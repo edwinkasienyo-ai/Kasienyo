@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>INTEGRATED INFORMATION MANAGEMENT SYSTEM</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body class="login-page">
+    <div class="login-left">
+      <h1>INTEGRATED INFORMATION MANAGEMENT SYSTEM</h1>
+      <h2>FOR BASIC LEARNING INSTITUTIONS</h2>
+      <p>
+        Modern, secure, and scalable multi-tenant institutional platform with Admission,
+        Management, Academics, HR, Finance, Communication, Parents Portal, Welfare and
+        Laws/Regulations modules.
+      </p>
+      <ul>
+        <li>Institution-level data isolation</li>
+        <li>Role-based access control and OTP 2FA</li>
+        <li>Dashboard, analytics, document workflows and exports</li>
+      </ul>
+    </div>
+
+    <div class="login-right">
+      <div class="card auth-card">
+        <h3>Secure Login</h3>
+        <label>Username</label>
+        <input id="username" placeholder="Enter username" />
+        <label>Password</label>
+        <input id="password" type="password" placeholder="Enter password" />
+        <label>OTP Channel</label>
+        <select id="otpChannel">
+          <option value="console">Console</option>
+          <option value="email">Email</option>
+          <option value="sms">SMS</option>
+        </select>
+        <button id="loginButton">Send OTP</button>
+
+        <div class="separator"></div>
+
+        <label>One-Time Password (OTP)</label>
+        <input id="otp" placeholder="Enter OTP code" />
+        <button id="verifyButton">Verify OTP</button>
+
+        <p class="small-note">
+          Default administrator login:<br />
+          <strong>Username:</strong> admin<br />
+          <strong>Password:</strong> 1234
+        </p>
+      </div>
+    </div>
+
+    <script src="/main.js"></script>
+  </body>
+</html>
