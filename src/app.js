@@ -57,6 +57,14 @@ if (!fs.existsSync(uploadsPath)) {
 }
 
 app.use("/uploads", express.static(uploadsPath));
+app.use((req, res, next) => {
+  if (/\.(js|css)$/i.test(req.path) || req.path === "/dashboard.html") {
+    res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+    res.setHeader("Pragma", "no-cache");
+    res.setHeader("Expires", "0");
+  }
+  next();
+});
 app.use(express.static(path.join(process.cwd(), "public")));
 
 const upload = multer({
