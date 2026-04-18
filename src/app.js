@@ -436,6 +436,480 @@ async function upsertAdmissionRows({ records, institutionId, userId }) {
   return { insertedOrUpdated, rejectedRows };
 }
 
+function safeJsonParse(value, fallback = null) {
+  if (value === null || value === undefined || value === "") return fallback;
+  if (typeof value === "object") return value;
+  try {
+    return JSON.parse(value);
+  } catch (error) {
+    return fallback;
+  }
+}
+
+function learnerVersionSnapshot(row = {}) {
+  const fields = [
+    "id",
+    "institution_id",
+    "full_name",
+    "first_name",
+    "middle_name",
+    "last_name",
+    "other_names",
+    "admission_number",
+    "date_of_admission",
+    "grade",
+    "form_name",
+    "stream",
+    "assessment_number",
+    "upi_number",
+    "birth_certificate_number",
+    "date_of_birth",
+    "gender",
+    "passport_photo_path",
+    "religion",
+    "nationality",
+    "county",
+    "sub_county",
+    "location",
+    "sub_location",
+    "village",
+    "year_joined",
+    "term_joined",
+    "orphan_condition",
+    "status",
+    "conduct_status",
+    "parent_full_name",
+    "parent_relationship",
+    "parent_id_number",
+    "parent_phone",
+    "parent_email",
+    "deleted_at",
+    "deleted_by_user_id",
+    "created_at",
+    "updated_at"
+  ];
+  const snapshot = {};
+  fields.forEach((field) => {
+    snapshot[field] = row[field] ?? null;
+  });
+  return snapshot;
+}
+
+async function logAdmissionVersion({
+  institutionId,
+  learnerId,
+  versionAction,
+  changedByUserId,
+  beforeData = null,
+  afterData = null,
+  notes = null
+}) {
+  await query(
+    `INSERT INTO admission_record_versions
+      (institution_id, learner_id, version_action, changed_by_user_id, before_json, after_json, notes, changed_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, NOW())`,
+    [
+      institutionId,
+      learnerId,
+      versionAction,
+      changedByUserId || null,
+      beforeData ? JSON.stringify(beforeData) : null,
+      afterData ? JSON.stringify(afterData) : null,
+      notes || null
+    ]
+  );
+}
+
+async function createAdmissionJob({
+  institutionId,
+  jobType,
+  status = "Queued",
+  progressPercent = 0,
+  totalItems = 0,
+  processedItems = 0,
+  payload = null,
+  result = null,
+  errorMessage = null,
+  createdByUserId = null,
+  userId = null,
+  startedAt = null,
+  completedAt = null
+}) {
+  const actorUserId = createdByUserId ?? userId ?? null;
+  const resultInsert = await query(
+    `INSERT INTO admission_jobs
+      (institution_id, job_type, status, progress_percent, total_items, processed_items, payload_json, result_json, error_message, created_by_user_id, started_at, completed_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      institutionId,
+      jobType,
+      status,
+      progressPercent,
+      totalItems,
+      processedItems,
+      payload ? JSON.stringify(payload) : null,
+      result ? JSON.stringify(result) : null,
+      errorMessage || null,
+      actorUserId,
+      startedAt,
+      completedAt
+    ]
+  );
+  return resultInsert.insertId;
+}
+
+async function updateAdmissionJob(jobId, changes = {}) {
+  const columnMap = {
+    status: "status",
+    progressPercent: "progress_percent",
+    totalItems: "total_items",
+    processedItems: "processed_items",
+    payload: "payload_json",
+    result: "result_json",
+    errorMessage: "error_message",
+    startedAt: "started_at",
+    completedAt: "completed_at"
+  };
+  const setParts = [];
+  const params = [];
+  Object.entries(changes).forEach(([key, value]) => {
+    const column = columnMap[key];
+    if (!column) return;
+    setParts.push(`${column} = ?`);
+    if (key === "payload" || key === "result") {
+      params.push(value ? JSON.stringify(value) : null);
+    } else {
+      params.push(value ?? null);
+    }
+  });
+  if (!setParts.length) return;
+  setParts.push("updated_at = NOW()");
+  await query(`UPDATE admission_jobs SET ${setParts.join(", ")} WHERE id = ?`, [...params, jobId]);
+}
+
+function normalizePaginationLimit(value, defaultValue = 100, maxValue = 500) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return defaultValue;
+  return Math.max(1, Math.min(Math.round(numeric), maxValue));
+}
+
+function normalizePaginationOffset(value, defaultValue = 0) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return defaultValue;
+  return Math.max(0, Math.round(numeric));
+}
+
+function admissionLearnerSnapshot(row = {}) {
+  return {
+    id: row.id,
+    institution_id: row.institution_id,
+    full_name: row.full_name,
+    first_name: row.first_name,
+    middle_name: row.middle_name,
+    last_name: row.last_name,
+    other_names: row.other_names,
+    admission_number: row.admission_number,
+    date_of_admission: row.date_of_admission,
+    grade: row.grade,
+    form_name: row.form_name,
+    stream: row.stream,
+    assessment_number: row.assessment_number,
+    upi_number: row.upi_number,
+    birth_certificate_number: row.birth_certificate_number,
+    date_of_birth: row.date_of_birth,
+    gender: row.gender,
+    passport_photo_path: row.passport_photo_path,
+    religion: row.religion,
+    nationality: row.nationality,
+    county: row.county,
+    sub_county: row.sub_county,
+    location: row.location,
+    sub_location: row.sub_location,
+    village: row.village,
+    year_joined: row.year_joined,
+    term_joined: row.term_joined,
+    orphan_condition: row.orphan_condition,
+    status: row.status,
+    parent_full_name: row.parent_full_name,
+    parent_relationship: row.parent_relationship,
+    parent_id_number: row.parent_id_number,
+    parent_phone: row.parent_phone,
+    parent_email: row.parent_email,
+    deleted_at: row.deleted_at || null,
+    deleted_by_user_id: row.deleted_by_user_id || null,
+    updated_at: row.updated_at || null
+  };
+}
+
+async function recordAdmissionVersion({
+  institutionId,
+  learnerId,
+  action,
+  changedByUserId,
+  before = null,
+  after = null,
+  notes = null
+}) {
+  await query(
+    `INSERT INTO admission_record_versions
+      (institution_id, learner_id, version_action, changed_by_user_id, before_json, after_json, notes, changed_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, NOW())`,
+    [
+      institutionId,
+      learnerId,
+      action,
+      changedByUserId || null,
+      before ? JSON.stringify(before) : null,
+      after ? JSON.stringify(after) : null,
+      notes || null
+    ]
+  );
+}
+
+async function softDeleteAdmissionLearner({ institutionId, learnerId, actorUserId, reason = null }) {
+  const rows = await query(
+    "SELECT * FROM learners WHERE id = ? AND institution_id = ? LIMIT 1",
+    [learnerId, institutionId]
+  );
+  if (!rows.length) {
+    throw new Error("Learner not found.");
+  }
+  const learner = rows[0];
+  if (learner.deleted_at) {
+    throw new Error("Learner already archived.");
+  }
+  const beforeSnapshot = admissionLearnerSnapshot(learner);
+  await query(
+    `UPDATE learners
+     SET deleted_at = NOW(), deleted_by_user_id = ?, updated_at = NOW()
+     WHERE id = ? AND institution_id = ?`,
+    [actorUserId || null, learnerId, institutionId]
+  );
+  const afterSnapshot = { ...beforeSnapshot, deleted_at: dayjs().format("YYYY-MM-DD HH:mm:ss"), deleted_by_user_id: actorUserId || null };
+  await recordAdmissionVersion({
+    institutionId,
+    learnerId,
+    action: "SOFT_DELETE",
+    changedByUserId: actorUserId,
+    before: beforeSnapshot,
+    after: afterSnapshot,
+    notes: reason || "Soft deleted"
+  });
+  return learner;
+}
+
+async function restoreAdmissionLearner({ institutionId, learnerId, actorUserId, reason = null }) {
+  const rows = await query(
+    "SELECT * FROM learners WHERE id = ? AND institution_id = ? LIMIT 1",
+    [learnerId, institutionId]
+  );
+  if (!rows.length) {
+    throw new Error("Learner not found.");
+  }
+  const learner = rows[0];
+  if (!learner.deleted_at) {
+    throw new Error("Learner is active already.");
+  }
+  const beforeSnapshot = admissionLearnerSnapshot(learner);
+  await query(
+    `UPDATE learners
+     SET deleted_at = NULL, deleted_by_user_id = NULL, updated_at = NOW()
+     WHERE id = ? AND institution_id = ?`,
+    [learnerId, institutionId]
+  );
+  const afterSnapshot = { ...beforeSnapshot, deleted_at: null, deleted_by_user_id: null };
+  await recordAdmissionVersion({
+    institutionId,
+    learnerId,
+    action: "RESTORE",
+    changedByUserId: actorUserId,
+    before: beforeSnapshot,
+    after: afterSnapshot,
+    notes: reason || "Restored from recycle bin"
+  });
+  return learner;
+}
+
+async function parseAdmissionImportFile({ absolutePath, originalName }) {
+  const extension = path.extname(originalName || "").toLowerCase();
+  const requiredHeaders = ["first_name", "last_name", "admission_number", "birth_certificate_number"];
+  let parsedRecords = [];
+
+  if (extension === ".xlsx") {
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.readFile(absolutePath);
+    const sheet = workbook.worksheets[0];
+    if (!sheet) {
+      throw new Error("Excel worksheet was not found in uploaded file.");
+    }
+    const headerCells = sheet.getRow(1).values.slice(1).map(extractSpreadsheetCellValue);
+    const headerIndex = buildAdmissionHeaderIndex(headerCells.map(normalizeImportHeader));
+    const missingHeaders = requiredHeaders.filter((header) => !headerIndex[header]);
+    if (missingHeaders.length) {
+      throw new Error(`Missing required header columns: ${missingHeaders.join(", ")}`);
+    }
+    for (let rowNumber = 2; rowNumber <= sheet.rowCount; rowNumber += 1) {
+      const row = sheet.getRow(rowNumber);
+      const rawRecord = {};
+      ADMISSION_IMPORT_HEADERS.forEach((header) => {
+        const cellIndex = headerIndex[header];
+        if (cellIndex) {
+          rawRecord[header] = extractSpreadsheetCellValue(row.getCell(cellIndex).value);
+        }
+      });
+      const hasAnyValue = Object.values(rawRecord).some(
+        (value) => value !== null && value !== undefined && String(value).trim() !== ""
+      );
+      if (!hasAnyValue) continue;
+      parsedRecords.push({ rowNumber, values: rawRecord });
+    }
+    return { sourceFormat: extension, parsedRecords };
+  }
+
+  if (extension === ".csv") {
+    const csvText = fs.readFileSync(absolutePath, "utf8");
+    const parsed = parseCsvText(csvText);
+    const headerIndex = buildAdmissionHeaderIndex(parsed.headers);
+    const missingHeaders = requiredHeaders.filter((header) => !headerIndex[header]);
+    if (missingHeaders.length) {
+      throw new Error(`Missing required header columns: ${missingHeaders.join(", ")}`);
+    }
+    parsedRecords = parsed.rows
+      .map((row) => {
+        const rawRecord = {};
+        ADMISSION_IMPORT_HEADERS.forEach((header) => {
+          const idx = headerIndex[header];
+          if (idx) rawRecord[header] = row.values[idx - 1] ?? null;
+        });
+        const hasAnyValue = Object.values(rawRecord).some(
+          (value) => value !== null && value !== undefined && String(value).trim() !== ""
+        );
+        if (!hasAnyValue) return null;
+        return { rowNumber: row.rowNumber, values: rawRecord };
+      })
+      .filter(Boolean);
+    return { sourceFormat: extension, parsedRecords };
+  }
+
+  throw new Error("Admission upload supports only .xlsx and .csv formats.");
+}
+
+async function buildAdmissionDryRunSummary({ records = [], institutionId }) {
+  const acceptedRecords = [];
+  const rejectedRows = [];
+  records.forEach((record) => {
+    const learner = normalizeLearnerPayload(record.values);
+    const validationError = validateLearnerPayload(learner);
+    if (validationError) {
+      rejectedRows.push({ row: record.rowNumber, reason: validationError });
+      return;
+    }
+    acceptedRecords.push({
+      rowNumber: record.rowNumber,
+      values: learner
+    });
+  });
+
+  const uniqueAdmissions = [
+    ...new Set(
+      acceptedRecords
+        .map((record) => normalizeText(record.values.admission_number))
+        .filter(Boolean)
+    )
+  ];
+  let existingCount = 0;
+  if (uniqueAdmissions.length) {
+    const placeholders = uniqueAdmissions.map(() => "?").join(", ");
+    const [row] = await query(
+      `SELECT COUNT(*) total FROM learners
+       WHERE institution_id = ? AND deleted_at IS NULL
+         AND admission_number IN (${placeholders})`,
+      [institutionId, ...uniqueAdmissions]
+    );
+    existingCount = Number(row?.total || 0);
+  }
+
+  return {
+    acceptedRecords,
+    rejectedRows,
+    summary: {
+      totalRows: records.length,
+      acceptedRows: acceptedRecords.length,
+      rejectedRows: rejectedRows.length,
+      estimatedInserts: Math.max(0, acceptedRecords.length - existingCount),
+      estimatedUpdates: Math.min(existingCount, acceptedRecords.length)
+    }
+  };
+}
+
+function normalizeAdmissionImportRecords(records) {
+  if (Array.isArray(records)) return records;
+  if (records && Array.isArray(records.parsedRecords)) return records.parsedRecords;
+  return [];
+}
+
+async function evaluateAdmissionDryRun({ records = [], institutionId }) {
+  const normalizedRecords = normalizeAdmissionImportRecords(records);
+  const dryRun = await buildAdmissionDryRunSummary({
+    records: normalizedRecords,
+    institutionId
+  });
+  return {
+    totalRows: dryRun.summary.totalRows,
+    validRows: dryRun.summary.acceptedRows,
+    invalidRows: dryRun.summary.rejectedRows,
+    estimatedInserts: dryRun.summary.estimatedInserts,
+    estimatedUpdates: dryRun.summary.estimatedUpdates,
+    acceptedRecords: dryRun.acceptedRecords,
+    rejectedRows: dryRun.rejectedRows
+  };
+}
+
+async function applyAdmissionRecordsWithJob({ records = [], institutionId, userId, jobId = null }) {
+  const normalizedRecords = normalizeAdmissionImportRecords(records);
+  const { insertedOrUpdated, rejectedRows } = await upsertAdmissionRows({
+    records: normalizedRecords,
+    institutionId,
+    userId
+  });
+  const rejectionReportPath = saveAdmissionRejectionReport(rejectedRows);
+  const result = {
+    totalRows: normalizedRecords.length,
+    insertedOrUpdated,
+    rejectedRows,
+    rejectionReportPath
+  };
+  if (jobId) {
+    await updateAdmissionJob(jobId, {
+      processedItems: result.totalRows,
+      result
+    });
+  }
+  return result;
+}
+
+function normalizeAdmissionJobRow(row = {}) {
+  return {
+    id: row.id,
+    institution_id: row.institution_id,
+    job_type: row.job_type,
+    status: row.status,
+    progress_percent: Number(row.progress_percent || 0),
+    total_items: Number(row.total_items || 0),
+    processed_items: Number(row.processed_items || 0),
+    payload_json: safeJsonParse(row.payload_json, null),
+    result_json: safeJsonParse(row.result_json, null),
+    error_message: row.error_message || null,
+    created_by_user_id: row.created_by_user_id || null,
+    started_at: row.started_at || null,
+    completed_at: row.completed_at || null,
+    created_at: row.created_at || null,
+    updated_at: row.updated_at || null
+  };
+}
+
+const ADMISSION_SENSITIVE_STATUS = new Set(["Transferred", "Alumni", "Deceased"]);
+
 function normalizeAdmissionKey(value) {
   return String(value || "")
     .trim()
@@ -1761,6 +2235,529 @@ app.post(
 );
 
 app.post(
+  "/api/admission/learners/bulk-upload/dry-run",
+  auth,
+  enforceRole([ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER]),
+  enforcePermission(PERMISSIONS.CREATE),
+  upload.single("file"),
+  asyncHandler(async (req, res) => {
+    if (!req.file) {
+      return res.status(400).json({ error: "CSV or Excel file is required." });
+    }
+    let parseResult = null;
+    try {
+      parseResult = await parseAdmissionImportFile({
+        absolutePath: req.file.path,
+        originalName: req.file.originalname
+      });
+      const preview = await evaluateAdmissionDryRun({
+        records: parseResult.parsedRecords,
+        institutionId: req.user.institution_id
+      });
+      const reportPath = preview.rejectedRows.length
+        ? saveAdmissionRejectionReport(preview.rejectedRows)
+        : null;
+      await auditLog(req.user, "DRY_RUN_ADMISSION_BULK_UPLOAD", "learners", null, {
+        sourceFormat: parseResult.sourceFormat,
+        totalRows: preview.totalRows,
+        validRows: preview.validRows,
+        estimatedInserts: preview.estimatedInserts,
+        estimatedUpdates: preview.estimatedUpdates,
+        rejectedRows: preview.rejectedRows.length
+      });
+      res.json({
+        message: "Dry-run completed. Review the preview before applying import.",
+        sourceFormat: parseResult.sourceFormat,
+        preview,
+        rejectionReportPath: reportPath
+      });
+    } finally {
+      if (req.file?.path) fs.unlink(req.file.path, () => {});
+    }
+  })
+);
+
+app.post(
+  ["/api/admission/learners/bulk-upload/jobs", "/api/admission/jobs/import/apply"],
+  auth,
+  enforceRole([ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER]),
+  enforcePermission(PERMISSIONS.CREATE),
+  upload.single("file"),
+  asyncHandler(async (req, res) => {
+    if (!req.file) {
+      return res.status(400).json({ error: "CSV or Excel file is required." });
+    }
+    const jobId = await createAdmissionJob({
+      institutionId: req.user.institution_id,
+      userId: req.user.id,
+      jobType: "BULK_IMPORT_APPLY",
+      payload: {
+        originalName: req.file.originalname || null
+      }
+    });
+    try {
+      const parseResult = await parseAdmissionImportFile({
+        absolutePath: req.file.path,
+        originalName: req.file.originalname
+      });
+      await updateAdmissionJob(jobId, {
+        status: "Running",
+        progressPercent: 15,
+        startedAt: dayjs().format("YYYY-MM-DD HH:mm:ss"),
+        payload: {
+          originalName: req.file.originalname || null,
+          sourceFormat: parseResult.sourceFormat
+        }
+      });
+      const preview = await evaluateAdmissionDryRun({
+        records: parseResult.parsedRecords,
+        institutionId: req.user.institution_id
+      });
+      await updateAdmissionJob(jobId, {
+        totalItems: preview.totalRows,
+        processedItems: preview.validRows,
+        progressPercent: 55,
+        result: {
+          preview
+        }
+      });
+
+      const result = await applyAdmissionRecordsWithJob({
+        records: parseResult.parsedRecords,
+        institutionId: req.user.institution_id,
+        userId: req.user.id,
+        jobId
+      });
+      result.sourceFormat = parseResult.sourceFormat;
+      result.preview = preview;
+      await updateAdmissionJob(jobId, {
+        status: "Completed",
+        progressPercent: 100,
+        processedItems: result.totalRows,
+        completedAt: dayjs().format("YYYY-MM-DD HH:mm:ss"),
+        result
+      });
+      await auditLog(req.user, "QUEUE_APPLY_ADMISSION_BULK_UPLOAD", "admission_jobs", jobId, {
+        sourceFormat: parseResult.sourceFormat,
+        insertedOrUpdated: result.insertedOrUpdated,
+        rejectedRows: result.rejectedRows.length
+      });
+      res.status(202).json({
+        message: "Admission import job completed.",
+        jobId,
+        status: "Completed",
+        result
+      });
+    } catch (error) {
+      await updateAdmissionJob(jobId, {
+        status: "Failed",
+        progressPercent: 100,
+        completedAt: dayjs().format("YYYY-MM-DD HH:mm:ss"),
+        errorMessage: error.message
+      });
+      throw error;
+    } finally {
+      if (req.file?.path) fs.unlink(req.file.path, () => {});
+    }
+  })
+);
+
+app.get(
+  "/api/admission/jobs",
+  auth,
+  enforceRole([ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER]),
+  enforcePermission(PERMISSIONS.VIEW),
+  asyncHandler(async (req, res) => {
+    const limit = normalizePaginationLimit(req.query.limit || 20, 20, 100);
+    const offset = normalizePaginationOffset(req.query.offset || 0, 0);
+    const rows = await query(
+      `SELECT id, job_type, status, progress_percent, total_items, processed_items, payload_json, result_json, error_message,
+              created_by_user_id, started_at, completed_at, created_at, updated_at
+       FROM admission_jobs
+       WHERE institution_id = ?
+       ORDER BY id DESC
+       LIMIT ? OFFSET ?`,
+      [req.user.institution_id, limit, offset]
+    );
+    const jobs = rows.map(normalizeAdmissionJobRow);
+    const [countRow] = await query(
+      "SELECT COUNT(*) total FROM admission_jobs WHERE institution_id = ?",
+      [req.user.institution_id]
+    );
+    res.json({
+      rows: jobs,
+      pagination: {
+        total: Number(countRow?.total || 0),
+        limit,
+        offset,
+        returned: jobs.length,
+        hasMore: offset + jobs.length < Number(countRow?.total || 0)
+      }
+    });
+  })
+);
+
+app.get(
+  "/api/admission/jobs/:id",
+  auth,
+  enforceRole([ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER]),
+  enforcePermission(PERMISSIONS.VIEW),
+  asyncHandler(async (req, res) => {
+    const rows = await query(
+      `SELECT *
+       FROM admission_jobs
+       WHERE id = ? AND institution_id = ?
+       LIMIT 1`,
+      [req.params.id, req.user.institution_id]
+    );
+    if (!rows.length) {
+      return res.status(404).json({ error: "Admission job not found." });
+    }
+    res.json(normalizeAdmissionJobRow(rows[0]));
+  })
+);
+
+app.get(
+  "/api/admission/learners/deleted",
+  auth,
+  enforceRole([ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER]),
+  enforcePermission(PERMISSIONS.VIEW),
+  asyncHandler(async (req, res) => {
+    const limit = normalizePaginationLimit(req.query.limit || 100, 100, 500);
+    const offset = normalizePaginationOffset(req.query.offset || 0, 0);
+    const rows = await query(
+      `SELECT *
+       FROM learners
+       WHERE institution_id = ? AND deleted_at IS NOT NULL
+       ORDER BY deleted_at DESC, id DESC
+       LIMIT ? OFFSET ?`,
+      [req.user.institution_id, limit, offset]
+    );
+    const [countRow] = await query(
+      "SELECT COUNT(*) total FROM learners WHERE institution_id = ? AND deleted_at IS NOT NULL",
+      [req.user.institution_id]
+    );
+    res.json({
+      rows: formatLearnerStatusRows(rows),
+      pagination: {
+        total: Number(countRow?.total || 0),
+        limit,
+        offset,
+        returned: rows.length,
+        hasMore: offset + rows.length < Number(countRow?.total || 0)
+      }
+    });
+  })
+);
+
+app.post(
+  "/api/admission/learners/:id/restore",
+  auth,
+  enforceRole([ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
+  enforcePermission(PERMISSIONS.UPDATE),
+  asyncHandler(async (req, res) => {
+    const reason = normalizeText(req.body?.reason) || "Restored from recycle bin";
+    await restoreAdmissionLearner({
+      institutionId: req.user.institution_id,
+      learnerId: req.params.id,
+      actorUserId: req.user.id,
+      reason
+    });
+    await auditLog(req.user, "RESTORE", "learners", req.params.id, { reason });
+    res.json({ message: "Learner restored successfully." });
+  })
+);
+
+app.get(
+  "/api/admission/learners/:id/versions",
+  auth,
+  enforceRole([ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER]),
+  enforcePermission(PERMISSIONS.VIEW),
+  asyncHandler(async (req, res) => {
+    const learnerRows = await query(
+      "SELECT id FROM learners WHERE id = ? AND institution_id = ? LIMIT 1",
+      [req.params.id, req.user.institution_id]
+    );
+    if (!learnerRows.length) {
+      return res.status(404).json({ error: "Learner not found." });
+    }
+    const versions = await query(
+      `SELECT id, learner_id, version_action, changed_by_user_id, before_json, after_json, notes, changed_at
+       FROM admission_record_versions
+       WHERE institution_id = ? AND learner_id = ?
+       ORDER BY changed_at DESC, id DESC`,
+      [req.user.institution_id, req.params.id]
+    );
+    res.json({
+      learnerId: Number(req.params.id),
+      rows: versions.map((row) => ({
+        ...row,
+        before_json: safeJsonParse(row.before_json, null),
+        after_json: safeJsonParse(row.after_json, null)
+      }))
+    });
+  })
+);
+
+app.get(
+  "/api/admission/learners/duplicates",
+  auth,
+  enforceRole([ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER]),
+  enforcePermission(PERMISSIONS.VIEW),
+  asyncHandler(async (req, res) => {
+    const rows = await query(
+      `SELECT id, first_name, last_name, full_name, admission_number, date_of_birth, parent_phone, parent_email, status
+       FROM learners
+       WHERE institution_id = ? AND deleted_at IS NULL
+       ORDER BY first_name ASC, last_name ASC, id ASC`,
+      [req.user.institution_id]
+    );
+
+    const groups = new Map();
+    const byAdmission = new Map();
+    rows.forEach((row) => {
+      const admissionKey = normalizeAdmissionKey(row.admission_number);
+      if (admissionKey) {
+        if (!byAdmission.has(admissionKey)) byAdmission.set(admissionKey, []);
+        byAdmission.get(admissionKey).push(row);
+      }
+      const fullNameKey = normalizeAdmissionKey(`${row.first_name || ""}${row.last_name || ""}`);
+      const dobKey = normalizeText(row.date_of_birth);
+      const contactKey = normalizeAdmissionKey(row.parent_phone || row.parent_email || "");
+      if (!fullNameKey || !dobKey) return;
+      const groupKey = `${fullNameKey}::${dobKey}::${contactKey || "NO_CONTACT"}`;
+      if (!groups.has(groupKey)) groups.set(groupKey, []);
+      groups.get(groupKey).push(row);
+    });
+
+    const duplicateGroups = [];
+    let sequence = 1;
+    byAdmission.forEach((items, key) => {
+      if (items.length < 2) return;
+      duplicateGroups.push({
+        queue_id: `ADM-${sequence++}`,
+        group_key: `ADMISSION::${key}`,
+        reason: "Same admission number",
+        items
+      });
+    });
+    groups.forEach((items, key) => {
+      if (items.length < 2) return;
+      duplicateGroups.push({
+        queue_id: `SIM-${sequence++}`,
+        group_key: `SIMILAR::${key}`,
+        reason: "Same names, DOB, and parent contact pattern",
+        items
+      });
+    });
+
+    res.json({
+      totalGroups: duplicateGroups.length,
+      rows: duplicateGroups
+    });
+  })
+);
+
+app.post(
+  "/api/admission/learners/duplicates/review",
+  auth,
+  enforceRole([ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
+  enforcePermission(PERMISSIONS.UPDATE),
+  asyncHandler(async (req, res) => {
+    const groupKey = normalizeText(req.body?.group_key);
+    const decision = normalizeText(req.body?.decision);
+    const notes = normalizeText(req.body?.notes);
+    if (!groupKey) {
+      return res.status(400).json({ error: "group_key is required." });
+    }
+    if (!decision || !["Merge", "Keep Separate"].includes(decision)) {
+      return res.status(400).json({ error: "decision must be either 'Merge' or 'Keep Separate'." });
+    }
+
+    await query(
+      `INSERT INTO admission_duplicate_reviews
+        (institution_id, group_key, decision, notes, resolved_by_user_id, resolved_at)
+       VALUES (?, ?, ?, ?, ?, NOW())
+       ON DUPLICATE KEY UPDATE
+         decision = VALUES(decision),
+         notes = VALUES(notes),
+         resolved_by_user_id = VALUES(resolved_by_user_id),
+         resolved_at = NOW(),
+         updated_at = NOW()`,
+      [req.user.institution_id, groupKey, decision, notes, req.user.id]
+    );
+
+    await auditLog(req.user, "REVIEW_ADMISSION_DUPLICATE", "admission_duplicate_reviews", null, {
+      group_key: groupKey,
+      decision,
+      notes
+    });
+    res.json({ message: "Duplicate review saved." });
+  })
+);
+
+app.post(
+  "/api/admission/learners/:id/status/request-approval",
+  auth,
+  enforceRole([ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER]),
+  enforcePermission(PERMISSIONS.UPDATE),
+  asyncHandler(async (req, res) => {
+    const desiredStatus = normalizeText(req.body?.to_status || req.body?.status);
+    const requestReason = normalizeText(req.body?.reason || req.body?.request_reason);
+    if (!desiredStatus || !ADMISSION_STATUS.includes(desiredStatus)) {
+      return res.status(400).json({ error: "A valid target status is required." });
+    }
+
+    const learners = await query(
+      "SELECT * FROM learners WHERE id = ? AND institution_id = ? AND deleted_at IS NULL LIMIT 1",
+      [req.params.id, req.user.institution_id]
+    );
+    if (!learners.length) {
+      return res.status(404).json({ error: "Learner not found." });
+    }
+    const learner = learners[0];
+    const currentStatus = normalizeText(learner.status) || "In Session";
+
+    if (!ADMISSION_SENSITIVE_STATUS.has(desiredStatus)) {
+      const beforeSnapshot = admissionLearnerSnapshot(learner);
+      await query(
+        "UPDATE learners SET status = ?, updated_at = NOW() WHERE id = ? AND institution_id = ?",
+        [desiredStatus, req.params.id, req.user.institution_id]
+      );
+      const afterSnapshot = { ...beforeSnapshot, status: desiredStatus };
+      await recordAdmissionVersion({
+        institutionId: req.user.institution_id,
+        learnerId: req.params.id,
+        action: "STATUS_DIRECT_UPDATE",
+        changedByUserId: req.user.id,
+        before: beforeSnapshot,
+        after: afterSnapshot,
+        notes: requestReason || `Status changed to ${desiredStatus}`
+      });
+      await auditLog(req.user, "UPDATE_STATUS_DIRECT", "learners", req.params.id, {
+        from_status: currentStatus,
+        to_status: desiredStatus,
+        reason: requestReason || null
+      });
+      return res.json({
+        message: "Status updated directly.",
+        approvalRequired: false,
+        from_status: currentStatus,
+        to_status: desiredStatus
+      });
+    }
+
+    const insertResult = await query(
+      `INSERT INTO admission_status_approvals
+        (institution_id, learner_id, admission_number, learner_name, from_status, to_status, request_reason, approval_status, requested_by_user_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 'Pending', ?)`,
+      [
+        req.user.institution_id,
+        req.params.id,
+        learner.admission_number || null,
+        learner.full_name || null,
+        currentStatus,
+        desiredStatus,
+        requestReason,
+        req.user.id
+      ]
+    );
+    await auditLog(req.user, "REQUEST_STATUS_APPROVAL", "admission_status_approvals", insertResult.insertId, {
+      learner_id: Number(req.params.id),
+      from_status: currentStatus,
+      to_status: desiredStatus,
+      request_reason: requestReason || null
+    });
+    res.status(202).json({
+      message: "Status change request submitted for approval.",
+      approvalRequired: true,
+      approvalId: insertResult.insertId
+    });
+  })
+);
+
+app.post(
+  "/api/admission/status-approvals/:id/decide",
+  auth,
+  enforceRole([ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
+  enforcePermission(PERMISSIONS.UPDATE),
+  asyncHandler(async (req, res) => {
+    const decisionRaw = normalizeText(req.body?.decision);
+    const decisionComment = normalizeText(req.body?.comment || req.body?.decision_comment);
+    if (!decisionRaw) {
+      return res.status(400).json({ error: "decision is required." });
+    }
+    const decisionNormalized = decisionRaw.toLowerCase();
+    let nextStatus = null;
+    if (["approve", "approved", "accept", "accepted"].includes(decisionNormalized)) {
+      nextStatus = "Approved";
+    } else if (["reject", "rejected", "deny", "denied"].includes(decisionNormalized)) {
+      nextStatus = "Rejected";
+    } else {
+      return res.status(400).json({ error: "decision must be approve or reject." });
+    }
+
+    const rows = await query(
+      "SELECT * FROM admission_status_approvals WHERE id = ? AND institution_id = ? LIMIT 1",
+      [req.params.id, req.user.institution_id]
+    );
+    if (!rows.length) {
+      return res.status(404).json({ error: "Approval request not found." });
+    }
+    const approval = rows[0];
+    if (approval.approval_status !== "Pending") {
+      return res.status(409).json({ error: "This approval request has already been decided." });
+    }
+
+    await query(
+      `UPDATE admission_status_approvals
+       SET approval_status = ?, approved_by_user_id = ?, approved_at = NOW(), decision_comment = ?, updated_at = NOW()
+       WHERE id = ? AND institution_id = ?`,
+      [nextStatus, req.user.id, decisionComment, req.params.id, req.user.institution_id]
+    );
+
+    let learnerUpdated = false;
+    if (nextStatus === "Approved") {
+      const learnerRows = await query(
+        "SELECT * FROM learners WHERE id = ? AND institution_id = ? AND deleted_at IS NULL LIMIT 1",
+        [approval.learner_id, req.user.institution_id]
+      );
+      if (learnerRows.length) {
+        const learner = learnerRows[0];
+        const beforeSnapshot = admissionLearnerSnapshot(learner);
+        await query(
+          "UPDATE learners SET status = ?, updated_at = NOW() WHERE id = ? AND institution_id = ?",
+          [approval.to_status, approval.learner_id, req.user.institution_id]
+        );
+        const afterSnapshot = { ...beforeSnapshot, status: approval.to_status };
+        await recordAdmissionVersion({
+          institutionId: req.user.institution_id,
+          learnerId: approval.learner_id,
+          action: "STATUS_APPROVAL_APPLIED",
+          changedByUserId: req.user.id,
+          before: beforeSnapshot,
+          after: afterSnapshot,
+          notes: decisionComment || `Approved status change to ${approval.to_status}`
+        });
+        learnerUpdated = true;
+      }
+    }
+
+    await auditLog(req.user, "DECIDE_STATUS_APPROVAL", "admission_status_approvals", req.params.id, {
+      decision: nextStatus,
+      learner_id: approval.learner_id,
+      to_status: approval.to_status,
+      learnerUpdated
+    });
+    res.json({
+      message: `Approval ${nextStatus.toLowerCase()}.`,
+      status: nextStatus,
+      learnerUpdated
+    });
+  })
+);
+
+app.post(
   "/api/admission/learners/photo-upload/:id",
   auth,
   enforceRole([ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER]),
@@ -1776,7 +2773,7 @@ app.post(
     }
 
     const learners = await query(
-      "SELECT id FROM learners WHERE id = ? AND institution_id = ? LIMIT 1",
+      "SELECT id FROM learners WHERE id = ? AND institution_id = ? AND deleted_at IS NULL LIMIT 1",
       [req.params.id, req.user.institution_id]
     );
     if (!learners.length) {
@@ -1816,7 +2813,7 @@ app.get(
     }
 
     const params = [req.user.institution_id];
-    let where = "WHERE institution_id = ?";
+    let where = "WHERE institution_id = ? AND deleted_at IS NULL";
     if (value) {
       where += ` AND ${field} LIKE ?`;
       params.push(`%${value}%`);
@@ -1889,7 +2886,7 @@ app.get(
     }
 
     const params = [req.user.institution_id];
-    let where = "WHERE institution_id = ?";
+    let where = "WHERE institution_id = ? AND deleted_at IS NULL";
     if (statusFilter) {
       where += " AND status = ?";
       params.push(statusFilter);
@@ -2094,7 +3091,7 @@ app.get(
     const rows = await query(
       `SELECT *
        FROM learners
-       WHERE institution_id = ?
+       WHERE institution_id = ? AND deleted_at IS NULL
        ORDER BY ${ADMISSION_STATUS_ORDER_SQL}`,
       [req.user.institution_id]
     );
@@ -2140,7 +3137,7 @@ app.get(
   enforceRole([ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER]),
   enforcePermission(PERMISSIONS.VIEW),
   asyncHandler(async (req, res) => {
-    const rows = await query("SELECT * FROM learners WHERE id = ? AND institution_id = ? LIMIT 1", [
+    const rows = await query("SELECT * FROM learners WHERE id = ? AND institution_id = ? AND deleted_at IS NULL LIMIT 1", [
       req.params.id,
       req.user.institution_id
     ]);
@@ -2280,7 +3277,7 @@ app.get(
   asyncHandler(async (req, res) => {
     const statusFilter = normalizeText(req.query.status);
     const params = [req.user.institution_id];
-    let where = "WHERE institution_id = ?";
+    let where = "WHERE institution_id = ? AND deleted_at IS NULL";
     if (statusFilter) {
       where += " AND status = ?";
       params.push(statusFilter);
@@ -3023,6 +4020,7 @@ if (admissionConfig) {
         institutionId: req.user.institution_id,
         searchFields: admissionConfig.searchFields,
         q: req.query.q || "",
+        extraWhere: " AND deleted_at IS NULL",
         orderBy: ADMISSION_STATUS_ORDER_SQL,
         limit: req.query.limit || 100,
         offset: req.query.offset || 0
@@ -3038,7 +4036,9 @@ if (admissionConfig) {
     enforcePermission(PERMISSIONS.VIEW),
     asyncHandler(async (req, res) => {
       const rows = await query(
-        `SELECT * FROM ${admissionConfig.table} WHERE id = ? AND institution_id = ? LIMIT 1`,
+        `SELECT * FROM ${admissionConfig.table}
+         WHERE id = ? AND institution_id = ? AND deleted_at IS NULL
+         LIMIT 1`,
         [req.params.id, req.user.institution_id]
       );
       if (!rows.length) {
@@ -3069,7 +4069,10 @@ if (admissionConfig) {
       }
 
       const duplicateRows = await query(
-        "SELECT id FROM learners WHERE institution_id = ? AND admission_number = ? LIMIT 1",
+        `SELECT id
+         FROM learners
+         WHERE institution_id = ? AND admission_number = ? AND deleted_at IS NULL
+         LIMIT 1`,
         [req.user.institution_id, data.admission_number]
       );
       if (duplicateRows.length) {
@@ -3099,7 +4102,9 @@ if (admissionConfig) {
       }
 
       const existingRows = await query(
-        `SELECT * FROM ${admissionConfig.table} WHERE id = ? AND institution_id = ? LIMIT 1`,
+        `SELECT * FROM ${admissionConfig.table}
+         WHERE id = ? AND institution_id = ? AND deleted_at IS NULL
+         LIMIT 1`,
         [req.params.id, req.user.institution_id]
       );
       if (!existingRows.length) {
@@ -3118,7 +4123,10 @@ if (admissionConfig) {
       const requestedAdmission = normalizeText(merged.admission_number);
       if (requestedAdmission) {
         const duplicateRows = await query(
-          "SELECT id FROM learners WHERE institution_id = ? AND admission_number = ? AND id <> ? LIMIT 1",
+          `SELECT id
+           FROM learners
+           WHERE institution_id = ? AND admission_number = ? AND id <> ? AND deleted_at IS NULL
+           LIMIT 1`,
           [req.user.institution_id, requestedAdmission, req.params.id]
         );
         if (duplicateRows.length) {
@@ -3145,12 +4153,22 @@ if (admissionConfig) {
     enforceRole(admissionConfig.allowedRoles),
     enforcePermission(PERMISSIONS.DELETE),
     asyncHandler(async (req, res) => {
-      await query(`DELETE FROM ${admissionConfig.table} WHERE id = ? AND institution_id = ?`, [
-        req.params.id,
-        req.user.institution_id
-      ]);
-      await auditLog(req.user, "DELETE", admissionConfig.table, req.params.id);
-      res.json({ message: "Record deleted." });
+      const reason = normalizeText(req.body?.reason) || "Archived by delete action";
+      try {
+        await softDeleteAdmissionLearner({
+          institutionId: req.user.institution_id,
+          learnerId: req.params.id,
+          actorUserId: req.user.id,
+          reason
+        });
+      } catch (error) {
+        if (String(error.message || "").includes("not found")) {
+          return res.status(404).json({ error: "Record not found." });
+        }
+        return res.status(400).json({ error: error.message || "Unable to archive learner." });
+      }
+      await auditLog(req.user, "SOFT_DELETE", admissionConfig.table, req.params.id, { reason });
+      res.json({ message: "Record archived. Use recycle bin to restore if needed." });
     })
   );
 
@@ -3165,6 +4183,7 @@ if (admissionConfig) {
         institutionId: req.user.institution_id,
         searchFields: admissionConfig.searchFields,
         q: req.query.q || "",
+        extraWhere: " AND deleted_at IS NULL",
         orderBy: ADMISSION_STATUS_ORDER_SQL,
         limit: 5000
       });
@@ -3185,6 +4204,7 @@ if (admissionConfig) {
         institutionId: req.user.institution_id,
         searchFields: admissionConfig.searchFields,
         q: req.query.q || "",
+        extraWhere: " AND deleted_at IS NULL",
         orderBy: ADMISSION_STATUS_ORDER_SQL,
         limit: 5000
       });
@@ -3523,7 +4543,7 @@ app.post(
     const duplicateAdmissions = await query(
       `SELECT admission_number, COUNT(*) total
        FROM learners
-       WHERE institution_id = ? AND admission_number IS NOT NULL AND admission_number <> ''
+       WHERE institution_id = ? AND deleted_at IS NULL AND admission_number IS NOT NULL AND admission_number <> ''
        GROUP BY admission_number
        HAVING COUNT(*) > 1`,
       [institutionId]
@@ -3534,6 +4554,7 @@ app.post(
       `SELECT id, full_name, admission_number
        FROM learners
        WHERE institution_id = ?
+         AND deleted_at IS NULL
          AND (parent_phone IS NULL OR parent_phone = '')
          AND (parent_email IS NULL OR parent_email = '')
        ORDER BY id DESC
@@ -3544,6 +4565,7 @@ app.post(
       `SELECT COUNT(*) total
        FROM learners
        WHERE institution_id = ?
+         AND deleted_at IS NULL
          AND (parent_phone IS NULL OR parent_phone = '')
          AND (parent_email IS NULL OR parent_email = '')`,
       [institutionId]
@@ -3553,6 +4575,7 @@ app.post(
       `SELECT id, full_name, admission_number, status
        FROM learners
        WHERE institution_id = ?
+         AND deleted_at IS NULL
          AND (status IS NULL OR status = '' OR status NOT IN (?, ?, ?, ?, ?))
        ORDER BY id DESC
        LIMIT ?`,
@@ -3570,6 +4593,7 @@ app.post(
       `SELECT COUNT(*) total
        FROM learners
        WHERE institution_id = ?
+         AND deleted_at IS NULL
          AND (status IS NULL OR status = '' OR status NOT IN (?, ?, ?, ?, ?))`,
       [
         institutionId,
@@ -3616,7 +4640,7 @@ app.get(
     const duplicateAdmissions = await query(
       `SELECT admission_number, COUNT(*) total
        FROM learners
-       WHERE institution_id = ? AND admission_number IS NOT NULL AND admission_number <> ''
+       WHERE institution_id = ? AND deleted_at IS NULL AND admission_number IS NOT NULL AND admission_number <> ''
        GROUP BY admission_number
        HAVING COUNT(*) > 1`,
       [institutionId]
@@ -3625,6 +4649,7 @@ app.get(
       `SELECT id, full_name, admission_number
        FROM learners
        WHERE institution_id = ?
+         AND deleted_at IS NULL
          AND (parent_phone IS NULL OR parent_phone = '')
          AND (parent_email IS NULL OR parent_email = '')
        ORDER BY id DESC
@@ -3635,6 +4660,7 @@ app.get(
       `SELECT id, full_name, admission_number, status
        FROM learners
        WHERE institution_id = ?
+         AND deleted_at IS NULL
          AND (status IS NULL OR status = '' OR status NOT IN (?, ?, ?, ?, ?))
        ORDER BY id DESC
        LIMIT 100`,
