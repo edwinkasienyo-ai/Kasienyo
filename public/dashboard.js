@@ -65,6 +65,98 @@ const FIELD_HINTS = {
   status: "Choose the current official status from approved options."
 };
 
+const DEFAULT_MODULE_HELP = {
+  summary: "Use this section to capture complete, accurate records before saving.",
+  steps: [
+    "Complete all required fields marked with *.",
+    "Use Process for module automation or clean-up tasks where available.",
+    "Use View to refresh records after Save or Process."
+  ]
+};
+
+const MODULE_SECTION_HELP = {
+  admission: {
+    summary: "Capture learner biodata, parent contacts, status, and class placement accurately.",
+    steps: [
+      "Use Grade OR Form (not both).",
+      "Bulk upload biodata using Excel/CSV template for many learners.",
+      "Map photos by admission number filename or ZIP upload."
+    ]
+  },
+  "management-teachers": {
+    summary: "Maintain complete teacher profile and subject assignment records.",
+    steps: [
+      "Capture TSC and ID numbers exactly as official records.",
+      "Assign major and other teaching subjects for scheduling.",
+      "Add next-of-kin contact for emergency response."
+    ]
+  },
+  "management-teacher-resources": {
+    summary: "Manage lesson plans, schemes, and curriculum resources per class and term.",
+    steps: [
+      "Use Process to auto-generate a starter teaching resource.",
+      "Set grade, term, strand, and sub-strand for traceability.",
+      "Upload generated or approved files using system upload paths."
+    ]
+  },
+  attendance: {
+    summary: "Capture daily attendance with correct status and timing details.",
+    steps: [
+      "Use Process to auto-generate class register entries.",
+      "Record attendance status using approved options only.",
+      "Capture reason/comments for absences and late arrivals."
+    ]
+  },
+  "academic-exams": {
+    summary: "Prepare exam records per class, subject, and curriculum coverage.",
+    steps: [
+      "Use Process to auto-generate draft exam text.",
+      "Capture strand/sub-strand for curriculum alignment.",
+      "Set term and year for report filtering and retrieval."
+    ]
+  },
+  "academic-marks": {
+    summary: "Capture marks accurately for learner performance and positioning.",
+    steps: [
+      "Ensure learner ID matches the learner profile before saving.",
+      "Enter marks between 0 and 100.",
+      "Use Process to normalize percentages and CBC bands."
+    ]
+  },
+  "finance-fee-structure": {
+    summary: "Define required fees per class, term, and year.",
+    steps: [
+      "Capture grade, term, and year before amount.",
+      "Enter a positive required fee amount.",
+      "Use Process to generate fee summary and balances."
+    ]
+  },
+  "finance-fee-payments": {
+    summary: "Record learner fee payments and update balances reliably.",
+    steps: [
+      "Confirm learner ID and name before posting payment.",
+      "Record payment method and payment datetime.",
+      "Use Process to generate consolidated fee summary."
+    ]
+  },
+  "communication-messages": {
+    summary: "Send and track SMS/email notifications to institution stakeholders.",
+    steps: [
+      "Set recipient contact and message body clearly.",
+      "Queue messages first where needed.",
+      "Use Process to dispatch queued messages quickly."
+    ]
+  },
+  laws: {
+    summary: "Maintain institutional laws, regulations, and policy documents.",
+    steps: [
+      "Categorize each document correctly.",
+      "Provide clear title and effective date.",
+      "Update file path whenever policy files are replaced."
+    ]
+  }
+};
+
 const moduleConfigs = {
   admission: {
     title: "Admission Module - Learners Bio Data",
@@ -476,11 +568,16 @@ function buildInput(field) {
   const id = `field-${field.name}`;
   const required = field.required ? '<span class="required-star">*</span>' : "";
   const hint = field.hint ? `<p class="field-hint">${escapeHtml(field.hint)}</p>` : "";
+  const helpIcon = field.hint
+    ? `<span class="help-icon" title="${escapeHtml(field.hint)}" aria-label="${escapeHtml(
+        field.hint
+      )}">i</span>`
+    : "";
   const error = `<p id="error-${field.name}" class="field-error" aria-live="polite"></p>`;
   if (field.type === "textarea") {
     return `
       <div class="field-block">
-        <label for="${id}">${field.label} ${required}</label>
+        <label for="${id}">${field.label} ${required} ${helpIcon}</label>
         <textarea id="${id}" rows="3" placeholder="${field.label}"></textarea>
         ${hint}
         ${error}
@@ -494,7 +591,7 @@ function buildInput(field) {
       .join("");
     return `
       <div class="field-block">
-        <label for="${id}">${field.label} ${required}</label>
+        <label for="${id}">${field.label} ${required} ${helpIcon}</label>
         <select id="${id}">${optionHtml}</select>
         ${hint}
         ${error}
@@ -503,7 +600,7 @@ function buildInput(field) {
   }
   return `
     <div class="field-block">
-      <label for="${id}">${field.label} ${required}</label>
+      <label for="${id}">${field.label} ${required} ${helpIcon}</label>
       <input id="${id}" type="${field.type || "text"}" placeholder="${field.label}" />
       ${hint}
       ${error}
@@ -521,6 +618,42 @@ function attachFieldMetadata(moduleKey, config) {
     field.required = requiredNames.has(field.name);
     field.hint = field.hint || FIELD_HINTS[field.name] || "";
   });
+}
+
+function moduleHelpContent(moduleKey) {
+  return MODULE_SECTION_HELP[moduleKey] || DEFAULT_MODULE_HELP;
+}
+
+function renderModuleHelp(moduleKey) {
+  const help = moduleHelpContent(moduleKey);
+  const stepsHtml = (help.steps || [])
+    .map((step) => `<li>${escapeHtml(step)}</li>`)
+    .join("");
+  return `
+    <div class="module-help-card" id="moduleHelpCard">
+      <div class="module-help-header">
+        <h4>
+          Section Help
+          <span class="help-icon" title="Guidance for this module." aria-label="Guidance for this module.">i</span>
+        </h4>
+        <button id="toggleModuleHelpButton" class="module-help-toggle">Hide Help</button>
+      </div>
+      <div id="moduleHelpBody" class="module-help-body">
+        <p class="module-help-summary">${escapeHtml(help.summary || "")}</p>
+        <ol class="module-help-steps">${stepsHtml}</ol>
+      </div>
+    </div>
+  `;
+}
+
+function bindModuleHelpToggle() {
+  const button = document.getElementById("toggleModuleHelpButton");
+  const body = document.getElementById("moduleHelpBody");
+  if (!button || !body) return;
+  button.onclick = () => {
+    const hidden = body.classList.toggle("is-hidden");
+    button.textContent = hidden ? "Show Help" : "Hide Help";
+  };
 }
 
 function statusBadgeHtml(status) {
@@ -1326,9 +1459,11 @@ function renderCrudModule(moduleKey) {
   document.getElementById("moduleTitle").textContent = config.title;
   document.getElementById("cards").innerHTML = "";
   const extraTools = moduleKey === "admission" ? admissionToolsHtml() : "";
+  const helpCard = renderModuleHelp(moduleKey);
 
   document.getElementById("formArea").innerHTML = `
     <h3>${config.title}</h3>
+    ${helpCard}
     ${extraTools}
     <div class="form-grid">
       ${config.fields.map(buildInput).join("")}
@@ -1351,6 +1486,7 @@ function renderCrudModule(moduleKey) {
   document.getElementById("downloadExcelButton").onclick = exportExcel;
   document.getElementById("printButton").onclick = () => window.print();
   document.getElementById("viewButton").onclick = () => loadModuleData(config);
+  bindModuleHelpToggle();
 
   if (moduleKey === "admission") {
     bindAdmissionTools();
