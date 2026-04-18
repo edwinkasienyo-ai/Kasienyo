@@ -326,6 +326,177 @@ button:hover {
   margin: 0 0 6px;
 }
 
+.guided-toggle-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0 10px;
+}
+
+.guided-toggle-row input[type="checkbox"] {
+  width: auto;
+  margin: 0;
+}
+
+.guided-checklist {
+  border: 1px solid #d8e5f4;
+  border-radius: 10px;
+  background: #f8fbff;
+  padding: 10px;
+  margin: 8px 0 10px;
+}
+
+.guided-checklist h5 {
+  margin: 0 0 8px;
+  color: #154166;
+}
+
+.guided-checklist ul {
+  margin: 0;
+  padding-left: 16px;
+}
+
+.guided-checklist li {
+  margin: 4px 0;
+}
+
+.guided-checklist li.done {
+  color: #1f6b3f;
+}
+
+.guided-checklist li.pending {
+  color: #8b1e1e;
+}
+
+.completeness-summary {
+  border: 1px solid #d8e5f4;
+  border-radius: 10px;
+  background: #f8fbff;
+  padding: 10px;
+  margin: 8px 0 10px;
+}
+
+.completeness-summary h5 {
+  margin: 0 0 8px;
+  color: #154166;
+}
+
+.completeness-kpis {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.completeness-kpis .tag {
+  font-size: 12px;
+}
+
+.completeness-tools {
+  margin-top: 8px;
+}
+
+.admission-guided-card {
+  margin-top: 10px;
+  border: 1px solid #dbe7f5;
+  border-radius: 10px;
+  background: #ffffff;
+  padding: 10px;
+}
+
+.admission-guided-card h5 {
+  margin: 0 0 8px;
+  color: #154166;
+}
+
+.guided-mode-hint {
+  margin: 4px 0 0;
+  color: #375a7e;
+  font-size: 12px;
+}
+
+.guide-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.guide-steps li {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 4px 0;
+}
+
+.step-check {
+  width: 16px;
+  text-align: center;
+  font-weight: 700;
+}
+
+.step-done .step-check {
+  color: #1f6b3f;
+}
+
+.step-pending .step-check {
+  color: #a13d1b;
+}
+
+.step-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.step-action {
+  font-size: 12px;
+  color: #3d5f84;
+}
+
+.admission-completeness-summary {
+  border: 1px solid #dbe7f5;
+  border-radius: 10px;
+  background: #f8fbff;
+  padding: 10px;
+  margin-top: 10px;
+}
+
+.admission-completeness-summary h5 {
+  margin: 0 0 8px;
+  color: #154166;
+}
+
+.admission-completeness-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.admission-completeness-table {
+  margin-top: 8px;
+  max-height: 260px;
+  overflow: auto;
+  border: 1px solid #e2eaf4;
+  border-radius: 8px;
+}
+
+.admission-completeness-table table {
+  margin: 0;
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.admission-completeness-table th,
+.admission-completeness-table td {
+  font-size: 12px;
+  padding: 6px;
+  border-bottom: 1px solid #eef3f9;
+  text-align: left;
+}
+
+.admission-completeness-table tr:last-child td {
+  border-bottom: none;
+}
+
 .admission-status-summary {
   margin-top: 10px;
   border-top: 1px dashed #ccd9ea;

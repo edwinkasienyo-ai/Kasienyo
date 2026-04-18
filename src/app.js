@@ -663,6 +663,69 @@ function formatLearnerStatusRows(rows = []) {
   }));
 }
 
+function admissionCompletenessIndicators(learner = {}) {
+  const indicators = [
+    { key: "first_name", label: "First name" },
+    { key: "last_name", label: "Last name" },
+    { key: "admission_number", label: "Admission number" },
+    { key: "birth_certificate_number", label: "Birth certificate number" },
+    { key: "status", label: "Status" },
+    { key: "date_of_admission", label: "Date of admission" },
+    { key: "date_of_birth", label: "Date of birth" },
+    { key: "gender", label: "Gender" },
+    { key: "parent_full_name", label: "Parent name" },
+    { key: "parent_phone", label: "Parent phone" },
+    { key: "passport_photo_path", label: "Passport photo" }
+  ];
+  const classSectionAvailable = Boolean(normalizeText(learner.grade) || normalizeText(learner.form_name));
+  const missing = indicators
+    .filter((indicator) => !normalizeText(learner[indicator.key]))
+    .map((indicator) => indicator.label);
+  if (!classSectionAvailable) {
+    missing.push("Class section (Grade or Form)");
+  }
+  const completed = indicators.length + 1 - missing.length;
+  const total = indicators.length + 1;
+  const percentage = total ? Math.round((completed / total) * 100) : 0;
+  return { missing, completed, total, percentage };
+}
+
+function admissionGuideStepFlags(summary = {}) {
+  const stats = {
+    hasLearners: Number(summary.totalLearners || 0) > 0,
+    hasMostlyCompleteRecords: Number(summary.averageCompleteness || 0) >= 70,
+    hasPhotos: Number(summary.withPhotos || 0) > 0,
+    hasParentsContacts: Number(summary.withParentContact || 0) > 0
+  };
+  return [
+    {
+      key: "step-1",
+      title: "Create at least one learner record",
+      done: stats.hasLearners
+    },
+    {
+      key: "step-2",
+      title: "Reach at least 70% average record completeness",
+      done: stats.hasMostlyCompleteRecords
+    },
+    {
+      key: "step-3",
+      title: "Upload learner photos",
+      done: stats.hasPhotos
+    },
+    {
+      key: "step-4",
+      title: "Capture parent/guardian contacts",
+      done: stats.hasParentsContacts
+    },
+    {
+      key: "step-5",
+      title: "Run Admission Integrity Audit",
+      done: Number(summary.invalidStatusCount || 0) === 0 && Number(summary.missingParentContactsCount || 0) === 0
+    }
+  ];
+}
+
 function colorFromHex(hex) {
   const normalized = String(hex || "#6d6d6d").replace("#", "");
   const safe = normalized.length === 6 ? normalized : "6d6d6d";
@@ -1623,6 +1686,169 @@ app.get(
       statusFilter: statusFilter || null,
       totalLearners: summary.total,
       byStatus: summary.byStatus
+    });
+  })
+);
+
+app.get(
+  "/api/admission/learners/completeness",
+  auth,
+  enforceRole([ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER]),
+  enforcePermission(PERMISSIONS.VIEW),
+  asyncHandler(async (req, res) => {
+    const statusFilter = normalizeText(req.query.status);
+    if (statusFilter && !ADMISSION_STATUS.includes(statusFilter)) {
+      return res.status(400).json({ error: "Invalid status filter provided." });
+    }
+
+    const params = [req.user.institution_id];
+    let where = "WHERE institution_id = ?";
+    if (statusFilter) {
+      where += " AND status = ?";
+      params.push(statusFilter);
+    }
+
+    const rows = await query(
+      `SELECT *
+       FROM learners
+       ${where}
+       ORDER BY ${ADMISSION_STATUS_ORDER_SQL}`,
+      params
+    );
+
+    const profiles = rows.map((row) => {
+      const completeness = admissionCompletenessIndicators(row);
+      return {
+        id: row.id,
+        full_name: row.full_name,
+        first_name: row.first_name,
+        admission_number: row.admission_number,
+        status: row.status,
+        passport_photo_path: row.passport_photo_path,
+        parent_phone: row.parent_phone,
+        parent_email: row.parent_email,
+        parent_full_name: row.parent_full_name,
+        completeness_percentage: completeness.percentage,
+        missing_fields: completeness.missing
+      };
+    });
+
+    const totals = profiles.reduce(
+      (acc, item) => {
+        acc.totalLearners += 1;
+        acc.completenessSum += Number(item.completeness_percentage || 0);
+        if (Number(item.completeness_percentage || 0) >= 90) acc.highCompleteness += 1;
+        if (Number(item.completeness_percentage || 0) >= 70) acc.mediumCompleteness += 1;
+        if (item.passport_photo_path) acc.withPhotos += 1;
+        if (item.parent_phone || item.parent_email) acc.withParentContact += 1;
+        return acc;
+      },
+      {
+        totalLearners: 0,
+        completenessSum: 0,
+        highCompleteness: 0,
+        mediumCompleteness: 0,
+        withPhotos: 0,
+        withParentContact: 0
+      }
+    );
+    const averageCompleteness = totals.totalLearners
+      ? Math.round(totals.completenessSum / totals.totalLearners)
+      : 0;
+
+    const [integrityTotals] = await query(
+      `SELECT
+         SUM(CASE WHEN status IS NULL OR status = '' OR status NOT IN (?, ?, ?, ?, ?) THEN 1 ELSE 0 END) invalid_status_count,
+         SUM(
+           CASE
+             WHEN (parent_phone IS NULL OR parent_phone = '')
+              AND (parent_email IS NULL OR parent_email = '')
+             THEN 1 ELSE 0
+           END
+         ) missing_parent_contacts_count
+       FROM learners
+       ${where}`,
+      [
+        ADMISSION_STATUS[0],
+        ADMISSION_STATUS[1],
+        ADMISSION_STATUS[2],
+        ADMISSION_STATUS[3],
+        ADMISSION_STATUS[4],
+        req.user.institution_id,
+        ...(statusFilter ? [statusFilter] : [])
+      ]
+    );
+
+    const summary = {
+      totalLearners: totals.totalLearners,
+      averageCompleteness,
+      highCompleteness: totals.highCompleteness,
+      mediumCompleteness: totals.mediumCompleteness,
+      withPhotos: totals.withPhotos,
+      withParentContact: totals.withParentContact,
+      invalidStatusCount: Number(integrityTotals?.invalid_status_count || 0),
+      missingParentContactsCount: Number(integrityTotals?.missing_parent_contacts_count || 0)
+    };
+
+    await auditLog(req.user, "VIEW_ADMISSION_COMPLETENESS", "learners", null, {
+      status: statusFilter || "ALL",
+      totalLearners: summary.totalLearners,
+      averageCompleteness: summary.averageCompleteness
+    });
+
+    res.json({
+      statusFilter: statusFilter || null,
+      summary,
+      learners: profiles
+    });
+  })
+);
+
+app.get(
+  "/api/admission/workflow/steps",
+  auth,
+  enforceRole([ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER]),
+  enforcePermission(PERMISSIONS.VIEW),
+  asyncHandler(async (req, res) => {
+    const rows = await query(
+      `SELECT *
+       FROM learners
+       WHERE institution_id = ?
+       ORDER BY ${ADMISSION_STATUS_ORDER_SQL}`,
+      [req.user.institution_id]
+    );
+
+    const completenessPercentages = rows.map((row) => admissionCompletenessIndicators(row).percentage);
+    const averageCompleteness = completenessPercentages.length
+      ? Math.round(
+          completenessPercentages.reduce((sum, value) => sum + Number(value || 0), 0) /
+            completenessPercentages.length
+        )
+      : 0;
+    const withPhotos = rows.filter((row) => normalizeText(row.passport_photo_path)).length;
+    const withParentContact = rows.filter(
+      (row) => normalizeText(row.parent_phone) || normalizeText(row.parent_email)
+    ).length;
+    const invalidStatusCount = rows.filter(
+      (row) => !normalizeText(row.status) || !ADMISSION_STATUS.includes(normalizeText(row.status))
+    ).length;
+    const missingParentContactsCount = rows.filter(
+      (row) => !normalizeText(row.parent_phone) && !normalizeText(row.parent_email)
+    ).length;
+
+    const summary = {
+      totalLearners: rows.length,
+      averageCompleteness,
+      withPhotos,
+      withParentContact,
+      invalidStatusCount,
+      missingParentContactsCount
+    };
+    const steps = admissionGuideStepFlags(summary);
+
+    res.json({
+      summary,
+      steps
     });
   })
 );

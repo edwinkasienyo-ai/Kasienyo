@@ -8,6 +8,9 @@ let currentModule = "dashboard";
 let currentEditId = null;
 let admissionSearchRows = [];
 let currentValidationErrors = {};
+let admissionGuidedModeEnabled = false;
+let admissionGuidedStepState = [];
+let admissionCompletenessCache = null;
 
 const ADMISSION_SEARCH_FIELDS = [
   { value: "full_name", label: "Name" },
@@ -64,6 +67,22 @@ const FIELD_HINTS = {
   attendance_date: "Choose the official attendance datetime.",
   status: "Choose the current official status from approved options."
 };
+
+const ADMISSION_GUIDED_ACTIONS = {
+  "step-1": "Use Save to create first learner record.",
+  "step-2": "Run completeness summary and fill missing required data.",
+  "step-3": "Use photo upload (single, batch, or ZIP).",
+  "step-4": "Capture parent phone or email for each learner.",
+  "step-5": "Run Admission Integrity Audit from Process button."
+};
+
+const ADMISSION_GUIDE_STEPS = [
+  { key: "step-1", title: "Create at least one learner record" },
+  { key: "step-2", title: "Reach at least 70% average record completeness" },
+  { key: "step-3", title: "Upload learner photos" },
+  { key: "step-4", title: "Capture parent/guardian contacts" },
+  { key: "step-5", title: "Run Admission Integrity Audit" }
+];
 
 const DEFAULT_MODULE_HELP = {
   summary: "Use this section to capture complete, accurate records before saving.",
@@ -698,11 +717,194 @@ function renderAdmissionStatusSummary(summary = null) {
   `;
 }
 
+function admissionStepActionLabel(stepKey) {
+  return ADMISSION_GUIDED_ACTIONS[stepKey] || "Review records and update missing information.";
+}
+
+function admissionCompletenessTableHtml(learners = []) {
+  if (!learners.length) {
+    return '<p class="small-note">No learner records available for completeness analysis.</p>';
+  }
+  const topRows = learners
+    .slice()
+    .sort((a, b) => Number(a.completeness_percentage || 0) - Number(b.completeness_percentage || 0))
+    .slice(0, 10);
+  const rowsHtml = topRows
+    .map((row) => {
+      const missing = Array.isArray(row.missing_fields) ? row.missing_fields.join(", ") : "";
+      return `
+        <tr>
+          <td>${escapeHtml(row.first_name || row.full_name || "")}</td>
+          <td>${escapeHtml(row.admission_number || "")}</td>
+          <td>${escapeHtml(row.status || "")}</td>
+          <td>${Number(row.completeness_percentage || 0)}%</td>
+          <td>${escapeHtml(missing || "-")}</td>
+        </tr>
+      `;
+    })
+    .join("");
+  return `
+    <div class="admission-completeness-table">
+      <h6>Records needing attention (lowest completeness first)</h6>
+      <table>
+        <thead>
+          <tr>
+            <th>Name</th>
+            <th>Admission No.</th>
+            <th>Status</th>
+            <th>Complete</th>
+            <th>Missing Fields</th>
+          </tr>
+        </thead>
+        <tbody>${rowsHtml}</tbody>
+      </table>
+    </div>
+  `;
+}
+
+function renderAdmissionGuidance() {
+  const panel = document.getElementById("admissionGuidancePanel");
+  if (!panel || currentModule !== "admission") return;
+  const steps = admissionGuidedStepState.length
+    ? admissionGuidedStepState
+    : ADMISSION_GUIDE_STEPS.map((step) => ({ ...step, done: false }));
+  const completed = steps.filter((step) => Boolean(step.done)).length;
+  const summary = admissionCompletenessCache?.summary || {};
+  const learners = admissionCompletenessCache?.learners || [];
+  const statusFilter = document.getElementById("admissionSearchStatus")?.value || "";
+  const activeFilter = statusFilter || "All statuses";
+  const stepItems = steps
+    .map((step) => {
+      const done = Boolean(step.done);
+      return `
+        <li class="${done ? "step-done" : "step-pending"}">
+          <span class="step-check">${done ? "Done" : "Pending"}</span>
+          <span>${escapeHtml(step.title || "")}</span>
+          <span class="small-note">${escapeHtml(admissionStepActionLabel(step.key))}</span>
+          <button type="button" onclick="runAdmissionGuidedStep('${escapeHtml(step.key)}')">Take Action</button>
+        </li>
+      `;
+    })
+    .join("");
+
+  panel.innerHTML = `
+    <div class="admission-guidance-header">
+      <h5>Admission Guided Mode</h5>
+      <span class="tag">Completed Steps: ${completed}/${steps.length}</span>
+    </div>
+    ${
+      !admissionGuidedModeEnabled
+        ? '<p class="small-note">Guided Mode is disabled. Enable it to see checklist progress and completeness insights.</p>'
+        : `
+          <div class="guided-checklist">
+            <ul class="guide-steps">${stepItems}</ul>
+          </div>
+          <div class="admission-completeness-summary">
+            <h5>Completeness Dashboard (${escapeHtml(activeFilter)})</h5>
+            <div class="summary-tags">
+              <span class="tag">Learners: ${Number(summary.totalLearners || 0)}</span>
+              <span class="tag">Avg Completeness: ${Number(summary.averageCompleteness || 0)}%</span>
+              <span class="tag">90%+ Complete: ${Number(summary.highCompleteness || 0)}</span>
+              <span class="tag">70%+ Complete: ${Number(summary.mediumCompleteness || 0)}</span>
+              <span class="tag">With Photos: ${Number(summary.withPhotos || 0)}</span>
+              <span class="tag">With Parent Contact: ${Number(summary.withParentContact || 0)}</span>
+            </div>
+            <div class="actions-row completeness-tools">
+              <button type="button" onclick="quickFilterAdmissionStatus('')">All</button>
+              <button type="button" onclick="quickFilterAdmissionStatus('In Session')">In Session</button>
+              <button type="button" onclick="quickFilterAdmissionStatus('Not in Session')">Not in Session</button>
+              <button type="button" onclick="quickFilterAdmissionStatus('Transferred')">Transferred</button>
+              <button type="button" onclick="quickFilterAdmissionStatus('Alumni')">Alumni</button>
+              <button type="button" onclick="quickFilterAdmissionStatus('Deceased')">Deceased</button>
+            </div>
+            ${admissionCompletenessTableHtml(learners)}
+          </div>
+        `
+    }
+  `;
+}
+
+async function refreshAdmissionGuidanceData(force = false) {
+  if (currentModule !== "admission") return;
+  if (!admissionGuidedModeEnabled && !force) {
+    renderAdmissionGuidance();
+    return;
+  }
+  const status = document.getElementById("admissionSearchStatus")?.value || "";
+  const query = new URLSearchParams();
+  if (status) query.set("status", status);
+  const suffix = query.toString() ? `?${query.toString()}` : "";
+  try {
+    const [workflow, completeness] = await Promise.all([
+      request("/api/admission/workflow/steps"),
+      request(`/api/admission/learners/completeness${suffix}`)
+    ]);
+    admissionGuidedStepState = workflow?.steps || [];
+    admissionCompletenessCache = completeness || null;
+  } catch (error) {
+    admissionGuidedStepState = [];
+    admissionCompletenessCache = null;
+  }
+  renderAdmissionGuidance();
+}
+
+function toggleAdmissionGuidedMode(enabled) {
+  admissionGuidedModeEnabled = Boolean(enabled);
+  localStorage.setItem("admissionGuidedMode", admissionGuidedModeEnabled ? "1" : "0");
+  const toggle = document.getElementById("guidedModeToggle");
+  if (toggle) toggle.checked = admissionGuidedModeEnabled;
+  if (admissionGuidedModeEnabled) {
+    refreshAdmissionGuidanceData(true);
+    return;
+  }
+  renderAdmissionGuidance();
+}
+
+async function quickFilterAdmissionStatus(status) {
+  const statusSelect = document.getElementById("admissionSearchStatus");
+  if (!statusSelect) return;
+  statusSelect.value = status || "";
+  await searchAdmission();
+  await refreshAdmissionStatusSummary();
+  await refreshAdmissionGuidanceData(true);
+}
+
+async function runAdmissionGuidedStep(stepKey) {
+  if (stepKey === "step-1") {
+    const firstNameField = document.getElementById("field-first_name");
+    if (firstNameField) firstNameField.focus();
+    return;
+  }
+  if (stepKey === "step-2") {
+    await refreshAdmissionGuidanceData(true);
+    return;
+  }
+  if (stepKey === "step-3") {
+    document.getElementById("admissionPhotoBatchInput")?.focus();
+    alert("Use Photo action per learner or batch/ZIP upload tools.");
+    return;
+  }
+  if (stepKey === "step-4") {
+    await quickFilterAdmissionStatus("");
+    alert("Add parent phone or email for learners missing contact information.");
+    return;
+  }
+  if (stepKey === "step-5") {
+    await processCurrentModule();
+    await refreshAdmissionGuidanceData(true);
+  }
+}
+
 function admissionToolsHtml() {
   return `
     <div class="admission-tools">
       <h4>Admission Bulk Upload and Search Tools</h4>
       <p class="small-note">Download template, fill learner biodata, upload Excel/CSV, then add photos while editing each learner, batch filenames (AdmissionNumber.jpg), or ZIP upload.</p>
+      <div class="guided-toggle-row">
+        <label><input id="guidedModeToggle" type="checkbox" ${admissionGuidedModeEnabled ? "checked" : ""} /> Guided Mode</label>
+        <button id="refreshAdmissionGuidanceButton" type="button">Refresh Guidance Data</button>
+      </div>
+      <div id="admissionGuidancePanel" class="admission-guidance-panel"></div>
       <div class="admission-tools-grid">
         <div>
           <label>Template + Biodata Upload</label>
@@ -1419,6 +1621,7 @@ async function loadModuleData(config) {
     renderTable(rows || []);
     if (currentModule === "admission") {
       await refreshAdmissionStatusSummary();
+      await refreshAdmissionGuidanceData();
     }
   } catch (error) {
     alert(error.message);
@@ -1436,6 +1639,8 @@ function bindAdmissionTools() {
   const printRecordButton = document.getElementById("admissionRecordPrintButton");
   const groupedRegisterButton = document.getElementById("admissionGroupedRegisterButton");
   const refreshSummaryButton = document.getElementById("refreshAdmissionSummaryButton");
+  const guidedModeToggle = document.getElementById("guidedModeToggle");
+  const refreshGuidanceButton = document.getElementById("refreshAdmissionGuidanceButton");
   if (downloadTemplateButton) downloadTemplateButton.onclick = downloadAdmissionTemplate;
   if (downloadCsvTemplateButton) downloadCsvTemplateButton.onclick = downloadAdmissionCsvTemplate;
   if (uploadExcelButton) uploadExcelButton.onclick = uploadAdmissionExcel;
@@ -1446,16 +1651,27 @@ function bindAdmissionTools() {
     searchButton.onclick = async () => {
       await searchAdmission();
       await refreshAdmissionStatusSummary();
+      await refreshAdmissionGuidanceData(true);
     };
   }
   if (printRecordButton) printRecordButton.onclick = printAdmissionCurrentTable;
   if (groupedRegisterButton) groupedRegisterButton.onclick = printAdmissionGroupedRegister;
   if (refreshSummaryButton) refreshSummaryButton.onclick = refreshAdmissionStatusSummary;
+  if (guidedModeToggle) {
+    guidedModeToggle.onchange = (event) => toggleAdmissionGuidedMode(event.target.checked);
+  }
+  if (refreshGuidanceButton) {
+    refreshGuidanceButton.onclick = () => refreshAdmissionGuidanceData(true);
+  }
+  renderAdmissionGuidance();
 }
 
 function renderCrudModule(moduleKey) {
   const config = moduleConfigs[moduleKey];
   attachFieldMetadata(moduleKey, config);
+  if (moduleKey === "admission") {
+    admissionGuidedModeEnabled = localStorage.getItem("admissionGuidedMode") === "1";
+  }
   document.getElementById("moduleTitle").textContent = config.title;
   document.getElementById("cards").innerHTML = "";
   const extraTools = moduleKey === "admission" ? admissionToolsHtml() : "";
@@ -1661,6 +1877,11 @@ window.admissionAction = async (action, learnerId) => {
     printLearnerRecord(learnerId);
   }
 };
+
+window.quickFilterAdmissionStatus = quickFilterAdmissionStatus;
+window.runAdmissionGuidedStep = runAdmissionGuidedStep;
+window.toggleAdmissionGuidedMode = toggleAdmissionGuidedMode;
+window.refreshAdmissionGuidanceData = refreshAdmissionGuidanceData;
 
 window.editRow = editRow;
 window.deleteRow = deleteRow;
