@@ -1042,6 +1042,16 @@ function admissionToolsHtml() {
     <div class="admission-tools">
       <h4>Admission Bulk Upload and Search Tools</h4>
       <p class="small-note">Download template, fill learner biodata, upload Excel/CSV, then add photos while editing each learner, batch filenames (AdmissionNumber.jpg), or ZIP upload.</p>
+      <div class="admission-requirements">
+        <h5>Requested Admission Amendments (A-E)</h5>
+        <ul>
+          <li><strong>A.</strong> Biodata template download + filled Excel/CSV upload for bulk entry, with photo support via edit/upload actions.</li>
+          <li><strong>B.</strong> Grade/Form mutual exclusion (choose one only).</li>
+          <li><strong>C.</strong> Status colors + status-first then first-name sorting, including print/download outputs.</li>
+          <li><strong>D.</strong> Search results actions: Edit, Delete, Photo, View, Download, Print.</li>
+          <li><strong>E.</strong> Record printing buttons for admission listings and grouped register.</li>
+        </ul>
+      </div>
       <div class="guided-toggle-row">
         <label><input id="guidedModeToggle" type="checkbox" ${admissionGuidedModeEnabled ? "checked" : ""} /> Guided Mode</label>
         <label><input id="admissionIncompleteOnlyToggle" type="checkbox" /> Incomplete only</label>
@@ -1121,8 +1131,21 @@ function bindAdmissionMutualExclusion() {
   if (!gradeEl || !formEl) return;
 
   const sync = () => {
-    const gradeHasValue = String(gradeEl.value || "").trim() !== "";
-    const formHasValue = String(formEl.value || "").trim() !== "";
+    let gradeHasValue = String(gradeEl.value || "").trim() !== "";
+    let formHasValue = String(formEl.value || "").trim() !== "";
+    const gradeRecentlyEdited = document.activeElement === gradeEl;
+    const formRecentlyEdited = document.activeElement === formEl;
+
+    // If both become populated (e.g. when loading an old row), keep one deterministically.
+    if (gradeHasValue && formHasValue) {
+      if (formRecentlyEdited) {
+        gradeEl.value = "";
+      } else {
+        formEl.value = "";
+      }
+      gradeHasValue = String(gradeEl.value || "").trim() !== "";
+      formHasValue = String(formEl.value || "").trim() !== "";
+    }
 
     if (gradeHasValue) {
       formEl.value = "";
