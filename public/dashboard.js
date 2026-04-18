@@ -7,6 +7,7 @@ let meta = {};
 let currentModule = "dashboard";
 let currentEditId = null;
 let admissionSearchRows = [];
+let currentValidationErrors = {};
 
 const ADMISSION_SEARCH_FIELDS = [
   { value: "full_name", label: "Name" },
@@ -25,6 +26,43 @@ const STATUS_COLORS = {
   Transferred: "#1a73e8",
   Alumni: "#f57c00",
   Deceased: "#d93025"
+};
+
+const MODULE_REQUIRED_FIELDS = {
+  admission: ["first_name", "last_name", "admission_number", "birth_certificate_number"],
+  "management-teachers": ["full_name", "tsc_number", "id_number"],
+  "management-non-teaching": ["full_name", "staff_number"],
+  "management-teacher-resources": ["resource_type", "title"],
+  attendance: ["attendance_type", "person_name", "attendance_date", "status"],
+  "academic-exams": ["title"],
+  "academic-marks": ["learner_id", "learner_name", "exam_type", "subject", "marks"],
+  "hr-leave": ["staff_name", "leave_type"],
+  "hr-recruitment": ["record_type"],
+  "finance-fee-structure": ["grade", "term", "year", "amount_required"],
+  "finance-fee-payments": ["learner_id", "learner_name", "amount_paid", "payment_date"],
+  "finance-procurement": ["document_type", "supplier_name"],
+  "communication-announcements": ["title", "message"],
+  "communication-messages": ["message_type", "recipient_contact", "message_body"],
+  "welfare-members": ["member_name", "member_role"],
+  "welfare-contributions": ["member_id", "member_name", "contribution_period", "amount"],
+  "welfare-loans": ["member_id", "member_name", "amount", "application_date"],
+  laws: ["document_category", "title"]
+};
+
+const FIELD_HINTS = {
+  admission_number: "Use a unique institution admission number (example: ADM-001).",
+  birth_certificate_number: "Required unique identity for learner and parent login mappings.",
+  parent_email: "If provided, use a valid email format like parent@example.com.",
+  grade: "Choose Grade OR Form, not both.",
+  form_name: "Choose Form OR Grade, not both.",
+  marks: "Enter score between 0 and 100.",
+  percentage: "Optional; if empty it auto-follows marks.",
+  amount_paid: "Enter a positive amount.",
+  amount_required: "Enter total fee required for the selected class/term/year.",
+  payment_date: "Select payment date and time for accurate finance reports.",
+  document_type: "Pick the procurement document type used by your institution.",
+  attendance_date: "Choose the official attendance datetime.",
+  status: "Choose the current official status from approved options."
 };
 
 const moduleConfigs = {
@@ -436,21 +474,53 @@ async function request(path, options = {}) {
 
 function buildInput(field) {
   const id = `field-${field.name}`;
+  const required = field.required ? '<span class="required-star">*</span>' : "";
+  const hint = field.hint ? `<p class="field-hint">${escapeHtml(field.hint)}</p>` : "";
+  const error = `<p id="error-${field.name}" class="field-error" aria-live="polite"></p>`;
   if (field.type === "textarea") {
-    return `<label>${field.label}</label><textarea id="${id}" rows="3" placeholder="${field.label}"></textarea>`;
+    return `
+      <div class="field-block">
+        <label for="${id}">${field.label} ${required}</label>
+        <textarea id="${id}" rows="3" placeholder="${field.label}"></textarea>
+        ${hint}
+        ${error}
+      </div>
+    `;
   }
   if (field.type === "select") {
     const options = field.options || meta[field.optionsKey] || [];
     const optionHtml = ['<option value="">Select...</option>']
       .concat(options.map((option) => `<option value="${option}">${option}</option>`))
       .join("");
-    return `<label>${field.label}</label><select id="${id}">${optionHtml}</select>`;
+    return `
+      <div class="field-block">
+        <label for="${id}">${field.label} ${required}</label>
+        <select id="${id}">${optionHtml}</select>
+        ${hint}
+        ${error}
+      </div>
+    `;
   }
-  return `<label>${field.label}</label><input id="${id}" type="${field.type || "text"}" placeholder="${field.label}" />`;
+  return `
+    <div class="field-block">
+      <label for="${id}">${field.label} ${required}</label>
+      <input id="${id}" type="${field.type || "text"}" placeholder="${field.label}" />
+      ${hint}
+      ${error}
+    </div>
+  `;
 }
 
 function statusColor(status) {
   return STATUS_COLORS[status] || "#5f7187";
+}
+
+function attachFieldMetadata(moduleKey, config) {
+  const requiredNames = new Set(MODULE_REQUIRED_FIELDS[moduleKey] || []);
+  config.fields.forEach((field) => {
+    field.required = requiredNames.has(field.name);
+    field.hint = field.hint || FIELD_HINTS[field.name] || "";
+  });
 }
 
 function statusBadgeHtml(status) {
@@ -599,6 +669,90 @@ function getFieldValue(field) {
   return el.value || null;
 }
 
+function clearFieldErrors(config) {
+  currentValidationErrors = {};
+  config.fields.forEach((field) => {
+    const errorEl = document.getElementById(`error-${field.name}`);
+    const inputEl = document.getElementById(`field-${field.name}`);
+    if (errorEl) {
+      errorEl.textContent = "";
+      errorEl.style.display = "none";
+    }
+    if (inputEl) {
+      inputEl.classList.remove("input-invalid");
+    }
+  });
+}
+
+function showFieldErrors(config, errors = {}) {
+  currentValidationErrors = { ...errors };
+  config.fields.forEach((field) => {
+    const message = errors[field.name] || "";
+    const errorEl = document.getElementById(`error-${field.name}`);
+    const inputEl = document.getElementById(`field-${field.name}`);
+    if (errorEl) {
+      errorEl.textContent = message;
+      errorEl.style.display = message ? "block" : "none";
+    }
+    if (inputEl) {
+      if (message) inputEl.classList.add("input-invalid");
+      else inputEl.classList.remove("input-invalid");
+    }
+  });
+}
+
+function parseServerErrorToFieldErrors(errorMessage, config) {
+  const message = String(errorMessage || "").toLowerCase();
+  const fieldErrors = {};
+  config.fields.forEach((field) => {
+    const token = field.name.replaceAll("_", " ");
+    if (message.includes(token) || message.includes(field.label.toLowerCase())) {
+      fieldErrors[field.name] = String(errorMessage);
+    }
+  });
+  return fieldErrors;
+}
+
+function validateFormLocally(config, payload) {
+  const errors = {};
+  config.fields.forEach((field) => {
+    if (!field.required) return;
+    const value = payload[field.name];
+    if (value === null || value === undefined || String(value).trim() === "") {
+      errors[field.name] = `${field.label} is required.`;
+    }
+  });
+
+  if (currentModule === "admission") {
+    if (!payload.grade && !payload.form_name) {
+      errors.grade = "Select Grade or Form.";
+      errors.form_name = "Select Form or Grade.";
+    }
+  }
+  return errors;
+}
+
+function ensureFormNotice() {
+  const formArea = document.getElementById("formArea");
+  if (!formArea) return null;
+  const existing = document.getElementById("formNotice");
+  if (existing) return existing;
+  formArea.insertAdjacentHTML("afterbegin", '<div id="formNotice" class="form-notice" aria-live="polite"></div>');
+  return document.getElementById("formNotice");
+}
+
+function setFormNotice(message, type = "info") {
+  const notice = ensureFormNotice();
+  if (!notice) return;
+  notice.className = `form-notice ${type}`;
+  notice.textContent = message || "";
+  notice.style.display = message ? "block" : "none";
+}
+
+function clearFormNotice() {
+  setFormNotice("", "info");
+}
+
 function setFieldValue(field, value) {
   const el = document.getElementById(`field-${field.name}`);
   if (!el) return;
@@ -742,10 +896,19 @@ async function saveCurrentModule() {
   const config = moduleConfigs[currentModule];
   if (!config) return;
 
+  clearFieldErrors(config);
+  clearFormNotice();
   const payload = {};
   config.fields.forEach((field) => {
     payload[field.name] = getFieldValue(field);
   });
+
+  const localErrors = validateFormLocally(config, payload);
+  if (Object.keys(localErrors).length) {
+    showFieldErrors(config, localErrors);
+    setFormNotice("Fix highlighted fields before saving.", "error");
+    return;
+  }
 
   if (currentModule === "academic-marks" && payload.marks !== null) {
     payload.percentage = payload.percentage ?? payload.marks;
@@ -758,18 +921,25 @@ async function saveCurrentModule() {
         method: "PUT",
         body: JSON.stringify(payload)
       });
-      alert("Record updated successfully.");
+      setFormNotice("Record updated successfully.", "success");
     } else {
       await request(config.endpoint, {
         method: "POST",
         body: JSON.stringify(payload)
       });
-      alert("Record saved successfully.");
+      setFormNotice("Record saved successfully.", "success");
     }
+    clearFieldErrors(config);
     clearForm(config);
     await loadModuleData(config);
   } catch (error) {
-    alert(error.message);
+    const fieldErrors = parseServerErrorToFieldErrors(error.message, config);
+    if (Object.keys(fieldErrors).length) {
+      showFieldErrors(config, fieldErrors);
+      setFormNotice("Some fields need correction. See highlighted errors.", "error");
+      return;
+    }
+    setFormNotice(error.message, "error");
   }
 }
 
@@ -1152,6 +1322,7 @@ function bindAdmissionTools() {
 
 function renderCrudModule(moduleKey) {
   const config = moduleConfigs[moduleKey];
+  attachFieldMetadata(moduleKey, config);
   document.getElementById("moduleTitle").textContent = config.title;
   document.getElementById("cards").innerHTML = "";
   const extraTools = moduleKey === "admission" ? admissionToolsHtml() : "";

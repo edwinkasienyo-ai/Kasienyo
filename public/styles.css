@@ -198,6 +198,60 @@ button:hover {
   margin-top: 10px;
 }
 
+.field-block {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.required-star {
+  color: #c62828;
+  font-weight: 700;
+}
+
+.field-hint {
+  margin: 0;
+  font-size: 11px;
+  color: #5f7187;
+}
+
+.field-error {
+  margin: 0;
+  font-size: 11px;
+  color: #c62828;
+  display: none;
+}
+
+.input-invalid {
+  border-color: #c62828 !important;
+  box-shadow: 0 0 0 1px rgba(198, 40, 40, 0.2);
+}
+
+.form-notice {
+  margin-top: 10px;
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 12px;
+}
+
+.form-notice.info {
+  background: #eef6ff;
+  border: 1px solid #c9def7;
+  color: #1b4d79;
+}
+
+.form-notice.success {
+  background: #ecf9f1;
+  border: 1px solid #b6e8c6;
+  color: #1f6b3f;
+}
+
+.form-notice.error {
+  background: #fdeeee;
+  border: 1px solid #f2c3c3;
+  color: #8b1e1e;
+}
+
 .module-process-result {
   margin-top: 12px;
   border: 1px solid #d3e2f4;
