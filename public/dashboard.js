@@ -618,6 +618,126 @@ function cbcBandFromScore(score) {
   return "BE";
 }
 
+function jsonPreview(data) {
+  return `<pre class="process-output">${escapeHtml(JSON.stringify(data, null, 2))}</pre>`;
+}
+
+function setProcessResult(title, payload) {
+  const formArea = document.getElementById("formArea");
+  if (!formArea) return;
+  const existing = document.getElementById("moduleProcessResult");
+  const content = `
+    <div id="moduleProcessResult" class="module-process-result">
+      <h4>${escapeHtml(title)}</h4>
+      ${jsonPreview(payload)}
+    </div>
+  `;
+  if (existing) {
+    existing.outerHTML = content;
+  } else {
+    formArea.insertAdjacentHTML("beforeend", content);
+  }
+}
+
+function processEndpointForModule(moduleKey) {
+  switch (moduleKey) {
+    case "admission":
+      return {
+        endpoint: "/api/workflows/admission-integrity-audit",
+        buildPayload: () => ({}),
+        title: "Admission Integrity Audit"
+      };
+    case "attendance":
+      return {
+        endpoint: "/api/attendance/auto-class-register",
+        buildPayload: () => ({
+          grade: document.getElementById("field-grade")?.value || null,
+          stream: document.getElementById("field-stream")?.value || null,
+          attendance_date: document.getElementById("field-attendance_date")?.value || null
+        }),
+        title: "Auto Class Register"
+      };
+    case "management-teacher-resources":
+      return {
+        endpoint: "/api/management/teacher-resources/auto-generate",
+        buildPayload: () => ({
+          teacher_profile_id: document.getElementById("field-teacher_profile_id")?.value || null,
+          resource_type: document.getElementById("field-resource_type")?.value || null,
+          grade: document.getElementById("field-grade")?.value || null,
+          term: document.getElementById("field-term")?.value || null,
+          strand: document.getElementById("field-strand")?.value || null,
+          sub_strand: document.getElementById("field-sub_strand")?.value || null
+        }),
+        title: "Teacher Resource Auto Generation"
+      };
+    case "academic-exams":
+      return {
+        endpoint: "/api/academic/exams/auto-generate",
+        buildPayload: () => ({
+          title: document.getElementById("field-title")?.value || null,
+          grade: document.getElementById("field-grade")?.value || null,
+          stream: document.getElementById("field-stream")?.value || null,
+          subject: document.getElementById("field-subject")?.value || null,
+          strand: document.getElementById("field-strand")?.value || null,
+          sub_strand: document.getElementById("field-sub_strand")?.value || null,
+          term: document.getElementById("field-term")?.value || null,
+          year: document.getElementById("field-year")?.value || null,
+          notes_file_path: document.getElementById("field-notes_file_path")?.value || null
+        }),
+        title: "Academic Exam Auto Generation"
+      };
+    case "academic-marks":
+      return {
+        endpoint: "/api/workflows/academic/normalize-gradebook",
+        buildPayload: () => ({
+          grade: document.getElementById("field-grade")?.value || null,
+          term: document.getElementById("field-term")?.value || null,
+          year: document.getElementById("field-year")?.value || null
+        }),
+        title: "Academic Gradebook Normalization"
+      };
+    case "communication-messages":
+      return {
+        endpoint: "/api/workflows/communication/dispatch-queued",
+        buildPayload: () => ({ limit: 200 }),
+        title: "Queued Communication Dispatch"
+      };
+    case "finance-fee-structure":
+    case "finance-fee-payments":
+      return {
+        endpoint: "/api/workflows/finance/fee-summary",
+        buildPayload: () => ({
+          grade: document.getElementById("field-grade")?.value || null,
+          term: document.getElementById("field-term")?.value || null,
+          year: document.getElementById("field-year")?.value || null
+        }),
+        title: "Finance Fee Summary"
+      };
+    default:
+      return null;
+  }
+}
+
+async function processCurrentModule() {
+  const action = processEndpointForModule(currentModule);
+  if (!action) {
+    alert("No process workflow configured for this module yet.");
+    return;
+  }
+  try {
+    const result = await request(action.endpoint, {
+      method: "POST",
+      body: JSON.stringify(action.buildPayload())
+    });
+    setProcessResult(action.title, result);
+    if (moduleConfigs[currentModule]) {
+      await loadModuleData(moduleConfigs[currentModule]);
+    }
+  } catch (error) {
+    alert(error.message);
+  }
+}
+
 async function saveCurrentModule() {
   const config = moduleConfigs[currentModule];
   if (!config) return;
@@ -1055,7 +1175,7 @@ function renderCrudModule(moduleKey) {
 
   document.getElementById("saveButton").onclick = saveCurrentModule;
   document.getElementById("clearButton").onclick = () => clearForm(config);
-  document.getElementById("processButton").onclick = () => alert("Processing completed for this module.");
+  document.getElementById("processButton").onclick = processCurrentModule;
   document.getElementById("downloadPdfButton").onclick = exportPdf;
   document.getElementById("downloadExcelButton").onclick = exportExcel;
   document.getElementById("printButton").onclick = () => window.print();

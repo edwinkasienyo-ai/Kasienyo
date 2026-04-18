@@ -198,6 +198,31 @@ button:hover {
   margin-top: 10px;
 }
 
+.module-process-result {
+  margin-top: 12px;
+  border: 1px solid #d3e2f4;
+  background: #f6faff;
+  border-radius: 10px;
+  padding: 10px;
+}
+
+.module-process-result h4 {
+  margin: 0 0 8px;
+  color: #164168;
+}
+
+.process-output {
+  margin: 0;
+  max-height: 280px;
+  overflow: auto;
+  background: #0f1722;
+  color: #d7e6fb;
+  border-radius: 8px;
+  padding: 10px;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
 .admission-tools {
   background: #f3f7fc;
   border: 1px solid #dbe6f4;

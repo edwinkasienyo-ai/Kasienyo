@@ -169,6 +169,18 @@ const ALLOWED_ADMISSION_SEARCH_FIELDS = new Set([
   "form_name"
 ]);
 
+const ATTENDANCE_TYPES = ["Teacher", "Learner", "Non-Teaching"];
+const ATTENDANCE_STATUS_OPTIONS = [
+  "Present",
+  "Absent",
+  "Late",
+  "Official Duty",
+  "Absent with Apology",
+  "Absent with No Apology"
+];
+const MESSAGE_STATUS_OPTIONS = ["Queued", "Sent", "Failed"];
+const PAYMENT_METHOD_OPTIONS = ["Cash", "Bank", "Mpesa", "Cheque", "Other"];
+
 function asyncHandler(handler) {
   return (req, res, next) => Promise.resolve(handler(req, res, next)).catch(next);
 }
@@ -905,6 +917,347 @@ async function getPaginatedRows({
                ORDER BY ${orderBy}
                LIMIT ? OFFSET ?`;
   return query(sql, [...search.params, Number(limit), Number(offset)]);
+}
+
+function normalizeDateTime(value) {
+  if (value === undefined || value === null || value === "") return null;
+  const parsed = dayjs(value);
+  if (!parsed.isValid()) return null;
+  return parsed.format("YYYY-MM-DD HH:mm:ss");
+}
+
+function toNumberOrNull(value) {
+  if (value === undefined || value === null || value === "") return null;
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : null;
+}
+
+function computeCbcBand(mark) {
+  const score = Number(mark);
+  if (!Number.isFinite(score)) return null;
+  if (score >= 75) return "EE";
+  if (score >= 50) return "ME";
+  if (score >= 25) return "AE";
+  return "BE";
+}
+
+async function ensureEntityExists({ table, id, institutionId, label }) {
+  if (id === undefined || id === null || id === "") return false;
+  const rows = await query(
+    `SELECT id FROM ${table} WHERE id = ? AND institution_id = ? LIMIT 1`,
+    [id, institutionId]
+  );
+  if (!rows.length) {
+    throw new Error(`${label} with id ${id} was not found for this institution.`);
+  }
+  return true;
+}
+
+function normalizeGenericModulePayload(config, input = {}, options = {}) {
+  const isCreate = Boolean(options.isCreate);
+  const data = { ...input };
+
+  config.fields.forEach((fieldName) => {
+    if (!Object.prototype.hasOwnProperty.call(data, fieldName)) return;
+    if (typeof data[fieldName] === "string") {
+      data[fieldName] = normalizeText(data[fieldName]);
+    }
+  });
+
+  switch (config.table) {
+    case "teacher_resources":
+      data.teacher_profile_id = toNumberOrNull(data.teacher_profile_id);
+      break;
+    case "attendance_records":
+      data.attendance_date = normalizeDateTime(data.attendance_date);
+      data.time_in = normalizeDateTime(data.time_in);
+      data.time_out = normalizeDateTime(data.time_out);
+      break;
+    case "academic_exams":
+      data.year = normalizeYear(data.year);
+      break;
+    case "academic_marks":
+      data.learner_id = toNumberOrNull(data.learner_id);
+      data.marks = toNumberOrNull(data.marks);
+      data.percentage = toNumberOrNull(data.percentage);
+      data.year = normalizeYear(data.year);
+      if (data.marks !== null) {
+        if (data.percentage === null) {
+          data.percentage = data.marks;
+        }
+        data.cbc_grade_band = computeCbcBand(data.marks);
+      }
+      break;
+    case "hr_leave_requests":
+      data.staff_profile_id = toNumberOrNull(data.staff_profile_id);
+      data.applied_by_user_id = toNumberOrNull(data.applied_by_user_id);
+      data.approved_by_user_id = toNumberOrNull(data.approved_by_user_id);
+      data.start_date = normalizeDate(data.start_date);
+      data.end_date = normalizeDate(data.end_date);
+      break;
+    case "finance_fee_structures":
+      data.year = normalizeYear(data.year);
+      data.amount_required = toNumberOrNull(data.amount_required);
+      break;
+    case "finance_fee_payments":
+      data.learner_id = toNumberOrNull(data.learner_id);
+      data.amount_paid = toNumberOrNull(data.amount_paid);
+      data.balance_after_payment = toNumberOrNull(data.balance_after_payment);
+      data.payment_date = normalizeDateTime(data.payment_date);
+      if (isCreate && !data.receipt_number) {
+        data.receipt_number = `RCPT-${Date.now()}`;
+      }
+      break;
+    case "finance_procurement_records":
+      data.quantity = toNumberOrNull(data.quantity);
+      data.amount = toNumberOrNull(data.amount);
+      data.document_date = normalizeDate(data.document_date);
+      data.due_date = normalizeDate(data.due_date);
+      if (isCreate && !data.document_number) {
+        const prefix = (data.document_type || "DOC").replace(/\s+/g, "").toUpperCase();
+        data.document_number = `${prefix}-${Date.now()}`;
+      }
+      break;
+    case "communication_messages":
+      data.sent_at = normalizeDateTime(data.sent_at);
+      data.status = data.status || "Queued";
+      if (data.status === "Sent" && !data.sent_at) {
+        data.sent_at = dayjs().format("YYYY-MM-DD HH:mm:ss");
+      }
+      break;
+    case "communication_announcements":
+      data.start_date = normalizeDate(data.start_date);
+      data.end_date = normalizeDate(data.end_date);
+      break;
+    case "learner_resources":
+      data.uploaded_by_user_id = toNumberOrNull(data.uploaded_by_user_id);
+      break;
+    case "welfare_members":
+      data.joined_date = normalizeDate(data.joined_date);
+      break;
+    case "welfare_contributions":
+      data.member_id = toNumberOrNull(data.member_id);
+      data.amount = toNumberOrNull(data.amount);
+      data.payment_date = normalizeDate(data.payment_date);
+      break;
+    case "welfare_loans":
+      data.member_id = toNumberOrNull(data.member_id);
+      data.amount = toNumberOrNull(data.amount);
+      data.application_date = normalizeDate(data.application_date);
+      data.return_date = normalizeDate(data.return_date);
+      break;
+    case "laws_regulations_policies":
+      data.effective_date = normalizeDate(data.effective_date);
+      break;
+    case "non_teaching_staff_profiles":
+      if (isCreate && !data.staff_number) {
+        data.staff_number = `NTS-${Date.now()}`;
+      }
+      break;
+    default:
+      break;
+  }
+
+  return data;
+}
+
+async function validateGenericModulePayload({ config, data, institutionId, isCreate = true }) {
+  if (config.table === "teacher_profiles") {
+    if (!data.full_name) return "Teacher full name is required.";
+    if (!data.tsc_number) return "TSC number is required.";
+    if (!data.id_number) return "Teacher ID number is required.";
+  }
+
+  if (config.table === "non_teaching_staff_profiles") {
+    if (!data.full_name) return "Non-teaching staff full name is required.";
+    if (!data.staff_number) return "Staff number is required.";
+  }
+
+  if (config.table === "teacher_resources") {
+    if (!data.resource_type) return "Resource type is required.";
+    if (!data.title) return "Resource title is required.";
+    if (data.teacher_profile_id !== null) {
+      await ensureEntityExists({
+        table: "teacher_profiles",
+        id: data.teacher_profile_id,
+        institutionId,
+        label: "Teacher profile"
+      });
+    }
+  }
+
+  if (config.table === "attendance_records") {
+    if (!ATTENDANCE_TYPES.includes(data.attendance_type)) {
+      return `Attendance type must be one of: ${ATTENDANCE_TYPES.join(", ")}`;
+    }
+    if (!data.person_name) return "Person name is required.";
+    if (!data.attendance_date) return "Attendance date is required.";
+    if (!ATTENDANCE_STATUS_OPTIONS.includes(data.status)) {
+      return `Attendance status must be one of: ${ATTENDANCE_STATUS_OPTIONS.join(", ")}`;
+    }
+  }
+
+  if (config.table === "academic_exams") {
+    if (!data.title) return "Exam title is required.";
+    if (data.term && !TERMS.includes(data.term)) {
+      return `Exam term must be one of: ${TERMS.join(", ")}`;
+    }
+    if (data.year !== null && (data.year < 2000 || data.year > 2100)) {
+      return "Exam year must be between 2000 and 2100.";
+    }
+  }
+
+  if (config.table === "academic_marks") {
+    if (data.learner_id === null) return "Learner ID is required.";
+    if (!data.learner_name) return "Learner name is required.";
+    if (!data.exam_type) return "Exam type is required.";
+    if (!data.subject) return "Subject is required.";
+    if (data.marks === null) return "Marks are required.";
+    if (!EXAM_TYPES.includes(data.exam_type)) {
+      return `Exam type must be one of: ${EXAM_TYPES.join(", ")}`;
+    }
+    if (data.term && !TERMS.includes(data.term)) {
+      return `Term must be one of: ${TERMS.join(", ")}`;
+    }
+    if (data.marks < 0 || data.marks > 100) {
+      return "Marks must be between 0 and 100.";
+    }
+    if (data.percentage !== null && (data.percentage < 0 || data.percentage > 100)) {
+      return "Percentage must be between 0 and 100.";
+    }
+    await ensureEntityExists({
+      table: "learners",
+      id: data.learner_id,
+      institutionId,
+      label: "Learner"
+    });
+  }
+
+  if (config.table === "hr_leave_requests") {
+    if (!data.staff_name) return "Staff name is required.";
+    if (!data.leave_type) return "Leave type is required.";
+    if (!LEAVE_TYPES.includes(data.leave_type)) {
+      return `Leave type must be one of: ${LEAVE_TYPES.join(", ")}`;
+    }
+    if (data.start_date && data.end_date && data.end_date < data.start_date) {
+      return "Leave end date cannot be earlier than start date.";
+    }
+  }
+
+  if (config.table === "hr_recruitment_records") {
+    if (!data.record_type) return "Recruitment record type is required.";
+  }
+
+  if (config.table === "finance_fee_structures") {
+    if (!data.grade) return "Fee structure grade is required.";
+    if (!data.term) return "Fee structure term is required.";
+    if (data.year === null) return "Fee structure year is required.";
+    if (data.amount_required === null) return "Required fee amount is required.";
+    if (!GRADES.includes(data.grade)) {
+      return `Grade must be one of: ${GRADES.join(", ")}`;
+    }
+    if (!TERMS.includes(data.term)) {
+      return `Term must be one of: ${TERMS.join(", ")}`;
+    }
+    if (data.amount_required <= 0) return "Required fee amount must be greater than zero.";
+  }
+
+  if (config.table === "finance_fee_payments") {
+    if (data.learner_id === null) return "Learner ID is required.";
+    if (!data.learner_name) return "Learner name is required.";
+    if (data.amount_paid === null) return "Amount paid is required.";
+    if (data.amount_paid <= 0) return "Amount paid must be greater than zero.";
+    if (!data.payment_date) return "Payment date is required.";
+    if (data.payment_method && !PAYMENT_METHOD_OPTIONS.includes(data.payment_method)) {
+      return `Payment method must be one of: ${PAYMENT_METHOD_OPTIONS.join(", ")}`;
+    }
+    await ensureEntityExists({
+      table: "learners",
+      id: data.learner_id,
+      institutionId,
+      label: "Learner"
+    });
+  }
+
+  if (config.table === "finance_procurement_records") {
+    if (!data.document_type) return "Document type is required.";
+    if (!DOCUMENT_CATEGORIES.PROCUREMENT.includes(data.document_type)) {
+      return `Document type must be one of: ${DOCUMENT_CATEGORIES.PROCUREMENT.join(", ")}`;
+    }
+    if (!data.supplier_name) return "Supplier name is required.";
+    if (data.quantity !== null && data.quantity < 0) return "Quantity cannot be negative.";
+    if (data.amount !== null && data.amount < 0) return "Amount cannot be negative.";
+    if (data.document_date && data.due_date && data.due_date < data.document_date) {
+      return "Due date cannot be earlier than document date.";
+    }
+  }
+
+  if (config.table === "communication_messages") {
+    if (!data.message_type) return "Message type is required.";
+    if (!data.recipient_contact) return "Recipient contact is required.";
+    if (!data.message_body) return "Message body is required.";
+    if (!MESSAGE_STATUS_OPTIONS.includes(data.status)) {
+      return `Message status must be one of: ${MESSAGE_STATUS_OPTIONS.join(", ")}`;
+    }
+  }
+
+  if (config.table === "communication_announcements") {
+    if (!data.title) return "Announcement title is required.";
+    if (!data.message) return "Announcement message is required.";
+    if (data.start_date && data.end_date && data.end_date < data.start_date) {
+      return "Announcement end date cannot be earlier than start date.";
+    }
+  }
+
+  if (config.table === "learner_resources") {
+    if (!data.title) return "Resource title is required.";
+  }
+
+  if (config.table === "welfare_members") {
+    if (!data.member_name) return "Welfare member name is required.";
+    if (!data.member_role) return "Welfare member role is required.";
+  }
+
+  if (config.table === "welfare_contributions") {
+    if (data.member_id === null) return "Member ID is required.";
+    if (!data.member_name) return "Member name is required.";
+    if (!data.contribution_period) return "Contribution period is required.";
+    if (data.amount === null || data.amount <= 0) {
+      return "Contribution amount must be greater than zero.";
+    }
+    await ensureEntityExists({
+      table: "welfare_members",
+      id: data.member_id,
+      institutionId,
+      label: "Welfare member"
+    });
+  }
+
+  if (config.table === "welfare_loans") {
+    if (data.member_id === null) return "Member ID is required.";
+    if (!data.member_name) return "Member name is required.";
+    if (data.amount === null || data.amount <= 0) return "Loan amount must be greater than zero.";
+    if (!data.application_date) return "Loan application date is required.";
+    if (data.return_date && data.return_date < data.application_date) {
+      return "Loan return date cannot be earlier than application date.";
+    }
+    await ensureEntityExists({
+      table: "welfare_members",
+      id: data.member_id,
+      institutionId,
+      label: "Welfare member"
+    });
+  }
+
+  if (config.table === "laws_regulations_policies") {
+    if (!data.document_category) return "Document category is required.";
+    if (!DOCUMENT_CATEGORIES.LAW_POLICY.includes(data.document_category)) {
+      return `Document category must be one of: ${DOCUMENT_CATEGORIES.LAW_POLICY.join(", ")}`;
+    }
+    if (!data.title) return "Document title is required.";
+  }
+
+  return null;
 }
 
 app.get("/api/meta", (_, res) => {
@@ -2384,33 +2737,21 @@ moduleConfigs.forEach((config) => {
     enforceRole(config.allowedRoles),
     enforcePermission(PERMISSIONS.CREATE),
     asyncHandler(async (req, res) => {
-      const data = pickFields(req.body, config.fields);
+      const picked = pickFields(req.body, config.fields);
+      if (!Object.keys(picked).length) {
+        return res.status(400).json({ error: "No valid payload fields." });
+      }
+      const data = normalizeGenericModulePayload(config, picked, { isCreate: true });
+      const validationError = await validateGenericModulePayload({
+        config,
+        data,
+        institutionId: req.user.institution_id
+      });
+      if (validationError) {
+        return res.status(400).json({ error: validationError });
+      }
       data.institution_id = req.user.institution_id;
       data.created_by_user_id = req.user.id;
-
-      if (config.table === "academic_marks" && data.marks !== undefined && data.marks !== null) {
-        const markValue = Number(data.marks);
-        data.percentage = data.percentage ?? markValue;
-        if (!data.cbc_grade_band) {
-          if (markValue >= 75) data.cbc_grade_band = "EE";
-          else if (markValue >= 50) data.cbc_grade_band = "ME";
-          else if (markValue >= 25) data.cbc_grade_band = "AE";
-          else data.cbc_grade_band = "BE";
-        }
-      }
-
-      if (config.table === "non_teaching_staff_profiles" && !data.staff_number) {
-        data.staff_number = `NTS-${Date.now()}`;
-      }
-
-      if (config.table === "finance_fee_payments" && !data.receipt_number) {
-        data.receipt_number = `RCPT-${Date.now()}`;
-      }
-
-      if (config.table === "finance_procurement_records" && !data.document_number) {
-        const prefix = (data.document_type || "DOC").replace(/\s+/g, "").toUpperCase();
-        data.document_number = `${prefix}-${Date.now()}`;
-      }
 
       const columns = Object.keys(data);
       if (!columns.length) {
@@ -2430,18 +2771,41 @@ moduleConfigs.forEach((config) => {
     enforceRole(config.allowedRoles),
     enforcePermission(PERMISSIONS.UPDATE),
     asyncHandler(async (req, res) => {
-      const data = pickFields(req.body, config.fields);
-      const columns = Object.keys(data);
-      if (!columns.length) {
+      const incoming = pickFields(req.body, config.fields);
+      const incomingColumns = Object.keys(incoming);
+      if (!incomingColumns.length) {
         return res.status(400).json({ error: "No valid payload fields." });
       }
 
+      const existingRows = await query(
+        `SELECT * FROM ${config.table} WHERE id = ? AND institution_id = ? LIMIT 1`,
+        [req.params.id, req.user.institution_id]
+      );
+      if (!existingRows.length) {
+        return res.status(404).json({ error: "Record not found." });
+      }
+
+      const merged = normalizeGenericModulePayload(
+        config,
+        { ...existingRows[0], ...incoming },
+        { isCreate: false }
+      );
+      const validationError = await validateGenericModulePayload({
+        config,
+        data: merged,
+        institutionId: req.user.institution_id
+      });
+      if (validationError) {
+        return res.status(400).json({ error: validationError });
+      }
+
+      const columns = config.fields;
       const setClause = columns.map((column) => `${column} = ?`).join(", ");
       const sql = `UPDATE ${config.table}
                    SET ${setClause}, updated_at = NOW()
                    WHERE id = ? AND institution_id = ?`;
-      await query(sql, [...Object.values(data), req.params.id, req.user.institution_id]);
-      await auditLog(req.user, "UPDATE", config.table, req.params.id, data);
+      await query(sql, [...columns.map((column) => merged[column] ?? null), req.params.id, req.user.institution_id]);
+      await auditLog(req.user, "UPDATE", config.table, req.params.id, incoming);
       res.json({ message: "Record updated." });
     })
   );
@@ -2635,6 +2999,273 @@ app.post(
       count: learners.length
     });
     res.json({ message: "Class register auto-generated.", count: learners.length });
+  })
+);
+
+app.post(
+  "/api/workflows/admission-integrity-audit",
+  auth,
+  enforceRole([ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER]),
+  enforcePermission(PERMISSIONS.VIEW),
+  asyncHandler(async (req, res) => {
+    const institutionId = req.user.institution_id;
+    const duplicateAdmissions = await query(
+      `SELECT admission_number, COUNT(*) total
+       FROM learners
+       WHERE institution_id = ? AND admission_number IS NOT NULL AND admission_number <> ''
+       GROUP BY admission_number
+       HAVING COUNT(*) > 1`,
+      [institutionId]
+    );
+    const missingParentContacts = await query(
+      `SELECT id, full_name, admission_number
+       FROM learners
+       WHERE institution_id = ?
+         AND (parent_phone IS NULL OR parent_phone = '')
+         AND (parent_email IS NULL OR parent_email = '')
+       ORDER BY id DESC
+       LIMIT 100`,
+      [institutionId]
+    );
+    const invalidStatusRows = await query(
+      `SELECT id, full_name, admission_number, status
+       FROM learners
+       WHERE institution_id = ?
+         AND (status IS NULL OR status = '' OR status NOT IN (?, ?, ?, ?, ?))
+       ORDER BY id DESC
+       LIMIT 100`,
+      [
+        institutionId,
+        ADMISSION_STATUS[0],
+        ADMISSION_STATUS[1],
+        ADMISSION_STATUS[2],
+        ADMISSION_STATUS[3],
+        ADMISSION_STATUS[4]
+      ]
+    );
+
+    await auditLog(req.user, "RUN_ADMISSION_INTEGRITY_AUDIT", "learners", null, {
+      duplicateAdmissionSets: duplicateAdmissions.length,
+      missingParentContacts: missingParentContacts.length,
+      invalidStatusRows: invalidStatusRows.length
+    });
+
+    res.json({
+      message: "Admission integrity audit completed.",
+      duplicateAdmissionSets: duplicateAdmissions.length,
+      duplicateAdmissions,
+      missingParentContactsCount: missingParentContacts.length,
+      missingParentContacts,
+      invalidStatusCount: invalidStatusRows.length,
+      invalidStatusRows
+    });
+  })
+);
+
+app.post(
+  "/api/workflows/communication/dispatch-queued",
+  auth,
+  enforceRole([ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
+  enforcePermission(PERMISSIONS.UPDATE),
+  asyncHandler(async (req, res) => {
+    const institutionId = req.user.institution_id;
+    const limitRaw = Number(req.body?.limit || 200);
+    const limit = Number.isFinite(limitRaw) ? Math.max(1, Math.min(limitRaw, 500)) : 200;
+    const queuedRows = await query(
+      `SELECT id, message_type, recipient_contact
+       FROM communication_messages
+       WHERE institution_id = ? AND status = 'Queued'
+       ORDER BY id ASC
+       LIMIT ?`,
+      [institutionId, limit]
+    );
+
+    let processed = 0;
+    for (const message of queuedRows) {
+      await query(
+        `UPDATE communication_messages
+         SET status = 'Sent', sent_at = NOW(), updated_at = NOW()
+         WHERE id = ? AND institution_id = ?`,
+        [message.id, institutionId]
+      );
+      processed += 1;
+    }
+    const [remainingRow] = await query(
+      `SELECT COUNT(*) total
+       FROM communication_messages
+       WHERE institution_id = ? AND status = 'Queued'`,
+      [institutionId]
+    );
+
+    await auditLog(req.user, "DISPATCH_QUEUED_MESSAGES", "communication_messages", null, {
+      processed,
+      limit
+    });
+
+    res.json({
+      message: "Queued messages were marked as sent.",
+      processed,
+      remainingQueued: Number(remainingRow?.total || 0)
+    });
+  })
+);
+
+app.post(
+  "/api/workflows/finance/fee-summary",
+  auth,
+  enforceRole([ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.NON_TEACHING_STAFF]),
+  enforcePermission(PERMISSIONS.VIEW),
+  asyncHandler(async (req, res) => {
+    const institutionId = req.user.institution_id;
+    const gradeFilter = normalizeText(req.body?.grade);
+    const termFilter = normalizeText(req.body?.term);
+    const yearFilter = normalizeYear(req.body?.year);
+
+    const params = [institutionId];
+    let extra = "";
+    if (gradeFilter) {
+      extra += " AND grade = ?";
+      params.push(gradeFilter);
+    }
+    if (termFilter) {
+      extra += " AND term = ?";
+      params.push(termFilter);
+    }
+    if (yearFilter !== null) {
+      extra += " AND year = ?";
+      params.push(yearFilter);
+    }
+
+    const structures = await query(
+      `SELECT grade, stream, term, year, amount_required
+       FROM finance_fee_structures
+       WHERE institution_id = ?${extra}`,
+      params
+    );
+    const payments = await query(
+      `SELECT grade, stream, SUM(amount_paid) total_paid, COUNT(*) total_payments
+       FROM finance_fee_payments
+       WHERE institution_id = ?${gradeFilter ? " AND grade = ?" : ""}${
+        yearFilter !== null ? " AND YEAR(payment_date) = ?" : ""
+      }
+       GROUP BY grade, stream`,
+      [
+        institutionId,
+        ...(gradeFilter ? [gradeFilter] : []),
+        ...(yearFilter !== null ? [yearFilter] : [])
+      ]
+    );
+
+    const paymentIndex = new Map(
+      payments.map((row) => [`${row.grade || ""}::${row.stream || ""}`, row])
+    );
+    const merged = structures.map((row) => {
+      const key = `${row.grade || ""}::${row.stream || ""}`;
+      const payment = paymentIndex.get(key) || { total_paid: 0, total_payments: 0 };
+      const required = Number(row.amount_required || 0);
+      const paid = Number(payment.total_paid || 0);
+      return {
+        ...row,
+        total_paid: paid,
+        balance: required - paid,
+        total_payments: Number(payment.total_payments || 0)
+      };
+    });
+
+    const totals = merged.reduce(
+      (acc, item) => {
+        acc.required += Number(item.amount_required || 0);
+        acc.paid += Number(item.total_paid || 0);
+        return acc;
+      },
+      { required: 0, paid: 0 }
+    );
+    totals.balance = totals.required - totals.paid;
+
+    await auditLog(req.user, "GENERATE_FEE_SUMMARY", "finance_fee_structures", null, {
+      grade: gradeFilter || null,
+      term: termFilter || null,
+      year: yearFilter,
+      lines: merged.length
+    });
+
+    res.json({
+      message: "Fee summary generated.",
+      filters: {
+        grade: gradeFilter || null,
+        term: termFilter || null,
+        year: yearFilter
+      },
+      totals,
+      lines: merged
+    });
+  })
+);
+
+app.post(
+  "/api/workflows/academic/normalize-gradebook",
+  auth,
+  enforceRole([ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER]),
+  enforcePermission(PERMISSIONS.UPDATE),
+  asyncHandler(async (req, res) => {
+    const institutionId = req.user.institution_id;
+    const gradeFilter = normalizeText(req.body?.grade);
+    const termFilter = normalizeText(req.body?.term);
+    const yearFilter = normalizeYear(req.body?.year);
+
+    const params = [institutionId];
+    let where = "WHERE institution_id = ?";
+    if (gradeFilter) {
+      where += " AND grade = ?";
+      params.push(gradeFilter);
+    }
+    if (termFilter) {
+      where += " AND term = ?";
+      params.push(termFilter);
+    }
+    if (yearFilter !== null) {
+      where += " AND year = ?";
+      params.push(yearFilter);
+    }
+
+    const rows = await query(
+      `SELECT id, marks, percentage, cbc_grade_band
+       FROM academic_marks
+       ${where}
+       ORDER BY id ASC`,
+      params
+    );
+
+    let updated = 0;
+    for (const row of rows) {
+      const marks = Number(row.marks || 0);
+      const percentage = Number.isFinite(Number(row.percentage)) ? Number(row.percentage) : marks;
+      const band = computeCbcBand(marks);
+      const needsUpdate =
+        Number(row.percentage) !== percentage || String(row.cbc_grade_band || "") !== String(band || "");
+      if (!needsUpdate) continue;
+      await query(
+        `UPDATE academic_marks
+         SET percentage = ?, cbc_grade_band = ?, updated_at = NOW()
+         WHERE id = ? AND institution_id = ?`,
+        [percentage, band, row.id, institutionId]
+      );
+      updated += 1;
+    }
+
+    await auditLog(req.user, "NORMALIZE_GRADEBOOK", "academic_marks", null, {
+      grade: gradeFilter || null,
+      term: termFilter || null,
+      year: yearFilter,
+      scanned: rows.length,
+      updated
+    });
+
+    res.json({
+      message: "Academic gradebook normalization completed.",
+      scanned: rows.length,
+      updated
+    });
   })
 );
 
