@@ -19,6 +19,7 @@ let admissionGuidedModeEnabled = false;
 let admissionGuidedStepState = [];
 let admissionCompletenessCache = null;
 let admissionIntegrityAuditCache = null;
+let selectedAdmissionSearchLearnerId = null;
 
 const ADMISSION_SEARCH_FIELDS = [
   { value: "full_name", label: "Name" },
@@ -1110,6 +1111,20 @@ function admissionToolsHtml() {
             </select>
             <button id="admissionSearchButton">Search</button>
           </div>
+          <div class="search-direct-actions">
+            <p class="selected-search-title">Search Result Actions (Edit / Delete / Photo / View / Download / Print)</p>
+            <div class="actions-row search-action-bar">
+            <select id="admissionSearchResultPicker">
+              <option value="">No search results</option>
+            </select>
+            <button id="admissionSearchEditButton" type="button">Edit Selected</button>
+            <button id="admissionSearchDeleteButton" class="danger" type="button">Delete Selected</button>
+            <button id="admissionSearchPhotoButton" type="button">Photo Selected</button>
+            <button id="admissionSearchViewButton" type="button">View Selected</button>
+            <button id="admissionSearchDownloadButton" type="button">Download Selected</button>
+            <button id="admissionSearchPrintButton" type="button">Print Selected</button>
+            </div>
+          </div>
         </div>
       </div>
       <div class="actions-row">
@@ -1836,7 +1851,53 @@ function renderAdmissionTable(rows) {
     `
     )
     .join("");
+  renderAdmissionSearchActionPicker(rows);
   updateAdmissionAmendmentChecklist();
+}
+
+function renderAdmissionSearchActionPicker(rows = []) {
+  const picker = document.getElementById("admissionSearchResultPicker");
+  if (!picker) return;
+  if (!Array.isArray(rows) || !rows.length) {
+    picker.innerHTML = '<option value="">No search results</option>';
+    picker.disabled = true;
+    selectedAdmissionSearchLearnerId = null;
+    return;
+  }
+  const previousValue = String(selectedAdmissionSearchLearnerId || picker.value || "");
+  const options = rows
+    .map((row) => {
+      const id = Number(row.id);
+      const label = `${row.first_name || row.full_name || "Learner"} (${row.admission_number || "No ADM"})`;
+      return `<option value="${id}">${escapeHtml(label)}</option>`;
+    })
+    .join("");
+  picker.innerHTML = options;
+  picker.disabled = false;
+  const ids = rows.map((row) => String(Number(row.id)));
+  if (previousValue && ids.includes(previousValue)) {
+    picker.value = previousValue;
+  } else {
+    picker.value = ids[0];
+  }
+  selectedAdmissionSearchLearnerId = Number(picker.value);
+}
+
+function getSelectedAdmissionSearchLearnerId() {
+  const picker = document.getElementById("admissionSearchResultPicker");
+  if (picker && picker.value) {
+    selectedAdmissionSearchLearnerId = Number(picker.value);
+  }
+  return Number(selectedAdmissionSearchLearnerId || 0) || null;
+}
+
+async function runAdmissionSearchAction(action) {
+  const learnerId = getSelectedAdmissionSearchLearnerId();
+  if (!learnerId) {
+    alert("Search and select a learner first.");
+    return;
+  }
+  await window.admissionAction(action, learnerId);
 }
 
 function renderTable(rows) {
@@ -1912,6 +1973,13 @@ function bindAdmissionTools() {
   const completenessCsvButton = document.getElementById("admissionCompletenessCsvButton");
   const loadMoreButton = document.getElementById("admissionLoadMoreButton");
   const refreshSummaryButton = document.getElementById("refreshAdmissionSummaryButton");
+  const searchResultPicker = document.getElementById("admissionSearchResultPicker");
+  const searchEditButton = document.getElementById("admissionSearchEditButton");
+  const searchDeleteButton = document.getElementById("admissionSearchDeleteButton");
+  const searchPhotoButton = document.getElementById("admissionSearchPhotoButton");
+  const searchViewButton = document.getElementById("admissionSearchViewButton");
+  const searchDownloadButton = document.getElementById("admissionSearchDownloadButton");
+  const searchPrintButton = document.getElementById("admissionSearchPrintButton");
   const guidedModeToggle = document.getElementById("guidedModeToggle");
   const incompleteOnlyToggle = document.getElementById("admissionIncompleteOnlyToggle");
   const applyFixQueueButton = document.getElementById("applyAdmissionFixQueueButton");
@@ -1935,6 +2003,17 @@ function bindAdmissionTools() {
   if (completenessCsvButton) completenessCsvButton.onclick = downloadAdmissionCompletenessReport;
   if (loadMoreButton) loadMoreButton.onclick = loadMoreAdmissionResults;
   if (refreshSummaryButton) refreshSummaryButton.onclick = refreshAdmissionStatusSummary;
+  if (searchResultPicker) {
+    searchResultPicker.onchange = () => {
+      selectedAdmissionSearchLearnerId = Number(searchResultPicker.value || 0) || null;
+    };
+  }
+  if (searchEditButton) searchEditButton.onclick = () => runAdmissionSearchAction("edit");
+  if (searchDeleteButton) searchDeleteButton.onclick = () => runAdmissionSearchAction("delete");
+  if (searchPhotoButton) searchPhotoButton.onclick = () => runAdmissionSearchAction("uploadPhoto");
+  if (searchViewButton) searchViewButton.onclick = () => runAdmissionSearchAction("view");
+  if (searchDownloadButton) searchDownloadButton.onclick = () => runAdmissionSearchAction("download");
+  if (searchPrintButton) searchPrintButton.onclick = () => runAdmissionSearchAction("print");
   if (guidedModeToggle) {
     guidedModeToggle.onchange = (event) => toggleAdmissionGuidedMode(event.target.checked);
   }
