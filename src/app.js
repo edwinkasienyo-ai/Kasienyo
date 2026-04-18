@@ -1803,6 +1803,10 @@ app.get(
     const field = String(req.query.field || "full_name");
     const value = String(req.query.value || "").trim();
     const status = String(req.query.status || "").trim();
+    const limitRaw = Number(req.query.limit || 100);
+    const limit = Number.isFinite(limitRaw) ? Math.max(1, Math.min(limitRaw, 500)) : 100;
+    const offsetRaw = Number(req.query.offset || 0);
+    const offset = Number.isFinite(offsetRaw) ? Math.max(0, offsetRaw) : 0;
     const onlyIncomplete = ["1", "true", "yes", "y"].includes(
       String(req.query.incomplete_only || "").trim().toLowerCase()
     );
@@ -1822,20 +1826,54 @@ app.get(
       params.push(status);
     }
 
-    const rows = await query(
-      `SELECT * FROM learners
-       ${where}
-       ORDER BY ${ADMISSION_STATUS_ORDER_SQL}`,
-      params
-    );
-    let formatted = formatLearnerStatusRows(rows);
     if (onlyIncomplete) {
-      formatted = formatted.filter((row) => {
+      const rows = await query(
+        `SELECT * FROM learners
+         ${where}
+         ORDER BY ${ADMISSION_STATUS_ORDER_SQL}`,
+        params
+      );
+      const filtered = formatLearnerStatusRows(rows).filter((row) => {
         const completeness = admissionCompletenessIndicators(row);
         return Array.isArray(completeness.missing) && completeness.missing.length > 0;
       });
+      const pagedRows = filtered.slice(offset, offset + limit);
+      return res.json({
+        rows: pagedRows,
+        pagination: {
+          total: filtered.length,
+          limit,
+          offset,
+          returned: pagedRows.length,
+          hasMore: offset + pagedRows.length < filtered.length
+        }
+      });
     }
-    res.json(formatted);
+
+    const [countRow] = await query(
+      `SELECT COUNT(*) total
+       FROM learners
+       ${where}`,
+      params
+    );
+    const rows = await query(
+      `SELECT * FROM learners
+       ${where}
+       ORDER BY ${ADMISSION_STATUS_ORDER_SQL}
+       LIMIT ? OFFSET ?`,
+      [...params, limit, offset]
+    );
+    const formatted = formatLearnerStatusRows(rows);
+    res.json({
+      rows: formatted,
+      pagination: {
+        total: Number(countRow?.total || 0),
+        limit,
+        offset,
+        returned: formatted.length,
+        hasMore: offset + formatted.length < Number(countRow?.total || 0)
+      }
+    });
   })
 );
 
@@ -3478,6 +3516,103 @@ app.post(
   enforcePermission(PERMISSIONS.VIEW),
   asyncHandler(async (req, res) => {
     const institutionId = req.user.institution_id;
+    const sampleLimitRaw = Number(req.body?.sampleLimit || 100);
+    const sampleLimit = Number.isFinite(sampleLimitRaw)
+      ? Math.max(10, Math.min(sampleLimitRaw, 500))
+      : 100;
+    const duplicateAdmissions = await query(
+      `SELECT admission_number, COUNT(*) total
+       FROM learners
+       WHERE institution_id = ? AND admission_number IS NOT NULL AND admission_number <> ''
+       GROUP BY admission_number
+       HAVING COUNT(*) > 1`,
+      [institutionId]
+    );
+    const duplicateAdmissionSample = duplicateAdmissions.slice(0, sampleLimit);
+    const duplicateAdmissionExcess = Math.max(0, duplicateAdmissions.length - duplicateAdmissionSample.length);
+    const missingParentContacts = await query(
+      `SELECT id, full_name, admission_number
+       FROM learners
+       WHERE institution_id = ?
+         AND (parent_phone IS NULL OR parent_phone = '')
+         AND (parent_email IS NULL OR parent_email = '')
+       ORDER BY id DESC
+       LIMIT ?`,
+      [institutionId, sampleLimit]
+    );
+    const [missingParentContactsTotalRow] = await query(
+      `SELECT COUNT(*) total
+       FROM learners
+       WHERE institution_id = ?
+         AND (parent_phone IS NULL OR parent_phone = '')
+         AND (parent_email IS NULL OR parent_email = '')`,
+      [institutionId]
+    );
+    const missingParentContactsTotal = Number(missingParentContactsTotalRow?.total || 0);
+    const invalidStatusRows = await query(
+      `SELECT id, full_name, admission_number, status
+       FROM learners
+       WHERE institution_id = ?
+         AND (status IS NULL OR status = '' OR status NOT IN (?, ?, ?, ?, ?))
+       ORDER BY id DESC
+       LIMIT ?`,
+      [
+        institutionId,
+        ADMISSION_STATUS[0],
+        ADMISSION_STATUS[1],
+        ADMISSION_STATUS[2],
+        ADMISSION_STATUS[3],
+        ADMISSION_STATUS[4],
+        sampleLimit
+      ]
+    );
+    const [invalidStatusTotalRow] = await query(
+      `SELECT COUNT(*) total
+       FROM learners
+       WHERE institution_id = ?
+         AND (status IS NULL OR status = '' OR status NOT IN (?, ?, ?, ?, ?))`,
+      [
+        institutionId,
+        ADMISSION_STATUS[0],
+        ADMISSION_STATUS[1],
+        ADMISSION_STATUS[2],
+        ADMISSION_STATUS[3],
+        ADMISSION_STATUS[4]
+      ]
+    );
+    const invalidStatusTotal = Number(invalidStatusTotalRow?.total || 0);
+
+    await auditLog(req.user, "RUN_ADMISSION_INTEGRITY_AUDIT", "learners", null, {
+      duplicateAdmissionSets: duplicateAdmissions.length,
+      missingParentContacts: missingParentContactsTotal,
+      invalidStatusRows: invalidStatusTotal,
+      sampleLimit
+    });
+
+    res.json({
+      message: "Admission integrity audit completed.",
+      duplicateAdmissionSets: duplicateAdmissions.length,
+      duplicateAdmissions: duplicateAdmissionSample,
+      duplicateAdmissionsTruncated: duplicateAdmissionExcess > 0,
+      duplicateAdmissionsRemaining: duplicateAdmissionExcess,
+      missingParentContactsCount: missingParentContactsTotal,
+      missingParentContacts,
+      missingParentContactsTruncated: missingParentContactsTotal > missingParentContacts.length,
+      invalidStatusCount: invalidStatusTotal,
+      invalidStatusRows,
+      invalidStatusRowsTruncated: invalidStatusTotal > invalidStatusRows.length,
+      sampleLimit
+    });
+  })
+);
+
+app.get(
+  "/api/workflows/admission-integrity-audit",
+  auth,
+  enforceRole([ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER]),
+  enforcePermission(PERMISSIONS.VIEW),
+  asyncHandler(async (req, res) => {
+    const institutionId = req.user.institution_id;
     const duplicateAdmissions = await query(
       `SELECT admission_number, COUNT(*) total
        FROM learners
@@ -3513,21 +3648,23 @@ app.post(
       ]
     );
 
-    await auditLog(req.user, "RUN_ADMISSION_INTEGRITY_AUDIT", "learners", null, {
-      duplicateAdmissionSets: duplicateAdmissions.length,
-      missingParentContacts: missingParentContacts.length,
-      invalidStatusRows: invalidStatusRows.length
-    });
-
-    res.json({
-      message: "Admission integrity audit completed.",
+    const summary = {
       duplicateAdmissionSets: duplicateAdmissions.length,
       duplicateAdmissions,
       missingParentContactsCount: missingParentContacts.length,
       missingParentContacts,
       invalidStatusCount: invalidStatusRows.length,
-      invalidStatusRows
+      invalidStatusRows,
+      generatedAt: dayjs().format("YYYY-MM-DD HH:mm:ss")
+    };
+
+    await auditLog(req.user, "VIEW_ADMISSION_INTEGRITY_AUDIT", "learners", null, {
+      duplicateAdmissionSets: summary.duplicateAdmissionSets,
+      missingParentContacts: summary.missingParentContactsCount,
+      invalidStatusRows: summary.invalidStatusCount
     });
+
+    res.json(summary);
   })
 );
 

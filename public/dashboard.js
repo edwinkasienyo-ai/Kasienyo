@@ -7,10 +7,18 @@ let meta = {};
 let currentModule = "dashboard";
 let currentEditId = null;
 let admissionSearchRows = [];
+let admissionSearchPagination = {
+  total: 0,
+  limit: 100,
+  offset: 0,
+  returned: 0,
+  hasMore: false
+};
 let currentValidationErrors = {};
 let admissionGuidedModeEnabled = false;
 let admissionGuidedStepState = [];
 let admissionCompletenessCache = null;
+let admissionIntegrityAuditCache = null;
 
 const ADMISSION_SEARCH_FIELDS = [
   { value: "full_name", label: "Name" },
@@ -786,6 +794,69 @@ function currentAdmissionIncompleteOnlyMode() {
   return document.getElementById("admissionIncompleteOnlyToggle")?.checked || false;
 }
 
+function renderAdmissionSearchMeta() {
+  const target = document.getElementById("admissionSearchMeta");
+  if (!target) return;
+  const total = Number(admissionSearchPagination.total || 0);
+  const offset = Number(admissionSearchPagination.offset || 0);
+  const returned = Number(admissionSearchPagination.returned || admissionSearchRows.length || 0);
+  const start = total ? offset + 1 : 0;
+  const end = total ? offset + returned : 0;
+  const suffix = admissionSearchPagination.hasMore ? " (more records available)" : "";
+  target.textContent = `Showing ${start}-${end} of ${total}${suffix}`;
+  const loadMoreButton = document.getElementById("admissionLoadMoreButton");
+  if (loadMoreButton) {
+    loadMoreButton.disabled = !admissionSearchPagination.hasMore;
+    loadMoreButton.textContent = admissionSearchPagination.hasMore ? "Load More Results" : "No More Results";
+  }
+}
+
+function renderAdmissionIntegrityAuditSummary() {
+  const target = document.getElementById("admissionIntegritySummary");
+  if (!target) return;
+  const summary = admissionIntegrityAuditCache;
+  if (!summary) {
+    target.innerHTML = '<p class="small-note">Integrity summary unavailable. Click Refresh Guidance Data.</p>';
+    return;
+  }
+  const duplicateCount = Number(summary.duplicateAdmissionSets || 0);
+  const missingContactCount = Number(summary.missingParentContactsCount || 0);
+  const invalidStatusCount = Number(summary.invalidStatusCount || 0);
+  const isHealthy = duplicateCount === 0 && missingContactCount === 0 && invalidStatusCount === 0;
+  target.innerHTML = `
+    <div class="integrity-header">
+      <strong>Admission Integrity</strong>
+      <span class="tag ${isHealthy ? "integrity-good" : "integrity-bad"}">${isHealthy ? "Healthy" : "Needs Attention"}</span>
+    </div>
+    <div class="integrity-grid">
+      <span class="tag">Duplicate Admission Numbers: ${duplicateCount}</span>
+      <span class="tag">Missing Parent Contacts: ${missingContactCount}</span>
+      <span class="tag">Invalid Status Rows: ${invalidStatusCount}</span>
+    </div>
+    <p class="small-note">Last generated: ${escapeHtml(summary.generatedAt || "N/A")}</p>
+  `;
+}
+
+async function refreshAdmissionIntegrityAuditSummary() {
+  if (currentModule !== "admission") return;
+  try {
+    const summary = await request("/api/workflows/admission-integrity-audit");
+    admissionIntegrityAuditCache = summary || null;
+  } catch (error) {
+    admissionIntegrityAuditCache = null;
+  }
+  renderAdmissionIntegrityAuditSummary();
+}
+
+function renderAdmissionFixQueueState() {
+  const button = document.getElementById("applyAdmissionFixQueueButton");
+  const toggle = document.getElementById("admissionIncompleteOnlyToggle");
+  if (!button || !toggle) return;
+  const enabled = Boolean(toggle.checked);
+  button.classList.toggle("fix-queue-active", enabled);
+  button.textContent = enabled ? "Fix Queue Active" : "Apply Fix Queue";
+}
+
 function syncAdmissionIncompleteToggleFromDataset() {
   const toggle = document.getElementById("admissionIncompleteOnlyToggle");
   if (!toggle) return;
@@ -915,6 +986,7 @@ async function quickFilterAdmissionStatus(status) {
 async function toggleAdmissionIncompleteOnly(enabled) {
   const toggle = document.getElementById("admissionIncompleteOnlyToggle");
   if (toggle) toggle.checked = Boolean(enabled);
+  renderAdmissionFixQueueState();
   await searchAdmission();
   await refreshAdmissionStatusSummary();
   await refreshAdmissionGuidanceData(true);
@@ -923,6 +995,7 @@ async function toggleAdmissionIncompleteOnly(enabled) {
 async function applyAdmissionFixQueue() {
   const toggle = document.getElementById("admissionIncompleteOnlyToggle");
   if (toggle) toggle.checked = true;
+  renderAdmissionFixQueueState();
   await toggleAdmissionIncompleteOnly(true);
 }
 
@@ -975,6 +1048,8 @@ function admissionToolsHtml() {
         <button id="applyAdmissionFixQueueButton" type="button">Apply Fix Queue</button>
         <button id="refreshAdmissionGuidanceButton" type="button">Refresh Guidance Data</button>
       </div>
+      <p id="admissionSearchMeta" class="small-note">Showing 0-0 of 0</p>
+      <div id="admissionIntegritySummary" class="admission-integrity-summary"></div>
       <div id="admissionGuidancePanel" class="admission-guidance-panel"></div>
       <div class="admission-tools-grid">
         <div>
@@ -1023,6 +1098,7 @@ function admissionToolsHtml() {
         <button id="admissionGroupedRegisterButton">Print Grouped Register</button>
         <button id="admissionReadinessReportButton">Print Readiness Report</button>
         <button id="admissionCompletenessCsvButton">Download Completeness CSV</button>
+        <button id="admissionLoadMoreButton">Load More Results</button>
         <button id="refreshAdmissionSummaryButton">Refresh Status Summary</button>
       </div>
       <div id="admissionStatusSummary" class="admission-status-summary"></div>
@@ -1517,10 +1593,58 @@ async function searchAdmission() {
   const onlyIncomplete = currentAdmissionIncompleteOnlyMode();
   try {
     const query = new URLSearchParams({ field, value, status });
+    query.set("limit", String(admissionSearchPagination.limit || 100));
+    query.set("offset", "0");
     if (onlyIncomplete) query.set("incomplete_only", "1");
-    const rows = await request(`/api/admission/learners/search?${query.toString()}`);
-    admissionSearchRows = rows || [];
+    const payload = await request(`/api/admission/learners/search?${query.toString()}`);
+    const rows = Array.isArray(payload?.rows) ? payload.rows : [];
+    const pagination = payload?.pagination || {};
+    admissionSearchRows = rows;
+    admissionSearchPagination = {
+      total: Number(pagination.total || rows.length),
+      limit: Number(pagination.limit || admissionSearchPagination.limit || 100),
+      offset: Number(pagination.offset || 0),
+      returned: Number(pagination.returned || rows.length),
+      hasMore: Boolean(pagination.hasMore)
+    };
     renderAdmissionTable(admissionSearchRows);
+    renderAdmissionSearchMeta();
+    renderAdmissionFixQueueState();
+  } catch (error) {
+    alert(error.message);
+  }
+}
+
+async function loadMoreAdmissionResults() {
+  const field = document.getElementById("admissionSearchField")?.value || "full_name";
+  const value = document.getElementById("admissionSearchValue")?.value?.trim() || "";
+  const status = document.getElementById("admissionSearchStatus")?.value || "";
+  const onlyIncomplete = currentAdmissionIncompleteOnlyMode();
+  if (!admissionSearchPagination.hasMore) {
+    alert("No more admission records to load.");
+    return;
+  }
+  const nextOffset =
+    Number(admissionSearchPagination.offset || 0) + Number(admissionSearchPagination.returned || 0);
+  try {
+    const query = new URLSearchParams({ field, value, status });
+    query.set("limit", String(admissionSearchPagination.limit || 100));
+    query.set("offset", String(nextOffset));
+    if (onlyIncomplete) query.set("incomplete_only", "1");
+    const payload = await request(`/api/admission/learners/search?${query.toString()}`);
+    const rows = Array.isArray(payload?.rows) ? payload.rows : [];
+    const pagination = payload?.pagination || {};
+    admissionSearchRows = admissionSearchRows.concat(rows);
+    admissionSearchPagination = {
+      total: Number(pagination.total || admissionSearchRows.length),
+      limit: Number(pagination.limit || admissionSearchPagination.limit || 100),
+      offset: Number(pagination.offset || nextOffset),
+      returned: Number(pagination.returned || rows.length),
+      hasMore: Boolean(pagination.hasMore)
+    };
+    renderAdmissionTable(admissionSearchRows);
+    renderAdmissionSearchMeta();
+    renderAdmissionFixQueueState();
   } catch (error) {
     alert(error.message);
   }
@@ -1692,10 +1816,20 @@ async function loadModuleData(config) {
     const rows = await request(config.endpoint);
     if (currentModule === "admission") {
       admissionSearchRows = rows || [];
+      admissionSearchPagination = {
+        total: admissionSearchRows.length,
+        limit: 100,
+        offset: 0,
+        returned: admissionSearchRows.length,
+        hasMore: false
+      };
     }
     renderTable(rows || []);
     if (currentModule === "admission") {
+      renderAdmissionSearchMeta();
+      renderAdmissionFixQueueState();
       await refreshAdmissionStatusSummary();
+      await refreshAdmissionIntegrityAuditSummary();
       await refreshAdmissionGuidanceData();
     }
   } catch (error) {
@@ -1715,6 +1849,7 @@ function bindAdmissionTools() {
   const groupedRegisterButton = document.getElementById("admissionGroupedRegisterButton");
   const readinessReportButton = document.getElementById("admissionReadinessReportButton");
   const completenessCsvButton = document.getElementById("admissionCompletenessCsvButton");
+  const loadMoreButton = document.getElementById("admissionLoadMoreButton");
   const refreshSummaryButton = document.getElementById("refreshAdmissionSummaryButton");
   const guidedModeToggle = document.getElementById("guidedModeToggle");
   const incompleteOnlyToggle = document.getElementById("admissionIncompleteOnlyToggle");
@@ -1737,6 +1872,7 @@ function bindAdmissionTools() {
   if (groupedRegisterButton) groupedRegisterButton.onclick = printAdmissionGroupedRegister;
   if (readinessReportButton) readinessReportButton.onclick = printAdmissionReadinessReport;
   if (completenessCsvButton) completenessCsvButton.onclick = downloadAdmissionCompletenessReport;
+  if (loadMoreButton) loadMoreButton.onclick = loadMoreAdmissionResults;
   if (refreshSummaryButton) refreshSummaryButton.onclick = refreshAdmissionStatusSummary;
   if (guidedModeToggle) {
     guidedModeToggle.onchange = (event) => toggleAdmissionGuidedMode(event.target.checked);
@@ -1748,9 +1884,14 @@ function bindAdmissionTools() {
     applyFixQueueButton.onclick = applyAdmissionFixQueue;
   }
   if (refreshGuidanceButton) {
-    refreshGuidanceButton.onclick = () => refreshAdmissionGuidanceData(true);
+    refreshGuidanceButton.onclick = async () => {
+      await refreshAdmissionIntegrityAuditSummary();
+      await refreshAdmissionGuidanceData(true);
+    };
   }
   syncAdmissionIncompleteToggleFromDataset();
+  renderAdmissionFixQueueState();
+  renderAdmissionIntegrityAuditSummary();
   renderAdmissionGuidance();
 }
 
@@ -1973,6 +2114,8 @@ window.refreshAdmissionGuidanceData = refreshAdmissionGuidanceData;
 window.applyAdmissionFixQueue = applyAdmissionFixQueue;
 window.downloadAdmissionCompletenessReport = downloadAdmissionCompletenessReport;
 window.printAdmissionReadinessReport = printAdmissionReadinessReport;
+window.loadMoreAdmissionResults = loadMoreAdmissionResults;
+window.refreshAdmissionIntegrityAuditSummary = refreshAdmissionIntegrityAuditSummary;
 
 window.editRow = editRow;
 window.deleteRow = deleteRow;

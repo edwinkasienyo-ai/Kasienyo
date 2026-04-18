@@ -554,6 +554,71 @@ button:hover {
   display: inline-block;
 }
 
+.admission-search-meta {
+  margin-top: 8px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.admission-search-meta .small-note {
+  margin: 0;
+}
+
+.admission-integrity-summary {
+  margin-top: 8px;
+  border: 1px solid #dbe7f5;
+  border-radius: 10px;
+  background: #f8fbff;
+  padding: 10px;
+}
+
+.admission-integrity-summary h5 {
+  margin: 0 0 8px;
+  color: #154166;
+}
+
+.integrity-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 8px;
+}
+
+.integrity-list {
+  margin-top: 8px;
+  max-height: 160px;
+  overflow: auto;
+  border: 1px solid #e2eaf4;
+  border-radius: 8px;
+  padding: 8px;
+  background: #fff;
+}
+
+.integrity-list h6 {
+  margin: 0 0 6px;
+  color: #1f4f7f;
+}
+
+.integrity-list ul {
+  margin: 0;
+  padding-left: 16px;
+}
+
+.integrity-list li {
+  font-size: 12px;
+  margin: 3px 0;
+}
+
+.integrity-good {
+  color: #1f6b3f;
+}
+
+.integrity-bad {
+  color: #a13d1b;
+}
+
 .admission-tools-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
