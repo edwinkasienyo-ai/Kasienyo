@@ -1,4 +1,5 @@
 const API_BASE = "";
+const UI_BUILD_VERSION = "20260418-2";
 
 async function request(path, options = {}) {
   const response = await fetch(`${API_BASE}${path}`, {
@@ -54,7 +55,7 @@ async function verifyOtp() {
     localStorage.setItem("token", data.token);
     localStorage.setItem("portal", data.portal);
     localStorage.removeItem("pendingUsername");
-    window.location.href = "/dashboard.html";
+    window.location.href = `/dashboard.html?v=${encodeURIComponent(UI_BUILD_VERSION)}`;
   } catch (error) {
     alert(error.message);
   }

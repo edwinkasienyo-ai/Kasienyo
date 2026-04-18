@@ -92,6 +92,8 @@ const ADMISSION_GUIDE_STEPS = [
   { key: "step-5", title: "Run Admission Integrity Audit" }
 ];
 
+const DASHBOARD_BUILD_ID = "admission-ui-20260418-2";
+
 const DEFAULT_MODULE_HELP = {
   summary: "Use this section to capture complete, accurate records before saving.",
   steps: [
@@ -1040,6 +1042,9 @@ async function runAdmissionGuidedStep(stepKey) {
 function admissionToolsHtml() {
   return `
     <div class="admission-tools">
+      <div class="admission-debug-version">
+        UI Build: ${DASHBOARD_BUILD_ID}
+      </div>
       <h4>Admission Bulk Upload and Search Tools</h4>
       <p class="small-note">Download template, fill learner biodata, upload Excel/CSV, then add photos while editing each learner, batch filenames (AdmissionNumber.jpg), or ZIP upload.</p>
       <div class="admission-requirements">
@@ -1051,6 +1056,10 @@ function admissionToolsHtml() {
           <li data-check="d"><strong>D.</strong> Search results actions: Edit, Delete, Photo, View, Download, Print.</li>
           <li data-check="e"><strong>E.</strong> Record printing buttons for admission listings and grouped register.</li>
         </ul>
+      </div>
+      <div class="admission-visibility-banner">
+        <strong>Admission Enhancements Active:</strong>
+        Template Download/Upload, Grade/Form Lock, Status Colors/Sorting, Search Actions, and Print Controls.
       </div>
       <div class="guided-toggle-row">
         <label><input id="guidedModeToggle" type="checkbox" ${admissionGuidedModeEnabled ? "checked" : ""} /> Guided Mode</label>
