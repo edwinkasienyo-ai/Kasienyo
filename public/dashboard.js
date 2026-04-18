@@ -461,15 +461,23 @@ function admissionToolsHtml() {
   return `
     <div class="admission-tools">
       <h4>Admission Bulk Upload and Search Tools</h4>
-      <p class="small-note">Download template, fill learner biodata, upload Excel, then add photos while editing each learner.</p>
+      <p class="small-note">Download template, fill learner biodata, upload Excel/CSV, then add photos while editing each learner or with batch filename mapping (AdmissionNumber.jpg).</p>
       <div class="admission-tools-grid">
         <div>
-          <label>Excel Template + Upload</label>
+          <label>Template + Biodata Upload</label>
           <div class="actions-row">
             <button id="downloadAdmissionTemplateButton">Download Excel Template</button>
-            <input id="admissionExcelInput" type="file" accept=".xlsx" />
-            <button id="uploadAdmissionExcelButton">Upload Filled Excel</button>
+            <input id="admissionExcelInput" type="file" accept=".xlsx,.csv" />
+            <button id="uploadAdmissionExcelButton">Upload Filled Excel/CSV</button>
           </div>
+        </div>
+        <div>
+          <label>Batch photo upload by filename</label>
+          <div class="actions-row">
+            <input id="admissionPhotoBatchInput" type="file" accept="image/*" multiple />
+            <button id="uploadAdmissionPhotoBatchButton">Upload Photo Batch</button>
+          </div>
+          <p class="small-note">Name each photo with admission number, e.g. ADM001.jpg</p>
         </div>
         <div>
           <label>Search learner record</label>
@@ -488,6 +496,7 @@ function admissionToolsHtml() {
       </div>
       <div class="actions-row">
         <button id="admissionRecordPrintButton">Print Records</button>
+        <button id="admissionGroupedRegisterButton">Print Grouped Register</button>
       </div>
     </div>
   `;
@@ -641,7 +650,7 @@ async function downloadAdmissionTemplate() {
 async function uploadAdmissionExcel() {
   const fileInput = document.getElementById("admissionExcelInput");
   if (!fileInput || !fileInput.files || !fileInput.files[0]) {
-    alert("Select a completed .xlsx template first.");
+    alert("Select a completed .xlsx or .csv template first.");
     return;
   }
   const formData = new FormData();
@@ -659,7 +668,44 @@ async function uploadAdmissionExcel() {
       throw new Error(data.error || "Bulk upload failed.");
     }
     const rejected = data.rejectedRows?.length || 0;
-    alert(`Bulk upload completed. Processed: ${data.insertedOrUpdated || 0}. Rejected: ${rejected}.`);
+    alert(
+      `Bulk upload completed. Format: ${data.sourceFormat || "unknown"}. Processed: ${data.insertedOrUpdated || 0}. Rejected: ${rejected}.`
+    );
+    fileInput.value = "";
+    await loadModuleData(moduleConfigs.admission);
+  } catch (error) {
+    alert(error.message);
+  }
+}
+
+async function uploadAdmissionPhotoBatch() {
+  const fileInput = document.getElementById("admissionPhotoBatchInput");
+  if (!fileInput || !fileInput.files || !fileInput.files.length) {
+    alert("Select learner photos first. Filenames must be admission numbers.");
+    return;
+  }
+
+  const formData = new FormData();
+  Array.from(fileInput.files).forEach((file) => {
+    formData.append("photos", file);
+  });
+
+  try {
+    const response = await fetch("/api/admission/learners/photo-batch-upload", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`
+      },
+      body: formData
+    });
+    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(data.error || "Batch photo upload failed.");
+    }
+    const rejected = data.rejectedFiles?.length || 0;
+    alert(
+      `Photo batch processed. Uploaded: ${data.uploaded || 0}, Matched: ${data.matchedCount || 0}, Rejected: ${rejected}.`
+    );
     fileInput.value = "";
     await loadModuleData(moduleConfigs.admission);
   } catch (error) {
@@ -720,6 +766,22 @@ function downloadLearnerRecord(learnerId) {
 
 function printLearnerRecord(learnerId) {
   window.open(`/api/admission/learners/${learnerId}/export/pdf`, "_blank");
+}
+
+function printAdmissionGroupedRegister() {
+  const status = document.getElementById("admissionSearchStatus")?.value || "";
+  const query = status ? `?status=${encodeURIComponent(status)}` : "";
+  window.open(`/api/admission/learners/register/print${query}`, "_blank");
+}
+
+function printAdmissionCurrentTable() {
+  if (!admissionSearchRows.length) {
+    alert("No admission records loaded to print.");
+    return;
+  }
+  const status = document.getElementById("admissionSearchStatus")?.value || "";
+  const query = status ? `?status=${encodeURIComponent(status)}` : "";
+  window.open(`/api/admission/learners/register/print${query}`, "_blank");
 }
 
 function renderAdmissionTable(rows) {
@@ -827,12 +889,16 @@ async function loadModuleData(config) {
 function bindAdmissionTools() {
   const downloadTemplateButton = document.getElementById("downloadAdmissionTemplateButton");
   const uploadExcelButton = document.getElementById("uploadAdmissionExcelButton");
+  const uploadPhotoBatchButton = document.getElementById("uploadAdmissionPhotoBatchButton");
   const searchButton = document.getElementById("admissionSearchButton");
   const printRecordButton = document.getElementById("admissionRecordPrintButton");
+  const groupedRegisterButton = document.getElementById("admissionGroupedRegisterButton");
   if (downloadTemplateButton) downloadTemplateButton.onclick = downloadAdmissionTemplate;
   if (uploadExcelButton) uploadExcelButton.onclick = uploadAdmissionExcel;
+  if (uploadPhotoBatchButton) uploadPhotoBatchButton.onclick = uploadAdmissionPhotoBatch;
   if (searchButton) searchButton.onclick = searchAdmission;
-  if (printRecordButton) printRecordButton.onclick = () => window.print();
+  if (printRecordButton) printRecordButton.onclick = printAdmissionCurrentTable;
+  if (groupedRegisterButton) groupedRegisterButton.onclick = printAdmissionGroupedRegister;
 }
 
 function renderCrudModule(moduleKey) {

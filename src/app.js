@@ -227,6 +227,142 @@ function normalizeDate(value) {
   return dayjs(parsed).format("YYYY-MM-DD");
 }
 
+function normalizeImportHeader(header) {
+  return String(header || "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, "_")
+    .replace(/[^a-z0-9_]/g, "");
+}
+
+function extractSpreadsheetCellValue(value) {
+  if (value === null || value === undefined) return null;
+  if (typeof value !== "object") return value;
+  if (Object.prototype.hasOwnProperty.call(value, "result")) return value.result;
+  if (Object.prototype.hasOwnProperty.call(value, "text")) return value.text;
+  if (Object.prototype.hasOwnProperty.call(value, "hyperlink")) return value.hyperlink;
+  if (Object.prototype.hasOwnProperty.call(value, "richText")) {
+    return value.richText.map((part) => part?.text || "").join("");
+  }
+  return String(value);
+}
+
+function parseCsvRecordLine(line) {
+  const cells = [];
+  let current = "";
+  let inQuotes = false;
+
+  for (let i = 0; i < line.length; i += 1) {
+    const char = line[i];
+    const nextChar = line[i + 1];
+
+    if (char === '"' && inQuotes && nextChar === '"') {
+      current += '"';
+      i += 1;
+      continue;
+    }
+    if (char === '"') {
+      inQuotes = !inQuotes;
+      continue;
+    }
+    if (char === "," && !inQuotes) {
+      cells.push(current.trim());
+      current = "";
+      continue;
+    }
+    current += char;
+  }
+
+  cells.push(current.trim());
+  return cells;
+}
+
+function parseCsvText(csvText) {
+  const cleaned = String(csvText || "").replace(/^\uFEFF/, "").replace(/\r\n/g, "\n");
+  const lines = cleaned.split("\n").filter((line) => line.trim().length > 0);
+  if (!lines.length) {
+    return { headers: [], rows: [] };
+  }
+  const headers = parseCsvRecordLine(lines[0]).map(normalizeImportHeader);
+  const rows = lines.slice(1).map((line, index) => ({
+    rowNumber: index + 2,
+    values: parseCsvRecordLine(line)
+  }));
+  return { headers, rows };
+}
+
+function buildAdmissionHeaderIndex(headers = []) {
+  const index = {};
+  headers.forEach((header, idx) => {
+    if (ADMISSION_IMPORT_HEADERS.includes(header)) {
+      index[header] = idx + 1;
+    }
+  });
+  return index;
+}
+
+async function upsertAdmissionRows({ records, institutionId, userId }) {
+  let insertedOrUpdated = 0;
+  const rejectedRows = [];
+
+  for (const record of records) {
+    const learner = normalizeLearnerPayload(record.values);
+
+    if (
+      !learner.first_name ||
+      !learner.last_name ||
+      !learner.admission_number ||
+      !learner.birth_certificate_number
+    ) {
+      rejectedRows.push({
+        row: record.rowNumber,
+        reason:
+          "Required values missing (first_name, last_name, admission_number, birth_certificate_number)."
+      });
+      continue;
+    }
+
+    learner.institution_id = institutionId;
+    learner.created_by_user_id = userId;
+
+    const insertColumns = [
+      "institution_id",
+      "created_by_user_id",
+      ...ADMISSION_IMPORT_HEADERS,
+      "passport_photo_path"
+    ];
+    const insertValues = insertColumns.map((column) => learner[column] ?? null);
+    const placeholders = insertColumns.map(() => "?").join(", ");
+    const updatableColumns = insertColumns
+      .filter((column) => !["institution_id", "created_by_user_id"].includes(column))
+      .map((column) => `${column} = VALUES(${column})`)
+      .concat("updated_at = NOW()")
+      .join(", ");
+
+    await query(
+      `INSERT INTO learners (${insertColumns.join(", ")})
+       VALUES (${placeholders})
+       ON DUPLICATE KEY UPDATE ${updatableColumns}`,
+      insertValues
+    );
+    insertedOrUpdated += 1;
+  }
+
+  return { insertedOrUpdated, rejectedRows };
+}
+
+function normalizeAdmissionKey(value) {
+  return String(value || "")
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, "");
+}
+
+function inferAdmissionNumberFromFilename(fileName) {
+  const nameOnly = String(fileName || "").replace(/\.[^/.]+$/, "");
+  return nameOnly.trim();
+}
+
 function normalizeLearnerPayload(input = {}) {
   const data = { ...input };
   const firstName = normalizeText(data.first_name);
@@ -307,6 +443,17 @@ function formatLearnerStatusRows(rows = []) {
     status_color: ADMISSION_STATUS_HEX[row.status] || "#6d6d6d",
     status_sort_order: admissionStatusSortOrder(row.status)
   }));
+}
+
+function colorFromHex(hex) {
+  const normalized = String(hex || "#6d6d6d").replace("#", "");
+  const safe = normalized.length === 6 ? normalized : "6d6d6d";
+  const value = parseInt(safe, 16);
+  return [
+    (value >> 16) & 255,
+    (value >> 8) & 255,
+    value & 255
+  ];
 }
 
 function normalizeExcelCellValue(cellValue) {
@@ -727,102 +874,94 @@ app.post(
   upload.single("file"),
   asyncHandler(async (req, res) => {
     if (!req.file) {
-      return res.status(400).json({ error: "Excel file is required." });
+      return res.status(400).json({ error: "CSV or Excel file is required." });
     }
 
-    if (!req.file.originalname.toLowerCase().endsWith(".xlsx")) {
-      fs.unlink(req.file.path, () => {});
-      return res.status(400).json({ error: "Admission upload requires .xlsx file format." });
-    }
-
-    const workbook = new ExcelJS.Workbook();
-    await workbook.xlsx.readFile(req.file.path);
-    const sheet = workbook.worksheets[0];
-    if (!sheet) {
-      fs.unlink(req.file.path, () => {});
-      return res.status(400).json({ error: "Excel worksheet was not found in uploaded file." });
-    }
-
-    const headerCells = sheet.getRow(1).values.slice(1);
-    const normalizedHeaders = headerCells.map((header) => String(header || "").trim().toLowerCase());
-    const headerIndex = {};
-    normalizedHeaders.forEach((header, index) => {
-      if (ADMISSION_IMPORT_HEADERS.includes(header)) {
-        headerIndex[header] = index + 1;
-      }
-    });
-
+    const extension = path.extname(req.file.originalname || "").toLowerCase();
     const requiredHeaders = ["first_name", "last_name", "admission_number", "birth_certificate_number"];
-    const missingHeaders = requiredHeaders.filter((header) => !headerIndex[header]);
-    if (missingHeaders.length) {
-      fs.unlink(req.file.path, () => {});
-      return res.status(400).json({
-        error: `Missing required header columns: ${missingHeaders.join(", ")}`
-      });
-    }
+    let parsedRecords = [];
 
-    let insertedOrUpdated = 0;
-    const rejectedRows = [];
-
-    for (let rowNumber = 2; rowNumber <= sheet.rowCount; rowNumber += 1) {
-      const row = sheet.getRow(rowNumber);
-      const rawRecord = {};
-
-      ADMISSION_IMPORT_HEADERS.forEach((header) => {
-        const cellIndex = headerIndex[header];
-        if (cellIndex) {
-          rawRecord[header] = row.getCell(cellIndex).value;
-        }
-      });
-
-      const hasAnyValue = Object.values(rawRecord).some(
-        (value) => value !== null && value !== undefined && String(value).trim() !== ""
-      );
-      if (!hasAnyValue) continue;
-
-      const learner = normalizeLearnerPayload(rawRecord);
-      if (!learner.first_name || !learner.last_name || !learner.admission_number || !learner.birth_certificate_number) {
-        rejectedRows.push({
-          row: rowNumber,
-          reason:
-            "Required values missing (first_name, last_name, admission_number, birth_certificate_number)."
-        });
-        continue;
+    if (extension === ".xlsx") {
+      const workbook = new ExcelJS.Workbook();
+      await workbook.xlsx.readFile(req.file.path);
+      const sheet = workbook.worksheets[0];
+      if (!sheet) {
+        fs.unlink(req.file.path, () => {});
+        return res.status(400).json({ error: "Excel worksheet was not found in uploaded file." });
       }
 
-      learner.institution_id = req.user.institution_id;
-      learner.created_by_user_id = req.user.id;
+      const headerCells = sheet.getRow(1).values.slice(1).map(extractSpreadsheetCellValue);
+      const headerIndex = buildAdmissionHeaderIndex(headerCells.map(normalizeImportHeader));
+      const missingHeaders = requiredHeaders.filter((header) => !headerIndex[header]);
+      if (missingHeaders.length) {
+        fs.unlink(req.file.path, () => {});
+        return res.status(400).json({
+          error: `Missing required header columns: ${missingHeaders.join(", ")}`
+        });
+      }
 
-      const insertColumns = [
-        "institution_id",
-        "created_by_user_id",
-        ...ADMISSION_IMPORT_HEADERS,
-        "passport_photo_path"
-      ];
-      const insertValues = insertColumns.map((column) => learner[column] ?? null);
-      const placeholders = insertColumns.map(() => "?").join(", ");
-      const updatableColumns = insertColumns
-        .filter((column) => !["institution_id", "created_by_user_id"].includes(column))
-        .map((column) => `${column} = VALUES(${column})`)
-        .concat("updated_at = NOW()")
-        .join(", ");
-
-      await query(
-        `INSERT INTO learners (${insertColumns.join(", ")})
-         VALUES (${placeholders})
-         ON DUPLICATE KEY UPDATE ${updatableColumns}`,
-        insertValues
-      );
-      insertedOrUpdated += 1;
+      for (let rowNumber = 2; rowNumber <= sheet.rowCount; rowNumber += 1) {
+        const row = sheet.getRow(rowNumber);
+        const rawRecord = {};
+        ADMISSION_IMPORT_HEADERS.forEach((header) => {
+          const cellIndex = headerIndex[header];
+          if (cellIndex) {
+            rawRecord[header] = extractSpreadsheetCellValue(row.getCell(cellIndex).value);
+          }
+        });
+        const hasAnyValue = Object.values(rawRecord).some(
+          (value) => value !== null && value !== undefined && String(value).trim() !== ""
+        );
+        if (!hasAnyValue) continue;
+        parsedRecords.push({ rowNumber, values: rawRecord });
+      }
+    } else if (extension === ".csv") {
+      const csvText = fs.readFileSync(req.file.path, "utf8");
+      const parsed = parseCsvText(csvText);
+      const headerIndex = buildAdmissionHeaderIndex(parsed.headers);
+      const missingHeaders = requiredHeaders.filter((header) => !headerIndex[header]);
+      if (missingHeaders.length) {
+        fs.unlink(req.file.path, () => {});
+        return res.status(400).json({
+          error: `Missing required header columns: ${missingHeaders.join(", ")}`
+        });
+      }
+      parsedRecords = parsed.rows
+        .map((row) => {
+          const rawRecord = {};
+          ADMISSION_IMPORT_HEADERS.forEach((header) => {
+            const idx = headerIndex[header];
+            if (idx) {
+              rawRecord[header] = row.values[idx - 1] ?? null;
+            }
+          });
+          const hasAnyValue = Object.values(rawRecord).some(
+            (value) => value !== null && value !== undefined && String(value).trim() !== ""
+          );
+          if (!hasAnyValue) return null;
+          return { rowNumber: row.rowNumber, values: rawRecord };
+        })
+        .filter(Boolean);
+    } else {
+      fs.unlink(req.file.path, () => {});
+      return res.status(400).json({ error: "Admission upload supports only .xlsx and .csv formats." });
     }
+
+    const { insertedOrUpdated, rejectedRows } = await upsertAdmissionRows({
+      records: parsedRecords,
+      institutionId: req.user.institution_id,
+      userId: req.user.id
+    });
 
     fs.unlink(req.file.path, () => {});
     await auditLog(req.user, "BULK_UPLOAD_ADMISSION", "learners", null, {
       insertedOrUpdated,
+      source_format: extension,
       rejected: rejectedRows.length
     });
     res.json({
       message: "Admission bulk upload completed.",
+      sourceFormat: extension,
       insertedOrUpdated,
       rejectedRows
     });
@@ -936,6 +1075,144 @@ app.get(
     doc.fontSize(10).fillColor("#3d4f63").text(
       "Photo management note: for many learners, upload biodata in bulk first, then add passport photos during edit or using the Upload Photo action."
     );
+    doc.end();
+  })
+);
+
+app.post(
+  "/api/admission/learners/photo-batch-upload",
+  auth,
+  enforceRole([ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER]),
+  enforcePermission(PERMISSIONS.UPDATE),
+  upload.array("photos", 300),
+  asyncHandler(async (req, res) => {
+    if (!req.files || !req.files.length) {
+      return res.status(400).json({ error: "At least one photo file is required." });
+    }
+
+    const learners = await query(
+      "SELECT id, admission_number FROM learners WHERE institution_id = ?",
+      [req.user.institution_id]
+    );
+    const learnerIndex = new Map(
+      learners.map((learner) => [normalizeAdmissionKey(learner.admission_number), learner])
+    );
+
+    let matchedCount = 0;
+    const rejectedFiles = [];
+
+    for (const file of req.files) {
+      const isImage = String(file.mimetype || "").startsWith("image/");
+      if (!isImage) {
+        rejectedFiles.push({
+          file: file.originalname,
+          reason: "Only image files are accepted."
+        });
+        fs.unlink(file.path, () => {});
+        continue;
+      }
+
+      const inferredAdmission = inferAdmissionNumberFromFilename(file.originalname);
+      const normalizedAdmission = normalizeAdmissionKey(inferredAdmission);
+      const learner = learnerIndex.get(normalizedAdmission);
+      if (!learner) {
+        rejectedFiles.push({
+          file: file.originalname,
+          reason:
+            "No learner matches this filename. Use admission number as filename (example: ADM001.jpg)."
+        });
+        fs.unlink(file.path, () => {});
+        continue;
+      }
+
+      const filePath = `/uploads/${file.filename}`;
+      await query(
+        "UPDATE learners SET passport_photo_path = ?, updated_at = NOW() WHERE id = ? AND institution_id = ?",
+        [filePath, learner.id, req.user.institution_id]
+      );
+      matchedCount += 1;
+    }
+
+    await auditLog(req.user, "PHOTO_BATCH_UPLOAD_ADMISSION", "learners", null, {
+      uploaded: req.files.length,
+      matchedCount,
+      rejectedCount: rejectedFiles.length
+    });
+
+    res.json({
+      message: "Batch photo upload processed.",
+      uploaded: req.files.length,
+      matchedCount,
+      rejectedFiles
+    });
+  })
+);
+
+app.get(
+  "/api/admission/learners/register/print",
+  auth,
+  enforceRole([ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER]),
+  enforcePermission(PERMISSIONS.VIEW),
+  asyncHandler(async (req, res) => {
+    const statusFilter = normalizeText(req.query.status);
+    const params = [req.user.institution_id];
+    let where = "WHERE institution_id = ?";
+    if (statusFilter) {
+      where += " AND status = ?";
+      params.push(statusFilter);
+    }
+
+    const rows = await query(
+      `SELECT *
+       FROM learners
+       ${where}
+       ORDER BY ${ADMISSION_STATUS_ORDER_SQL}`,
+      params
+    );
+    const formatted = formatLearnerStatusRows(rows);
+
+    const grouped = new Map();
+    ADMISSION_STATUS.forEach((status) => grouped.set(status, []));
+    grouped.set("Uncategorized", []);
+    for (const learner of formatted) {
+      const statusKey = learner.status || "Uncategorized";
+      if (!grouped.has(statusKey)) grouped.set(statusKey, []);
+      grouped.get(statusKey).push(learner);
+    }
+
+    const doc = new PDFDocument({ margin: 24, size: "A4" });
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", 'inline; filename="admission-register.pdf"');
+    doc.pipe(res);
+
+    doc.fontSize(16).fillColor("#000000").text("Admission Status Register", { underline: true });
+    doc
+      .fontSize(10)
+      .fillColor("#425466")
+      .text(`Generated: ${dayjs().format("YYYY-MM-DD HH:mm")} | Learners: ${formatted.length}`);
+    doc.moveDown(0.8);
+
+    for (const [status, learnersInStatus] of grouped.entries()) {
+      if (!learnersInStatus.length) continue;
+      const color = ADMISSION_STATUS_HEX[status] || "#5f7187";
+      doc.fontSize(12).fillColor(color).text(`${status} (${learnersInStatus.length})`);
+      doc.fillColor("#111111").fontSize(10);
+      learnersInStatus.forEach((learner, index) => {
+        doc.text(
+          `${index + 1}. ${learner.first_name || learner.full_name || "N/A"} | ADM: ${
+            learner.admission_number || "N/A"
+          } | Class: ${learner.grade || learner.form_name || "N/A"} ${learner.stream || ""} | Parent: ${
+            learner.parent_full_name || "N/A"
+          } (${learner.parent_phone || "N/A"})`
+        );
+      });
+      doc.moveDown(0.6);
+    }
+
+    await auditLog(req.user, "PRINT_ADMISSION_REGISTER", "learners", null, {
+      status: statusFilter || "ALL",
+      count: formatted.length
+    });
     doc.end();
   })
 );
