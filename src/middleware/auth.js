@@ -2,9 +2,11 @@ const jwt = require("jsonwebtoken");
 
 function auth(req, res, next) {
   const authHeader = req.headers.authorization || "";
-  const token = authHeader.startsWith("Bearer ")
+  const headerToken = authHeader.startsWith("Bearer ")
     ? authHeader.substring("Bearer ".length)
     : authHeader;
+  const queryToken = req.query?.token ? String(req.query.token) : "";
+  const token = headerToken || queryToken;
 
   if (!token) {
     return res.status(401).json({ error: "Authentication token is required." });

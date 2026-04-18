@@ -210,6 +210,46 @@ button:hover {
   margin: 0 0 6px;
 }
 
+.admission-status-summary {
+  margin-top: 10px;
+  border-top: 1px dashed #ccd9ea;
+  padding-top: 8px;
+}
+
+.summary-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 6px;
+}
+
+.summary-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.summary-tag {
+  border: 1px solid #ccd9ea;
+  background: #fff;
+  color: #153c5f;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 4px 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.summary-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
 .admission-tools-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));

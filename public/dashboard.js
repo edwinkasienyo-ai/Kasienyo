@@ -457,6 +457,44 @@ function statusBadgeHtml(status) {
   return `<span class="status-badge" style="background:${statusColor(status)}">${status || "N/A"}</span>`;
 }
 
+function createAuthDownloadUrl(endpoint) {
+  const separator = endpoint.includes("?") ? "&" : "?";
+  return `${endpoint}${separator}token=${encodeURIComponent(token)}`;
+}
+
+function openProtectedUrl(endpoint) {
+  window.open(createAuthDownloadUrl(endpoint), "_blank");
+}
+
+function renderAdmissionStatusSummary(summary = null) {
+  const target = document.getElementById("admissionStatusSummary");
+  if (!target) return;
+  if (!summary || !Array.isArray(summary.byStatus)) {
+    target.innerHTML = '<p class="small-note">Status summary unavailable.</p>';
+    return;
+  }
+
+  const statusItems = summary.byStatus
+    .filter((item) => Number(item.count || 0) > 0)
+    .map(
+      (item) => `
+        <span class="tag summary-tag" style="border-color:${item.color};">
+          <span class="summary-dot" style="background:${item.color};"></span>
+          ${escapeHtml(item.status)}: ${Number(item.count || 0)}
+        </span>
+      `
+    )
+    .join("");
+
+  target.innerHTML = `
+    <div class="summary-header">
+      <strong>Total Learners: ${Number(summary.totalLearners || 0)}</strong>
+      <span class="small-note">${summary.statusFilter ? `Filter: ${escapeHtml(summary.statusFilter)}` : "All statuses"}</span>
+    </div>
+    <div class="summary-tags">${statusItems || '<span class="small-note">No learners found.</span>'}</div>
+  `;
+}
+
 function admissionToolsHtml() {
   return `
     <div class="admission-tools">
@@ -467,6 +505,7 @@ function admissionToolsHtml() {
           <label>Template + Biodata Upload</label>
           <div class="actions-row">
             <button id="downloadAdmissionTemplateButton">Download Excel Template</button>
+            <button id="downloadAdmissionCsvTemplateButton">Download CSV Template</button>
             <input id="admissionExcelInput" type="file" accept=".xlsx,.csv" />
             <button id="uploadAdmissionExcelButton">Upload Filled Excel/CSV</button>
             <button id="downloadAdmissionRejectionReportButton">Download Rejection Report</button>
@@ -506,7 +545,9 @@ function admissionToolsHtml() {
       <div class="actions-row">
         <button id="admissionRecordPrintButton">Print Records</button>
         <button id="admissionGroupedRegisterButton">Print Grouped Register</button>
+        <button id="refreshAdmissionSummaryButton">Refresh Status Summary</button>
       </div>
+      <div id="admissionStatusSummary" class="admission-status-summary"></div>
     </div>
   `;
 }
@@ -643,17 +684,21 @@ async function deleteRow(id) {
 async function exportPdf() {
   const config = moduleConfigs[currentModule];
   if (!config) return;
-  window.open(`${config.endpoint}/export/pdf`, "_blank");
+  openProtectedUrl(`${config.endpoint}/export/pdf`);
 }
 
 async function exportExcel() {
   const config = moduleConfigs[currentModule];
   if (!config) return;
-  window.open(`${config.endpoint}/export/excel`, "_blank");
+  openProtectedUrl(`${config.endpoint}/export/excel`);
 }
 
 async function downloadAdmissionTemplate() {
-  window.open("/api/admission/learners/template/excel", "_blank");
+  openProtectedUrl("/api/admission/learners/template/excel");
+}
+
+async function downloadAdmissionCsvTemplate() {
+  openProtectedUrl("/api/admission/learners/template/csv");
 }
 
 async function uploadAdmissionExcel() {
@@ -698,7 +743,7 @@ function downloadAdmissionRejectionReport() {
     alert("No rejection report available yet. Upload biodata first.");
     return;
   }
-  window.open(reportPath, "_blank");
+  openProtectedUrl(reportPath);
 }
 
 async function uploadAdmissionPhotoBatch() {
@@ -811,21 +856,21 @@ async function uploadLearnerPhoto(learnerId) {
 }
 
 function viewLearnerRecord(learnerId) {
-  window.open(`/api/admission/learners/${learnerId}/export/pdf`, "_blank");
+  openProtectedUrl(`/api/admission/learners/${learnerId}/export/pdf`);
 }
 
 function downloadLearnerRecord(learnerId) {
-  window.open(`/api/admission/learners/${learnerId}/export/pdf`, "_blank");
+  openProtectedUrl(`/api/admission/learners/${learnerId}/export/pdf`);
 }
 
 function printLearnerRecord(learnerId) {
-  window.open(`/api/admission/learners/${learnerId}/export/pdf`, "_blank");
+  openProtectedUrl(`/api/admission/learners/${learnerId}/export/pdf`);
 }
 
 function printAdmissionGroupedRegister() {
   const status = document.getElementById("admissionSearchStatus")?.value || "";
   const query = status ? `?status=${encodeURIComponent(status)}` : "";
-  window.open(`/api/admission/learners/register/print${query}`, "_blank");
+  openProtectedUrl(`/api/admission/learners/register/print${query}`);
 }
 
 function printAdmissionCurrentTable() {
@@ -835,7 +880,21 @@ function printAdmissionCurrentTable() {
   }
   const status = document.getElementById("admissionSearchStatus")?.value || "";
   const query = status ? `?status=${encodeURIComponent(status)}` : "";
-  window.open(`/api/admission/learners/register/print${query}`, "_blank");
+  openProtectedUrl(`/api/admission/learners/register/print${query}`);
+}
+
+async function refreshAdmissionStatusSummary() {
+  if (currentModule !== "admission") return;
+  const status = document.getElementById("admissionSearchStatus")?.value || "";
+  const query = new URLSearchParams();
+  if (status) query.set("status", status);
+  const suffix = query.toString() ? `?${query.toString()}` : "";
+  try {
+    const summary = await request(`/api/admission/learners/status-summary${suffix}`);
+    renderAdmissionStatusSummary(summary);
+  } catch (error) {
+    renderAdmissionStatusSummary(null);
+  }
 }
 
 function renderAdmissionTable(rows) {
@@ -935,6 +994,9 @@ async function loadModuleData(config) {
       admissionSearchRows = rows || [];
     }
     renderTable(rows || []);
+    if (currentModule === "admission") {
+      await refreshAdmissionStatusSummary();
+    }
   } catch (error) {
     alert(error.message);
   }
@@ -942,6 +1004,7 @@ async function loadModuleData(config) {
 
 function bindAdmissionTools() {
   const downloadTemplateButton = document.getElementById("downloadAdmissionTemplateButton");
+  const downloadCsvTemplateButton = document.getElementById("downloadAdmissionCsvTemplateButton");
   const uploadExcelButton = document.getElementById("uploadAdmissionExcelButton");
   const downloadRejectionButton = document.getElementById("downloadAdmissionRejectionReportButton");
   const uploadPhotoBatchButton = document.getElementById("uploadAdmissionPhotoBatchButton");
@@ -949,14 +1012,22 @@ function bindAdmissionTools() {
   const searchButton = document.getElementById("admissionSearchButton");
   const printRecordButton = document.getElementById("admissionRecordPrintButton");
   const groupedRegisterButton = document.getElementById("admissionGroupedRegisterButton");
+  const refreshSummaryButton = document.getElementById("refreshAdmissionSummaryButton");
   if (downloadTemplateButton) downloadTemplateButton.onclick = downloadAdmissionTemplate;
+  if (downloadCsvTemplateButton) downloadCsvTemplateButton.onclick = downloadAdmissionCsvTemplate;
   if (uploadExcelButton) uploadExcelButton.onclick = uploadAdmissionExcel;
   if (downloadRejectionButton) downloadRejectionButton.onclick = downloadAdmissionRejectionReport;
   if (uploadPhotoBatchButton) uploadPhotoBatchButton.onclick = uploadAdmissionPhotoBatch;
   if (uploadPhotoZipButton) uploadPhotoZipButton.onclick = uploadAdmissionPhotoZipBatch;
-  if (searchButton) searchButton.onclick = searchAdmission;
+  if (searchButton) {
+    searchButton.onclick = async () => {
+      await searchAdmission();
+      await refreshAdmissionStatusSummary();
+    };
+  }
   if (printRecordButton) printRecordButton.onclick = printAdmissionCurrentTable;
   if (groupedRegisterButton) groupedRegisterButton.onclick = printAdmissionGroupedRegister;
+  if (refreshSummaryButton) refreshSummaryButton.onclick = refreshAdmissionStatusSummary;
 }
 
 function renderCrudModule(moduleKey) {
@@ -1043,7 +1114,7 @@ async function loadParentOrBomResults() {
     </div>
   `;
   document.getElementById("exportParentPdf").onclick = () =>
-    window.open("/api/parent/results/export/pdf", "_blank");
+    openProtectedUrl("/api/parent/results/export/pdf");
   document.getElementById("printParent").onclick = () => window.print();
 
   try {

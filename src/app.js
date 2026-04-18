@@ -123,6 +123,40 @@ const ADMISSION_IMPORT_HEADERS = [
   "parent_email"
 ];
 
+const ADMISSION_TEMPLATE_EXAMPLE_ROW = [
+  "Akinyi",
+  "N",
+  "Otieno",
+  "",
+  "Akinyi N Otieno",
+  "ADM-001",
+  "2026-01-10",
+  "Grade 6",
+  "",
+  "North",
+  "ASMT-1234",
+  "UPI-2001",
+  "BC-778899",
+  "2015-05-01",
+  "Female",
+  "Christian",
+  "Kenyan",
+  "Nairobi",
+  "Westlands",
+  "Loresho",
+  "Loresho",
+  "Village A",
+  2026,
+  "Term One",
+  "Both Parent Alive",
+  "In Session",
+  "Parent Name",
+  "Mother",
+  "12345678",
+  "+254700000000",
+  "parent@example.com"
+];
+
 const ALLOWED_ADMISSION_SEARCH_FIELDS = new Set([
   "full_name",
   "first_name",
@@ -228,6 +262,12 @@ function normalizeDate(value) {
   return dayjs(parsed).format("YYYY-MM-DD");
 }
 
+function normalizeYear(value) {
+  if (value === undefined || value === null || value === "") return null;
+  const normalized = Math.trunc(Number(value));
+  return Number.isFinite(normalized) ? normalized : null;
+}
+
 function normalizeImportHeader(header) {
   return String(header || "")
     .trim()
@@ -297,6 +337,42 @@ function csvEscape(value) {
   return `"${raw.replace(/"/g, '""')}"`;
 }
 
+function buildAdmissionTemplateCsvContent() {
+  const headerLine = ADMISSION_IMPORT_HEADERS.map((header) => csvEscape(header)).join(",");
+  const sampleLine = ADMISSION_TEMPLATE_EXAMPLE_ROW.map((value) => csvEscape(value)).join(",");
+  return `${headerLine}\n${sampleLine}\n`;
+}
+
+function normalizeAdmissionStatusForSummary(value) {
+  const normalized = normalizeText(value);
+  if (!normalized) return "Uncategorized";
+  return ADMISSION_STATUS.includes(normalized) ? normalized : "Uncategorized";
+}
+
+function buildAdmissionStatusSummary(rows = []) {
+  const counts = new Map();
+  ADMISSION_STATUS.forEach((status) => counts.set(status, 0));
+  counts.set("Uncategorized", 0);
+
+  rows.forEach((row) => {
+    const status = normalizeAdmissionStatusForSummary(row.status);
+    counts.set(status, (counts.get(status) || 0) + Number(row.total || 0));
+  });
+
+  const orderedStatuses = ADMISSION_STATUS.concat(["Uncategorized"]);
+  const summaryRows = orderedStatuses.map((status) => ({
+    status,
+    count: counts.get(status) || 0,
+    color: ADMISSION_STATUS_HEX[status] || "#5f7187",
+    sort_order: admissionStatusSortOrder(status)
+  }));
+
+  return {
+    total: summaryRows.reduce((sum, item) => sum + item.count, 0),
+    byStatus: summaryRows
+  };
+}
+
 function buildAdmissionHeaderIndex(headers = []) {
   const index = {};
   headers.forEach((header, idx) => {
@@ -313,18 +389,9 @@ async function upsertAdmissionRows({ records, institutionId, userId }) {
 
   for (const record of records) {
     const learner = normalizeLearnerPayload(record.values);
-
-    if (
-      !learner.first_name ||
-      !learner.last_name ||
-      !learner.admission_number ||
-      !learner.birth_certificate_number
-    ) {
-      rejectedRows.push({
-        row: record.rowNumber,
-        reason:
-          "Required values missing (first_name, last_name, admission_number, birth_certificate_number)."
-      });
+    const validationError = validateLearnerPayload(learner);
+    if (validationError) {
+      rejectedRows.push({ row: record.rowNumber, reason: validationError });
       continue;
     }
 
@@ -552,7 +619,7 @@ function normalizeLearnerPayload(input = {}) {
   data.parent_phone = normalizeText(data.parent_phone);
   data.parent_email = normalizeText(data.parent_email);
 
-  data.year_joined = data.year_joined ? Number(data.year_joined) : null;
+  data.year_joined = normalizeYear(data.year_joined);
   data.date_of_admission = normalizeDate(data.date_of_admission);
   data.date_of_birth = normalizeDate(data.date_of_birth);
 
@@ -615,6 +682,18 @@ function validateLearnerPayload(data) {
   if (!data.birth_certificate_number) return "Birth certificate number is required.";
   if (!data.grade && !data.form_name) {
     return "Select either Grade or Form.";
+  }
+  if (data.status && !ADMISSION_STATUS.includes(data.status)) {
+    return `Status must be one of: ${ADMISSION_STATUS.join(", ")}`;
+  }
+  if (data.gender && !GENDER_OPTIONS.includes(data.gender)) {
+    return `Gender must be one of: ${GENDER_OPTIONS.join(", ")}`;
+  }
+  if (data.parent_email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(data.parent_email)) {
+    return "Parent email is invalid.";
+  }
+  if (data.year_joined !== null && (data.year_joined < 1900 || data.year_joined > 2100)) {
+    return "Year joined must be between 1900 and 2100.";
   }
   return null;
 }
@@ -956,39 +1035,7 @@ app.get(
     const workbook = new ExcelJS.Workbook();
     const sheet = workbook.addWorksheet("Learner Biodata Template");
     sheet.addRow(ADMISSION_IMPORT_HEADERS);
-    sheet.addRow([
-      "Akinyi",
-      "N",
-      "Otieno",
-      "",
-      "Akinyi N Otieno",
-      "ADM-001",
-      "2026-01-10",
-      "Grade 6",
-      "",
-      "North",
-      "ASMT-1234",
-      "UPI-2001",
-      "BC-778899",
-      "2015-05-01",
-      "Female",
-      "Christian",
-      "Kenyan",
-      "Nairobi",
-      "Westlands",
-      "Loresho",
-      "Loresho",
-      "Village A",
-      2026,
-      "Term One",
-      "Both Parent Alive",
-      "In Session",
-      "Parent Name",
-      "Mother",
-      "12345678",
-      "+254700000000",
-      "parent@example.com"
-    ]);
+    sheet.addRow(ADMISSION_TEMPLATE_EXAMPLE_ROW);
     sheet.getRow(1).font = { bold: true };
     sheet.columns.forEach((column) => {
       column.width = 20;
@@ -1002,6 +1049,19 @@ app.get(
     res.setHeader("Content-Disposition", 'attachment; filename="admission-learner-template.xlsx"');
     await workbook.xlsx.write(res);
     res.end();
+  })
+);
+
+app.get(
+  "/api/admission/learners/template/csv",
+  auth,
+  enforceRole([ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER]),
+  enforcePermission(PERMISSIONS.VIEW),
+  asyncHandler(async (req, res) => {
+    await auditLog(req.user, "DOWNLOAD_ADMISSION_TEMPLATE_CSV", "learners", null);
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", 'attachment; filename="admission-learner-template.csv"');
+    res.send(buildAdmissionTemplateCsvContent());
   })
 );
 
@@ -1176,6 +1236,41 @@ app.get(
       params
     );
     res.json(formatLearnerStatusRows(rows));
+  })
+);
+
+app.get(
+  "/api/admission/learners/status-summary",
+  auth,
+  enforceRole([ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER]),
+  enforcePermission(PERMISSIONS.VIEW),
+  asyncHandler(async (req, res) => {
+    const statusFilter = normalizeText(req.query.status);
+    if (statusFilter && !ADMISSION_STATUS.includes(statusFilter)) {
+      return res.status(400).json({ error: "Invalid status filter provided." });
+    }
+
+    const params = [req.user.institution_id];
+    let where = "WHERE institution_id = ?";
+    if (statusFilter) {
+      where += " AND status = ?";
+      params.push(statusFilter);
+    }
+
+    const groupedRows = await query(
+      `SELECT status, COUNT(*) total
+       FROM learners
+       ${where}
+       GROUP BY status`,
+      params
+    );
+
+    const summary = buildAdmissionStatusSummary(groupedRows);
+    res.json({
+      statusFilter: statusFilter || null,
+      totalLearners: summary.total,
+      byStatus: summary.byStatus
+    });
   })
 );
 
@@ -2103,14 +2198,23 @@ if (admissionConfig) {
       data.institution_id = req.user.institution_id;
       data.created_by_user_id = req.user.id;
 
+      const validationError = validateLearnerPayload(data);
+      if (validationError) {
+        return res.status(400).json({ error: validationError });
+      }
+
       const columns = Object.keys(data);
       if (!columns.length) {
         return res.status(400).json({ error: "No valid payload fields." });
       }
 
-      if (!data.first_name || !data.last_name || !data.admission_number || !data.birth_certificate_number) {
-        return res.status(400).json({
-          error: "first_name, last_name, admission_number and birth_certificate_number are required."
+      const duplicateRows = await query(
+        "SELECT id FROM learners WHERE institution_id = ? AND admission_number = ? LIMIT 1",
+        [req.user.institution_id, data.admission_number]
+      );
+      if (duplicateRows.length) {
+        return res.status(409).json({
+          error: "Admission number already exists. Use edit/update instead."
         });
       }
 
@@ -2128,18 +2232,49 @@ if (admissionConfig) {
     enforceRole(admissionConfig.allowedRoles),
     enforcePermission(PERMISSIONS.UPDATE),
     asyncHandler(async (req, res) => {
-      const data = normalizeLearnerPayload(pickFields(req.body, admissionConfig.fields));
-      const columns = Object.keys(data);
-      if (!columns.length) {
+      const incoming = pickFields(req.body, admissionConfig.fields);
+      const incomingColumns = Object.keys(incoming);
+      if (!incomingColumns.length) {
         return res.status(400).json({ error: "No valid payload fields." });
       }
 
+      const existingRows = await query(
+        `SELECT * FROM ${admissionConfig.table} WHERE id = ? AND institution_id = ? LIMIT 1`,
+        [req.params.id, req.user.institution_id]
+      );
+      if (!existingRows.length) {
+        return res.status(404).json({ error: "Record not found." });
+      }
+
+      const merged = normalizeLearnerPayload({
+        ...existingRows[0],
+        ...incoming
+      });
+      const validationError = validateLearnerPayload(merged);
+      if (validationError) {
+        return res.status(400).json({ error: validationError });
+      }
+
+      const requestedAdmission = normalizeText(merged.admission_number);
+      if (requestedAdmission) {
+        const duplicateRows = await query(
+          "SELECT id FROM learners WHERE institution_id = ? AND admission_number = ? AND id <> ? LIMIT 1",
+          [req.user.institution_id, requestedAdmission, req.params.id]
+        );
+        if (duplicateRows.length) {
+          return res.status(409).json({
+            error: "Admission number already exists for another learner."
+          });
+        }
+      }
+
+      const columns = admissionConfig.fields;
       const setClause = columns.map((column) => `${column} = ?`).join(", ");
       const sql = `UPDATE ${admissionConfig.table}
                    SET ${setClause}, updated_at = NOW()
                    WHERE id = ? AND institution_id = ?`;
-      await query(sql, [...Object.values(data), req.params.id, req.user.institution_id]);
-      await auditLog(req.user, "UPDATE", admissionConfig.table, req.params.id, data);
+      await query(sql, [...columns.map((column) => merged[column] ?? null), req.params.id, req.user.institution_id]);
+      await auditLog(req.user, "UPDATE", admissionConfig.table, req.params.id, incoming);
       res.json({ message: "Record updated." });
     })
   );
