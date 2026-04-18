@@ -8,6 +8,8 @@ const jwt = require("jsonwebtoken");
 const multer = require("multer");
 const { v4: uuidv4 } = require("uuid");
 const dayjs = require("dayjs");
+const ExcelJS = require("exceljs");
+const PDFDocument = require("pdfkit");
 const { query } = require("./config/db");
 const {
   ROLES,
@@ -62,6 +64,75 @@ const upload = multer({
     filename: (_, file, cb) => cb(null, `${Date.now()}-${file.originalname}`)
   })
 });
+
+const ADMISSION_STATUS_ORDER_SQL = `
+  CASE status
+    WHEN 'In Session' THEN 1
+    WHEN 'Not in Session' THEN 2
+    WHEN 'Transferred' THEN 3
+    WHEN 'Alumni' THEN 4
+    WHEN 'Deceased' THEN 5
+    ELSE 99
+  END,
+  first_name ASC,
+  middle_name ASC,
+  last_name ASC,
+  id DESC
+`;
+
+const ADMISSION_STATUS_HEX = {
+  "In Session": "#188038",
+  "Not in Session": "#f6bf26",
+  Transferred: "#1a73e8",
+  Alumni: "#f57c00",
+  Deceased: "#d93025"
+};
+
+const ADMISSION_IMPORT_HEADERS = [
+  "first_name",
+  "middle_name",
+  "last_name",
+  "other_names",
+  "full_name",
+  "admission_number",
+  "date_of_admission",
+  "grade",
+  "form_name",
+  "stream",
+  "assessment_number",
+  "upi_number",
+  "birth_certificate_number",
+  "date_of_birth",
+  "gender",
+  "religion",
+  "nationality",
+  "county",
+  "sub_county",
+  "location",
+  "sub_location",
+  "village",
+  "year_joined",
+  "term_joined",
+  "orphan_condition",
+  "status",
+  "parent_full_name",
+  "parent_relationship",
+  "parent_id_number",
+  "parent_phone",
+  "parent_email"
+];
+
+const ALLOWED_ADMISSION_SEARCH_FIELDS = new Set([
+  "full_name",
+  "first_name",
+  "admission_number",
+  "upi_number",
+  "assessment_number",
+  "birth_certificate_number",
+  "status",
+  "grade",
+  "form_name"
+]);
 
 function asyncHandler(handler) {
   return (req, res, next) => Promise.resolve(handler(req, res, next)).catch(next);
@@ -134,6 +205,199 @@ function pickFields(payload, allowedFields) {
     }
     return acc;
   }, {});
+}
+
+function normalizeText(value) {
+  if (value === undefined || value === null) return null;
+  const asText = String(value).trim();
+  return asText.length ? asText : null;
+}
+
+function excelSerialToDate(serial) {
+  const excelEpoch = dayjs("1899-12-30");
+  return excelEpoch.add(Number(serial), "day").format("YYYY-MM-DD");
+}
+
+function normalizeDate(value) {
+  if (!value) return null;
+  if (value instanceof Date) return dayjs(value).format("YYYY-MM-DD");
+  if (typeof value === "number") return excelSerialToDate(value);
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return null;
+  return dayjs(parsed).format("YYYY-MM-DD");
+}
+
+function normalizeLearnerPayload(input = {}) {
+  const data = { ...input };
+  const firstName = normalizeText(data.first_name);
+  const middleName = normalizeText(data.middle_name);
+  const lastName = normalizeText(data.last_name);
+  const otherNames = normalizeText(data.other_names);
+  const providedFullName = normalizeText(data.full_name);
+
+  data.first_name = firstName;
+  data.middle_name = middleName;
+  data.last_name = lastName;
+  data.other_names = otherNames;
+  data.full_name = providedFullName || [firstName, middleName, lastName, otherNames].filter(Boolean).join(" ");
+
+  const grade = normalizeText(data.grade);
+  const formName = normalizeText(data.form_name);
+  if (grade) {
+    data.grade = grade;
+    data.form_name = null;
+  } else if (formName) {
+    data.form_name = formName;
+    data.grade = null;
+  } else {
+    data.grade = null;
+    data.form_name = null;
+  }
+
+  data.admission_number = normalizeText(data.admission_number);
+  data.stream = normalizeText(data.stream);
+  data.assessment_number = normalizeText(data.assessment_number);
+  data.upi_number = normalizeText(data.upi_number);
+  data.birth_certificate_number = normalizeText(data.birth_certificate_number);
+  data.gender = normalizeText(data.gender);
+  data.passport_photo_path = normalizeText(data.passport_photo_path);
+  data.religion = normalizeText(data.religion);
+  data.nationality = normalizeText(data.nationality);
+  data.county = normalizeText(data.county);
+  data.sub_county = normalizeText(data.sub_county);
+  data.location = normalizeText(data.location);
+  data.sub_location = normalizeText(data.sub_location);
+  data.village = normalizeText(data.village);
+  data.term_joined = normalizeText(data.term_joined);
+  data.orphan_condition = normalizeText(data.orphan_condition);
+  data.status = normalizeText(data.status) || "In Session";
+  data.parent_full_name = normalizeText(data.parent_full_name);
+  data.parent_relationship = normalizeText(data.parent_relationship);
+  data.parent_id_number = normalizeText(data.parent_id_number);
+  data.parent_phone = normalizeText(data.parent_phone);
+  data.parent_email = normalizeText(data.parent_email);
+
+  data.year_joined = data.year_joined ? Number(data.year_joined) : null;
+  data.date_of_admission = normalizeDate(data.date_of_admission);
+  data.date_of_birth = normalizeDate(data.date_of_birth);
+
+  return data;
+}
+
+function admissionStatusSortOrder(status) {
+  switch (status) {
+    case "In Session":
+      return 1;
+    case "Not in Session":
+      return 2;
+    case "Transferred":
+      return 3;
+    case "Alumni":
+      return 4;
+    case "Deceased":
+      return 5;
+    default:
+      return 99;
+  }
+}
+
+function formatLearnerStatusRows(rows = []) {
+  return rows.map((row) => ({
+    ...row,
+    status_color: ADMISSION_STATUS_HEX[row.status] || "#6d6d6d",
+    status_sort_order: admissionStatusSortOrder(row.status)
+  }));
+}
+
+function normalizeExcelCellValue(cellValue) {
+  if (cellValue === undefined || cellValue === null) return null;
+  if (typeof cellValue === "object") {
+    if (cellValue instanceof Date) return dayjs(cellValue).format("YYYY-MM-DD");
+    if (Object.prototype.hasOwnProperty.call(cellValue, "result")) return cellValue.result;
+    if (Object.prototype.hasOwnProperty.call(cellValue, "text")) return cellValue.text;
+    if (Array.isArray(cellValue.richText)) {
+      return cellValue.richText.map((part) => part.text).join("");
+    }
+  }
+  return cellValue;
+}
+
+function validateLearnerPayload(data) {
+  if (!data.first_name) return "First name is required.";
+  if (!data.last_name) return "Last name is required.";
+  if (!data.admission_number) return "Admission number is required.";
+  if (!data.birth_certificate_number) return "Birth certificate number is required.";
+  if (!data.grade && !data.form_name) {
+    return "Select either Grade or Form.";
+  }
+  return null;
+}
+
+async function upsertLearnerRecord({ institutionId, userId, payload }) {
+  const existing = await query(
+    "SELECT id FROM learners WHERE institution_id = ? AND admission_number = ? LIMIT 1",
+    [institutionId, payload.admission_number]
+  );
+
+  const fields = [
+    "full_name",
+    "first_name",
+    "middle_name",
+    "last_name",
+    "other_names",
+    "admission_number",
+    "date_of_admission",
+    "grade",
+    "form_name",
+    "stream",
+    "assessment_number",
+    "upi_number",
+    "birth_certificate_number",
+    "date_of_birth",
+    "gender",
+    "passport_photo_path",
+    "religion",
+    "nationality",
+    "county",
+    "sub_county",
+    "location",
+    "sub_location",
+    "village",
+    "year_joined",
+    "term_joined",
+    "orphan_condition",
+    "status",
+    "conduct_status",
+    "parent_full_name",
+    "parent_relationship",
+    "parent_id_number",
+    "parent_phone",
+    "parent_email"
+  ];
+
+  if (existing.length) {
+    const setClause = fields.map((column) => `${column} = ?`).join(", ");
+    await query(
+      `UPDATE learners
+       SET ${setClause}, updated_at = NOW()
+       WHERE id = ? AND institution_id = ?`,
+      [...fields.map((field) => payload[field] ?? null), existing[0].id, institutionId]
+    );
+    return { mode: "updated", id: existing[0].id };
+  }
+
+  const insertData = {
+    institution_id: institutionId,
+    ...payload,
+    created_by_user_id: userId
+  };
+  const columns = Object.keys(insertData);
+  const placeholders = columns.map(() => "?").join(", ");
+  const result = await query(
+    `INSERT INTO learners (${columns.join(", ")}) VALUES (${placeholders})`,
+    columns.map((column) => insertData[column] ?? null)
+  );
+  return { mode: "created", id: result.insertId };
 }
 
 async function createOtpSession({ identity, role, institutionId, payload, destination, channel }) {
@@ -262,6 +526,7 @@ async function getPaginatedRows({
   q,
   extraWhere = "",
   extraParams = [],
+  orderBy = "id DESC",
   limit = 50,
   offset = 0
 }) {
@@ -272,7 +537,7 @@ async function getPaginatedRows({
   });
   const sql = `SELECT * FROM ${table}
                WHERE institution_id = ? ${extraWhere}${search.where}
-               ORDER BY id DESC
+               ORDER BY ${orderBy}
                LIMIT ? OFFSET ?`;
   return query(sql, [...search.params, Number(limit), Number(offset)]);
 }
@@ -393,6 +658,285 @@ app.post(
       filePath: `/uploads/${req.file.filename}`,
       mimeType: req.file.mimetype
     });
+  })
+);
+
+app.get(
+  "/api/admission/learners/template/excel",
+  auth,
+  enforceRole([ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER]),
+  enforcePermission(PERMISSIONS.VIEW),
+  asyncHandler(async (req, res) => {
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet("Learner Biodata Template");
+    sheet.addRow(ADMISSION_IMPORT_HEADERS);
+    sheet.addRow([
+      "Akinyi",
+      "N",
+      "Otieno",
+      "",
+      "Akinyi N Otieno",
+      "ADM-001",
+      "2026-01-10",
+      "Grade 6",
+      "",
+      "North",
+      "ASMT-1234",
+      "UPI-2001",
+      "BC-778899",
+      "2015-05-01",
+      "Female",
+      "Christian",
+      "Kenyan",
+      "Nairobi",
+      "Westlands",
+      "Loresho",
+      "Loresho",
+      "Village A",
+      2026,
+      "Term One",
+      "Both Parent Alive",
+      "In Session",
+      "Parent Name",
+      "Mother",
+      "12345678",
+      "+254700000000",
+      "parent@example.com"
+    ]);
+    sheet.getRow(1).font = { bold: true };
+    sheet.columns.forEach((column) => {
+      column.width = 20;
+    });
+
+    await auditLog(req.user, "DOWNLOAD_ADMISSION_TEMPLATE", "learners", null);
+    res.setHeader(
+      "Content-Type",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    );
+    res.setHeader("Content-Disposition", 'attachment; filename="admission-learner-template.xlsx"');
+    await workbook.xlsx.write(res);
+    res.end();
+  })
+);
+
+app.post(
+  "/api/admission/learners/bulk-upload",
+  auth,
+  enforceRole([ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER]),
+  enforcePermission(PERMISSIONS.CREATE),
+  upload.single("file"),
+  asyncHandler(async (req, res) => {
+    if (!req.file) {
+      return res.status(400).json({ error: "Excel file is required." });
+    }
+
+    if (!req.file.originalname.toLowerCase().endsWith(".xlsx")) {
+      fs.unlink(req.file.path, () => {});
+      return res.status(400).json({ error: "Admission upload requires .xlsx file format." });
+    }
+
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.readFile(req.file.path);
+    const sheet = workbook.worksheets[0];
+    if (!sheet) {
+      fs.unlink(req.file.path, () => {});
+      return res.status(400).json({ error: "Excel worksheet was not found in uploaded file." });
+    }
+
+    const headerCells = sheet.getRow(1).values.slice(1);
+    const normalizedHeaders = headerCells.map((header) => String(header || "").trim().toLowerCase());
+    const headerIndex = {};
+    normalizedHeaders.forEach((header, index) => {
+      if (ADMISSION_IMPORT_HEADERS.includes(header)) {
+        headerIndex[header] = index + 1;
+      }
+    });
+
+    const requiredHeaders = ["first_name", "last_name", "admission_number", "birth_certificate_number"];
+    const missingHeaders = requiredHeaders.filter((header) => !headerIndex[header]);
+    if (missingHeaders.length) {
+      fs.unlink(req.file.path, () => {});
+      return res.status(400).json({
+        error: `Missing required header columns: ${missingHeaders.join(", ")}`
+      });
+    }
+
+    let insertedOrUpdated = 0;
+    const rejectedRows = [];
+
+    for (let rowNumber = 2; rowNumber <= sheet.rowCount; rowNumber += 1) {
+      const row = sheet.getRow(rowNumber);
+      const rawRecord = {};
+
+      ADMISSION_IMPORT_HEADERS.forEach((header) => {
+        const cellIndex = headerIndex[header];
+        if (cellIndex) {
+          rawRecord[header] = row.getCell(cellIndex).value;
+        }
+      });
+
+      const hasAnyValue = Object.values(rawRecord).some(
+        (value) => value !== null && value !== undefined && String(value).trim() !== ""
+      );
+      if (!hasAnyValue) continue;
+
+      const learner = normalizeLearnerPayload(rawRecord);
+      if (!learner.first_name || !learner.last_name || !learner.admission_number || !learner.birth_certificate_number) {
+        rejectedRows.push({
+          row: rowNumber,
+          reason:
+            "Required values missing (first_name, last_name, admission_number, birth_certificate_number)."
+        });
+        continue;
+      }
+
+      learner.institution_id = req.user.institution_id;
+      learner.created_by_user_id = req.user.id;
+
+      const insertColumns = [
+        "institution_id",
+        "created_by_user_id",
+        ...ADMISSION_IMPORT_HEADERS,
+        "passport_photo_path"
+      ];
+      const insertValues = insertColumns.map((column) => learner[column] ?? null);
+      const placeholders = insertColumns.map(() => "?").join(", ");
+      const updatableColumns = insertColumns
+        .filter((column) => !["institution_id", "created_by_user_id"].includes(column))
+        .map((column) => `${column} = VALUES(${column})`)
+        .concat("updated_at = NOW()")
+        .join(", ");
+
+      await query(
+        `INSERT INTO learners (${insertColumns.join(", ")})
+         VALUES (${placeholders})
+         ON DUPLICATE KEY UPDATE ${updatableColumns}`,
+        insertValues
+      );
+      insertedOrUpdated += 1;
+    }
+
+    fs.unlink(req.file.path, () => {});
+    await auditLog(req.user, "BULK_UPLOAD_ADMISSION", "learners", null, {
+      insertedOrUpdated,
+      rejected: rejectedRows.length
+    });
+    res.json({
+      message: "Admission bulk upload completed.",
+      insertedOrUpdated,
+      rejectedRows
+    });
+  })
+);
+
+app.post(
+  "/api/admission/learners/photo-upload/:id",
+  auth,
+  enforceRole([ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER]),
+  enforcePermission(PERMISSIONS.UPDATE),
+  upload.single("photo"),
+  asyncHandler(async (req, res) => {
+    if (!req.file) {
+      return res.status(400).json({ error: "Photo file is required." });
+    }
+    if (!String(req.file.mimetype || "").startsWith("image/")) {
+      fs.unlink(req.file.path, () => {});
+      return res.status(400).json({ error: "Only image files are allowed for learner photos." });
+    }
+
+    const learners = await query(
+      "SELECT id FROM learners WHERE id = ? AND institution_id = ? LIMIT 1",
+      [req.params.id, req.user.institution_id]
+    );
+    if (!learners.length) {
+      fs.unlink(req.file.path, () => {});
+      return res.status(404).json({ error: "Learner not found." });
+    }
+
+    const filePath = `/uploads/${req.file.filename}`;
+    await query(
+      "UPDATE learners SET passport_photo_path = ?, updated_at = NOW() WHERE id = ? AND institution_id = ?",
+      [filePath, req.params.id, req.user.institution_id]
+    );
+    await auditLog(req.user, "UPLOAD_LEARNER_PHOTO", "learners", req.params.id, { filePath });
+    res.json({ message: "Learner photo uploaded successfully.", filePath });
+  })
+);
+
+app.get(
+  "/api/admission/learners/search",
+  auth,
+  enforceRole([ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER]),
+  enforcePermission(PERMISSIONS.VIEW),
+  asyncHandler(async (req, res) => {
+    const field = String(req.query.field || "full_name");
+    const value = String(req.query.value || "").trim();
+    const status = String(req.query.status || "").trim();
+
+    if (!ALLOWED_ADMISSION_SEARCH_FIELDS.has(field)) {
+      return res.status(400).json({ error: "Invalid admission search field selected." });
+    }
+
+    const params = [req.user.institution_id];
+    let where = "WHERE institution_id = ?";
+    if (value) {
+      where += ` AND ${field} LIKE ?`;
+      params.push(`%${value}%`);
+    }
+    if (status) {
+      where += " AND status = ?";
+      params.push(status);
+    }
+
+    const rows = await query(
+      `SELECT * FROM learners
+       ${where}
+       ORDER BY ${ADMISSION_STATUS_ORDER_SQL}`,
+      params
+    );
+    res.json(formatLearnerStatusRows(rows));
+  })
+);
+
+app.get(
+  "/api/admission/learners/:id/export/pdf",
+  auth,
+  enforceRole([ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER]),
+  enforcePermission(PERMISSIONS.VIEW),
+  asyncHandler(async (req, res) => {
+    const rows = await query("SELECT * FROM learners WHERE id = ? AND institution_id = ? LIMIT 1", [
+      req.params.id,
+      req.user.institution_id
+    ]);
+    if (!rows.length) {
+      return res.status(404).json({ error: "Learner not found." });
+    }
+
+    const learner = formatLearnerStatusRows(rows)[0];
+    const statusColor = learner.status_color || "#6d6d6d";
+    const doc = new PDFDocument({ margin: 30 });
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="learner-${learner.admission_number || learner.id}-record.pdf"`
+    );
+    doc.pipe(res);
+
+    doc.fontSize(16).fillColor("#000000").text("Learner Bio Data Record", { underline: true });
+    doc.moveDown(0.6);
+    doc.fontSize(12).text(`Admission Number: ${learner.admission_number || "N/A"}`);
+    doc.text(`Full Name: ${learner.full_name || "N/A"}`);
+    doc.text(`Class Section: ${learner.grade || learner.form_name || "N/A"} ${learner.stream || ""}`);
+    doc.text(`UPI: ${learner.upi_number || "N/A"} | Assessment: ${learner.assessment_number || "N/A"}`);
+    doc.fillColor(statusColor).text(`Status: ${learner.status || "N/A"}`);
+    doc.fillColor("#000000");
+    doc.text(`Parent: ${learner.parent_full_name || "N/A"} | Phone: ${learner.parent_phone || "N/A"}`);
+    doc.text(`Birth Certificate: ${learner.birth_certificate_number || "N/A"}`);
+    doc.moveDown(0.6);
+    doc.fontSize(10).fillColor("#3d4f63").text(
+      "Photo management note: for many learners, upload biodata in bulk first, then add passport photos during edit or using the Upload Photo action."
+    );
+    doc.end();
   })
 );
 
@@ -1050,7 +1594,159 @@ const moduleConfigs = [
   }
 ];
 
+const admissionConfig = moduleConfigs.find((config) => config.route === "/api/admission/learners");
+
+if (admissionConfig) {
+  app.get(
+    admissionConfig.route,
+    auth,
+    enforceRole(admissionConfig.allowedRoles),
+    enforcePermission(PERMISSIONS.VIEW),
+    asyncHandler(async (req, res) => {
+      const rows = await getPaginatedRows({
+        table: admissionConfig.table,
+        institutionId: req.user.institution_id,
+        searchFields: admissionConfig.searchFields,
+        q: req.query.q || "",
+        orderBy: ADMISSION_STATUS_ORDER_SQL,
+        limit: req.query.limit || 100,
+        offset: req.query.offset || 0
+      });
+      res.json(formatLearnerStatusRows(rows));
+    })
+  );
+
+  app.get(
+    `${admissionConfig.route}/:id`,
+    auth,
+    enforceRole(admissionConfig.allowedRoles),
+    enforcePermission(PERMISSIONS.VIEW),
+    asyncHandler(async (req, res) => {
+      const rows = await query(
+        `SELECT * FROM ${admissionConfig.table} WHERE id = ? AND institution_id = ? LIMIT 1`,
+        [req.params.id, req.user.institution_id]
+      );
+      if (!rows.length) {
+        return res.status(404).json({ error: "Record not found." });
+      }
+      return res.json(formatLearnerStatusRows(rows)[0]);
+    })
+  );
+
+  app.post(
+    admissionConfig.route,
+    auth,
+    enforceRole(admissionConfig.allowedRoles),
+    enforcePermission(PERMISSIONS.CREATE),
+    asyncHandler(async (req, res) => {
+      const data = normalizeLearnerPayload(pickFields(req.body, admissionConfig.fields));
+      data.institution_id = req.user.institution_id;
+      data.created_by_user_id = req.user.id;
+
+      const columns = Object.keys(data);
+      if (!columns.length) {
+        return res.status(400).json({ error: "No valid payload fields." });
+      }
+
+      if (!data.first_name || !data.last_name || !data.admission_number || !data.birth_certificate_number) {
+        return res.status(400).json({
+          error: "first_name, last_name, admission_number and birth_certificate_number are required."
+        });
+      }
+
+      const placeholders = columns.map(() => "?").join(", ");
+      const sql = `INSERT INTO ${admissionConfig.table} (${columns.join(", ")}) VALUES (${placeholders})`;
+      const result = await query(sql, Object.values(data));
+      await auditLog(req.user, "CREATE", admissionConfig.table, result.insertId, data);
+      res.status(201).json({ id: result.insertId, message: "Record created." });
+    })
+  );
+
+  app.put(
+    `${admissionConfig.route}/:id`,
+    auth,
+    enforceRole(admissionConfig.allowedRoles),
+    enforcePermission(PERMISSIONS.UPDATE),
+    asyncHandler(async (req, res) => {
+      const data = normalizeLearnerPayload(pickFields(req.body, admissionConfig.fields));
+      const columns = Object.keys(data);
+      if (!columns.length) {
+        return res.status(400).json({ error: "No valid payload fields." });
+      }
+
+      const setClause = columns.map((column) => `${column} = ?`).join(", ");
+      const sql = `UPDATE ${admissionConfig.table}
+                   SET ${setClause}, updated_at = NOW()
+                   WHERE id = ? AND institution_id = ?`;
+      await query(sql, [...Object.values(data), req.params.id, req.user.institution_id]);
+      await auditLog(req.user, "UPDATE", admissionConfig.table, req.params.id, data);
+      res.json({ message: "Record updated." });
+    })
+  );
+
+  app.delete(
+    `${admissionConfig.route}/:id`,
+    auth,
+    enforceRole(admissionConfig.allowedRoles),
+    enforcePermission(PERMISSIONS.DELETE),
+    asyncHandler(async (req, res) => {
+      await query(`DELETE FROM ${admissionConfig.table} WHERE id = ? AND institution_id = ?`, [
+        req.params.id,
+        req.user.institution_id
+      ]);
+      await auditLog(req.user, "DELETE", admissionConfig.table, req.params.id);
+      res.json({ message: "Record deleted." });
+    })
+  );
+
+  app.get(
+    `${admissionConfig.route}/export/pdf`,
+    auth,
+    enforceRole(admissionConfig.allowedRoles),
+    enforcePermission(PERMISSIONS.VIEW),
+    asyncHandler(async (req, res) => {
+      const rows = await getPaginatedRows({
+        table: admissionConfig.table,
+        institutionId: req.user.institution_id,
+        searchFields: admissionConfig.searchFields,
+        q: req.query.q || "",
+        orderBy: ADMISSION_STATUS_ORDER_SQL,
+        limit: 5000
+      });
+      const formattedRows = formatLearnerStatusRows(rows);
+      const lines = formattedRows.map((row) => JSON.stringify(row));
+      sendSimplePdf(res, `${admissionConfig.table}-report`, lines);
+    })
+  );
+
+  app.get(
+    `${admissionConfig.route}/export/excel`,
+    auth,
+    enforceRole(admissionConfig.allowedRoles),
+    enforcePermission(PERMISSIONS.VIEW),
+    asyncHandler(async (req, res) => {
+      const rows = await getPaginatedRows({
+        table: admissionConfig.table,
+        institutionId: req.user.institution_id,
+        searchFields: admissionConfig.searchFields,
+        q: req.query.q || "",
+        orderBy: ADMISSION_STATUS_ORDER_SQL,
+        limit: 5000
+      });
+      const formattedRows = formatLearnerStatusRows(rows);
+      const headers = formattedRows.length ? Object.keys(formattedRows[0]) : ["No Data"];
+      const dataRows = formattedRows.length
+        ? formattedRows.map((row) => headers.map((header) => row[header]))
+        : [];
+      await sendSimpleExcel(res, admissionConfig.table, headers, dataRows);
+    })
+  );
+}
+
 moduleConfigs.forEach((config) => {
+  if (config.route === "/api/admission/learners") {
+    return;
+  }
   app.get(
     config.route,
     auth,

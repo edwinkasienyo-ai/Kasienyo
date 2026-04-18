@@ -6,6 +6,26 @@ if (!token) {
 let meta = {};
 let currentModule = "dashboard";
 let currentEditId = null;
+let admissionSearchRows = [];
+
+const ADMISSION_SEARCH_FIELDS = [
+  { value: "full_name", label: "Name" },
+  { value: "admission_number", label: "Admission Number" },
+  { value: "upi_number", label: "UPI Number" },
+  { value: "assessment_number", label: "Assessment Number" },
+  { value: "birth_certificate_number", label: "Birth Certificate Number" },
+  { value: "status", label: "Status" },
+  { value: "grade", label: "Grade" },
+  { value: "form_name", label: "Form" }
+];
+
+const STATUS_COLORS = {
+  "In Session": "#188038",
+  "Not in Session": "#f6bf26",
+  Transferred: "#1a73e8",
+  Alumni: "#f57c00",
+  Deceased: "#d93025"
+};
 
 const moduleConfigs = {
   admission: {
@@ -40,7 +60,12 @@ const moduleConfigs = {
       { name: "orphan_condition", label: "Condition", type: "select", optionsKey: "orphanStatus" },
       { name: "status", label: "Status", type: "select", optionsKey: "admissionStatus" },
       { name: "parent_full_name", label: "Parent Name" },
-      { name: "parent_relationship", label: "Parent Relationship", type: "select", optionsKey: "relationshipOptions" },
+      {
+        name: "parent_relationship",
+        label: "Parent Relationship",
+        type: "select",
+        optionsKey: "relationshipOptions"
+      },
       { name: "parent_id_number", label: "Parent ID Number" },
       { name: "parent_phone", label: "Parent Phone Number" },
       { name: "parent_email", label: "Parent Email Address" }
@@ -96,7 +121,12 @@ const moduleConfigs = {
     title: "Attendance Management",
     endpoint: "/api/attendance/records",
     fields: [
-      { name: "attendance_type", label: "Attendance Type", type: "select", options: ["Teacher", "Learner", "Non-Teaching"] },
+      {
+        name: "attendance_type",
+        label: "Attendance Type",
+        type: "select",
+        options: ["Teacher", "Learner", "Non-Teaching"]
+      },
       { name: "person_id", label: "Person ID" },
       { name: "person_name", label: "Person Name" },
       { name: "grade", label: "Class/Grade", type: "select", optionsKey: "gradeOptions" },
@@ -104,7 +134,19 @@ const moduleConfigs = {
       { name: "attendance_date", label: "Attendance Date/Time", type: "datetime-local" },
       { name: "time_in", label: "Time In", type: "datetime-local" },
       { name: "time_out", label: "Time Out", type: "datetime-local" },
-      { name: "status", label: "Status", type: "select", options: ["Present", "Absent", "Late", "Official Duty", "Absent with Apology", "Absent with No Apology"] },
+      {
+        name: "status",
+        label: "Status",
+        type: "select",
+        options: [
+          "Present",
+          "Absent",
+          "Late",
+          "Official Duty",
+          "Absent with Apology",
+          "Absent with No Apology"
+        ]
+      },
       { name: "reason", label: "Reason for Absence" },
       { name: "comments", label: "Comment", type: "textarea" }
     ]
@@ -150,7 +192,12 @@ const moduleConfigs = {
     title: "HR - Leave Management",
     endpoint: "/api/hr/leave-requests",
     fields: [
-      { name: "staff_profile_type", label: "Staff Profile Type", type: "select", options: ["Teacher", "Non-Teaching Staff"] },
+      {
+        name: "staff_profile_type",
+        label: "Staff Profile Type",
+        type: "select",
+        options: ["Teacher", "Non-Teaching Staff"]
+      },
       { name: "staff_profile_id", label: "Staff Profile ID", type: "number" },
       { name: "staff_name", label: "Staff Name" },
       { name: "leave_type", label: "Leave Type", type: "select", optionsKey: "leaveTypes" },
@@ -158,14 +205,34 @@ const moduleConfigs = {
       { name: "end_date", label: "End Date", type: "date" },
       { name: "reason", label: "Reason", type: "textarea" },
       { name: "status", label: "Status", type: "select", options: ["Pending", "Approved", "Rejected"] },
-      { name: "approval_stage", label: "Approval Stage", type: "select", options: ["Member", "Loan Officer", "Principal", "Final"] }
+      {
+        name: "approval_stage",
+        label: "Approval Stage",
+        type: "select",
+        options: ["Member", "Loan Officer", "Principal", "Final"]
+      }
     ]
   },
   "hr-recruitment": {
     title: "HR - Recruitment and Letters",
     endpoint: "/api/hr/recruitment-records",
     fields: [
-      { name: "record_type", label: "Record Type", type: "select", options: ["Job Vacancy", "Shortlisting", "Appointment Letter", "Promotion Letter", "Suspension Letter", "Warning Letter", "Show Cause Letter", "Dismissal Letter", "Early Retirement"] },
+      {
+        name: "record_type",
+        label: "Record Type",
+        type: "select",
+        options: [
+          "Job Vacancy",
+          "Shortlisting",
+          "Appointment Letter",
+          "Promotion Letter",
+          "Suspension Letter",
+          "Warning Letter",
+          "Show Cause Letter",
+          "Dismissal Letter",
+          "Early Retirement"
+        ]
+      },
       { name: "position_name", label: "Job/Position" },
       { name: "candidate_name", label: "Name" },
       { name: "candidate_id_number", label: "ID Number" },
@@ -200,7 +267,12 @@ const moduleConfigs = {
       { name: "grade", label: "Grade", type: "select", optionsKey: "gradeOptions" },
       { name: "stream", label: "Stream" },
       { name: "amount_paid", label: "Amount Paid", type: "number" },
-      { name: "payment_method", label: "Payment Method", type: "select", options: ["Cash", "Bank", "Mpesa", "Cheque", "Other"] },
+      {
+        name: "payment_method",
+        label: "Payment Method",
+        type: "select",
+        options: ["Cash", "Bank", "Mpesa", "Cheque", "Other"]
+      },
       { name: "receipt_number", label: "Receipt Number" },
       { name: "payment_date", label: "Payment Date", type: "datetime-local" },
       { name: "balance_after_payment", label: "Balance After Payment", type: "number" }
@@ -230,7 +302,12 @@ const moduleConfigs = {
     fields: [
       { name: "title", label: "Title" },
       { name: "message", label: "Announcement Message", type: "textarea" },
-      { name: "audience", label: "Audience", type: "select", options: ["All", "Teachers", "Parents", "Learners", "Non-Teaching", "BOM"] },
+      {
+        name: "audience",
+        label: "Audience",
+        type: "select",
+        options: ["All", "Teachers", "Parents", "Learners", "Non-Teaching", "BOM"]
+      },
       { name: "start_date", label: "Start Date", type: "date" },
       { name: "end_date", label: "End Date", type: "date" }
     ]
@@ -239,8 +316,18 @@ const moduleConfigs = {
     title: "Communication - SMS and Notifications",
     endpoint: "/api/communication/messages",
     fields: [
-      { name: "message_type", label: "Message Type", type: "select", options: ["SMS", "Email", "Push", "Parent Result Notice", "Fee Reminder"] },
-      { name: "recipient_role", label: "Recipient Role", type: "select", options: ["Parent", "Teacher", "Head", "Admin", "BOM", "Learner", "Non-Teaching"] },
+      {
+        name: "message_type",
+        label: "Message Type",
+        type: "select",
+        options: ["SMS", "Email", "Push", "Parent Result Notice", "Fee Reminder"]
+      },
+      {
+        name: "recipient_role",
+        label: "Recipient Role",
+        type: "select",
+        options: ["Parent", "Teacher", "Head", "Admin", "BOM", "Learner", "Non-Teaching"]
+      },
       { name: "recipient_contact", label: "Recipient Contact (Phone/Email)" },
       { name: "message_body", label: "Message Body", type: "textarea" },
       { name: "status", label: "Status", type: "select", options: ["Queued", "Sent", "Failed"] },
@@ -267,7 +354,12 @@ const moduleConfigs = {
       { name: "member_name", label: "Member Name" },
       { name: "contribution_period", label: "Contribution Period (Month/Term)" },
       { name: "amount", label: "Amount", type: "number" },
-      { name: "payment_mode", label: "Payment Mode", type: "select", options: ["Cash", "Bank", "Mpesa", "Payroll Deduction", "Other"] },
+      {
+        name: "payment_mode",
+        label: "Payment Mode",
+        type: "select",
+        options: ["Cash", "Bank", "Mpesa", "Payroll Deduction", "Other"]
+      },
       { name: "payment_date", label: "Payment Date", type: "date" }
     ]
   },
@@ -280,10 +372,30 @@ const moduleConfigs = {
       { name: "amount", label: "Loan Amount", type: "number" },
       { name: "application_date", label: "Application Date", type: "date" },
       { name: "return_date", label: "Return Date", type: "date" },
-      { name: "status", label: "Overall Status", type: "select", options: ["Pending", "Approved", "Rejected", "Disbursed", "Closed"] },
-      { name: "loan_officer_approval", label: "Loan Officer Approval", type: "select", options: ["Pending", "Approved", "Rejected"] },
-      { name: "principal_approval", label: "Principal Approval", type: "select", options: ["Pending", "Approved", "Rejected"] },
-      { name: "repayment_status", label: "Repayment Tracking", type: "select", options: ["Not Started", "In Progress", "Completed", "Defaulted"] }
+      {
+        name: "status",
+        label: "Overall Status",
+        type: "select",
+        options: ["Pending", "Approved", "Rejected", "Disbursed", "Closed"]
+      },
+      {
+        name: "loan_officer_approval",
+        label: "Loan Officer Approval",
+        type: "select",
+        options: ["Pending", "Approved", "Rejected"]
+      },
+      {
+        name: "principal_approval",
+        label: "Principal Approval",
+        type: "select",
+        options: ["Pending", "Approved", "Rejected"]
+      },
+      {
+        name: "repayment_status",
+        label: "Repayment Tracking",
+        type: "select",
+        options: ["Not Started", "In Progress", "Completed", "Defaulted"]
+      }
     ]
   },
   laws: {
@@ -324,9 +436,8 @@ async function request(path, options = {}) {
 
 function buildInput(field) {
   const id = `field-${field.name}`;
-  const value = "";
   if (field.type === "textarea") {
-    return `<label>${field.label}</label><textarea id="${id}" rows="3" placeholder="${field.label}">${value}</textarea>`;
+    return `<label>${field.label}</label><textarea id="${id}" rows="3" placeholder="${field.label}"></textarea>`;
   }
   if (field.type === "select") {
     const options = field.options || meta[field.optionsKey] || [];
@@ -335,7 +446,89 @@ function buildInput(field) {
       .join("");
     return `<label>${field.label}</label><select id="${id}">${optionHtml}</select>`;
   }
-  return `<label>${field.label}</label><input id="${id}" type="${field.type || "text"}" placeholder="${field.label}" value="${value}"/>`;
+  return `<label>${field.label}</label><input id="${id}" type="${field.type || "text"}" placeholder="${field.label}" />`;
+}
+
+function statusColor(status) {
+  return STATUS_COLORS[status] || "#5f7187";
+}
+
+function statusBadgeHtml(status) {
+  return `<span class="status-badge" style="background:${statusColor(status)}">${status || "N/A"}</span>`;
+}
+
+function admissionToolsHtml() {
+  return `
+    <div class="admission-tools">
+      <h4>Admission Bulk Upload and Search Tools</h4>
+      <p class="small-note">Download template, fill learner biodata, upload Excel, then add photos while editing each learner.</p>
+      <div class="admission-tools-grid">
+        <div>
+          <label>Excel Template + Upload</label>
+          <div class="actions-row">
+            <button id="downloadAdmissionTemplateButton">Download Excel Template</button>
+            <input id="admissionExcelInput" type="file" accept=".xlsx" />
+            <button id="uploadAdmissionExcelButton">Upload Filled Excel</button>
+          </div>
+        </div>
+        <div>
+          <label>Search learner record</label>
+          <div class="search-row">
+            <select id="admissionSearchField">
+              ${ADMISSION_SEARCH_FIELDS.map((item) => `<option value="${item.value}">${item.label}</option>`).join("")}
+            </select>
+            <input id="admissionSearchValue" placeholder="Search value" />
+            <select id="admissionSearchStatus">
+              <option value="">Any status</option>
+              ${(meta.admissionStatus || []).map((status) => `<option value="${status}">${status}</option>`).join("")}
+            </select>
+            <button id="admissionSearchButton">Search</button>
+          </div>
+        </div>
+      </div>
+      <div class="actions-row">
+        <button id="admissionRecordPrintButton">Print Records</button>
+      </div>
+    </div>
+  `;
+}
+
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
+
+function bindAdmissionMutualExclusion() {
+  const gradeEl = document.getElementById("field-grade");
+  const formEl = document.getElementById("field-form_name");
+  if (!gradeEl || !formEl) return;
+
+  const sync = () => {
+    const gradeHasValue = String(gradeEl.value || "").trim() !== "";
+    const formHasValue = String(formEl.value || "").trim() !== "";
+
+    if (gradeHasValue) {
+      formEl.value = "";
+      formEl.disabled = true;
+    } else {
+      formEl.disabled = false;
+    }
+
+    if (formHasValue) {
+      gradeEl.value = "";
+      gradeEl.disabled = true;
+    } else {
+      gradeEl.disabled = false;
+    }
+  };
+
+  gradeEl.addEventListener("change", sync);
+  formEl.addEventListener("change", sync);
+  sync();
 }
 
 function getFieldValue(field) {
@@ -408,6 +601,9 @@ async function editRow(id) {
     const row = await request(`${config.endpoint}/${id}`);
     currentEditId = row.id;
     config.fields.forEach((field) => setFieldValue(field, row[field.name]));
+    if (currentModule === "admission") {
+      bindAdmissionMutualExclusion();
+    }
   } catch (error) {
     alert(error.message);
   }
@@ -438,7 +634,157 @@ async function exportExcel() {
   window.open(`${config.endpoint}/export/excel`, "_blank");
 }
 
+async function downloadAdmissionTemplate() {
+  window.open("/api/admission/learners/template/excel", "_blank");
+}
+
+async function uploadAdmissionExcel() {
+  const fileInput = document.getElementById("admissionExcelInput");
+  if (!fileInput || !fileInput.files || !fileInput.files[0]) {
+    alert("Select a completed .xlsx template first.");
+    return;
+  }
+  const formData = new FormData();
+  formData.append("file", fileInput.files[0]);
+  try {
+    const response = await fetch("/api/admission/learners/bulk-upload", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`
+      },
+      body: formData
+    });
+    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(data.error || "Bulk upload failed.");
+    }
+    const rejected = data.rejectedRows?.length || 0;
+    alert(`Bulk upload completed. Processed: ${data.insertedOrUpdated || 0}. Rejected: ${rejected}.`);
+    fileInput.value = "";
+    await loadModuleData(moduleConfigs.admission);
+  } catch (error) {
+    alert(error.message);
+  }
+}
+
+async function searchAdmission() {
+  const field = document.getElementById("admissionSearchField")?.value || "full_name";
+  const value = document.getElementById("admissionSearchValue")?.value?.trim() || "";
+  const status = document.getElementById("admissionSearchStatus")?.value || "";
+  try {
+    const query = new URLSearchParams({ field, value, status });
+    const rows = await request(`/api/admission/learners/search?${query.toString()}`);
+    admissionSearchRows = rows || [];
+    renderAdmissionTable(admissionSearchRows);
+  } catch (error) {
+    alert(error.message);
+  }
+}
+
+async function uploadLearnerPhoto(learnerId) {
+  const input = document.createElement("input");
+  input.type = "file";
+  input.accept = "image/*";
+  input.onchange = async () => {
+    if (!input.files?.[0]) return;
+    const formData = new FormData();
+    formData.append("photo", input.files[0]);
+    try {
+      const response = await fetch(`/api/admission/learners/photo-upload/${learnerId}`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`
+        },
+        body: formData
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.error || "Photo upload failed.");
+      }
+      alert("Photo uploaded successfully.");
+      await loadModuleData(moduleConfigs.admission);
+    } catch (error) {
+      alert(error.message);
+    }
+  };
+  input.click();
+}
+
+function viewLearnerRecord(learnerId) {
+  window.open(`/api/admission/learners/${learnerId}/export/pdf`, "_blank");
+}
+
+function downloadLearnerRecord(learnerId) {
+  window.open(`/api/admission/learners/${learnerId}/export/pdf`, "_blank");
+}
+
+function printLearnerRecord(learnerId) {
+  window.open(`/api/admission/learners/${learnerId}/export/pdf`, "_blank");
+}
+
+function renderAdmissionTable(rows) {
+  const head = document.getElementById("tableHead");
+  const body = document.getElementById("tableBody");
+  if (!rows.length) {
+    head.innerHTML = "";
+    body.innerHTML = "<tr><td>No learners found.</td></tr>";
+    return;
+  }
+
+  head.innerHTML = `
+    <tr>
+      <th>Photo</th>
+      <th>First Name</th>
+      <th>Admission No</th>
+      <th>Class Section</th>
+      <th>UPI</th>
+      <th>Assessment</th>
+      <th>Birth Cert</th>
+      <th>Status</th>
+      <th>Parent</th>
+      <th>Actions</th>
+    </tr>
+  `;
+
+  body.innerHTML = rows
+    .map(
+      (row) => `
+      <tr>
+        <td>${
+          row.passport_photo_path
+            ? `<img src="${escapeHtml(row.passport_photo_path)}" alt="photo" class="photo-preview" />`
+            : "<span class='small-note'>No photo</span>"
+        }</td>
+        <td>${escapeHtml(row.first_name || row.full_name || "")}</td>
+        <td>${escapeHtml(row.admission_number || "")}</td>
+        <td>${escapeHtml(row.grade || row.form_name || "")} ${escapeHtml(row.stream || "")}</td>
+        <td>${escapeHtml(row.upi_number || "")}</td>
+        <td>${escapeHtml(row.assessment_number || "")}</td>
+        <td>${escapeHtml(row.birth_certificate_number || "")}</td>
+        <td>${statusBadgeHtml(row.status)}</td>
+        <td>${escapeHtml(row.parent_full_name || "")}<br/><span class="small-note">${escapeHtml(row.parent_phone || "")}</span></td>
+        <td>
+          <div class="table-actions">
+            <button onclick="admissionAction('edit', ${row.id})">Edit</button>
+            <button class="danger" onclick="admissionAction('delete', ${row.id})">Delete</button>
+            <button onclick="admissionAction('uploadPhoto', ${row.id})">Photo</button>
+            <button onclick="admissionAction('view', ${row.id})">View</button>
+            <button onclick="admissionAction('download', ${row.id})">Download</button>
+            <button onclick="admissionAction('print', ${row.id})">Print</button>
+          </div>
+        </td>
+      </tr>
+    `
+    )
+    .join("");
+}
+
 function renderTable(rows) {
+  if (currentModule === "admission") {
+    renderAdmissionTable(rows || []);
+    return;
+  }
+
   const head = document.getElementById("tableHead");
   const body = document.getElementById("tableBody");
 
@@ -451,7 +797,6 @@ function renderTable(rows) {
   const allKeys = Object.keys(rows[0]).filter((key) => !["details_json", "generated_exam_text"].includes(key));
   const shownKeys = allKeys.slice(0, 10);
   head.innerHTML = `<tr>${shownKeys.map((key) => `<th>${key}</th>`).join("")}<th>Actions</th></tr>`;
-
   body.innerHTML = rows
     .map(
       (row) => `
@@ -470,18 +815,35 @@ function renderTable(rows) {
 async function loadModuleData(config) {
   try {
     const rows = await request(config.endpoint);
+    if (currentModule === "admission") {
+      admissionSearchRows = rows || [];
+    }
     renderTable(rows || []);
   } catch (error) {
     alert(error.message);
   }
 }
 
+function bindAdmissionTools() {
+  const downloadTemplateButton = document.getElementById("downloadAdmissionTemplateButton");
+  const uploadExcelButton = document.getElementById("uploadAdmissionExcelButton");
+  const searchButton = document.getElementById("admissionSearchButton");
+  const printRecordButton = document.getElementById("admissionRecordPrintButton");
+  if (downloadTemplateButton) downloadTemplateButton.onclick = downloadAdmissionTemplate;
+  if (uploadExcelButton) uploadExcelButton.onclick = uploadAdmissionExcel;
+  if (searchButton) searchButton.onclick = searchAdmission;
+  if (printRecordButton) printRecordButton.onclick = () => window.print();
+}
+
 function renderCrudModule(moduleKey) {
   const config = moduleConfigs[moduleKey];
   document.getElementById("moduleTitle").textContent = config.title;
   document.getElementById("cards").innerHTML = "";
+  const extraTools = moduleKey === "admission" ? admissionToolsHtml() : "";
+
   document.getElementById("formArea").innerHTML = `
     <h3>${config.title}</h3>
+    ${extraTools}
     <div class="form-grid">
       ${config.fields.map(buildInput).join("")}
     </div>
@@ -495,6 +857,7 @@ function renderCrudModule(moduleKey) {
       <button id="viewButton">View</button>
     </div>
   `;
+
   document.getElementById("saveButton").onclick = saveCurrentModule;
   document.getElementById("clearButton").onclick = () => clearForm(config);
   document.getElementById("processButton").onclick = () => alert("Processing completed for this module.");
@@ -502,6 +865,12 @@ function renderCrudModule(moduleKey) {
   document.getElementById("downloadExcelButton").onclick = exportExcel;
   document.getElementById("printButton").onclick = () => window.print();
   document.getElementById("viewButton").onclick = () => loadModuleData(config);
+
+  if (moduleKey === "admission") {
+    bindAdmissionTools();
+    bindAdmissionMutualExclusion();
+  }
+
   loadModuleData(config);
 }
 
@@ -575,10 +944,7 @@ async function loadLearnerMaterials() {
   document.getElementById("refreshLearner").onclick = loadLearnerMaterials;
   document.getElementById("printLearner").onclick = () => window.print();
   try {
-    const [materials, marks] = await Promise.all([
-      request("/api/learner/materials"),
-      request("/api/learner/marks")
-    ]);
+    const [materials, marks] = await Promise.all([request("/api/learner/materials"), request("/api/learner/marks")]);
     renderTable([...(materials || []), ...(marks || [])]);
   } catch (error) {
     document.getElementById("tableHead").innerHTML = "";
@@ -645,10 +1011,37 @@ function bindTopbarButtons() {
     localStorage.clear();
     window.location.href = "/";
   });
-  document
-    .getElementById("changeCredentialsButton")
-    .addEventListener("click", changeCredentials);
+  document.getElementById("changeCredentialsButton").addEventListener("click", changeCredentials);
 }
+
+window.admissionAction = async (action, learnerId) => {
+  if (action === "edit") {
+    await editRow(learnerId);
+    return;
+  }
+  if (action === "delete") {
+    await deleteRow(learnerId);
+    return;
+  }
+  if (action === "uploadPhoto") {
+    await uploadLearnerPhoto(learnerId);
+    return;
+  }
+  if (action === "view") {
+    viewLearnerRecord(learnerId);
+    return;
+  }
+  if (action === "download") {
+    downloadLearnerRecord(learnerId);
+    return;
+  }
+  if (action === "print") {
+    printLearnerRecord(learnerId);
+  }
+};
+
+window.editRow = editRow;
+window.deleteRow = deleteRow;
 
 async function init() {
   try {
@@ -663,6 +1056,4 @@ async function init() {
   }
 }
 
-window.editRow = editRow;
-window.deleteRow = deleteRow;
 init();
