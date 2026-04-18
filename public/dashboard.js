@@ -1044,12 +1044,12 @@ function admissionToolsHtml() {
       <p class="small-note">Download template, fill learner biodata, upload Excel/CSV, then add photos while editing each learner, batch filenames (AdmissionNumber.jpg), or ZIP upload.</p>
       <div class="admission-requirements">
         <h5>Requested Admission Amendments (A-E)</h5>
-        <ul>
-          <li><strong>A.</strong> Biodata template download + filled Excel/CSV upload for bulk entry, with photo support via edit/upload actions.</li>
-          <li><strong>B.</strong> Grade/Form mutual exclusion (choose one only).</li>
-          <li><strong>C.</strong> Status colors + status-first then first-name sorting, including print/download outputs.</li>
-          <li><strong>D.</strong> Search results actions: Edit, Delete, Photo, View, Download, Print.</li>
-          <li><strong>E.</strong> Record printing buttons for admission listings and grouped register.</li>
+        <ul id="admissionAmendmentChecklist">
+          <li data-check="a"><strong>A.</strong> Biodata template download + filled Excel/CSV upload for bulk entry, with photo support via edit/upload actions.</li>
+          <li data-check="b"><strong>B.</strong> Grade/Form mutual exclusion (choose one only).</li>
+          <li data-check="c"><strong>C.</strong> Status colors + status-first then first-name sorting, including print/download outputs.</li>
+          <li data-check="d"><strong>D.</strong> Search results actions: Edit, Delete, Photo, View, Download, Print.</li>
+          <li data-check="e"><strong>E.</strong> Record printing buttons for admission listings and grouped register.</li>
         </ul>
       </div>
       <div class="guided-toggle-row">
@@ -1165,6 +1165,34 @@ function bindAdmissionMutualExclusion() {
   gradeEl.addEventListener("change", sync);
   formEl.addEventListener("change", sync);
   sync();
+}
+
+function updateAdmissionAmendmentChecklist() {
+  const checklist = document.getElementById("admissionAmendmentChecklist");
+  if (!checklist) return;
+  const checks = {
+    a:
+      Boolean(document.getElementById("downloadAdmissionTemplateButton")) &&
+      Boolean(document.getElementById("uploadAdmissionExcelButton")),
+    b: Boolean(document.getElementById("field-grade")) && Boolean(document.getElementById("field-form_name")),
+    c: Array.isArray(meta?.admissionStatus) && meta.admissionStatus.length > 0,
+    d:
+      Boolean(document.getElementById("admissionSearchButton")) &&
+      admissionSearchRows.every((row) => row && row.id !== undefined),
+    e:
+      Boolean(document.getElementById("admissionRecordPrintButton")) &&
+      Boolean(document.getElementById("admissionGroupedRegisterButton"))
+  };
+
+  checklist.querySelectorAll("li[data-check]").forEach((item) => {
+    const key = item.dataset.check;
+    const ready = Boolean(checks[key]);
+    item.classList.toggle("is-ready", ready);
+    item.classList.toggle("is-attention", !ready);
+    const badgeText = ready ? "Ready" : "Attention";
+    const badgeClass = ready ? "amendment-ready" : "amendment-attention";
+    item.innerHTML = `${item.innerHTML.replace(/<span class="amendment-badge[^>]*>.*?<\/span>/, "")}<span class="amendment-badge ${badgeClass}">${badgeText}</span>`;
+  });
 }
 
 function getFieldValue(field) {
@@ -1799,6 +1827,7 @@ function renderAdmissionTable(rows) {
     `
     )
     .join("");
+  updateAdmissionAmendmentChecklist();
 }
 
 function renderTable(rows) {
@@ -1916,6 +1945,7 @@ function bindAdmissionTools() {
   renderAdmissionFixQueueState();
   renderAdmissionIntegrityAuditSummary();
   renderAdmissionGuidance();
+  updateAdmissionAmendmentChecklist();
 }
 
 function renderCrudModule(moduleKey) {

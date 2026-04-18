@@ -354,6 +354,54 @@ button:hover {
   color: #1c3856;
 }
 
+.amendment-checklist ul {
+  list-style: none;
+  padding-left: 0;
+}
+
+.amendment-checklist li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border: 1px solid #e2eaf4;
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: #fbfdff;
+  margin: 6px 0;
+}
+
+.amendment-item-text {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.amendment-item-text strong {
+  color: #0f3e67;
+}
+
+.amendment-badge {
+  font-size: 11px;
+  font-weight: 700;
+  border-radius: 999px;
+  padding: 4px 8px;
+  white-space: nowrap;
+}
+
+.amendment-ready {
+  background: #e6f4ea;
+  color: #1d5f39;
+  border: 1px solid #b7dec2;
+}
+
+.amendment-attention {
+  background: #fff4e5;
+  color: #8a4f12;
+  border: 1px solid #f2d1a7;
+}
+
 .guided-toggle-row {
   display: flex;
   align-items: center;
