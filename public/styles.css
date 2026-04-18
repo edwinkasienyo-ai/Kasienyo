@@ -338,6 +338,17 @@ button:hover {
   margin: 0;
 }
 
+.guided-toggle-row label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.guided-toggle-row .fix-queue-active {
+  color: #8b1e1e;
+  font-weight: 700;
+}
+
 .guided-checklist {
   border: 1px solid #d8e5f4;
   border-radius: 10px;
@@ -495,6 +506,12 @@ button:hover {
 
 .admission-completeness-table tr:last-child td {
   border-bottom: none;
+}
+
+.admission-extra-report-tools {
+  margin-top: 10px;
+  border-top: 1px dashed #ccd9ea;
+  padding-top: 8px;
 }
 
 .admission-status-summary {

@@ -762,6 +762,37 @@ function admissionCompletenessTableHtml(learners = []) {
   `;
 }
 
+function admissionCompletenessDownloadUrl({ status = "", onlyIncomplete = false } = {}) {
+  const query = new URLSearchParams();
+  if (status) query.set("status", status);
+  if (onlyIncomplete) query.set("incomplete_only", "1");
+  const suffix = query.toString() ? `?${query.toString()}` : "";
+  return `/api/admission/learners/completeness/export/csv${suffix}`;
+}
+
+function admissionReadinessPrintUrl({ status = "", onlyIncomplete = false } = {}) {
+  const query = new URLSearchParams();
+  if (status) query.set("status", status);
+  if (onlyIncomplete) query.set("incomplete_only", "1");
+  const suffix = query.toString() ? `?${query.toString()}` : "";
+  return `/api/admission/learners/readiness/print${suffix}`;
+}
+
+function currentAdmissionSearchStatus() {
+  return document.getElementById("admissionSearchStatus")?.value || "";
+}
+
+function currentAdmissionIncompleteOnlyMode() {
+  return document.getElementById("admissionIncompleteOnlyToggle")?.checked || false;
+}
+
+function syncAdmissionIncompleteToggleFromDataset() {
+  const toggle = document.getElementById("admissionIncompleteOnlyToggle");
+  if (!toggle) return;
+  if (!admissionCompletenessCache) return;
+  toggle.checked = Boolean(admissionCompletenessCache.onlyIncomplete);
+}
+
 function renderAdmissionGuidance() {
   const panel = document.getElementById("admissionGuidancePanel");
   if (!panel || currentModule !== "admission") return;
@@ -771,8 +802,9 @@ function renderAdmissionGuidance() {
   const completed = steps.filter((step) => Boolean(step.done)).length;
   const summary = admissionCompletenessCache?.summary || {};
   const learners = admissionCompletenessCache?.learners || [];
-  const statusFilter = document.getElementById("admissionSearchStatus")?.value || "";
+  const statusFilter = currentAdmissionSearchStatus();
   const activeFilter = statusFilter || "All statuses";
+  const incompleteOnly = currentAdmissionIncompleteOnlyMode();
   const stepItems = steps
     .map((step) => {
       const done = Boolean(step.done);
@@ -816,6 +848,14 @@ function renderAdmissionGuidance() {
               <button type="button" onclick="quickFilterAdmissionStatus('Transferred')">Transferred</button>
               <button type="button" onclick="quickFilterAdmissionStatus('Alumni')">Alumni</button>
               <button type="button" onclick="quickFilterAdmissionStatus('Deceased')">Deceased</button>
+              <button type="button" onclick="applyAdmissionFixQueue()">Fix Queue</button>
+            </div>
+            <div class="actions-row completeness-tools">
+              <button type="button" onclick="downloadAdmissionCompletenessReport()">Download Completeness CSV</button>
+              <button type="button" onclick="printAdmissionReadinessReport()">Print Readiness Report</button>
+              <span class="small-note">Mode: ${
+                incompleteOnly ? "Incomplete records only" : "All records"
+              }</span>
             </div>
             ${admissionCompletenessTableHtml(learners)}
           </div>
@@ -830,9 +870,11 @@ async function refreshAdmissionGuidanceData(force = false) {
     renderAdmissionGuidance();
     return;
   }
-  const status = document.getElementById("admissionSearchStatus")?.value || "";
+  const status = currentAdmissionSearchStatus();
+  const onlyIncomplete = currentAdmissionIncompleteOnlyMode();
   const query = new URLSearchParams();
   if (status) query.set("status", status);
+  if (onlyIncomplete) query.set("incomplete_only", "1");
   const suffix = query.toString() ? `?${query.toString()}` : "";
   try {
     const [workflow, completeness] = await Promise.all([
@@ -845,6 +887,7 @@ async function refreshAdmissionGuidanceData(force = false) {
     admissionGuidedStepState = [];
     admissionCompletenessCache = null;
   }
+  syncAdmissionIncompleteToggleFromDataset();
   renderAdmissionGuidance();
 }
 
@@ -869,6 +912,32 @@ async function quickFilterAdmissionStatus(status) {
   await refreshAdmissionGuidanceData(true);
 }
 
+async function toggleAdmissionIncompleteOnly(enabled) {
+  const toggle = document.getElementById("admissionIncompleteOnlyToggle");
+  if (toggle) toggle.checked = Boolean(enabled);
+  await searchAdmission();
+  await refreshAdmissionStatusSummary();
+  await refreshAdmissionGuidanceData(true);
+}
+
+async function applyAdmissionFixQueue() {
+  const toggle = document.getElementById("admissionIncompleteOnlyToggle");
+  if (toggle) toggle.checked = true;
+  await toggleAdmissionIncompleteOnly(true);
+}
+
+function downloadAdmissionCompletenessReport() {
+  const status = currentAdmissionSearchStatus();
+  const onlyIncomplete = currentAdmissionIncompleteOnlyMode();
+  openProtectedUrl(admissionCompletenessDownloadUrl({ status, onlyIncomplete }));
+}
+
+function printAdmissionReadinessReport() {
+  const status = currentAdmissionSearchStatus();
+  const onlyIncomplete = currentAdmissionIncompleteOnlyMode();
+  openProtectedUrl(admissionReadinessPrintUrl({ status, onlyIncomplete }));
+}
+
 async function runAdmissionGuidedStep(stepKey) {
   if (stepKey === "step-1") {
     const firstNameField = document.getElementById("field-first_name");
@@ -876,7 +945,7 @@ async function runAdmissionGuidedStep(stepKey) {
     return;
   }
   if (stepKey === "step-2") {
-    await refreshAdmissionGuidanceData(true);
+    await downloadAdmissionCompletenessReport();
     return;
   }
   if (stepKey === "step-3") {
@@ -885,8 +954,8 @@ async function runAdmissionGuidedStep(stepKey) {
     return;
   }
   if (stepKey === "step-4") {
-    await quickFilterAdmissionStatus("");
-    alert("Add parent phone or email for learners missing contact information.");
+    await applyAdmissionFixQueue();
+    alert("Fix Queue enabled. Add parent phone or email for learners missing contact information.");
     return;
   }
   if (stepKey === "step-5") {
@@ -902,6 +971,8 @@ function admissionToolsHtml() {
       <p class="small-note">Download template, fill learner biodata, upload Excel/CSV, then add photos while editing each learner, batch filenames (AdmissionNumber.jpg), or ZIP upload.</p>
       <div class="guided-toggle-row">
         <label><input id="guidedModeToggle" type="checkbox" ${admissionGuidedModeEnabled ? "checked" : ""} /> Guided Mode</label>
+        <label><input id="admissionIncompleteOnlyToggle" type="checkbox" /> Incomplete only</label>
+        <button id="applyAdmissionFixQueueButton" type="button">Apply Fix Queue</button>
         <button id="refreshAdmissionGuidanceButton" type="button">Refresh Guidance Data</button>
       </div>
       <div id="admissionGuidancePanel" class="admission-guidance-panel"></div>
@@ -950,6 +1021,8 @@ function admissionToolsHtml() {
       <div class="actions-row">
         <button id="admissionRecordPrintButton">Print Records</button>
         <button id="admissionGroupedRegisterButton">Print Grouped Register</button>
+        <button id="admissionReadinessReportButton">Print Readiness Report</button>
+        <button id="admissionCompletenessCsvButton">Download Completeness CSV</button>
         <button id="refreshAdmissionSummaryButton">Refresh Status Summary</button>
       </div>
       <div id="admissionStatusSummary" class="admission-status-summary"></div>
@@ -1441,8 +1514,10 @@ async function searchAdmission() {
   const field = document.getElementById("admissionSearchField")?.value || "full_name";
   const value = document.getElementById("admissionSearchValue")?.value?.trim() || "";
   const status = document.getElementById("admissionSearchStatus")?.value || "";
+  const onlyIncomplete = currentAdmissionIncompleteOnlyMode();
   try {
     const query = new URLSearchParams({ field, value, status });
+    if (onlyIncomplete) query.set("incomplete_only", "1");
     const rows = await request(`/api/admission/learners/search?${query.toString()}`);
     admissionSearchRows = rows || [];
     renderAdmissionTable(admissionSearchRows);
@@ -1638,8 +1713,12 @@ function bindAdmissionTools() {
   const searchButton = document.getElementById("admissionSearchButton");
   const printRecordButton = document.getElementById("admissionRecordPrintButton");
   const groupedRegisterButton = document.getElementById("admissionGroupedRegisterButton");
+  const readinessReportButton = document.getElementById("admissionReadinessReportButton");
+  const completenessCsvButton = document.getElementById("admissionCompletenessCsvButton");
   const refreshSummaryButton = document.getElementById("refreshAdmissionSummaryButton");
   const guidedModeToggle = document.getElementById("guidedModeToggle");
+  const incompleteOnlyToggle = document.getElementById("admissionIncompleteOnlyToggle");
+  const applyFixQueueButton = document.getElementById("applyAdmissionFixQueueButton");
   const refreshGuidanceButton = document.getElementById("refreshAdmissionGuidanceButton");
   if (downloadTemplateButton) downloadTemplateButton.onclick = downloadAdmissionTemplate;
   if (downloadCsvTemplateButton) downloadCsvTemplateButton.onclick = downloadAdmissionCsvTemplate;
@@ -1656,13 +1735,22 @@ function bindAdmissionTools() {
   }
   if (printRecordButton) printRecordButton.onclick = printAdmissionCurrentTable;
   if (groupedRegisterButton) groupedRegisterButton.onclick = printAdmissionGroupedRegister;
+  if (readinessReportButton) readinessReportButton.onclick = printAdmissionReadinessReport;
+  if (completenessCsvButton) completenessCsvButton.onclick = downloadAdmissionCompletenessReport;
   if (refreshSummaryButton) refreshSummaryButton.onclick = refreshAdmissionStatusSummary;
   if (guidedModeToggle) {
     guidedModeToggle.onchange = (event) => toggleAdmissionGuidedMode(event.target.checked);
   }
+  if (incompleteOnlyToggle) {
+    incompleteOnlyToggle.onchange = (event) => toggleAdmissionIncompleteOnly(event.target.checked);
+  }
+  if (applyFixQueueButton) {
+    applyFixQueueButton.onclick = applyAdmissionFixQueue;
+  }
   if (refreshGuidanceButton) {
     refreshGuidanceButton.onclick = () => refreshAdmissionGuidanceData(true);
   }
+  syncAdmissionIncompleteToggleFromDataset();
   renderAdmissionGuidance();
 }
 
@@ -1882,6 +1970,9 @@ window.quickFilterAdmissionStatus = quickFilterAdmissionStatus;
 window.runAdmissionGuidedStep = runAdmissionGuidedStep;
 window.toggleAdmissionGuidedMode = toggleAdmissionGuidedMode;
 window.refreshAdmissionGuidanceData = refreshAdmissionGuidanceData;
+window.applyAdmissionFixQueue = applyAdmissionFixQueue;
+window.downloadAdmissionCompletenessReport = downloadAdmissionCompletenessReport;
+window.printAdmissionReadinessReport = printAdmissionReadinessReport;
 
 window.editRow = editRow;
 window.deleteRow = deleteRow;

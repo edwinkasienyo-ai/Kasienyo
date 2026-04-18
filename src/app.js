@@ -726,6 +726,180 @@ function admissionGuideStepFlags(summary = {}) {
   ];
 }
 
+function admissionCompletenessSummary(profiles = []) {
+  const totals = profiles.reduce(
+    (acc, item) => {
+      acc.totalLearners += 1;
+      acc.completenessSum += Number(item.completeness_percentage || 0);
+      if (Number(item.completeness_percentage || 0) >= 90) acc.highCompleteness += 1;
+      if (Number(item.completeness_percentage || 0) >= 70) acc.mediumCompleteness += 1;
+      if (normalizeText(item.passport_photo_path)) acc.withPhotos += 1;
+      if (normalizeText(item.parent_phone) || normalizeText(item.parent_email)) acc.withParentContact += 1;
+      if (!ADMISSION_STATUS.includes(normalizeText(item.status))) acc.invalidStatusCount += 1;
+      if (!normalizeText(item.parent_phone) && !normalizeText(item.parent_email)) {
+        acc.missingParentContactsCount += 1;
+      }
+      return acc;
+    },
+    {
+      totalLearners: 0,
+      completenessSum: 0,
+      highCompleteness: 0,
+      mediumCompleteness: 0,
+      withPhotos: 0,
+      withParentContact: 0,
+      invalidStatusCount: 0,
+      missingParentContactsCount: 0
+    }
+  );
+
+  const averageCompleteness = totals.totalLearners
+    ? Math.round(totals.completenessSum / totals.totalLearners)
+    : 0;
+
+  return {
+    totalLearners: totals.totalLearners,
+    averageCompleteness,
+    highCompleteness: totals.highCompleteness,
+    mediumCompleteness: totals.mediumCompleteness,
+    withPhotos: totals.withPhotos,
+    withParentContact: totals.withParentContact,
+    invalidStatusCount: totals.invalidStatusCount,
+    missingParentContactsCount: totals.missingParentContactsCount
+  };
+}
+
+function buildAdmissionCompletenessCsv({ statusFilter = null, onlyIncomplete = false, summary = {}, learners = [] }) {
+  const escapeCsv = (value) => {
+    const text = String(value ?? "");
+    if (/[",\n]/.test(text)) {
+      return `"${text.replace(/"/g, '""')}"`;
+    }
+    return text;
+  };
+
+  const lines = [
+    `Generated At,${escapeCsv(dayjs().format("YYYY-MM-DD HH:mm"))}`,
+    `Status Filter,${escapeCsv(statusFilter || "All statuses")}`,
+    `Only Incomplete,${escapeCsv(onlyIncomplete ? "Yes" : "No")}`,
+    `Total Learners,${escapeCsv(summary.totalLearners || 0)}`,
+    `Average Completeness,${escapeCsv(`${summary.averageCompleteness || 0}%`)}`,
+    `90%+ Complete,${escapeCsv(summary.highCompleteness || 0)}`,
+    `70%+ Complete,${escapeCsv(summary.mediumCompleteness || 0)}`,
+    `With Photos,${escapeCsv(summary.withPhotos || 0)}`,
+    `With Parent Contact,${escapeCsv(summary.withParentContact || 0)}`,
+    `Invalid Status Count,${escapeCsv(summary.invalidStatusCount || 0)}`,
+    `Missing Parent Contacts Count,${escapeCsv(summary.missingParentContactsCount || 0)}`,
+    "",
+    "Learner Name,Admission Number,Status,Class Section,Parent Contact,Completeness %,Missing Fields"
+  ];
+
+  learners.forEach((learner) => {
+    const classSection = [learner.grade || learner.form_name || "", learner.stream || ""].join(" ").trim();
+    const parentContact = learner.parent_phone || learner.parent_email || "";
+    const missingFields = Array.isArray(learner.missing_fields) ? learner.missing_fields.join("; ") : "";
+    lines.push(
+      [
+        learner.first_name || learner.full_name || "",
+        learner.admission_number || "",
+        learner.status || "",
+        classSection,
+        parentContact,
+        `${Number(learner.completeness_percentage || 0)}%`,
+        missingFields
+      ]
+        .map(escapeCsv)
+        .join(",")
+    );
+  });
+
+  return lines.join("\n");
+}
+
+function admissionReadinessLabel(score) {
+  if (score >= 90) return "Ready";
+  if (score >= 75) return "Near Ready";
+  if (score >= 60) return "Needs Cleanup";
+  return "Critical";
+}
+
+function topMissingAdmissionFields(learners = []) {
+  const counts = new Map();
+  learners.forEach((learner) => {
+    (learner.missing_fields || []).forEach((fieldName) => {
+      const key = String(fieldName || "").trim();
+      if (!key) return;
+      counts.set(key, (counts.get(key) || 0) + 1);
+    });
+  });
+  return [...counts.entries()]
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .slice(0, 12);
+}
+
+async function buildAdmissionCompletenessDataset({
+  institutionId,
+  statusFilter = null,
+  onlyIncomplete = false
+}) {
+  const params = [institutionId];
+  let where = "WHERE institution_id = ?";
+  if (statusFilter) {
+    where += " AND status = ?";
+    params.push(statusFilter);
+  }
+
+  const rows = await query(
+    `SELECT *
+     FROM learners
+     ${where}
+     ORDER BY ${ADMISSION_STATUS_ORDER_SQL}`,
+    params
+  );
+
+  let profiles = rows.map((row) => {
+    const completeness = admissionCompletenessIndicators(row);
+    return {
+      id: row.id,
+      full_name: row.full_name,
+      first_name: row.first_name,
+      admission_number: row.admission_number,
+      status: row.status,
+      grade: row.grade,
+      form_name: row.form_name,
+      stream: row.stream,
+      upi_number: row.upi_number,
+      assessment_number: row.assessment_number,
+      birth_certificate_number: row.birth_certificate_number,
+      passport_photo_path: row.passport_photo_path,
+      parent_phone: row.parent_phone,
+      parent_email: row.parent_email,
+      parent_full_name: row.parent_full_name,
+      completeness_percentage: completeness.percentage,
+      missing_fields: completeness.missing
+    };
+  });
+
+  if (onlyIncomplete) {
+    profiles = profiles.filter(
+      (item) => Array.isArray(item.missing_fields) && item.missing_fields.length > 0
+    );
+    profiles.sort(
+      (a, b) =>
+        Number(a.completeness_percentage || 0) - Number(b.completeness_percentage || 0) ||
+        String(a.first_name || a.full_name || "").localeCompare(String(b.first_name || b.full_name || ""))
+    );
+  }
+
+  const summary = admissionCompletenessSummary(profiles);
+  return {
+    statusFilter: statusFilter || null,
+    onlyIncomplete: Boolean(onlyIncomplete),
+    summary,
+    learners: profiles
+  };
+}
+
 function colorFromHex(hex) {
   const normalized = String(hex || "#6d6d6d").replace("#", "");
   const safe = normalized.length === 6 ? normalized : "6d6d6d";
@@ -1629,6 +1803,9 @@ app.get(
     const field = String(req.query.field || "full_name");
     const value = String(req.query.value || "").trim();
     const status = String(req.query.status || "").trim();
+    const onlyIncomplete = ["1", "true", "yes", "y"].includes(
+      String(req.query.incomplete_only || "").trim().toLowerCase()
+    );
 
     if (!ALLOWED_ADMISSION_SEARCH_FIELDS.has(field)) {
       return res.status(400).json({ error: "Invalid admission search field selected." });
@@ -1651,7 +1828,14 @@ app.get(
        ORDER BY ${ADMISSION_STATUS_ORDER_SQL}`,
       params
     );
-    res.json(formatLearnerStatusRows(rows));
+    let formatted = formatLearnerStatusRows(rows);
+    if (onlyIncomplete) {
+      formatted = formatted.filter((row) => {
+        const completeness = admissionCompletenessIndicators(row);
+        return Array.isArray(completeness.missing) && completeness.missing.length > 0;
+      });
+    }
+    res.json(formatted);
   })
 );
 
@@ -1700,107 +1884,166 @@ app.get(
     if (statusFilter && !ADMISSION_STATUS.includes(statusFilter)) {
       return res.status(400).json({ error: "Invalid status filter provided." });
     }
-
-    const params = [req.user.institution_id];
-    let where = "WHERE institution_id = ?";
-    if (statusFilter) {
-      where += " AND status = ?";
-      params.push(statusFilter);
-    }
-
-    const rows = await query(
-      `SELECT *
-       FROM learners
-       ${where}
-       ORDER BY ${ADMISSION_STATUS_ORDER_SQL}`,
-      params
+    const onlyIncomplete = ["1", "true", "yes", "y"].includes(
+      String(req.query.incomplete_only || "").trim().toLowerCase()
     );
-
-    const profiles = rows.map((row) => {
-      const completeness = admissionCompletenessIndicators(row);
-      return {
-        id: row.id,
-        full_name: row.full_name,
-        first_name: row.first_name,
-        admission_number: row.admission_number,
-        status: row.status,
-        passport_photo_path: row.passport_photo_path,
-        parent_phone: row.parent_phone,
-        parent_email: row.parent_email,
-        parent_full_name: row.parent_full_name,
-        completeness_percentage: completeness.percentage,
-        missing_fields: completeness.missing
-      };
+    const dataset = await buildAdmissionCompletenessDataset({
+      institutionId: req.user.institution_id,
+      statusFilter,
+      onlyIncomplete
     });
-
-    const totals = profiles.reduce(
-      (acc, item) => {
-        acc.totalLearners += 1;
-        acc.completenessSum += Number(item.completeness_percentage || 0);
-        if (Number(item.completeness_percentage || 0) >= 90) acc.highCompleteness += 1;
-        if (Number(item.completeness_percentage || 0) >= 70) acc.mediumCompleteness += 1;
-        if (item.passport_photo_path) acc.withPhotos += 1;
-        if (item.parent_phone || item.parent_email) acc.withParentContact += 1;
-        return acc;
-      },
-      {
-        totalLearners: 0,
-        completenessSum: 0,
-        highCompleteness: 0,
-        mediumCompleteness: 0,
-        withPhotos: 0,
-        withParentContact: 0
-      }
-    );
-    const averageCompleteness = totals.totalLearners
-      ? Math.round(totals.completenessSum / totals.totalLearners)
-      : 0;
-
-    const [integrityTotals] = await query(
-      `SELECT
-         SUM(CASE WHEN status IS NULL OR status = '' OR status NOT IN (?, ?, ?, ?, ?) THEN 1 ELSE 0 END) invalid_status_count,
-         SUM(
-           CASE
-             WHEN (parent_phone IS NULL OR parent_phone = '')
-              AND (parent_email IS NULL OR parent_email = '')
-             THEN 1 ELSE 0
-           END
-         ) missing_parent_contacts_count
-       FROM learners
-       ${where}`,
-      [
-        ADMISSION_STATUS[0],
-        ADMISSION_STATUS[1],
-        ADMISSION_STATUS[2],
-        ADMISSION_STATUS[3],
-        ADMISSION_STATUS[4],
-        req.user.institution_id,
-        ...(statusFilter ? [statusFilter] : [])
-      ]
-    );
-
-    const summary = {
-      totalLearners: totals.totalLearners,
-      averageCompleteness,
-      highCompleteness: totals.highCompleteness,
-      mediumCompleteness: totals.mediumCompleteness,
-      withPhotos: totals.withPhotos,
-      withParentContact: totals.withParentContact,
-      invalidStatusCount: Number(integrityTotals?.invalid_status_count || 0),
-      missingParentContactsCount: Number(integrityTotals?.missing_parent_contacts_count || 0)
-    };
 
     await auditLog(req.user, "VIEW_ADMISSION_COMPLETENESS", "learners", null, {
       status: statusFilter || "ALL",
-      totalLearners: summary.totalLearners,
-      averageCompleteness: summary.averageCompleteness
+      onlyIncomplete,
+      totalLearners: dataset.summary.totalLearners,
+      averageCompleteness: dataset.summary.averageCompleteness
     });
 
-    res.json({
-      statusFilter: statusFilter || null,
-      summary,
-      learners: profiles
+    res.json(dataset);
+  })
+);
+
+app.get(
+  "/api/admission/learners/completeness/export/csv",
+  auth,
+  enforceRole([ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER]),
+  enforcePermission(PERMISSIONS.VIEW),
+  asyncHandler(async (req, res) => {
+    const statusFilter = normalizeText(req.query.status);
+    if (statusFilter && !ADMISSION_STATUS.includes(statusFilter)) {
+      return res.status(400).json({ error: "Invalid status filter provided." });
+    }
+    const onlyIncomplete = ["1", "true", "yes", "y"].includes(
+      String(req.query.incomplete_only || "").trim().toLowerCase()
+    );
+
+    const dataset = await buildAdmissionCompletenessDataset({
+      institutionId: req.user.institution_id,
+      statusFilter,
+      onlyIncomplete
     });
+    const csvContent = buildAdmissionCompletenessCsv({
+      statusFilter: dataset.statusFilter,
+      onlyIncomplete: dataset.onlyIncomplete,
+      summary: dataset.summary,
+      learners: dataset.learners
+    });
+    const stamp = dayjs().format("YYYYMMDD-HHmm");
+    const filterSuffix = dataset.statusFilter ? `-${dataset.statusFilter.replace(/\s+/g, "-").toLowerCase()}` : "";
+    const incompleteSuffix = dataset.onlyIncomplete ? "-incomplete" : "";
+    const filename = `admission-completeness${filterSuffix}${incompleteSuffix}-${stamp}.csv`;
+
+    await auditLog(req.user, "DOWNLOAD_ADMISSION_COMPLETENESS_CSV", "learners", null, {
+      status: dataset.statusFilter || "ALL",
+      onlyIncomplete: dataset.onlyIncomplete,
+      count: dataset.learners.length
+    });
+
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+    res.send(csvContent);
+  })
+);
+
+app.get(
+  "/api/admission/learners/readiness/print",
+  auth,
+  enforceRole([ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER]),
+  enforcePermission(PERMISSIONS.VIEW),
+  asyncHandler(async (req, res) => {
+    const statusFilter = normalizeText(req.query.status);
+    if (statusFilter && !ADMISSION_STATUS.includes(statusFilter)) {
+      return res.status(400).json({ error: "Invalid status filter provided." });
+    }
+    const onlyIncomplete = ["1", "true", "yes", "y"].includes(
+      String(req.query.incomplete_only || "").trim().toLowerCase()
+    );
+    const dataset = await buildAdmissionCompletenessDataset({
+      institutionId: req.user.institution_id,
+      statusFilter,
+      onlyIncomplete
+    });
+    const readinessLabel = admissionReadinessLabel(Number(dataset.summary.averageCompleteness || 0));
+    const focusRows = dataset.learners
+      .slice()
+      .sort((a, b) => Number(a.completeness_percentage || 0) - Number(b.completeness_percentage || 0));
+    const missingFieldRank = topMissingAdmissionFields(focusRows);
+
+    const doc = new PDFDocument({ margin: 24, size: "A4" });
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", 'inline; filename="admission-readiness-report.pdf"');
+    doc.pipe(res);
+
+    doc.fontSize(16).fillColor("#000000").text("Admission Readiness Report", { underline: true });
+    doc
+      .fontSize(10)
+      .fillColor("#425466")
+      .text(`Generated: ${dayjs().format("YYYY-MM-DD HH:mm")}`)
+      .text(
+        `Scope: ${dataset.statusFilter || "All statuses"} | Focus: ${
+          dataset.onlyIncomplete ? "Incomplete records only" : "All records"
+        }`
+      );
+    doc.moveDown(0.6);
+
+    doc.fontSize(13).fillColor("#0f3860").text(`Overall Readiness: ${readinessLabel}`);
+    doc.fontSize(10).fillColor("#111111");
+    doc.text(`Learners in report: ${dataset.summary.totalLearners}`);
+    doc.text(`Average completeness: ${dataset.summary.averageCompleteness}%`);
+    doc.text(`90%+ complete: ${dataset.summary.highCompleteness}`);
+    doc.text(`70%+ complete: ${dataset.summary.mediumCompleteness}`);
+    doc.text(`With photos: ${dataset.summary.withPhotos}`);
+    doc.text(`With parent contact: ${dataset.summary.withParentContact}`);
+    doc.text(`Invalid statuses: ${dataset.summary.invalidStatusCount}`);
+    doc.text(`Missing parent contacts: ${dataset.summary.missingParentContactsCount}`);
+    doc.moveDown(0.6);
+
+    doc.fontSize(12).fillColor("#0f3860").text("Most Missing Fields");
+    doc.fontSize(10).fillColor("#111111");
+    if (!missingFieldRank.length) {
+      doc.text("No missing field patterns detected.");
+    } else {
+      missingFieldRank.forEach(([fieldName, count], index) => {
+        doc.text(`${index + 1}. ${fieldName}: ${count}`);
+      });
+    }
+    doc.moveDown(0.8);
+
+    doc.fontSize(12).fillColor("#0f3860").text("Learners Requiring Attention");
+    doc.fontSize(10).fillColor("#111111");
+    if (!focusRows.length) {
+      doc.text("No learner records found for this scope.");
+    } else {
+      focusRows.forEach((learner, index) => {
+        if (doc.y > 740) doc.addPage();
+        const statusColor = ADMISSION_STATUS_HEX[learner.status] || "#5f7187";
+        const classSection = [learner.grade || learner.form_name || "N/A", learner.stream || ""].join(" ").trim();
+        const parentContact = learner.parent_phone || learner.parent_email || "N/A";
+        const missing = Array.isArray(learner.missing_fields) && learner.missing_fields.length
+          ? learner.missing_fields.join(", ")
+          : "None";
+
+        doc.fillColor("#111111").text(`${index + 1}. ${learner.first_name || learner.full_name || "N/A"}`);
+        doc.fillColor(statusColor).text(`Status: ${learner.status || "N/A"}`);
+        doc.fillColor("#111111").text(
+          `ADM: ${learner.admission_number || "N/A"} | Class: ${classSection} | Completeness: ${
+            learner.completeness_percentage || 0
+          }%`
+        );
+        doc.text(`Parent Contact: ${parentContact}`);
+        doc.text(`Missing Fields: ${missing}`);
+        doc.moveDown(0.45);
+      });
+    }
+
+    await auditLog(req.user, "PRINT_ADMISSION_READINESS_REPORT", "learners", null, {
+      status: dataset.statusFilter || "ALL",
+      onlyIncomplete: dataset.onlyIncomplete,
+      count: dataset.learners.length,
+      averageCompleteness: dataset.summary.averageCompleteness
+    });
+    doc.end();
   })
 );
 
