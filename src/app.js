@@ -10,6 +10,7 @@ const { v4: uuidv4 } = require("uuid");
 const dayjs = require("dayjs");
 const ExcelJS = require("exceljs");
 const PDFDocument = require("pdfkit");
+const AdmZip = require("adm-zip");
 const { query } = require("./config/db");
 const {
   ROLES,
@@ -291,6 +292,11 @@ function parseCsvText(csvText) {
   return { headers, rows };
 }
 
+function csvEscape(value) {
+  const raw = String(value ?? "");
+  return `"${raw.replace(/"/g, '""')}"`;
+}
+
 function buildAdmissionHeaderIndex(headers = []) {
   const index = {};
   headers.forEach((header, idx) => {
@@ -361,6 +367,139 @@ function normalizeAdmissionKey(value) {
 function inferAdmissionNumberFromFilename(fileName) {
   const nameOnly = String(fileName || "").replace(/\.[^/.]+$/, "");
   return nameOnly.trim();
+}
+
+function buildAdmissionRejectionReportCsv(rejectedRows = []) {
+  const escapeCsv = (value) => {
+    const text = String(value ?? "");
+    if (/[",\n]/.test(text)) {
+      return `"${text.replace(/"/g, '""')}"`;
+    }
+    return text;
+  };
+
+  const lines = ["row,reason"];
+  rejectedRows.forEach((item) => {
+    lines.push(`${escapeCsv(item.row)},${escapeCsv(item.reason)}`);
+  });
+  return lines.join("\n");
+}
+
+function saveAdmissionRejectionReport(rejectedRows = []) {
+  if (!rejectedRows.length) return null;
+  const reportFileName = `admission-rejected-${Date.now()}.csv`;
+  const reportPath = path.join(uploadsPath, reportFileName);
+  fs.writeFileSync(reportPath, buildAdmissionRejectionReportCsv(rejectedRows), "utf8");
+  return `/uploads/${reportFileName}`;
+}
+
+function isSupportedImageFileName(fileName) {
+  const extension = path.extname(String(fileName || "").toLowerCase());
+  return [
+    ".jpg",
+    ".jpeg",
+    ".png",
+    ".gif",
+    ".bmp",
+    ".webp",
+    ".tif",
+    ".tiff",
+    ".heic",
+    ".heif",
+    ".raw"
+  ].includes(extension);
+}
+
+function mimeTypeFromFileName(fileName) {
+  const extension = path.extname(String(fileName || "").toLowerCase());
+  switch (extension) {
+    case ".jpg":
+    case ".jpeg":
+      return "image/jpeg";
+    case ".png":
+      return "image/png";
+    case ".gif":
+      return "image/gif";
+    case ".bmp":
+      return "image/bmp";
+    case ".webp":
+      return "image/webp";
+    case ".tif":
+    case ".tiff":
+      return "image/tiff";
+    case ".heic":
+      return "image/heic";
+    case ".heif":
+      return "image/heif";
+    default:
+      return "application/octet-stream";
+  }
+}
+
+function extractZipPhotosToUploads(zipAbsolutePath) {
+  const zip = new AdmZip(zipAbsolutePath);
+  const extractedFiles = [];
+
+  zip.getEntries().forEach((entry) => {
+    if (entry.isDirectory) return;
+    const originalName = path.basename(entry.entryName || "");
+    if (!originalName || !isSupportedImageFileName(originalName)) return;
+
+    const safeName = originalName.replace(/[^a-zA-Z0-9._-]/g, "_");
+    const storedName = `${Date.now()}-${Math.round(Math.random() * 100000)}-${safeName}`;
+    const absolutePath = path.join(uploadsPath, storedName);
+    fs.writeFileSync(absolutePath, entry.getData());
+
+    extractedFiles.push({
+      originalname: originalName,
+      filename: storedName,
+      path: absolutePath,
+      mimetype: mimeTypeFromFileName(originalName)
+    });
+  });
+
+  return extractedFiles;
+}
+
+async function mapAdmissionPhotosFromFiles({ files, institutionId, learnerIndex }) {
+  let matchedCount = 0;
+  const rejectedFiles = [];
+
+  for (const file of files) {
+    const isImage =
+      String(file.mimetype || "").startsWith("image/") || isSupportedImageFileName(file.originalname);
+
+    if (!isImage) {
+      rejectedFiles.push({
+        file: file.originalname,
+        reason: "Only image files are accepted."
+      });
+      if (file.path) fs.unlink(file.path, () => {});
+      continue;
+    }
+
+    const inferredAdmission = inferAdmissionNumberFromFilename(file.originalname);
+    const normalizedAdmission = normalizeAdmissionKey(inferredAdmission);
+    const learner = learnerIndex.get(normalizedAdmission);
+
+    if (!learner) {
+      rejectedFiles.push({
+        file: file.originalname,
+        reason: "No learner matches this filename. Use admission number as filename (example: ADM001.jpg)."
+      });
+      if (file.path) fs.unlink(file.path, () => {});
+      continue;
+    }
+
+    const filePath = `/uploads/${file.filename}`;
+    await query(
+      "UPDATE learners SET passport_photo_path = ?, updated_at = NOW() WHERE id = ? AND institution_id = ?",
+      [filePath, learner.id, institutionId]
+    );
+    matchedCount += 1;
+  }
+
+  return { matchedCount, rejectedFiles };
 }
 
 function normalizeLearnerPayload(input = {}) {
@@ -952,18 +1091,21 @@ app.post(
       institutionId: req.user.institution_id,
       userId: req.user.id
     });
+    const rejectionReportPath = saveAdmissionRejectionReport(rejectedRows);
 
     fs.unlink(req.file.path, () => {});
     await auditLog(req.user, "BULK_UPLOAD_ADMISSION", "learners", null, {
       insertedOrUpdated,
       source_format: extension,
-      rejected: rejectedRows.length
+      rejected: rejectedRows.length,
+      rejection_report: rejectionReportPath
     });
     res.json({
       message: "Admission bulk upload completed.",
       sourceFormat: extension,
       insertedOrUpdated,
-      rejectedRows
+      rejectedRows,
+      rejectionReportPath
     });
   })
 );
@@ -1097,41 +1239,11 @@ app.post(
     const learnerIndex = new Map(
       learners.map((learner) => [normalizeAdmissionKey(learner.admission_number), learner])
     );
-
-    let matchedCount = 0;
-    const rejectedFiles = [];
-
-    for (const file of req.files) {
-      const isImage = String(file.mimetype || "").startsWith("image/");
-      if (!isImage) {
-        rejectedFiles.push({
-          file: file.originalname,
-          reason: "Only image files are accepted."
-        });
-        fs.unlink(file.path, () => {});
-        continue;
-      }
-
-      const inferredAdmission = inferAdmissionNumberFromFilename(file.originalname);
-      const normalizedAdmission = normalizeAdmissionKey(inferredAdmission);
-      const learner = learnerIndex.get(normalizedAdmission);
-      if (!learner) {
-        rejectedFiles.push({
-          file: file.originalname,
-          reason:
-            "No learner matches this filename. Use admission number as filename (example: ADM001.jpg)."
-        });
-        fs.unlink(file.path, () => {});
-        continue;
-      }
-
-      const filePath = `/uploads/${file.filename}`;
-      await query(
-        "UPDATE learners SET passport_photo_path = ?, updated_at = NOW() WHERE id = ? AND institution_id = ?",
-        [filePath, learner.id, req.user.institution_id]
-      );
-      matchedCount += 1;
-    }
+    const { matchedCount, rejectedFiles } = await mapAdmissionPhotosFromFiles({
+      files: req.files,
+      institutionId: req.user.institution_id,
+      learnerIndex
+    });
 
     await auditLog(req.user, "PHOTO_BATCH_UPLOAD_ADMISSION", "learners", null, {
       uploaded: req.files.length,
@@ -1142,6 +1254,63 @@ app.post(
     res.json({
       message: "Batch photo upload processed.",
       uploaded: req.files.length,
+      matchedCount,
+      rejectedFiles
+    });
+  })
+);
+
+app.post(
+  "/api/admission/learners/photo-batch-zip-upload",
+  auth,
+  enforceRole([ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER]),
+  enforcePermission(PERMISSIONS.UPDATE),
+  upload.single("zipFile"),
+  asyncHandler(async (req, res) => {
+    if (!req.file) {
+      return res.status(400).json({ error: "ZIP file is required." });
+    }
+
+    const extension = path.extname(req.file.originalname || "").toLowerCase();
+    if (extension !== ".zip") {
+      fs.unlink(req.file.path, () => {});
+      return res.status(400).json({ error: "Only .zip files are accepted for ZIP photo upload." });
+    }
+
+    const learners = await query(
+      "SELECT id, admission_number FROM learners WHERE institution_id = ?",
+      [req.user.institution_id]
+    );
+    const learnerIndex = new Map(
+      learners.map((learner) => [normalizeAdmissionKey(learner.admission_number), learner])
+    );
+
+    const extractedFiles = extractZipPhotosToUploads(req.file.path);
+    fs.unlink(req.file.path, () => {});
+
+    if (!extractedFiles.length) {
+      return res.status(400).json({
+        error:
+          "No supported image files found in ZIP. Include files like .jpg, .png named by admission number."
+      });
+    }
+
+    const { matchedCount, rejectedFiles } = await mapAdmissionPhotosFromFiles({
+      files: extractedFiles,
+      institutionId: req.user.institution_id,
+      learnerIndex
+    });
+
+    await auditLog(req.user, "PHOTO_BATCH_ZIP_UPLOAD_ADMISSION", "learners", null, {
+      zipFile: req.file.originalname,
+      extracted: extractedFiles.length,
+      matchedCount,
+      rejectedCount: rejectedFiles.length
+    });
+
+    res.json({
+      message: "ZIP batch photo upload processed.",
+      extracted: extractedFiles.length,
       matchedCount,
       rejectedFiles
     });
@@ -1190,7 +1359,21 @@ app.get(
       .fontSize(10)
       .fillColor("#425466")
       .text(`Generated: ${dayjs().format("YYYY-MM-DD HH:mm")} | Learners: ${formatted.length}`);
-    doc.moveDown(0.8);
+    doc.moveDown(0.6);
+
+    doc.fontSize(13).fillColor("#0f3860").text("Admission Status Summary");
+    doc.moveDown(0.2);
+    const summaryStatuses = ADMISSION_STATUS.concat(["Uncategorized"]);
+    summaryStatuses.forEach((statusItem) => {
+      const count = grouped.get(statusItem)?.length || 0;
+      if (!count) return;
+      const color = ADMISSION_STATUS_HEX[statusItem] || "#5f7187";
+      const [r, g, b] = colorFromHex(color);
+      doc.fillColor("black");
+      doc.roundedRect(24, doc.y + 2, 10, 10, 2).fillAndStroke([r, g, b], [r, g, b]);
+      doc.fillColor("#111111").text(`${statusItem}: ${count}`, 40, doc.y - 10);
+    });
+    doc.moveDown(1.1);
 
     for (const [status, learnersInStatus] of grouped.entries()) {
       if (!learnersInStatus.length) continue;

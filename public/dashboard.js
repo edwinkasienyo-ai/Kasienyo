@@ -461,7 +461,7 @@ function admissionToolsHtml() {
   return `
     <div class="admission-tools">
       <h4>Admission Bulk Upload and Search Tools</h4>
-      <p class="small-note">Download template, fill learner biodata, upload Excel/CSV, then add photos while editing each learner or with batch filename mapping (AdmissionNumber.jpg).</p>
+      <p class="small-note">Download template, fill learner biodata, upload Excel/CSV, then add photos while editing each learner, batch filenames (AdmissionNumber.jpg), or ZIP upload.</p>
       <div class="admission-tools-grid">
         <div>
           <label>Template + Biodata Upload</label>
@@ -469,6 +469,7 @@ function admissionToolsHtml() {
             <button id="downloadAdmissionTemplateButton">Download Excel Template</button>
             <input id="admissionExcelInput" type="file" accept=".xlsx,.csv" />
             <button id="uploadAdmissionExcelButton">Upload Filled Excel/CSV</button>
+            <button id="downloadAdmissionRejectionReportButton">Download Rejection Report</button>
           </div>
         </div>
         <div>
@@ -478,6 +479,14 @@ function admissionToolsHtml() {
             <button id="uploadAdmissionPhotoBatchButton">Upload Photo Batch</button>
           </div>
           <p class="small-note">Name each photo with admission number, e.g. ADM001.jpg</p>
+        </div>
+        <div>
+          <label>Batch photo ZIP upload</label>
+          <div class="actions-row">
+            <input id="admissionPhotoZipInput" type="file" accept=".zip" />
+            <button id="uploadAdmissionPhotoZipButton">Upload Photo ZIP</button>
+          </div>
+          <p class="small-note">ZIP must contain image files named by admission number.</p>
         </div>
         <div>
           <label>Search learner record</label>
@@ -671,11 +680,25 @@ async function uploadAdmissionExcel() {
     alert(
       `Bulk upload completed. Format: ${data.sourceFormat || "unknown"}. Processed: ${data.insertedOrUpdated || 0}. Rejected: ${rejected}.`
     );
+    if (data.rejectionReportPath) {
+      localStorage.setItem("admissionRejectionReportPath", data.rejectionReportPath);
+    } else {
+      localStorage.removeItem("admissionRejectionReportPath");
+    }
     fileInput.value = "";
     await loadModuleData(moduleConfigs.admission);
   } catch (error) {
     alert(error.message);
   }
+}
+
+function downloadAdmissionRejectionReport() {
+  const reportPath = localStorage.getItem("admissionRejectionReportPath");
+  if (!reportPath) {
+    alert("No rejection report available yet. Upload biodata first.");
+    return;
+  }
+  window.open(reportPath, "_blank");
 }
 
 async function uploadAdmissionPhotoBatch() {
@@ -705,6 +728,37 @@ async function uploadAdmissionPhotoBatch() {
     const rejected = data.rejectedFiles?.length || 0;
     alert(
       `Photo batch processed. Uploaded: ${data.uploaded || 0}, Matched: ${data.matchedCount || 0}, Rejected: ${rejected}.`
+    );
+    fileInput.value = "";
+    await loadModuleData(moduleConfigs.admission);
+  } catch (error) {
+    alert(error.message);
+  }
+}
+
+async function uploadAdmissionPhotoZipBatch() {
+  const fileInput = document.getElementById("admissionPhotoZipInput");
+  if (!fileInput || !fileInput.files || !fileInput.files[0]) {
+    alert("Select ZIP file first.");
+    return;
+  }
+  const formData = new FormData();
+  formData.append("zipFile", fileInput.files[0]);
+  try {
+    const response = await fetch("/api/admission/learners/photo-batch-zip-upload", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`
+      },
+      body: formData
+    });
+    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(data.error || "ZIP photo upload failed.");
+    }
+    const rejected = data.rejectedFiles?.length || 0;
+    alert(
+      `ZIP photo batch processed. Extracted: ${data.extracted || 0}, Matched: ${data.matchedCount || 0}, Rejected: ${rejected}.`
     );
     fileInput.value = "";
     await loadModuleData(moduleConfigs.admission);
@@ -889,13 +943,17 @@ async function loadModuleData(config) {
 function bindAdmissionTools() {
   const downloadTemplateButton = document.getElementById("downloadAdmissionTemplateButton");
   const uploadExcelButton = document.getElementById("uploadAdmissionExcelButton");
+  const downloadRejectionButton = document.getElementById("downloadAdmissionRejectionReportButton");
   const uploadPhotoBatchButton = document.getElementById("uploadAdmissionPhotoBatchButton");
+  const uploadPhotoZipButton = document.getElementById("uploadAdmissionPhotoZipButton");
   const searchButton = document.getElementById("admissionSearchButton");
   const printRecordButton = document.getElementById("admissionRecordPrintButton");
   const groupedRegisterButton = document.getElementById("admissionGroupedRegisterButton");
   if (downloadTemplateButton) downloadTemplateButton.onclick = downloadAdmissionTemplate;
   if (uploadExcelButton) uploadExcelButton.onclick = uploadAdmissionExcel;
+  if (downloadRejectionButton) downloadRejectionButton.onclick = downloadAdmissionRejectionReport;
   if (uploadPhotoBatchButton) uploadPhotoBatchButton.onclick = uploadAdmissionPhotoBatch;
+  if (uploadPhotoZipButton) uploadPhotoZipButton.onclick = uploadAdmissionPhotoZipBatch;
   if (searchButton) searchButton.onclick = searchAdmission;
   if (printRecordButton) printRecordButton.onclick = printAdmissionCurrentTable;
   if (groupedRegisterButton) groupedRegisterButton.onclick = printAdmissionGroupedRegister;
