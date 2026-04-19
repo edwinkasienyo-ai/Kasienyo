@@ -105,10 +105,10 @@ async function registerInstitution() {
 }
 
 async function registerUser() {
-  const institution_code = document.getElementById("regUserInstitutionCode").value.trim();
-  const full_name = document.getElementById("regUserFullName").value.trim();
-  const username = document.getElementById("regUserUsername").value.trim();
-  const password = document.getElementById("regUserPassword").value;
+  const institution_code = document.getElementById("registerUserInstitutionCode").value.trim();
+  const full_name = document.getElementById("registerUserFullName").value.trim();
+  const username = document.getElementById("registerUserUsername").value.trim();
+  const password = document.getElementById("registerUserPassword").value;
   const role = document.getElementById("registerUserRole").value;
   const email = document.getElementById("registerUserEmail").value.trim();
   const phone = document.getElementById("registerUserPhone").value.trim();
@@ -131,19 +131,19 @@ async function registerUser() {
 
 async function recoverUsername() {
   const institution_code = document.getElementById("forgotUsernameInstitutionCode").value.trim();
-  const contact = document.getElementById("forgotUsernameContact").value.trim();
-  if (!institution_code || !contact) {
-    setAuthNotice("Institution code and email/mobile are required.", "error");
+  const email = document.getElementById("forgotUsernameEmail").value.trim();
+  const phone = document.getElementById("forgotUsernamePhone").value.trim();
+  if (!institution_code || (!email && !phone)) {
+    setAuthNotice("Institution code and email or mobile are required.", "error");
     return;
   }
-  const looksLikeEmail = contact.includes("@");
   try {
     const data = await request("/api/public/forgot-username", {
       method: "POST",
       body: JSON.stringify({
         institution_code,
-        email: looksLikeEmail ? contact : "",
-        phone: looksLikeEmail ? "" : contact
+        email,
+        phone
       })
     });
     const list = Array.isArray(data.usernames) ? data.usernames : [];
@@ -162,12 +162,12 @@ async function resetPassword() {
   const institution_code = document.getElementById("forgotPasswordInstitutionCode").value.trim();
   const username = document.getElementById("forgotPasswordUsername").value.trim();
   const new_password = document.getElementById("forgotPasswordNewPassword").value;
-  const contact = document.getElementById("forgotPasswordContact").value.trim();
-  if (!institution_code || !username || !new_password || !contact) {
-    setAuthNotice("Institution code, username, new password and email/mobile are required.", "error");
+  const email = document.getElementById("forgotPasswordEmail").value.trim();
+  const phone = document.getElementById("forgotPasswordPhone").value.trim();
+  if (!institution_code || !username || !new_password || (!email && !phone)) {
+    setAuthNotice("Institution code, username, new password and email or mobile are required.", "error");
     return;
   }
-  const looksLikeEmail = contact.includes("@");
   try {
     await request("/api/public/forgot-password", {
       method: "POST",
@@ -175,8 +175,8 @@ async function resetPassword() {
         institution_code,
         username,
         new_password,
-        email: looksLikeEmail ? contact : "",
-        phone: looksLikeEmail ? "" : contact
+        email,
+        phone
       })
     });
     setAuthNotice("Password reset successful. Login with new password.", "success");
