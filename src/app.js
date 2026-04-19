@@ -73,8 +73,11 @@ app.use(
     lastModified: false
   })
 );
-app.get("/", (_, res) => {
+app.get("/login", (_, res) => {
   res.sendFile(path.join(publicPath, "index.html"));
+});
+app.get("/", (_, res) => {
+  res.sendFile(path.join(publicPath, "dashboard.html"));
 });
 
 const upload = multer({
