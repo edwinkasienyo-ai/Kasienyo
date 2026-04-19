@@ -41,7 +41,7 @@ const STATUS_COLORS = {
 };
 
 const MODULE_REQUIRED_FIELDS = {
-  admission: ["first_name", "last_name", "admission_number", "birth_certificate_number"],
+  admission: ["first_name", "last_name", "admission_number", "birth_certificate_number", "status"],
   "management-teachers": ["full_name", "tsc_number", "id_number"],
   "management-non-teaching": ["full_name", "staff_number"],
   "management-teacher-resources": ["resource_type", "title"],
@@ -93,7 +93,7 @@ const ADMISSION_GUIDE_STEPS = [
   { key: "step-5", title: "Run Admission Integrity Audit" }
 ];
 
-const DASHBOARD_BUILD_ID = "admission-ui-20260411-3";
+const DASHBOARD_BUILD_ID = "admission-ui-20260419-1";
 
 const DEFAULT_MODULE_HELP = {
   summary: "Use this section to capture complete, accurate records before saving.",

@@ -1,5 +1,5 @@
 const API_BASE = "";
-const UI_BUILD_VERSION = "20260418-2";
+const UI_BUILD_VERSION = "20260419-1";
 
 async function request(path, options = {}) {
   const response = await fetch(`${API_BASE}${path}`, {

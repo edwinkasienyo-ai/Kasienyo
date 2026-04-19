@@ -131,6 +131,14 @@ const ADMISSION_IMPORT_HEADERS = [
   "parent_email"
 ];
 
+const ADMISSION_IMPORT_REQUIRED_HEADERS = [
+  "first_name",
+  "last_name",
+  "admission_number",
+  "birth_certificate_number",
+  "status"
+];
+
 const ADMISSION_TEMPLATE_EXAMPLE_ROW = [
   "Akinyi",
   "N",
@@ -764,7 +772,7 @@ async function restoreAdmissionLearner({ institutionId, learnerId, actorUserId, 
 
 async function parseAdmissionImportFile({ absolutePath, originalName }) {
   const extension = path.extname(originalName || "").toLowerCase();
-  const requiredHeaders = ["first_name", "last_name", "admission_number", "birth_certificate_number"];
+  const requiredHeaders = ADMISSION_IMPORT_REQUIRED_HEADERS;
   let parsedRecords = [];
 
   if (extension === ".xlsx") {
@@ -1130,7 +1138,7 @@ function normalizeLearnerPayload(input = {}) {
   data.village = normalizeText(data.village);
   data.term_joined = normalizeText(data.term_joined);
   data.orphan_condition = normalizeText(data.orphan_condition);
-  data.status = normalizeText(data.status) || "In Session";
+  data.status = normalizeText(data.status);
   data.parent_full_name = normalizeText(data.parent_full_name);
   data.parent_relationship = normalizeText(data.parent_relationship);
   data.parent_id_number = normalizeText(data.parent_id_number);
@@ -1438,6 +1446,7 @@ function validateLearnerPayload(data) {
   if (!data.grade && !data.form_name) {
     return "Select either Grade or Form.";
   }
+  if (!data.status) return "Status is required.";
   if (data.status && !ADMISSION_STATUS.includes(data.status)) {
     return `Status must be one of: ${ADMISSION_STATUS.join(", ")}`;
   }
@@ -2175,7 +2184,7 @@ app.post(
     }
 
     const extension = path.extname(req.file.originalname || "").toLowerCase();
-    const requiredHeaders = ["first_name", "last_name", "admission_number", "birth_certificate_number"];
+    const requiredHeaders = ADMISSION_IMPORT_REQUIRED_HEADERS;
     let parsedRecords = [];
 
     if (extension === ".xlsx") {
