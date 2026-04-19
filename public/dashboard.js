@@ -581,7 +581,7 @@ async function request(path, options = {}) {
     ...options
   });
 
-  if (response.status === 401 || response.status === 403) {
+  if (response.status === 401) {
     localStorage.clear();
     window.location.href = "/";
     return null;

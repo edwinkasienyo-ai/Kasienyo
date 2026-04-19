@@ -189,6 +189,28 @@ const ATTENDANCE_STATUS_OPTIONS = [
 const MESSAGE_STATUS_OPTIONS = ["Queued", "Sent", "Failed"];
 const PAYMENT_METHOD_OPTIONS = ["Cash", "Bank", "Mpesa", "Cheque", "Other"];
 
+const ROLE_ALIASES = {
+  ADMINISTRATOR: ROLES.ADMIN,
+  HEADTEACHER: ROLES.HEAD_OF_INSTITUTION,
+  HEAD_OF_SCHOOL: ROLES.HEAD_OF_INSTITUTION,
+  HEADMASTER: ROLES.HEAD_OF_INSTITUTION,
+  PRINCIPAL: ROLES.HEAD_OF_INSTITUTION,
+  NONTEACHINGSTAFF: ROLES.NON_TEACHING_STAFF,
+  BOARD_OF_MANAGEMENT: ROLES.BOM,
+  STUDENT: ROLES.LEARNER,
+  PUPIL: ROLES.LEARNER
+};
+
+function normalizeRoleValue(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return null;
+  if (ROLE_PERMISSIONS[raw]) return raw;
+  const shaped = raw.toUpperCase().replace(/[^A-Z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+  if (ROLE_PERMISSIONS[shaped]) return shaped;
+  const compact = shaped.replace(/_/g, "");
+  return ROLE_ALIASES[shaped] || ROLE_ALIASES[compact] || raw;
+}
+
 function asyncHandler(handler) {
   return (req, res, next) => Promise.resolve(handler(req, res, next)).catch(next);
 }
@@ -217,7 +239,8 @@ async function auditLog(user, action, entity, entityId, details = null) {
 }
 
 function hasPermission(role, permission) {
-  return (ROLE_PERMISSIONS[role] || []).includes(permission);
+  const normalizedRole = normalizeRoleValue(role);
+  return (ROLE_PERMISSIONS[normalizedRole] || []).includes(permission);
 }
 
 function enforcePermission(permission) {
@@ -231,7 +254,8 @@ function enforcePermission(permission) {
 
 function enforceRole(roles = []) {
   return (req, res, next) => {
-    if (!roles.includes(req.user.role)) {
+    const normalizedRole = normalizeRoleValue(req.user.role);
+    if (!roles.includes(normalizedRole)) {
       return res.status(403).json({ error: "Role is not allowed for this action." });
     }
     return next();
@@ -239,7 +263,7 @@ function enforceRole(roles = []) {
 }
 
 function toPortal(role) {
-  switch (role) {
+  switch (normalizeRoleValue(role)) {
     case ROLES.ADMIN:
       return "Administrator Dashboard";
     case ROLES.HEAD_OF_INSTITUTION:
@@ -1531,15 +1555,16 @@ async function authenticateByUserTable(username, password) {
   if (!valid) {
     return null;
   }
+  const normalizedRole = normalizeRoleValue(user.role);
 
   return {
     identity: user.username,
-    role: user.role,
+    role: normalizedRole || user.role,
     institution_id: user.institution_id,
     destination: user.email || user.phone || user.username,
     payload: {
       id: user.id,
-      role: user.role,
+      role: normalizedRole || user.role,
       institution_id: user.institution_id,
       full_name: user.full_name,
       username: user.username
@@ -2072,11 +2097,12 @@ app.post("/api/auth/verify-otp", asyncHandler(async (req, res) => {
 }));
 
 app.get("/api/portal/current", auth, (req, res) => {
+  const normalizedRole = normalizeRoleValue(req.user.role);
   res.json({
-    role: req.user.role,
-    portal: toPortal(req.user.role),
+    role: normalizedRole || req.user.role,
+    portal: toPortal(normalizedRole || req.user.role),
     institution_id: req.user.institution_id,
-    permissions: ROLE_PERMISSIONS[req.user.role] || []
+    permissions: ROLE_PERMISSIONS[normalizedRole] || []
   });
 });
 
@@ -3535,6 +3561,10 @@ app.post(
     if (!full_name || !username || !password || !role) {
       return res.status(400).json({ error: "full_name, username, password and role are required." });
     }
+    const normalizedRole = normalizeRoleValue(role);
+    if (!normalizedRole || !Object.values(ROLES).includes(normalizedRole)) {
+      return res.status(400).json({ error: "Invalid role value supplied." });
+    }
     const passwordHash = await hashPassword(password);
     const result = await query(
       `INSERT INTO users
@@ -3545,13 +3575,13 @@ app.post(
         full_name,
         username,
         passwordHash,
-        role,
+        normalizedRole,
         email || null,
         phone || null,
         req.user.id
       ]
     );
-    await auditLog(req.user, "CREATE_USER", "users", result.insertId, { username, role });
+    await auditLog(req.user, "CREATE_USER", "users", result.insertId, { username, role: normalizedRole });
     res.status(201).json({ id: result.insertId, message: "User created successfully." });
   })
 );
