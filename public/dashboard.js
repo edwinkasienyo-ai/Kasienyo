@@ -93,7 +93,7 @@ const ADMISSION_GUIDE_STEPS = [
   { key: "step-5", title: "Run Admission Integrity Audit" }
 ];
 
-const DASHBOARD_BUILD_ID = "admission-ui-20260418-2";
+const DASHBOARD_BUILD_ID = "admission-ui-20260411-3";
 
 const DEFAULT_MODULE_HELP = {
   summary: "Use this section to capture complete, accurate records before saving.",
@@ -196,7 +196,6 @@ const moduleConfigs = {
       { name: "middle_name", label: "Middle Name" },
       { name: "last_name", label: "Last Name" },
       { name: "other_names", label: "Other Names" },
-      { name: "full_name", label: "Full Name" },
       { name: "admission_number", label: "Admission Number" },
       { name: "date_of_admission", label: "Date of Admission", type: "date" },
       { name: "grade", label: "Grade", type: "select", optionsKey: "gradeOptions" },
@@ -596,6 +595,8 @@ async function request(path, options = {}) {
 
 function buildInput(field) {
   const id = `field-${field.name}`;
+  const safeId = escapeHtml(id);
+  const safeLabel = escapeHtml(field.label || "");
   const required = field.required ? '<span class="required-star">*</span>' : "";
   const hint = field.hint ? `<p class="field-hint">${escapeHtml(field.hint)}</p>` : "";
   const helpIcon = field.hint
@@ -607,8 +608,8 @@ function buildInput(field) {
   if (field.type === "textarea") {
     return `
       <div class="field-block">
-        <label for="${id}">${field.label} ${required} ${helpIcon}</label>
-        <textarea id="${id}" rows="3" placeholder="${field.label}"></textarea>
+        <label for="${safeId}">${safeLabel} ${required} ${helpIcon}</label>
+        <textarea id="${safeId}" rows="3" placeholder="${safeLabel}"></textarea>
         ${hint}
         ${error}
       </div>
@@ -617,12 +618,12 @@ function buildInput(field) {
   if (field.type === "select") {
     const options = field.options || meta[field.optionsKey] || [];
     const optionHtml = ['<option value="">Select...</option>']
-      .concat(options.map((option) => `<option value="${option}">${option}</option>`))
+      .concat(options.map((option) => `<option value="${escapeHtml(option)}">${escapeHtml(option)}</option>`))
       .join("");
     return `
       <div class="field-block">
-        <label for="${id}">${field.label} ${required} ${helpIcon}</label>
-        <select id="${id}">${optionHtml}</select>
+        <label for="${safeId}">${safeLabel} ${required} ${helpIcon}</label>
+        <select id="${safeId}">${optionHtml}</select>
         ${hint}
         ${error}
       </div>
@@ -630,8 +631,8 @@ function buildInput(field) {
   }
   return `
     <div class="field-block">
-      <label for="${id}">${field.label} ${required} ${helpIcon}</label>
-      <input id="${id}" type="${field.type || "text"}" placeholder="${field.label}" />
+      <label for="${safeId}">${safeLabel} ${required} ${helpIcon}</label>
+      <input id="${safeId}" type="${field.type || "text"}" placeholder="${safeLabel}" />
       ${hint}
       ${error}
     </div>
@@ -1102,12 +1103,14 @@ function admissionToolsHtml() {
           <label>Search learner record</label>
           <div class="search-row">
             <select id="admissionSearchField">
-              ${ADMISSION_SEARCH_FIELDS.map((item) => `<option value="${item.value}">${item.label}</option>`).join("")}
+              ${ADMISSION_SEARCH_FIELDS.map((item) => `<option value="${escapeHtml(item.value)}">${escapeHtml(item.label)}</option>`).join("")}
             </select>
             <input id="admissionSearchValue" placeholder="Search value" />
             <select id="admissionSearchStatus">
               <option value="">Any status</option>
-              ${(meta.admissionStatus || []).map((status) => `<option value="${status}">${status}</option>`).join("")}
+              ${(meta.admissionStatus || [])
+                .map((status) => `<option value="${escapeHtml(status)}">${escapeHtml(status)}</option>`)
+                .join("")}
             </select>
             <button id="admissionSearchButton">Search</button>
           </div>
@@ -2046,12 +2049,13 @@ function renderCrudModule(moduleKey) {
   document.getElementById("cards").innerHTML = "";
   const extraTools = moduleKey === "admission" ? admissionToolsHtml() : "";
   const helpCard = renderModuleHelp(moduleKey);
+  const formGridClass = moduleKey === "admission" ? "form-grid admission-form-grid" : "form-grid";
 
   document.getElementById("formArea").innerHTML = `
     <h3>${config.title}</h3>
     ${helpCard}
     ${extraTools}
-    <div class="form-grid">
+    <div class="${formGridClass}">
       ${config.fields.map(buildInput).join("")}
     </div>
     <div class="actions-row">

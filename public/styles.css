@@ -202,6 +202,19 @@ button:hover {
   gap: 10px;
 }
 
+.admission-form-grid {
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  align-items: start;
+}
+
+.admission-form-grid .field-block {
+  min-width: 0;
+}
+
+.admission-form-grid .field-block label {
+  line-height: 1.25;
+}
+
 .actions-row {
   display: flex;
   gap: 8px;
@@ -880,5 +893,9 @@ th {
   .topbar-right input {
     min-width: 0;
     flex: 1;
+  }
+
+  .admission-form-grid {
+    grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
   }
 }
