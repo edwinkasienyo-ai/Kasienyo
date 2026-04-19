@@ -7,7 +7,15 @@ const { ROLES } = require("./config/constants");
 const PORT = Number(process.env.PORT || 5000);
 
 async function ensureColumn(tableName, columnName, definitionSql) {
-  const rows = await query(`SHOW COLUMNS FROM ${tableName} LIKE ?`, [columnName]);
+  const rows = await query(
+    `SELECT COLUMN_NAME
+     FROM INFORMATION_SCHEMA.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = ?
+       AND COLUMN_NAME = ?
+     LIMIT 1`,
+    [tableName, columnName]
+  );
   if (rows.length) return;
   await query(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${definitionSql}`);
 }
