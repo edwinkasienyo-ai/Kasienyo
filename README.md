@@ -112,19 +112,6 @@ Available export endpoints include:
 - PDF
 - Excel
 
-Note for browser-based downloads from protected endpoints: the UI appends `?token=...` for download/print requests. The backend also supports standard `Authorization: Bearer <token>` headers.
-
-## Admission module practical improvements included
-
-- Excel **and CSV** learner biodata template downloads
-- Bulk learner import from Excel/CSV with row-level validation
-- CSV rejection report download for failed rows
-- Grade/Form mutual exclusion rules enforced in UI + API validation
-- Batch learner photo mapping by admission number filename
-- ZIP photo upload with automatic extraction + mapping
-- Status-aware colors and sorting in admission listings and printable register
-- Live admission status summary card with per-status totals
-
 The UI and metadata also include allowed format labels for:
 PDF, Excel, Word, PNG, JPEG/JPG, RAW, HEIC/HEIF, TIFF, WEBP, PowerPoint and other Microsoft Office formats.
 

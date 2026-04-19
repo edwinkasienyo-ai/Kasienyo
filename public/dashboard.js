@@ -6,186 +6,6 @@ if (!token) {
 let meta = {};
 let currentModule = "dashboard";
 let currentEditId = null;
-let admissionSearchRows = [];
-let admissionSearchPagination = {
-  total: 0,
-  limit: 100,
-  offset: 0,
-  returned: 0,
-  hasMore: false
-};
-let currentValidationErrors = {};
-let admissionGuidedModeEnabled = false;
-let admissionGuidedStepState = [];
-let admissionCompletenessCache = null;
-let admissionIntegrityAuditCache = null;
-let selectedAdmissionSearchLearnerId = null;
-
-const ADMISSION_SEARCH_FIELDS = [
-  { value: "full_name", label: "Name" },
-  { value: "admission_number", label: "Admission Number" },
-  { value: "upi_number", label: "UPI Number" },
-  { value: "assessment_number", label: "Assessment Number" },
-  { value: "birth_certificate_number", label: "Birth Certificate Number" },
-  { value: "status", label: "Status" },
-  { value: "grade", label: "Grade" },
-  { value: "form_name", label: "Form" }
-];
-
-const STATUS_COLORS = {
-  "In Session": "#188038",
-  "Not in Session": "#f6bf26",
-  Transferred: "#1a73e8",
-  Alumni: "#f57c00",
-  Deceased: "#d93025"
-};
-
-const MODULE_REQUIRED_FIELDS = {
-  admission: ["first_name", "last_name", "admission_number", "birth_certificate_number", "status"],
-  "management-teachers": ["full_name", "tsc_number", "id_number"],
-  "management-non-teaching": ["full_name", "staff_number"],
-  "management-teacher-resources": ["resource_type", "title"],
-  attendance: ["attendance_type", "person_name", "attendance_date", "status"],
-  "academic-exams": ["title"],
-  "academic-marks": ["learner_id", "learner_name", "exam_type", "subject", "marks"],
-  "hr-leave": ["staff_name", "leave_type"],
-  "hr-recruitment": ["record_type"],
-  "finance-fee-structure": ["grade", "term", "year", "amount_required"],
-  "finance-fee-payments": ["learner_id", "learner_name", "amount_paid", "payment_date"],
-  "finance-procurement": ["document_type", "supplier_name"],
-  "communication-announcements": ["title", "message"],
-  "communication-messages": ["message_type", "recipient_contact", "message_body"],
-  "welfare-members": ["member_name", "member_role"],
-  "welfare-contributions": ["member_id", "member_name", "contribution_period", "amount"],
-  "welfare-loans": ["member_id", "member_name", "amount", "application_date"],
-  laws: ["document_category", "title"]
-};
-
-const FIELD_HINTS = {
-  admission_number: "Use a unique institution admission number (example: ADM-001).",
-  birth_certificate_number: "Required unique identity for learner and parent login mappings.",
-  parent_email: "If provided, use a valid email format like parent@example.com.",
-  grade: "Choose Grade OR Form, not both.",
-  form_name: "Choose Form OR Grade, not both.",
-  marks: "Enter score between 0 and 100.",
-  percentage: "Optional; if empty it auto-follows marks.",
-  amount_paid: "Enter a positive amount.",
-  amount_required: "Enter total fee required for the selected class/term/year.",
-  payment_date: "Select payment date and time for accurate finance reports.",
-  document_type: "Pick the procurement document type used by your institution.",
-  attendance_date: "Choose the official attendance datetime.",
-  status: "Choose the current official status from approved options."
-};
-
-const ADMISSION_GUIDED_ACTIONS = {
-  "step-1": "Use Save to create first learner record.",
-  "step-2": "Run completeness summary and fill missing required data.",
-  "step-3": "Use photo upload (single, batch, or ZIP).",
-  "step-4": "Capture parent phone or email for each learner.",
-  "step-5": "Run Admission Integrity Audit from Process button."
-};
-
-const ADMISSION_GUIDE_STEPS = [
-  { key: "step-1", title: "Create at least one learner record" },
-  { key: "step-2", title: "Reach at least 70% average record completeness" },
-  { key: "step-3", title: "Upload learner photos" },
-  { key: "step-4", title: "Capture parent/guardian contacts" },
-  { key: "step-5", title: "Run Admission Integrity Audit" }
-];
-
-const DASHBOARD_BUILD_ID = "admission-ui-20260419-1";
-
-const DEFAULT_MODULE_HELP = {
-  summary: "Use this section to capture complete, accurate records before saving.",
-  steps: [
-    "Complete all required fields marked with *.",
-    "Use Process for module automation or clean-up tasks where available.",
-    "Use View to refresh records after Save or Process."
-  ]
-};
-
-const MODULE_SECTION_HELP = {
-  admission: {
-    summary: "Capture learner biodata, parent contacts, status, and class placement accurately.",
-    steps: [
-      "Use Grade OR Form (not both).",
-      "Bulk upload biodata using Excel/CSV template for many learners.",
-      "Map photos by admission number filename or ZIP upload."
-    ]
-  },
-  "management-teachers": {
-    summary: "Maintain complete teacher profile and subject assignment records.",
-    steps: [
-      "Capture TSC and ID numbers exactly as official records.",
-      "Assign major and other teaching subjects for scheduling.",
-      "Add next-of-kin contact for emergency response."
-    ]
-  },
-  "management-teacher-resources": {
-    summary: "Manage lesson plans, schemes, and curriculum resources per class and term.",
-    steps: [
-      "Use Process to auto-generate a starter teaching resource.",
-      "Set grade, term, strand, and sub-strand for traceability.",
-      "Upload generated or approved files using system upload paths."
-    ]
-  },
-  attendance: {
-    summary: "Capture daily attendance with correct status and timing details.",
-    steps: [
-      "Use Process to auto-generate class register entries.",
-      "Record attendance status using approved options only.",
-      "Capture reason/comments for absences and late arrivals."
-    ]
-  },
-  "academic-exams": {
-    summary: "Prepare exam records per class, subject, and curriculum coverage.",
-    steps: [
-      "Use Process to auto-generate draft exam text.",
-      "Capture strand/sub-strand for curriculum alignment.",
-      "Set term and year for report filtering and retrieval."
-    ]
-  },
-  "academic-marks": {
-    summary: "Capture marks accurately for learner performance and positioning.",
-    steps: [
-      "Ensure learner ID matches the learner profile before saving.",
-      "Enter marks between 0 and 100.",
-      "Use Process to normalize percentages and CBC bands."
-    ]
-  },
-  "finance-fee-structure": {
-    summary: "Define required fees per class, term, and year.",
-    steps: [
-      "Capture grade, term, and year before amount.",
-      "Enter a positive required fee amount.",
-      "Use Process to generate fee summary and balances."
-    ]
-  },
-  "finance-fee-payments": {
-    summary: "Record learner fee payments and update balances reliably.",
-    steps: [
-      "Confirm learner ID and name before posting payment.",
-      "Record payment method and payment datetime.",
-      "Use Process to generate consolidated fee summary."
-    ]
-  },
-  "communication-messages": {
-    summary: "Send and track SMS/email notifications to institution stakeholders.",
-    steps: [
-      "Set recipient contact and message body clearly.",
-      "Queue messages first where needed.",
-      "Use Process to dispatch queued messages quickly."
-    ]
-  },
-  laws: {
-    summary: "Maintain institutional laws, regulations, and policy documents.",
-    steps: [
-      "Categorize each document correctly.",
-      "Provide clear title and effective date.",
-      "Update file path whenever policy files are replaced."
-    ]
-  }
-};
 
 const moduleConfigs = {
   admission: {
@@ -196,6 +16,7 @@ const moduleConfigs = {
       { name: "middle_name", label: "Middle Name" },
       { name: "last_name", label: "Last Name" },
       { name: "other_names", label: "Other Names" },
+      { name: "full_name", label: "Full Name" },
       { name: "admission_number", label: "Admission Number" },
       { name: "date_of_admission", label: "Date of Admission", type: "date" },
       { name: "grade", label: "Grade", type: "select", optionsKey: "gradeOptions" },
@@ -219,12 +40,7 @@ const moduleConfigs = {
       { name: "orphan_condition", label: "Condition", type: "select", optionsKey: "orphanStatus" },
       { name: "status", label: "Status", type: "select", optionsKey: "admissionStatus" },
       { name: "parent_full_name", label: "Parent Name" },
-      {
-        name: "parent_relationship",
-        label: "Parent Relationship",
-        type: "select",
-        optionsKey: "relationshipOptions"
-      },
+      { name: "parent_relationship", label: "Parent Relationship", type: "select", optionsKey: "relationshipOptions" },
       { name: "parent_id_number", label: "Parent ID Number" },
       { name: "parent_phone", label: "Parent Phone Number" },
       { name: "parent_email", label: "Parent Email Address" }
@@ -280,12 +96,7 @@ const moduleConfigs = {
     title: "Attendance Management",
     endpoint: "/api/attendance/records",
     fields: [
-      {
-        name: "attendance_type",
-        label: "Attendance Type",
-        type: "select",
-        options: ["Teacher", "Learner", "Non-Teaching"]
-      },
+      { name: "attendance_type", label: "Attendance Type", type: "select", options: ["Teacher", "Learner", "Non-Teaching"] },
       { name: "person_id", label: "Person ID" },
       { name: "person_name", label: "Person Name" },
       { name: "grade", label: "Class/Grade", type: "select", optionsKey: "gradeOptions" },
@@ -293,19 +104,7 @@ const moduleConfigs = {
       { name: "attendance_date", label: "Attendance Date/Time", type: "datetime-local" },
       { name: "time_in", label: "Time In", type: "datetime-local" },
       { name: "time_out", label: "Time Out", type: "datetime-local" },
-      {
-        name: "status",
-        label: "Status",
-        type: "select",
-        options: [
-          "Present",
-          "Absent",
-          "Late",
-          "Official Duty",
-          "Absent with Apology",
-          "Absent with No Apology"
-        ]
-      },
+      { name: "status", label: "Status", type: "select", options: ["Present", "Absent", "Late", "Official Duty", "Absent with Apology", "Absent with No Apology"] },
       { name: "reason", label: "Reason for Absence" },
       { name: "comments", label: "Comment", type: "textarea" }
     ]
@@ -351,12 +150,7 @@ const moduleConfigs = {
     title: "HR - Leave Management",
     endpoint: "/api/hr/leave-requests",
     fields: [
-      {
-        name: "staff_profile_type",
-        label: "Staff Profile Type",
-        type: "select",
-        options: ["Teacher", "Non-Teaching Staff"]
-      },
+      { name: "staff_profile_type", label: "Staff Profile Type", type: "select", options: ["Teacher", "Non-Teaching Staff"] },
       { name: "staff_profile_id", label: "Staff Profile ID", type: "number" },
       { name: "staff_name", label: "Staff Name" },
       { name: "leave_type", label: "Leave Type", type: "select", optionsKey: "leaveTypes" },
@@ -364,34 +158,14 @@ const moduleConfigs = {
       { name: "end_date", label: "End Date", type: "date" },
       { name: "reason", label: "Reason", type: "textarea" },
       { name: "status", label: "Status", type: "select", options: ["Pending", "Approved", "Rejected"] },
-      {
-        name: "approval_stage",
-        label: "Approval Stage",
-        type: "select",
-        options: ["Member", "Loan Officer", "Principal", "Final"]
-      }
+      { name: "approval_stage", label: "Approval Stage", type: "select", options: ["Member", "Loan Officer", "Principal", "Final"] }
     ]
   },
   "hr-recruitment": {
     title: "HR - Recruitment and Letters",
     endpoint: "/api/hr/recruitment-records",
     fields: [
-      {
-        name: "record_type",
-        label: "Record Type",
-        type: "select",
-        options: [
-          "Job Vacancy",
-          "Shortlisting",
-          "Appointment Letter",
-          "Promotion Letter",
-          "Suspension Letter",
-          "Warning Letter",
-          "Show Cause Letter",
-          "Dismissal Letter",
-          "Early Retirement"
-        ]
-      },
+      { name: "record_type", label: "Record Type", type: "select", options: ["Job Vacancy", "Shortlisting", "Appointment Letter", "Promotion Letter", "Suspension Letter", "Warning Letter", "Show Cause Letter", "Dismissal Letter", "Early Retirement"] },
       { name: "position_name", label: "Job/Position" },
       { name: "candidate_name", label: "Name" },
       { name: "candidate_id_number", label: "ID Number" },
@@ -426,12 +200,7 @@ const moduleConfigs = {
       { name: "grade", label: "Grade", type: "select", optionsKey: "gradeOptions" },
       { name: "stream", label: "Stream" },
       { name: "amount_paid", label: "Amount Paid", type: "number" },
-      {
-        name: "payment_method",
-        label: "Payment Method",
-        type: "select",
-        options: ["Cash", "Bank", "Mpesa", "Cheque", "Other"]
-      },
+      { name: "payment_method", label: "Payment Method", type: "select", options: ["Cash", "Bank", "Mpesa", "Cheque", "Other"] },
       { name: "receipt_number", label: "Receipt Number" },
       { name: "payment_date", label: "Payment Date", type: "datetime-local" },
       { name: "balance_after_payment", label: "Balance After Payment", type: "number" }
@@ -461,12 +230,7 @@ const moduleConfigs = {
     fields: [
       { name: "title", label: "Title" },
       { name: "message", label: "Announcement Message", type: "textarea" },
-      {
-        name: "audience",
-        label: "Audience",
-        type: "select",
-        options: ["All", "Teachers", "Parents", "Learners", "Non-Teaching", "BOM"]
-      },
+      { name: "audience", label: "Audience", type: "select", options: ["All", "Teachers", "Parents", "Learners", "Non-Teaching", "BOM"] },
       { name: "start_date", label: "Start Date", type: "date" },
       { name: "end_date", label: "End Date", type: "date" }
     ]
@@ -475,18 +239,8 @@ const moduleConfigs = {
     title: "Communication - SMS and Notifications",
     endpoint: "/api/communication/messages",
     fields: [
-      {
-        name: "message_type",
-        label: "Message Type",
-        type: "select",
-        options: ["SMS", "Email", "Push", "Parent Result Notice", "Fee Reminder"]
-      },
-      {
-        name: "recipient_role",
-        label: "Recipient Role",
-        type: "select",
-        options: ["Parent", "Teacher", "Head", "Admin", "BOM", "Learner", "Non-Teaching"]
-      },
+      { name: "message_type", label: "Message Type", type: "select", options: ["SMS", "Email", "Push", "Parent Result Notice", "Fee Reminder"] },
+      { name: "recipient_role", label: "Recipient Role", type: "select", options: ["Parent", "Teacher", "Head", "Admin", "BOM", "Learner", "Non-Teaching"] },
       { name: "recipient_contact", label: "Recipient Contact (Phone/Email)" },
       { name: "message_body", label: "Message Body", type: "textarea" },
       { name: "status", label: "Status", type: "select", options: ["Queued", "Sent", "Failed"] },
@@ -513,12 +267,7 @@ const moduleConfigs = {
       { name: "member_name", label: "Member Name" },
       { name: "contribution_period", label: "Contribution Period (Month/Term)" },
       { name: "amount", label: "Amount", type: "number" },
-      {
-        name: "payment_mode",
-        label: "Payment Mode",
-        type: "select",
-        options: ["Cash", "Bank", "Mpesa", "Payroll Deduction", "Other"]
-      },
+      { name: "payment_mode", label: "Payment Mode", type: "select", options: ["Cash", "Bank", "Mpesa", "Payroll Deduction", "Other"] },
       { name: "payment_date", label: "Payment Date", type: "date" }
     ]
   },
@@ -531,30 +280,10 @@ const moduleConfigs = {
       { name: "amount", label: "Loan Amount", type: "number" },
       { name: "application_date", label: "Application Date", type: "date" },
       { name: "return_date", label: "Return Date", type: "date" },
-      {
-        name: "status",
-        label: "Overall Status",
-        type: "select",
-        options: ["Pending", "Approved", "Rejected", "Disbursed", "Closed"]
-      },
-      {
-        name: "loan_officer_approval",
-        label: "Loan Officer Approval",
-        type: "select",
-        options: ["Pending", "Approved", "Rejected"]
-      },
-      {
-        name: "principal_approval",
-        label: "Principal Approval",
-        type: "select",
-        options: ["Pending", "Approved", "Rejected"]
-      },
-      {
-        name: "repayment_status",
-        label: "Repayment Tracking",
-        type: "select",
-        options: ["Not Started", "In Progress", "Completed", "Defaulted"]
-      }
+      { name: "status", label: "Overall Status", type: "select", options: ["Pending", "Approved", "Rejected", "Disbursed", "Closed"] },
+      { name: "loan_officer_approval", label: "Loan Officer Approval", type: "select", options: ["Pending", "Approved", "Rejected"] },
+      { name: "principal_approval", label: "Principal Approval", type: "select", options: ["Pending", "Approved", "Rejected"] },
+      { name: "repayment_status", label: "Repayment Tracking", type: "select", options: ["Not Started", "In Progress", "Completed", "Defaulted"] }
     ]
   },
   laws: {
@@ -580,7 +309,7 @@ async function request(path, options = {}) {
     ...options
   });
 
-  if (response.status === 401) {
+  if (response.status === 401 || response.status === 403) {
     localStorage.clear();
     window.location.href = "/";
     return null;
@@ -595,631 +324,18 @@ async function request(path, options = {}) {
 
 function buildInput(field) {
   const id = `field-${field.name}`;
-  const safeId = escapeHtml(id);
-  const safeLabel = escapeHtml(field.label || "");
-  const required = field.required ? '<span class="required-star">*</span>' : "";
-  const hint = field.hint ? `<p class="field-hint">${escapeHtml(field.hint)}</p>` : "";
-  const helpIcon = field.hint
-    ? `<span class="help-icon" title="${escapeHtml(field.hint)}" aria-label="${escapeHtml(
-        field.hint
-      )}">i</span>`
-    : "";
-  const error = `<p id="error-${field.name}" class="field-error" aria-live="polite"></p>`;
+  const value = "";
   if (field.type === "textarea") {
-    return `
-      <div class="field-block">
-        <label for="${safeId}">${safeLabel} ${required} ${helpIcon}</label>
-        <textarea id="${safeId}" rows="3" placeholder="${safeLabel}"></textarea>
-        ${hint}
-        ${error}
-      </div>
-    `;
+    return `<label>${field.label}</label><textarea id="${id}" rows="3" placeholder="${field.label}">${value}</textarea>`;
   }
   if (field.type === "select") {
     const options = field.options || meta[field.optionsKey] || [];
     const optionHtml = ['<option value="">Select...</option>']
-      .concat(options.map((option) => `<option value="${escapeHtml(option)}">${escapeHtml(option)}</option>`))
+      .concat(options.map((option) => `<option value="${option}">${option}</option>`))
       .join("");
-    return `
-      <div class="field-block">
-        <label for="${safeId}">${safeLabel} ${required} ${helpIcon}</label>
-        <select id="${safeId}">${optionHtml}</select>
-        ${hint}
-        ${error}
-      </div>
-    `;
+    return `<label>${field.label}</label><select id="${id}">${optionHtml}</select>`;
   }
-  return `
-    <div class="field-block">
-      <label for="${safeId}">${safeLabel} ${required} ${helpIcon}</label>
-      <input id="${safeId}" type="${field.type || "text"}" placeholder="${safeLabel}" />
-      ${hint}
-      ${error}
-    </div>
-  `;
-}
-
-function statusColor(status) {
-  return STATUS_COLORS[status] || "#5f7187";
-}
-
-function attachFieldMetadata(moduleKey, config) {
-  const requiredNames = new Set(MODULE_REQUIRED_FIELDS[moduleKey] || []);
-  config.fields.forEach((field) => {
-    field.required = requiredNames.has(field.name);
-    field.hint = field.hint || FIELD_HINTS[field.name] || "";
-  });
-}
-
-function moduleHelpContent(moduleKey) {
-  return MODULE_SECTION_HELP[moduleKey] || DEFAULT_MODULE_HELP;
-}
-
-function renderModuleHelp(moduleKey) {
-  const help = moduleHelpContent(moduleKey);
-  const stepsHtml = (help.steps || [])
-    .map((step) => `<li>${escapeHtml(step)}</li>`)
-    .join("");
-  return `
-    <div class="module-help-card" id="moduleHelpCard">
-      <div class="module-help-header">
-        <h4>
-          Section Help
-          <span class="help-icon" title="Guidance for this module." aria-label="Guidance for this module.">i</span>
-        </h4>
-        <button id="toggleModuleHelpButton" class="module-help-toggle">Hide Help</button>
-      </div>
-      <div id="moduleHelpBody" class="module-help-body">
-        <p class="module-help-summary">${escapeHtml(help.summary || "")}</p>
-        <ol class="module-help-steps">${stepsHtml}</ol>
-      </div>
-    </div>
-  `;
-}
-
-function bindModuleHelpToggle() {
-  const button = document.getElementById("toggleModuleHelpButton");
-  const body = document.getElementById("moduleHelpBody");
-  if (!button || !body) return;
-  button.onclick = () => {
-    const hidden = body.classList.toggle("is-hidden");
-    button.textContent = hidden ? "Show Help" : "Hide Help";
-  };
-}
-
-function statusBadgeHtml(status) {
-  return `<span class="status-badge" style="background:${statusColor(status)}">${status || "N/A"}</span>`;
-}
-
-function createAuthDownloadUrl(endpoint) {
-  const separator = endpoint.includes("?") ? "&" : "?";
-  return `${endpoint}${separator}token=${encodeURIComponent(token)}`;
-}
-
-function openProtectedUrl(endpoint) {
-  window.open(createAuthDownloadUrl(endpoint), "_blank");
-}
-
-function renderAdmissionStatusSummary(summary = null) {
-  const target = document.getElementById("admissionStatusSummary");
-  if (!target) return;
-  if (!summary || !Array.isArray(summary.byStatus)) {
-    target.innerHTML = '<p class="small-note">Status summary unavailable.</p>';
-    return;
-  }
-
-  const statusItems = summary.byStatus
-    .filter((item) => Number(item.count || 0) > 0)
-    .map(
-      (item) => `
-        <span class="tag summary-tag" style="border-color:${item.color};">
-          <span class="summary-dot" style="background:${item.color};"></span>
-          ${escapeHtml(item.status)}: ${Number(item.count || 0)}
-        </span>
-      `
-    )
-    .join("");
-
-  target.innerHTML = `
-    <div class="summary-header">
-      <strong>Total Learners: ${Number(summary.totalLearners || 0)}</strong>
-      <span class="small-note">${summary.statusFilter ? `Filter: ${escapeHtml(summary.statusFilter)}` : "All statuses"}</span>
-    </div>
-    <div class="summary-tags">${statusItems || '<span class="small-note">No learners found.</span>'}</div>
-  `;
-}
-
-function admissionStepActionLabel(stepKey) {
-  return ADMISSION_GUIDED_ACTIONS[stepKey] || "Review records and update missing information.";
-}
-
-function admissionCompletenessTableHtml(learners = []) {
-  if (!learners.length) {
-    return '<p class="small-note">No learner records available for completeness analysis.</p>';
-  }
-  const topRows = learners
-    .slice()
-    .sort((a, b) => Number(a.completeness_percentage || 0) - Number(b.completeness_percentage || 0))
-    .slice(0, 10);
-  const rowsHtml = topRows
-    .map((row) => {
-      const missing = Array.isArray(row.missing_fields) ? row.missing_fields.join(", ") : "";
-      return `
-        <tr>
-          <td>${escapeHtml(row.first_name || row.full_name || "")}</td>
-          <td>${escapeHtml(row.admission_number || "")}</td>
-          <td>${escapeHtml(row.status || "")}</td>
-          <td>${Number(row.completeness_percentage || 0)}%</td>
-          <td>${escapeHtml(missing || "-")}</td>
-        </tr>
-      `;
-    })
-    .join("");
-  return `
-    <div class="admission-completeness-table">
-      <h6>Records needing attention (lowest completeness first)</h6>
-      <table>
-        <thead>
-          <tr>
-            <th>Name</th>
-            <th>Admission No.</th>
-            <th>Status</th>
-            <th>Complete</th>
-            <th>Missing Fields</th>
-          </tr>
-        </thead>
-        <tbody>${rowsHtml}</tbody>
-      </table>
-    </div>
-  `;
-}
-
-function admissionCompletenessDownloadUrl({ status = "", onlyIncomplete = false } = {}) {
-  const query = new URLSearchParams();
-  if (status) query.set("status", status);
-  if (onlyIncomplete) query.set("incomplete_only", "1");
-  const suffix = query.toString() ? `?${query.toString()}` : "";
-  return `/api/admission/learners/completeness/export/csv${suffix}`;
-}
-
-function admissionReadinessPrintUrl({ status = "", onlyIncomplete = false } = {}) {
-  const query = new URLSearchParams();
-  if (status) query.set("status", status);
-  if (onlyIncomplete) query.set("incomplete_only", "1");
-  const suffix = query.toString() ? `?${query.toString()}` : "";
-  return `/api/admission/learners/readiness/print${suffix}`;
-}
-
-function currentAdmissionSearchStatus() {
-  return document.getElementById("admissionSearchStatus")?.value || "";
-}
-
-function currentAdmissionIncompleteOnlyMode() {
-  return document.getElementById("admissionIncompleteOnlyToggle")?.checked || false;
-}
-
-function renderAdmissionSearchMeta() {
-  const target = document.getElementById("admissionSearchMeta");
-  if (!target) return;
-  const total = Number(admissionSearchPagination.total || 0);
-  const offset = Number(admissionSearchPagination.offset || 0);
-  const returned = Number(admissionSearchPagination.returned || admissionSearchRows.length || 0);
-  const start = total ? offset + 1 : 0;
-  const end = total ? offset + returned : 0;
-  const suffix = admissionSearchPagination.hasMore ? " (more records available)" : "";
-  target.textContent = `Showing ${start}-${end} of ${total}${suffix}`;
-  const loadMoreButton = document.getElementById("admissionLoadMoreButton");
-  if (loadMoreButton) {
-    loadMoreButton.disabled = !admissionSearchPagination.hasMore;
-    loadMoreButton.textContent = admissionSearchPagination.hasMore ? "Load More Results" : "No More Results";
-  }
-}
-
-function renderAdmissionIntegrityAuditSummary() {
-  const target = document.getElementById("admissionIntegritySummary");
-  if (!target) return;
-  const summary = admissionIntegrityAuditCache;
-  if (!summary) {
-    target.innerHTML = '<p class="small-note">Integrity summary unavailable. Click Refresh Guidance Data.</p>';
-    return;
-  }
-  const duplicateCount = Number(summary.duplicateAdmissionSets || 0);
-  const missingContactCount = Number(summary.missingParentContactsCount || 0);
-  const invalidStatusCount = Number(summary.invalidStatusCount || 0);
-  const isHealthy = duplicateCount === 0 && missingContactCount === 0 && invalidStatusCount === 0;
-  target.innerHTML = `
-    <div class="integrity-header">
-      <strong>Admission Integrity</strong>
-      <span class="tag ${isHealthy ? "integrity-good" : "integrity-bad"}">${isHealthy ? "Healthy" : "Needs Attention"}</span>
-    </div>
-    <div class="integrity-grid">
-      <span class="tag">Duplicate Admission Numbers: ${duplicateCount}</span>
-      <span class="tag">Missing Parent Contacts: ${missingContactCount}</span>
-      <span class="tag">Invalid Status Rows: ${invalidStatusCount}</span>
-    </div>
-    <p class="small-note">Last generated: ${escapeHtml(summary.generatedAt || "N/A")}</p>
-  `;
-}
-
-async function refreshAdmissionIntegrityAuditSummary() {
-  if (currentModule !== "admission") return;
-  try {
-    const summary = await request("/api/workflows/admission-integrity-audit");
-    admissionIntegrityAuditCache = summary || null;
-  } catch (error) {
-    admissionIntegrityAuditCache = null;
-  }
-  renderAdmissionIntegrityAuditSummary();
-}
-
-function renderAdmissionFixQueueState() {
-  const button = document.getElementById("applyAdmissionFixQueueButton");
-  const toggle = document.getElementById("admissionIncompleteOnlyToggle");
-  if (!button || !toggle) return;
-  const enabled = Boolean(toggle.checked);
-  button.classList.toggle("fix-queue-active", enabled);
-  button.textContent = enabled ? "Fix Queue Active" : "Apply Fix Queue";
-}
-
-function syncAdmissionIncompleteToggleFromDataset() {
-  const toggle = document.getElementById("admissionIncompleteOnlyToggle");
-  if (!toggle) return;
-  if (!admissionCompletenessCache) return;
-  toggle.checked = Boolean(admissionCompletenessCache.onlyIncomplete);
-}
-
-function renderAdmissionGuidance() {
-  const panel = document.getElementById("admissionGuidancePanel");
-  if (!panel || currentModule !== "admission") return;
-  const steps = admissionGuidedStepState.length
-    ? admissionGuidedStepState
-    : ADMISSION_GUIDE_STEPS.map((step) => ({ ...step, done: false }));
-  const completed = steps.filter((step) => Boolean(step.done)).length;
-  const summary = admissionCompletenessCache?.summary || {};
-  const learners = admissionCompletenessCache?.learners || [];
-  const statusFilter = currentAdmissionSearchStatus();
-  const activeFilter = statusFilter || "All statuses";
-  const incompleteOnly = currentAdmissionIncompleteOnlyMode();
-  const stepItems = steps
-    .map((step) => {
-      const done = Boolean(step.done);
-      return `
-        <li class="${done ? "step-done" : "step-pending"}">
-          <span class="step-check">${done ? "Done" : "Pending"}</span>
-          <span>${escapeHtml(step.title || "")}</span>
-          <span class="small-note">${escapeHtml(admissionStepActionLabel(step.key))}</span>
-          <button type="button" onclick="runAdmissionGuidedStep('${escapeHtml(step.key)}')">Take Action</button>
-        </li>
-      `;
-    })
-    .join("");
-
-  panel.innerHTML = `
-    <div class="admission-guidance-header">
-      <h5>Admission Guided Mode</h5>
-      <span class="tag">Completed Steps: ${completed}/${steps.length}</span>
-    </div>
-    ${
-      !admissionGuidedModeEnabled
-        ? '<p class="small-note">Guided Mode is disabled. Enable it to see checklist progress and completeness insights.</p>'
-        : `
-          <div class="guided-checklist">
-            <ul class="guide-steps">${stepItems}</ul>
-          </div>
-          <div class="admission-completeness-summary">
-            <h5>Completeness Dashboard (${escapeHtml(activeFilter)})</h5>
-            <div class="summary-tags">
-              <span class="tag">Learners: ${Number(summary.totalLearners || 0)}</span>
-              <span class="tag">Avg Completeness: ${Number(summary.averageCompleteness || 0)}%</span>
-              <span class="tag">90%+ Complete: ${Number(summary.highCompleteness || 0)}</span>
-              <span class="tag">70%+ Complete: ${Number(summary.mediumCompleteness || 0)}</span>
-              <span class="tag">With Photos: ${Number(summary.withPhotos || 0)}</span>
-              <span class="tag">With Parent Contact: ${Number(summary.withParentContact || 0)}</span>
-            </div>
-            <div class="actions-row completeness-tools">
-              <button type="button" onclick="quickFilterAdmissionStatus('')">All</button>
-              <button type="button" onclick="quickFilterAdmissionStatus('In Session')">In Session</button>
-              <button type="button" onclick="quickFilterAdmissionStatus('Not in Session')">Not in Session</button>
-              <button type="button" onclick="quickFilterAdmissionStatus('Transferred')">Transferred</button>
-              <button type="button" onclick="quickFilterAdmissionStatus('Alumni')">Alumni</button>
-              <button type="button" onclick="quickFilterAdmissionStatus('Deceased')">Deceased</button>
-              <button type="button" onclick="applyAdmissionFixQueue()">Fix Queue</button>
-            </div>
-            <div class="actions-row completeness-tools">
-              <button type="button" onclick="downloadAdmissionCompletenessReport()">Download Completeness CSV</button>
-              <button type="button" onclick="printAdmissionReadinessReport()">Print Readiness Report</button>
-              <span class="small-note">Mode: ${
-                incompleteOnly ? "Incomplete records only" : "All records"
-              }</span>
-            </div>
-            ${admissionCompletenessTableHtml(learners)}
-          </div>
-        `
-    }
-  `;
-}
-
-async function refreshAdmissionGuidanceData(force = false) {
-  if (currentModule !== "admission") return;
-  if (!admissionGuidedModeEnabled && !force) {
-    renderAdmissionGuidance();
-    return;
-  }
-  const status = currentAdmissionSearchStatus();
-  const onlyIncomplete = currentAdmissionIncompleteOnlyMode();
-  const query = new URLSearchParams();
-  if (status) query.set("status", status);
-  if (onlyIncomplete) query.set("incomplete_only", "1");
-  const suffix = query.toString() ? `?${query.toString()}` : "";
-  try {
-    const [workflow, completeness] = await Promise.all([
-      request("/api/admission/workflow/steps"),
-      request(`/api/admission/learners/completeness${suffix}`)
-    ]);
-    admissionGuidedStepState = workflow?.steps || [];
-    admissionCompletenessCache = completeness || null;
-  } catch (error) {
-    admissionGuidedStepState = [];
-    admissionCompletenessCache = null;
-  }
-  syncAdmissionIncompleteToggleFromDataset();
-  renderAdmissionGuidance();
-}
-
-function toggleAdmissionGuidedMode(enabled) {
-  admissionGuidedModeEnabled = Boolean(enabled);
-  localStorage.setItem("admissionGuidedMode", admissionGuidedModeEnabled ? "1" : "0");
-  const toggle = document.getElementById("guidedModeToggle");
-  if (toggle) toggle.checked = admissionGuidedModeEnabled;
-  if (admissionGuidedModeEnabled) {
-    refreshAdmissionGuidanceData(true);
-    return;
-  }
-  renderAdmissionGuidance();
-}
-
-async function quickFilterAdmissionStatus(status) {
-  const statusSelect = document.getElementById("admissionSearchStatus");
-  if (!statusSelect) return;
-  statusSelect.value = status || "";
-  await searchAdmission();
-  await refreshAdmissionStatusSummary();
-  await refreshAdmissionGuidanceData(true);
-}
-
-async function toggleAdmissionIncompleteOnly(enabled) {
-  const toggle = document.getElementById("admissionIncompleteOnlyToggle");
-  if (toggle) toggle.checked = Boolean(enabled);
-  renderAdmissionFixQueueState();
-  await searchAdmission();
-  await refreshAdmissionStatusSummary();
-  await refreshAdmissionGuidanceData(true);
-}
-
-async function applyAdmissionFixQueue() {
-  const toggle = document.getElementById("admissionIncompleteOnlyToggle");
-  if (toggle) toggle.checked = true;
-  renderAdmissionFixQueueState();
-  await toggleAdmissionIncompleteOnly(true);
-}
-
-function downloadAdmissionCompletenessReport() {
-  const status = currentAdmissionSearchStatus();
-  const onlyIncomplete = currentAdmissionIncompleteOnlyMode();
-  openProtectedUrl(admissionCompletenessDownloadUrl({ status, onlyIncomplete }));
-}
-
-function printAdmissionReadinessReport() {
-  const status = currentAdmissionSearchStatus();
-  const onlyIncomplete = currentAdmissionIncompleteOnlyMode();
-  openProtectedUrl(admissionReadinessPrintUrl({ status, onlyIncomplete }));
-}
-
-async function runAdmissionGuidedStep(stepKey) {
-  if (stepKey === "step-1") {
-    const firstNameField = document.getElementById("field-first_name");
-    if (firstNameField) firstNameField.focus();
-    return;
-  }
-  if (stepKey === "step-2") {
-    await downloadAdmissionCompletenessReport();
-    return;
-  }
-  if (stepKey === "step-3") {
-    document.getElementById("admissionPhotoBatchInput")?.focus();
-    alert("Use Photo action per learner or batch/ZIP upload tools.");
-    return;
-  }
-  if (stepKey === "step-4") {
-    await applyAdmissionFixQueue();
-    alert("Fix Queue enabled. Add parent phone or email for learners missing contact information.");
-    return;
-  }
-  if (stepKey === "step-5") {
-    await processCurrentModule();
-    await refreshAdmissionGuidanceData(true);
-  }
-}
-
-function admissionToolsHtml() {
-  return `
-    <div class="admission-tools">
-      <div class="admission-debug-version">
-        UI Build: ${DASHBOARD_BUILD_ID}
-      </div>
-      <h4>Admission Bulk Upload and Search Tools</h4>
-      <p class="small-note">Download template, fill learner biodata, upload Excel/CSV, then add photos while editing each learner, batch filenames (AdmissionNumber.jpg), or ZIP upload.</p>
-      <div class="admission-requirements">
-        <h5>Requested Admission Amendments (A-E)</h5>
-        <ul id="admissionAmendmentChecklist">
-          <li data-check="a"><strong>A.</strong> Biodata template download + filled Excel/CSV upload for bulk entry, with photo support via edit/upload actions.</li>
-          <li data-check="b"><strong>B.</strong> Grade/Form mutual exclusion (choose one only).</li>
-          <li data-check="c"><strong>C.</strong> Status colors + status-first then first-name sorting, including print/download outputs.</li>
-          <li data-check="d"><strong>D.</strong> Search results actions: Edit, Delete, Photo, View, Download, Print.</li>
-          <li data-check="e"><strong>E.</strong> Record printing buttons for admission listings and grouped register.</li>
-        </ul>
-      </div>
-      <div class="admission-visibility-banner">
-        <strong>Admission Enhancements Active:</strong>
-        Template Download/Upload, Grade/Form Lock, Status Colors/Sorting, Search Actions, and Print Controls.
-      </div>
-      <div class="guided-toggle-row">
-        <label><input id="guidedModeToggle" type="checkbox" ${admissionGuidedModeEnabled ? "checked" : ""} /> Guided Mode</label>
-        <label><input id="admissionIncompleteOnlyToggle" type="checkbox" /> Incomplete only</label>
-        <button id="applyAdmissionFixQueueButton" type="button">Apply Fix Queue</button>
-        <button id="refreshAdmissionGuidanceButton" type="button">Refresh Guidance Data</button>
-      </div>
-      <p id="admissionSearchMeta" class="small-note">Showing 0-0 of 0</p>
-      <div id="admissionIntegritySummary" class="admission-integrity-summary"></div>
-      <div id="admissionGuidancePanel" class="admission-guidance-panel"></div>
-      <div class="admission-tools-grid">
-        <div>
-          <label>Template + Biodata Upload</label>
-          <div class="actions-row">
-            <button id="downloadAdmissionTemplateButton">Download Excel Template</button>
-            <button id="downloadAdmissionCsvTemplateButton">Download CSV Template</button>
-            <input id="admissionExcelInput" type="file" accept=".xlsx,.csv" />
-            <button id="uploadAdmissionExcelButton">Upload Filled Excel/CSV</button>
-            <button id="downloadAdmissionRejectionReportButton">Download Rejection Report</button>
-          </div>
-        </div>
-        <div>
-          <label>Batch photo upload by filename</label>
-          <div class="actions-row">
-            <input id="admissionPhotoBatchInput" type="file" accept="image/*" multiple />
-            <button id="uploadAdmissionPhotoBatchButton">Upload Photo Batch</button>
-          </div>
-          <p class="small-note">Name each photo with admission number, e.g. ADM001.jpg</p>
-        </div>
-        <div>
-          <label>Batch photo ZIP upload</label>
-          <div class="actions-row">
-            <input id="admissionPhotoZipInput" type="file" accept=".zip" />
-            <button id="uploadAdmissionPhotoZipButton">Upload Photo ZIP</button>
-          </div>
-          <p class="small-note">ZIP must contain image files named by admission number.</p>
-        </div>
-        <div>
-          <label>Search learner record</label>
-          <div class="search-row">
-            <select id="admissionSearchField">
-              ${ADMISSION_SEARCH_FIELDS.map((item) => `<option value="${escapeHtml(item.value)}">${escapeHtml(item.label)}</option>`).join("")}
-            </select>
-            <input id="admissionSearchValue" placeholder="Search value" />
-            <select id="admissionSearchStatus">
-              <option value="">Any status</option>
-              ${(meta.admissionStatus || [])
-                .map((status) => `<option value="${escapeHtml(status)}">${escapeHtml(status)}</option>`)
-                .join("")}
-            </select>
-            <button id="admissionSearchButton">Search</button>
-          </div>
-          <div class="search-direct-actions">
-            <p class="selected-search-title">Search Result Actions (Edit / Delete / Photo / View / Download / Print)</p>
-            <div class="actions-row search-action-bar">
-            <select id="admissionSearchResultPicker">
-              <option value="">No search results</option>
-            </select>
-            <button id="admissionSearchEditButton" type="button">Edit Selected</button>
-            <button id="admissionSearchDeleteButton" class="danger" type="button">Delete Selected</button>
-            <button id="admissionSearchPhotoButton" type="button">Photo Selected</button>
-            <button id="admissionSearchViewButton" type="button">View Selected</button>
-            <button id="admissionSearchDownloadButton" type="button">Download Selected</button>
-            <button id="admissionSearchPrintButton" type="button">Print Selected</button>
-            </div>
-          </div>
-        </div>
-      </div>
-      <div class="actions-row">
-        <button id="admissionRecordPrintButton">Print Records</button>
-        <button id="admissionGroupedRegisterButton">Print Grouped Register</button>
-        <button id="admissionReadinessReportButton">Print Readiness Report</button>
-        <button id="admissionCompletenessCsvButton">Download Completeness CSV</button>
-        <button id="admissionLoadMoreButton">Load More Results</button>
-        <button id="refreshAdmissionSummaryButton">Refresh Status Summary</button>
-      </div>
-      <div id="admissionStatusSummary" class="admission-status-summary"></div>
-    </div>
-  `;
-}
-
-function escapeHtml(value) {
-  return String(value ?? "")
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#039;");
-}
-
-function bindAdmissionMutualExclusion() {
-  const gradeEl = document.getElementById("field-grade");
-  const formEl = document.getElementById("field-form_name");
-  if (!gradeEl || !formEl) return;
-
-  const sync = () => {
-    let gradeHasValue = String(gradeEl.value || "").trim() !== "";
-    let formHasValue = String(formEl.value || "").trim() !== "";
-    const gradeRecentlyEdited = document.activeElement === gradeEl;
-    const formRecentlyEdited = document.activeElement === formEl;
-
-    // If both become populated (e.g. when loading an old row), keep one deterministically.
-    if (gradeHasValue && formHasValue) {
-      if (formRecentlyEdited) {
-        gradeEl.value = "";
-      } else {
-        formEl.value = "";
-      }
-      gradeHasValue = String(gradeEl.value || "").trim() !== "";
-      formHasValue = String(formEl.value || "").trim() !== "";
-    }
-
-    if (gradeHasValue) {
-      formEl.value = "";
-      formEl.disabled = true;
-    } else {
-      formEl.disabled = false;
-    }
-
-    if (formHasValue) {
-      gradeEl.value = "";
-      gradeEl.disabled = true;
-    } else {
-      gradeEl.disabled = false;
-    }
-  };
-
-  gradeEl.addEventListener("change", sync);
-  formEl.addEventListener("change", sync);
-  sync();
-}
-
-function updateAdmissionAmendmentChecklist() {
-  const checklist = document.getElementById("admissionAmendmentChecklist");
-  if (!checklist) return;
-  const checks = {
-    a:
-      Boolean(document.getElementById("downloadAdmissionTemplateButton")) &&
-      Boolean(document.getElementById("uploadAdmissionExcelButton")),
-    b: Boolean(document.getElementById("field-grade")) && Boolean(document.getElementById("field-form_name")),
-    c: Array.isArray(meta?.admissionStatus) && meta.admissionStatus.length > 0,
-    d:
-      Boolean(document.getElementById("admissionSearchButton")) &&
-      admissionSearchRows.every((row) => row && row.id !== undefined),
-    e:
-      Boolean(document.getElementById("admissionRecordPrintButton")) &&
-      Boolean(document.getElementById("admissionGroupedRegisterButton"))
-  };
-
-  checklist.querySelectorAll("li[data-check]").forEach((item) => {
-    const key = item.dataset.check;
-    const ready = Boolean(checks[key]);
-    item.classList.toggle("is-ready", ready);
-    item.classList.toggle("is-attention", !ready);
-    const badgeText = ready ? "Ready" : "Attention";
-    const badgeClass = ready ? "amendment-ready" : "amendment-attention";
-    item.innerHTML = `${item.innerHTML.replace(/<span class="amendment-badge[^>]*>.*?<\/span>/, "")}<span class="amendment-badge ${badgeClass}">${badgeText}</span>`;
-  });
+  return `<label>${field.label}</label><input id="${id}" type="${field.type || "text"}" placeholder="${field.label}" value="${value}"/>`;
 }
 
 function getFieldValue(field) {
@@ -1229,90 +345,6 @@ function getFieldValue(field) {
     return el.value === "" ? null : Number(el.value);
   }
   return el.value || null;
-}
-
-function clearFieldErrors(config) {
-  currentValidationErrors = {};
-  config.fields.forEach((field) => {
-    const errorEl = document.getElementById(`error-${field.name}`);
-    const inputEl = document.getElementById(`field-${field.name}`);
-    if (errorEl) {
-      errorEl.textContent = "";
-      errorEl.style.display = "none";
-    }
-    if (inputEl) {
-      inputEl.classList.remove("input-invalid");
-    }
-  });
-}
-
-function showFieldErrors(config, errors = {}) {
-  currentValidationErrors = { ...errors };
-  config.fields.forEach((field) => {
-    const message = errors[field.name] || "";
-    const errorEl = document.getElementById(`error-${field.name}`);
-    const inputEl = document.getElementById(`field-${field.name}`);
-    if (errorEl) {
-      errorEl.textContent = message;
-      errorEl.style.display = message ? "block" : "none";
-    }
-    if (inputEl) {
-      if (message) inputEl.classList.add("input-invalid");
-      else inputEl.classList.remove("input-invalid");
-    }
-  });
-}
-
-function parseServerErrorToFieldErrors(errorMessage, config) {
-  const message = String(errorMessage || "").toLowerCase();
-  const fieldErrors = {};
-  config.fields.forEach((field) => {
-    const token = field.name.replaceAll("_", " ");
-    if (message.includes(token) || message.includes(field.label.toLowerCase())) {
-      fieldErrors[field.name] = String(errorMessage);
-    }
-  });
-  return fieldErrors;
-}
-
-function validateFormLocally(config, payload) {
-  const errors = {};
-  config.fields.forEach((field) => {
-    if (!field.required) return;
-    const value = payload[field.name];
-    if (value === null || value === undefined || String(value).trim() === "") {
-      errors[field.name] = `${field.label} is required.`;
-    }
-  });
-
-  if (currentModule === "admission") {
-    if (!payload.grade && !payload.form_name) {
-      errors.grade = "Select Grade or Form.";
-      errors.form_name = "Select Form or Grade.";
-    }
-  }
-  return errors;
-}
-
-function ensureFormNotice() {
-  const formArea = document.getElementById("formArea");
-  if (!formArea) return null;
-  const existing = document.getElementById("formNotice");
-  if (existing) return existing;
-  formArea.insertAdjacentHTML("afterbegin", '<div id="formNotice" class="form-notice" aria-live="polite"></div>');
-  return document.getElementById("formNotice");
-}
-
-function setFormNotice(message, type = "info") {
-  const notice = ensureFormNotice();
-  if (!notice) return;
-  notice.className = `form-notice ${type}`;
-  notice.textContent = message || "";
-  notice.style.display = message ? "block" : "none";
-}
-
-function clearFormNotice() {
-  setFormNotice("", "info");
 }
 
 function setFieldValue(field, value) {
@@ -1334,143 +366,14 @@ function cbcBandFromScore(score) {
   return "BE";
 }
 
-function jsonPreview(data) {
-  return `<pre class="process-output">${escapeHtml(JSON.stringify(data, null, 2))}</pre>`;
-}
-
-function setProcessResult(title, payload) {
-  const formArea = document.getElementById("formArea");
-  if (!formArea) return;
-  const existing = document.getElementById("moduleProcessResult");
-  const content = `
-    <div id="moduleProcessResult" class="module-process-result">
-      <h4>${escapeHtml(title)}</h4>
-      ${jsonPreview(payload)}
-    </div>
-  `;
-  if (existing) {
-    existing.outerHTML = content;
-  } else {
-    formArea.insertAdjacentHTML("beforeend", content);
-  }
-}
-
-function processEndpointForModule(moduleKey) {
-  switch (moduleKey) {
-    case "admission":
-      return {
-        endpoint: "/api/workflows/admission-integrity-audit",
-        buildPayload: () => ({}),
-        title: "Admission Integrity Audit"
-      };
-    case "attendance":
-      return {
-        endpoint: "/api/attendance/auto-class-register",
-        buildPayload: () => ({
-          grade: document.getElementById("field-grade")?.value || null,
-          stream: document.getElementById("field-stream")?.value || null,
-          attendance_date: document.getElementById("field-attendance_date")?.value || null
-        }),
-        title: "Auto Class Register"
-      };
-    case "management-teacher-resources":
-      return {
-        endpoint: "/api/management/teacher-resources/auto-generate",
-        buildPayload: () => ({
-          teacher_profile_id: document.getElementById("field-teacher_profile_id")?.value || null,
-          resource_type: document.getElementById("field-resource_type")?.value || null,
-          grade: document.getElementById("field-grade")?.value || null,
-          term: document.getElementById("field-term")?.value || null,
-          strand: document.getElementById("field-strand")?.value || null,
-          sub_strand: document.getElementById("field-sub_strand")?.value || null
-        }),
-        title: "Teacher Resource Auto Generation"
-      };
-    case "academic-exams":
-      return {
-        endpoint: "/api/academic/exams/auto-generate",
-        buildPayload: () => ({
-          title: document.getElementById("field-title")?.value || null,
-          grade: document.getElementById("field-grade")?.value || null,
-          stream: document.getElementById("field-stream")?.value || null,
-          subject: document.getElementById("field-subject")?.value || null,
-          strand: document.getElementById("field-strand")?.value || null,
-          sub_strand: document.getElementById("field-sub_strand")?.value || null,
-          term: document.getElementById("field-term")?.value || null,
-          year: document.getElementById("field-year")?.value || null,
-          notes_file_path: document.getElementById("field-notes_file_path")?.value || null
-        }),
-        title: "Academic Exam Auto Generation"
-      };
-    case "academic-marks":
-      return {
-        endpoint: "/api/workflows/academic/normalize-gradebook",
-        buildPayload: () => ({
-          grade: document.getElementById("field-grade")?.value || null,
-          term: document.getElementById("field-term")?.value || null,
-          year: document.getElementById("field-year")?.value || null
-        }),
-        title: "Academic Gradebook Normalization"
-      };
-    case "communication-messages":
-      return {
-        endpoint: "/api/workflows/communication/dispatch-queued",
-        buildPayload: () => ({ limit: 200 }),
-        title: "Queued Communication Dispatch"
-      };
-    case "finance-fee-structure":
-    case "finance-fee-payments":
-      return {
-        endpoint: "/api/workflows/finance/fee-summary",
-        buildPayload: () => ({
-          grade: document.getElementById("field-grade")?.value || null,
-          term: document.getElementById("field-term")?.value || null,
-          year: document.getElementById("field-year")?.value || null
-        }),
-        title: "Finance Fee Summary"
-      };
-    default:
-      return null;
-  }
-}
-
-async function processCurrentModule() {
-  const action = processEndpointForModule(currentModule);
-  if (!action) {
-    alert("No process workflow configured for this module yet.");
-    return;
-  }
-  try {
-    const result = await request(action.endpoint, {
-      method: "POST",
-      body: JSON.stringify(action.buildPayload())
-    });
-    setProcessResult(action.title, result);
-    if (moduleConfigs[currentModule]) {
-      await loadModuleData(moduleConfigs[currentModule]);
-    }
-  } catch (error) {
-    alert(error.message);
-  }
-}
-
 async function saveCurrentModule() {
   const config = moduleConfigs[currentModule];
   if (!config) return;
 
-  clearFieldErrors(config);
-  clearFormNotice();
   const payload = {};
   config.fields.forEach((field) => {
     payload[field.name] = getFieldValue(field);
   });
-
-  const localErrors = validateFormLocally(config, payload);
-  if (Object.keys(localErrors).length) {
-    showFieldErrors(config, localErrors);
-    setFormNotice("Fix highlighted fields before saving.", "error");
-    return;
-  }
 
   if (currentModule === "academic-marks" && payload.marks !== null) {
     payload.percentage = payload.percentage ?? payload.marks;
@@ -1483,25 +386,18 @@ async function saveCurrentModule() {
         method: "PUT",
         body: JSON.stringify(payload)
       });
-      setFormNotice("Record updated successfully.", "success");
+      alert("Record updated successfully.");
     } else {
       await request(config.endpoint, {
         method: "POST",
         body: JSON.stringify(payload)
       });
-      setFormNotice("Record saved successfully.", "success");
+      alert("Record saved successfully.");
     }
-    clearFieldErrors(config);
     clearForm(config);
     await loadModuleData(config);
   } catch (error) {
-    const fieldErrors = parseServerErrorToFieldErrors(error.message, config);
-    if (Object.keys(fieldErrors).length) {
-      showFieldErrors(config, fieldErrors);
-      setFormNotice("Some fields need correction. See highlighted errors.", "error");
-      return;
-    }
-    setFormNotice(error.message, "error");
+    alert(error.message);
   }
 }
 
@@ -1512,9 +408,6 @@ async function editRow(id) {
     const row = await request(`${config.endpoint}/${id}`);
     currentEditId = row.id;
     config.fields.forEach((field) => setFieldValue(field, row[field.name]));
-    if (currentModule === "admission") {
-      bindAdmissionMutualExclusion();
-    }
   } catch (error) {
     alert(error.message);
   }
@@ -1536,379 +429,16 @@ async function deleteRow(id) {
 async function exportPdf() {
   const config = moduleConfigs[currentModule];
   if (!config) return;
-  openProtectedUrl(`${config.endpoint}/export/pdf`);
+  window.open(`${config.endpoint}/export/pdf`, "_blank");
 }
 
 async function exportExcel() {
   const config = moduleConfigs[currentModule];
   if (!config) return;
-  openProtectedUrl(`${config.endpoint}/export/excel`);
-}
-
-async function downloadAdmissionTemplate() {
-  openProtectedUrl("/api/admission/learners/template/excel");
-}
-
-async function downloadAdmissionCsvTemplate() {
-  openProtectedUrl("/api/admission/learners/template/csv");
-}
-
-async function uploadAdmissionExcel() {
-  const fileInput = document.getElementById("admissionExcelInput");
-  if (!fileInput || !fileInput.files || !fileInput.files[0]) {
-    alert("Select a completed .xlsx or .csv template first.");
-    return;
-  }
-  const formData = new FormData();
-  formData.append("file", fileInput.files[0]);
-  try {
-    const response = await fetch("/api/admission/learners/bulk-upload", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`
-      },
-      body: formData
-    });
-    const data = await response.json();
-    if (!response.ok) {
-      throw new Error(data.error || "Bulk upload failed.");
-    }
-    const rejected = data.rejectedRows?.length || 0;
-    alert(
-      `Bulk upload completed. Format: ${data.sourceFormat || "unknown"}. Processed: ${data.insertedOrUpdated || 0}. Rejected: ${rejected}.`
-    );
-    if (data.rejectionReportPath) {
-      localStorage.setItem("admissionRejectionReportPath", data.rejectionReportPath);
-    } else {
-      localStorage.removeItem("admissionRejectionReportPath");
-    }
-    fileInput.value = "";
-    await loadModuleData(moduleConfigs.admission);
-  } catch (error) {
-    alert(error.message);
-  }
-}
-
-function downloadAdmissionRejectionReport() {
-  const reportPath = localStorage.getItem("admissionRejectionReportPath");
-  if (!reportPath) {
-    alert("No rejection report available yet. Upload biodata first.");
-    return;
-  }
-  openProtectedUrl(reportPath);
-}
-
-async function uploadAdmissionPhotoBatch() {
-  const fileInput = document.getElementById("admissionPhotoBatchInput");
-  if (!fileInput || !fileInput.files || !fileInput.files.length) {
-    alert("Select learner photos first. Filenames must be admission numbers.");
-    return;
-  }
-
-  const formData = new FormData();
-  Array.from(fileInput.files).forEach((file) => {
-    formData.append("photos", file);
-  });
-
-  try {
-    const response = await fetch("/api/admission/learners/photo-batch-upload", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`
-      },
-      body: formData
-    });
-    const data = await response.json();
-    if (!response.ok) {
-      throw new Error(data.error || "Batch photo upload failed.");
-    }
-    const rejected = data.rejectedFiles?.length || 0;
-    alert(
-      `Photo batch processed. Uploaded: ${data.uploaded || 0}, Matched: ${data.matchedCount || 0}, Rejected: ${rejected}.`
-    );
-    fileInput.value = "";
-    await loadModuleData(moduleConfigs.admission);
-  } catch (error) {
-    alert(error.message);
-  }
-}
-
-async function uploadAdmissionPhotoZipBatch() {
-  const fileInput = document.getElementById("admissionPhotoZipInput");
-  if (!fileInput || !fileInput.files || !fileInput.files[0]) {
-    alert("Select ZIP file first.");
-    return;
-  }
-  const formData = new FormData();
-  formData.append("zipFile", fileInput.files[0]);
-  try {
-    const response = await fetch("/api/admission/learners/photo-batch-zip-upload", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`
-      },
-      body: formData
-    });
-    const data = await response.json();
-    if (!response.ok) {
-      throw new Error(data.error || "ZIP photo upload failed.");
-    }
-    const rejected = data.rejectedFiles?.length || 0;
-    alert(
-      `ZIP photo batch processed. Extracted: ${data.extracted || 0}, Matched: ${data.matchedCount || 0}, Rejected: ${rejected}.`
-    );
-    fileInput.value = "";
-    await loadModuleData(moduleConfigs.admission);
-  } catch (error) {
-    alert(error.message);
-  }
-}
-
-async function searchAdmission() {
-  const field = document.getElementById("admissionSearchField")?.value || "full_name";
-  const value = document.getElementById("admissionSearchValue")?.value?.trim() || "";
-  const status = document.getElementById("admissionSearchStatus")?.value || "";
-  const onlyIncomplete = currentAdmissionIncompleteOnlyMode();
-  try {
-    const query = new URLSearchParams({ field, value, status });
-    query.set("limit", String(admissionSearchPagination.limit || 100));
-    query.set("offset", "0");
-    if (onlyIncomplete) query.set("incomplete_only", "1");
-    const payload = await request(`/api/admission/learners/search?${query.toString()}`);
-    const rows = Array.isArray(payload?.rows) ? payload.rows : [];
-    const pagination = payload?.pagination || {};
-    admissionSearchRows = rows;
-    admissionSearchPagination = {
-      total: Number(pagination.total || rows.length),
-      limit: Number(pagination.limit || admissionSearchPagination.limit || 100),
-      offset: Number(pagination.offset || 0),
-      returned: Number(pagination.returned || rows.length),
-      hasMore: Boolean(pagination.hasMore)
-    };
-    renderAdmissionTable(admissionSearchRows);
-    renderAdmissionSearchMeta();
-    renderAdmissionFixQueueState();
-  } catch (error) {
-    alert(error.message);
-  }
-}
-
-async function loadMoreAdmissionResults() {
-  const field = document.getElementById("admissionSearchField")?.value || "full_name";
-  const value = document.getElementById("admissionSearchValue")?.value?.trim() || "";
-  const status = document.getElementById("admissionSearchStatus")?.value || "";
-  const onlyIncomplete = currentAdmissionIncompleteOnlyMode();
-  if (!admissionSearchPagination.hasMore) {
-    alert("No more admission records to load.");
-    return;
-  }
-  const nextOffset =
-    Number(admissionSearchPagination.offset || 0) + Number(admissionSearchPagination.returned || 0);
-  try {
-    const query = new URLSearchParams({ field, value, status });
-    query.set("limit", String(admissionSearchPagination.limit || 100));
-    query.set("offset", String(nextOffset));
-    if (onlyIncomplete) query.set("incomplete_only", "1");
-    const payload = await request(`/api/admission/learners/search?${query.toString()}`);
-    const rows = Array.isArray(payload?.rows) ? payload.rows : [];
-    const pagination = payload?.pagination || {};
-    admissionSearchRows = admissionSearchRows.concat(rows);
-    admissionSearchPagination = {
-      total: Number(pagination.total || admissionSearchRows.length),
-      limit: Number(pagination.limit || admissionSearchPagination.limit || 100),
-      offset: Number(pagination.offset || nextOffset),
-      returned: Number(pagination.returned || rows.length),
-      hasMore: Boolean(pagination.hasMore)
-    };
-    renderAdmissionTable(admissionSearchRows);
-    renderAdmissionSearchMeta();
-    renderAdmissionFixQueueState();
-  } catch (error) {
-    alert(error.message);
-  }
-}
-
-async function uploadLearnerPhoto(learnerId) {
-  const input = document.createElement("input");
-  input.type = "file";
-  input.accept = "image/*";
-  input.onchange = async () => {
-    if (!input.files?.[0]) return;
-    const formData = new FormData();
-    formData.append("photo", input.files[0]);
-    try {
-      const response = await fetch(`/api/admission/learners/photo-upload/${learnerId}`, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${token}`
-        },
-        body: formData
-      });
-      const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data.error || "Photo upload failed.");
-      }
-      alert("Photo uploaded successfully.");
-      await loadModuleData(moduleConfigs.admission);
-    } catch (error) {
-      alert(error.message);
-    }
-  };
-  input.click();
-}
-
-function viewLearnerRecord(learnerId) {
-  openProtectedUrl(`/api/admission/learners/${learnerId}/export/pdf`);
-}
-
-function downloadLearnerRecord(learnerId) {
-  openProtectedUrl(`/api/admission/learners/${learnerId}/export/pdf`);
-}
-
-function printLearnerRecord(learnerId) {
-  openProtectedUrl(`/api/admission/learners/${learnerId}/export/pdf`);
-}
-
-function printAdmissionGroupedRegister() {
-  const status = document.getElementById("admissionSearchStatus")?.value || "";
-  const query = status ? `?status=${encodeURIComponent(status)}` : "";
-  openProtectedUrl(`/api/admission/learners/register/print${query}`);
-}
-
-function printAdmissionCurrentTable() {
-  if (!admissionSearchRows.length) {
-    alert("No admission records loaded to print.");
-    return;
-  }
-  const status = document.getElementById("admissionSearchStatus")?.value || "";
-  const query = status ? `?status=${encodeURIComponent(status)}` : "";
-  openProtectedUrl(`/api/admission/learners/register/print${query}`);
-}
-
-async function refreshAdmissionStatusSummary() {
-  if (currentModule !== "admission") return;
-  const status = document.getElementById("admissionSearchStatus")?.value || "";
-  const query = new URLSearchParams();
-  if (status) query.set("status", status);
-  const suffix = query.toString() ? `?${query.toString()}` : "";
-  try {
-    const summary = await request(`/api/admission/learners/status-summary${suffix}`);
-    renderAdmissionStatusSummary(summary);
-  } catch (error) {
-    renderAdmissionStatusSummary(null);
-  }
-}
-
-function renderAdmissionTable(rows) {
-  const head = document.getElementById("tableHead");
-  const body = document.getElementById("tableBody");
-  if (!rows.length) {
-    head.innerHTML = "";
-    body.innerHTML = "<tr><td>No learners found.</td></tr>";
-    return;
-  }
-
-  head.innerHTML = `
-    <tr>
-      <th>Photo</th>
-      <th>First Name</th>
-      <th>Admission No</th>
-      <th>Class Section</th>
-      <th>UPI</th>
-      <th>Assessment</th>
-      <th>Birth Cert</th>
-      <th>Status</th>
-      <th>Parent</th>
-      <th>Actions</th>
-    </tr>
-  `;
-
-  body.innerHTML = rows
-    .map(
-      (row) => `
-      <tr>
-        <td>${
-          row.passport_photo_path
-            ? `<img src="${escapeHtml(row.passport_photo_path)}" alt="photo" class="photo-preview" />`
-            : "<span class='small-note'>No photo</span>"
-        }</td>
-        <td>${escapeHtml(row.first_name || row.full_name || "")}</td>
-        <td>${escapeHtml(row.admission_number || "")}</td>
-        <td>${escapeHtml(row.grade || row.form_name || "")} ${escapeHtml(row.stream || "")}</td>
-        <td>${escapeHtml(row.upi_number || "")}</td>
-        <td>${escapeHtml(row.assessment_number || "")}</td>
-        <td>${escapeHtml(row.birth_certificate_number || "")}</td>
-        <td>${statusBadgeHtml(row.status)}</td>
-        <td>${escapeHtml(row.parent_full_name || "")}<br/><span class="small-note">${escapeHtml(row.parent_phone || "")}</span></td>
-        <td>
-          <div class="table-actions">
-            <button onclick="admissionAction('edit', ${row.id})">Edit</button>
-            <button class="danger" onclick="admissionAction('delete', ${row.id})">Delete</button>
-            <button onclick="admissionAction('uploadPhoto', ${row.id})">Photo</button>
-            <button onclick="admissionAction('view', ${row.id})">View</button>
-            <button onclick="admissionAction('download', ${row.id})">Download</button>
-            <button onclick="admissionAction('print', ${row.id})">Print</button>
-          </div>
-        </td>
-      </tr>
-    `
-    )
-    .join("");
-  renderAdmissionSearchActionPicker(rows);
-  updateAdmissionAmendmentChecklist();
-}
-
-function renderAdmissionSearchActionPicker(rows = []) {
-  const picker = document.getElementById("admissionSearchResultPicker");
-  if (!picker) return;
-  if (!Array.isArray(rows) || !rows.length) {
-    picker.innerHTML = '<option value="">No search results</option>';
-    picker.disabled = true;
-    selectedAdmissionSearchLearnerId = null;
-    return;
-  }
-  const previousValue = String(selectedAdmissionSearchLearnerId || picker.value || "");
-  const options = rows
-    .map((row) => {
-      const id = Number(row.id);
-      const label = `${row.first_name || row.full_name || "Learner"} (${row.admission_number || "No ADM"})`;
-      return `<option value="${id}">${escapeHtml(label)}</option>`;
-    })
-    .join("");
-  picker.innerHTML = options;
-  picker.disabled = false;
-  const ids = rows.map((row) => String(Number(row.id)));
-  if (previousValue && ids.includes(previousValue)) {
-    picker.value = previousValue;
-  } else {
-    picker.value = ids[0];
-  }
-  selectedAdmissionSearchLearnerId = Number(picker.value);
-}
-
-function getSelectedAdmissionSearchLearnerId() {
-  const picker = document.getElementById("admissionSearchResultPicker");
-  if (picker && picker.value) {
-    selectedAdmissionSearchLearnerId = Number(picker.value);
-  }
-  return Number(selectedAdmissionSearchLearnerId || 0) || null;
-}
-
-async function runAdmissionSearchAction(action) {
-  const learnerId = getSelectedAdmissionSearchLearnerId();
-  if (!learnerId) {
-    alert("Search and select a learner first.");
-    return;
-  }
-  await window.admissionAction(action, learnerId);
+  window.open(`${config.endpoint}/export/excel`, "_blank");
 }
 
 function renderTable(rows) {
-  if (currentModule === "admission") {
-    renderAdmissionTable(rows || []);
-    return;
-  }
-
   const head = document.getElementById("tableHead");
   const body = document.getElementById("tableBody");
 
@@ -1921,6 +451,7 @@ function renderTable(rows) {
   const allKeys = Object.keys(rows[0]).filter((key) => !["details_json", "generated_exam_text"].includes(key));
   const shownKeys = allKeys.slice(0, 10);
   head.innerHTML = `<tr>${shownKeys.map((key) => `<th>${key}</th>`).join("")}<th>Actions</th></tr>`;
+
   body.innerHTML = rows
     .map(
       (row) => `
@@ -1939,123 +470,19 @@ function renderTable(rows) {
 async function loadModuleData(config) {
   try {
     const rows = await request(config.endpoint);
-    if (currentModule === "admission") {
-      admissionSearchRows = rows || [];
-      admissionSearchPagination = {
-        total: admissionSearchRows.length,
-        limit: 100,
-        offset: 0,
-        returned: admissionSearchRows.length,
-        hasMore: false
-      };
-    }
     renderTable(rows || []);
-    if (currentModule === "admission") {
-      renderAdmissionSearchMeta();
-      renderAdmissionFixQueueState();
-      await refreshAdmissionStatusSummary();
-      await refreshAdmissionIntegrityAuditSummary();
-      await refreshAdmissionGuidanceData();
-    }
   } catch (error) {
     alert(error.message);
   }
 }
 
-function bindAdmissionTools() {
-  const downloadTemplateButton = document.getElementById("downloadAdmissionTemplateButton");
-  const downloadCsvTemplateButton = document.getElementById("downloadAdmissionCsvTemplateButton");
-  const uploadExcelButton = document.getElementById("uploadAdmissionExcelButton");
-  const downloadRejectionButton = document.getElementById("downloadAdmissionRejectionReportButton");
-  const uploadPhotoBatchButton = document.getElementById("uploadAdmissionPhotoBatchButton");
-  const uploadPhotoZipButton = document.getElementById("uploadAdmissionPhotoZipButton");
-  const searchButton = document.getElementById("admissionSearchButton");
-  const printRecordButton = document.getElementById("admissionRecordPrintButton");
-  const groupedRegisterButton = document.getElementById("admissionGroupedRegisterButton");
-  const readinessReportButton = document.getElementById("admissionReadinessReportButton");
-  const completenessCsvButton = document.getElementById("admissionCompletenessCsvButton");
-  const loadMoreButton = document.getElementById("admissionLoadMoreButton");
-  const refreshSummaryButton = document.getElementById("refreshAdmissionSummaryButton");
-  const searchResultPicker = document.getElementById("admissionSearchResultPicker");
-  const searchEditButton = document.getElementById("admissionSearchEditButton");
-  const searchDeleteButton = document.getElementById("admissionSearchDeleteButton");
-  const searchPhotoButton = document.getElementById("admissionSearchPhotoButton");
-  const searchViewButton = document.getElementById("admissionSearchViewButton");
-  const searchDownloadButton = document.getElementById("admissionSearchDownloadButton");
-  const searchPrintButton = document.getElementById("admissionSearchPrintButton");
-  const guidedModeToggle = document.getElementById("guidedModeToggle");
-  const incompleteOnlyToggle = document.getElementById("admissionIncompleteOnlyToggle");
-  const applyFixQueueButton = document.getElementById("applyAdmissionFixQueueButton");
-  const refreshGuidanceButton = document.getElementById("refreshAdmissionGuidanceButton");
-  if (downloadTemplateButton) downloadTemplateButton.onclick = downloadAdmissionTemplate;
-  if (downloadCsvTemplateButton) downloadCsvTemplateButton.onclick = downloadAdmissionCsvTemplate;
-  if (uploadExcelButton) uploadExcelButton.onclick = uploadAdmissionExcel;
-  if (downloadRejectionButton) downloadRejectionButton.onclick = downloadAdmissionRejectionReport;
-  if (uploadPhotoBatchButton) uploadPhotoBatchButton.onclick = uploadAdmissionPhotoBatch;
-  if (uploadPhotoZipButton) uploadPhotoZipButton.onclick = uploadAdmissionPhotoZipBatch;
-  if (searchButton) {
-    searchButton.onclick = async () => {
-      await searchAdmission();
-      await refreshAdmissionStatusSummary();
-      await refreshAdmissionGuidanceData(true);
-    };
-  }
-  if (printRecordButton) printRecordButton.onclick = printAdmissionCurrentTable;
-  if (groupedRegisterButton) groupedRegisterButton.onclick = printAdmissionGroupedRegister;
-  if (readinessReportButton) readinessReportButton.onclick = printAdmissionReadinessReport;
-  if (completenessCsvButton) completenessCsvButton.onclick = downloadAdmissionCompletenessReport;
-  if (loadMoreButton) loadMoreButton.onclick = loadMoreAdmissionResults;
-  if (refreshSummaryButton) refreshSummaryButton.onclick = refreshAdmissionStatusSummary;
-  if (searchResultPicker) {
-    searchResultPicker.onchange = () => {
-      selectedAdmissionSearchLearnerId = Number(searchResultPicker.value || 0) || null;
-    };
-  }
-  if (searchEditButton) searchEditButton.onclick = () => runAdmissionSearchAction("edit");
-  if (searchDeleteButton) searchDeleteButton.onclick = () => runAdmissionSearchAction("delete");
-  if (searchPhotoButton) searchPhotoButton.onclick = () => runAdmissionSearchAction("uploadPhoto");
-  if (searchViewButton) searchViewButton.onclick = () => runAdmissionSearchAction("view");
-  if (searchDownloadButton) searchDownloadButton.onclick = () => runAdmissionSearchAction("download");
-  if (searchPrintButton) searchPrintButton.onclick = () => runAdmissionSearchAction("print");
-  if (guidedModeToggle) {
-    guidedModeToggle.onchange = (event) => toggleAdmissionGuidedMode(event.target.checked);
-  }
-  if (incompleteOnlyToggle) {
-    incompleteOnlyToggle.onchange = (event) => toggleAdmissionIncompleteOnly(event.target.checked);
-  }
-  if (applyFixQueueButton) {
-    applyFixQueueButton.onclick = applyAdmissionFixQueue;
-  }
-  if (refreshGuidanceButton) {
-    refreshGuidanceButton.onclick = async () => {
-      await refreshAdmissionIntegrityAuditSummary();
-      await refreshAdmissionGuidanceData(true);
-    };
-  }
-  syncAdmissionIncompleteToggleFromDataset();
-  renderAdmissionFixQueueState();
-  renderAdmissionIntegrityAuditSummary();
-  renderAdmissionGuidance();
-  updateAdmissionAmendmentChecklist();
-}
-
 function renderCrudModule(moduleKey) {
   const config = moduleConfigs[moduleKey];
-  attachFieldMetadata(moduleKey, config);
-  if (moduleKey === "admission") {
-    admissionGuidedModeEnabled = localStorage.getItem("admissionGuidedMode") === "1";
-  }
   document.getElementById("moduleTitle").textContent = config.title;
   document.getElementById("cards").innerHTML = "";
-  const extraTools = moduleKey === "admission" ? admissionToolsHtml() : "";
-  const helpCard = renderModuleHelp(moduleKey);
-  const formGridClass = moduleKey === "admission" ? "form-grid admission-form-grid" : "form-grid";
-
   document.getElementById("formArea").innerHTML = `
     <h3>${config.title}</h3>
-    ${helpCard}
-    ${extraTools}
-    <div class="${formGridClass}">
+    <div class="form-grid">
       ${config.fields.map(buildInput).join("")}
     </div>
     <div class="actions-row">
@@ -2068,21 +495,13 @@ function renderCrudModule(moduleKey) {
       <button id="viewButton">View</button>
     </div>
   `;
-
   document.getElementById("saveButton").onclick = saveCurrentModule;
   document.getElementById("clearButton").onclick = () => clearForm(config);
-  document.getElementById("processButton").onclick = processCurrentModule;
+  document.getElementById("processButton").onclick = () => alert("Processing completed for this module.");
   document.getElementById("downloadPdfButton").onclick = exportPdf;
   document.getElementById("downloadExcelButton").onclick = exportExcel;
   document.getElementById("printButton").onclick = () => window.print();
   document.getElementById("viewButton").onclick = () => loadModuleData(config);
-  bindModuleHelpToggle();
-
-  if (moduleKey === "admission") {
-    bindAdmissionTools();
-    bindAdmissionMutualExclusion();
-  }
-
   loadModuleData(config);
 }
 
@@ -2131,7 +550,7 @@ async function loadParentOrBomResults() {
     </div>
   `;
   document.getElementById("exportParentPdf").onclick = () =>
-    openProtectedUrl("/api/parent/results/export/pdf");
+    window.open("/api/parent/results/export/pdf", "_blank");
   document.getElementById("printParent").onclick = () => window.print();
 
   try {
@@ -2156,7 +575,10 @@ async function loadLearnerMaterials() {
   document.getElementById("refreshLearner").onclick = loadLearnerMaterials;
   document.getElementById("printLearner").onclick = () => window.print();
   try {
-    const [materials, marks] = await Promise.all([request("/api/learner/materials"), request("/api/learner/marks")]);
+    const [materials, marks] = await Promise.all([
+      request("/api/learner/materials"),
+      request("/api/learner/marks")
+    ]);
     renderTable([...(materials || []), ...(marks || [])]);
   } catch (error) {
     document.getElementById("tableHead").innerHTML = "";
@@ -2223,47 +645,10 @@ function bindTopbarButtons() {
     localStorage.clear();
     window.location.href = "/";
   });
-  document.getElementById("changeCredentialsButton").addEventListener("click", changeCredentials);
+  document
+    .getElementById("changeCredentialsButton")
+    .addEventListener("click", changeCredentials);
 }
-
-window.admissionAction = async (action, learnerId) => {
-  if (action === "edit") {
-    await editRow(learnerId);
-    return;
-  }
-  if (action === "delete") {
-    await deleteRow(learnerId);
-    return;
-  }
-  if (action === "uploadPhoto") {
-    await uploadLearnerPhoto(learnerId);
-    return;
-  }
-  if (action === "view") {
-    viewLearnerRecord(learnerId);
-    return;
-  }
-  if (action === "download") {
-    downloadLearnerRecord(learnerId);
-    return;
-  }
-  if (action === "print") {
-    printLearnerRecord(learnerId);
-  }
-};
-
-window.quickFilterAdmissionStatus = quickFilterAdmissionStatus;
-window.runAdmissionGuidedStep = runAdmissionGuidedStep;
-window.toggleAdmissionGuidedMode = toggleAdmissionGuidedMode;
-window.refreshAdmissionGuidanceData = refreshAdmissionGuidanceData;
-window.applyAdmissionFixQueue = applyAdmissionFixQueue;
-window.downloadAdmissionCompletenessReport = downloadAdmissionCompletenessReport;
-window.printAdmissionReadinessReport = printAdmissionReadinessReport;
-window.loadMoreAdmissionResults = loadMoreAdmissionResults;
-window.refreshAdmissionIntegrityAuditSummary = refreshAdmissionIntegrityAuditSummary;
-
-window.editRow = editRow;
-window.deleteRow = deleteRow;
 
 async function init() {
   try {
@@ -2278,4 +663,6 @@ async function init() {
   }
 }
 
+window.editRow = editRow;
+window.deleteRow = deleteRow;
 init();
