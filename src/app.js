@@ -49,12 +49,16 @@ app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
 
 const uploadsPath = path.join(process.cwd(), "uploads");
+const publicPath = path.join(process.cwd(), "public");
 if (!fs.existsSync(uploadsPath)) {
   fs.mkdirSync(uploadsPath, { recursive: true });
 }
 
 app.use("/uploads", express.static(uploadsPath));
-app.use(express.static(path.join(process.cwd(), "public")));
+app.use(express.static(publicPath));
+app.get("/", (_, res) => {
+  res.sendFile(path.join(publicPath, "index.html"));
+});
 
 const upload = multer({
   storage: multer.diskStorage({
