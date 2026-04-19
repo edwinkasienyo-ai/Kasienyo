@@ -38,6 +38,7 @@ const { generateOtpCode, buildOtpExpiry, sendOtp } = require("./services/otpServ
 const { buildSearchWhere } = require("./utils/sql");
 
 const app = express();
+app.disable("etag");
 
 const frontendOrigin = process.env.FRONTEND_ORIGIN || "http://localhost:5000";
 app.use(
@@ -52,20 +53,29 @@ app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
 
 const uploadsPath = path.join(process.cwd(), "uploads");
+const publicPath = path.join(process.cwd(), "public");
 if (!fs.existsSync(uploadsPath)) {
   fs.mkdirSync(uploadsPath, { recursive: true });
 }
 
 app.use("/uploads", express.static(uploadsPath));
 app.use((req, res, next) => {
-  if (/\.(js|css)$/i.test(req.path) || req.path === "/dashboard.html") {
+  if (/\.(js|css|html)$/i.test(req.path) || req.path === "/") {
     res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
     res.setHeader("Pragma", "no-cache");
     res.setHeader("Expires", "0");
   }
   next();
 });
-app.use(express.static(path.join(process.cwd(), "public")));
+app.use(
+  express.static(publicPath, {
+    etag: false,
+    lastModified: false
+  })
+);
+app.get("/", (_, res) => {
+  res.sendFile(path.join(publicPath, "index.html"));
+});
 
 const upload = multer({
   storage: multer.diskStorage({
