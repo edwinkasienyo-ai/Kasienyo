@@ -127,6 +127,27 @@ function toPortal(role) {
   }
 }
 
+function cleanValue(value) {
+  if (value === null || value === undefined) return "";
+  return String(value).trim();
+}
+
+function cleanOptionalValue(value) {
+  const cleaned = cleanValue(value);
+  return cleaned || null;
+}
+
+const PUBLIC_ROLE_OPTIONS = [
+  ROLES.HEAD_OF_INSTITUTION,
+  ROLES.TEACHER,
+  ROLES.NON_TEACHING_STAFF,
+  ROLES.MOD,
+  ROLES.TSC,
+  ROLES.BOM,
+  ROLES.PARENT,
+  ROLES.LEARNER
+];
+
 function pickFields(payload, allowedFields) {
   return allowedFields.reduce((acc, field) => {
     if (Object.prototype.hasOwnProperty.call(payload, field)) {
@@ -367,6 +388,402 @@ app.post("/api/auth/verify-otp", asyncHandler(async (req, res) => {
     portal: toPortal(payload.role),
     user: payload
   });
+}));
+
+app.post("/api/public/register-institution", asyncHandler(async (req, res) => {
+  const institutionName = cleanValue(req.body?.institution_name);
+  const institutionCode = cleanValue(req.body?.institution_code);
+  const institutionEmail = cleanOptionalValue(req.body?.email);
+  const institutionPhone = cleanOptionalValue(req.body?.phone);
+  const county = cleanOptionalValue(req.body?.county);
+  const subCounty = cleanOptionalValue(req.body?.sub_county);
+  const location = cleanOptionalValue(req.body?.location);
+  const village = cleanOptionalValue(req.body?.village);
+
+  const adminFullName = cleanValue(req.body?.admin_full_name);
+  const adminUsername = cleanValue(req.body?.admin_username);
+  const adminPassword = cleanValue(req.body?.admin_password);
+  const portalRoleRaw = cleanValue(req.body?.portal_role);
+  const portalRole = [ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION].includes(portalRoleRaw)
+    ? portalRoleRaw
+    : ROLES.HEAD_OF_INSTITUTION;
+
+  if (!institutionName || !institutionCode || !adminFullName || !adminUsername || !adminPassword) {
+    return res.status(400).json({
+      error: "institution_name, institution_code, admin_full_name, admin_username and admin_password are required."
+    });
+  }
+
+  const existingInstitution = await query(
+    "SELECT id FROM institutions WHERE institution_code = ? LIMIT 1",
+    [institutionCode]
+  );
+  if (existingInstitution.length) {
+    return res.status(409).json({ error: "Institution code already exists." });
+  }
+
+  const institutionInsert = await query(
+    `INSERT INTO institutions
+      (institution_name, institution_code, email, phone, county, sub_county, location, village)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    [institutionName, institutionCode, institutionEmail, institutionPhone, county, subCounty, location, village]
+  );
+  const institutionId = institutionInsert.insertId;
+  const passwordHash = await hashPassword(adminPassword);
+
+  await query(
+    `INSERT INTO users
+      (institution_id, full_name, username, password_hash, role, email, phone, is_active)
+     VALUES (?, ?, ?, ?, ?, ?, ?, 1)`,
+    [institutionId, adminFullName, adminUsername, passwordHash, portalRole, institutionEmail, institutionPhone]
+  );
+
+  res.status(201).json({
+    message: "Institution and administrator account registered successfully.",
+    institution_id: institutionId,
+    institution_code: institutionCode,
+    admin_username: adminUsername
+  });
+}));
+
+app.post("/api/public/register-user", asyncHandler(async (req, res) => {
+  const institutionCode = cleanValue(req.body?.institution_code);
+  const fullName = cleanValue(req.body?.full_name);
+  const username = cleanValue(req.body?.username);
+  const password = cleanValue(req.body?.password);
+  const role = cleanValue(req.body?.portal_role);
+  const email = cleanOptionalValue(req.body?.email);
+  const phone = cleanOptionalValue(req.body?.phone);
+
+  if (!institutionCode || !fullName || !username || !password || !role) {
+    return res.status(400).json({
+      error: "institution_code, full_name, username, password and portal_role are required."
+    });
+  }
+  if (!PUBLIC_ROLE_OPTIONS.includes(role)) {
+    return res.status(400).json({
+      error: `portal_role must be one of: ${PUBLIC_ROLE_OPTIONS.join(", ")}`
+    });
+  }
+
+  const institutions = await query("SELECT id FROM institutions WHERE institution_code = ? LIMIT 1", [institutionCode]);
+  if (!institutions.length) {
+    return res.status(404).json({ error: "Institution code was not found." });
+  }
+
+  const institutionId = institutions[0].id;
+  const existingUser = await query(
+    "SELECT id FROM users WHERE institution_id = ? AND username = ? LIMIT 1",
+    [institutionId, username]
+  );
+  if (existingUser.length) {
+    return res.status(409).json({ error: "Username already exists for this institution." });
+  }
+
+  const passwordHash = await hashPassword(password);
+  const insert = await query(
+    `INSERT INTO users
+      (institution_id, full_name, username, password_hash, role, email, phone, is_active)
+     VALUES (?, ?, ?, ?, ?, ?, ?, 1)`,
+    [institutionId, fullName, username, passwordHash, role, email, phone]
+  );
+
+  res.status(201).json({
+    message: "User registered successfully.",
+    user_id: insert.insertId,
+    username,
+    role
+  });
+}));
+
+app.post("/api/public/forgot-username", asyncHandler(async (req, res) => {
+  const institutionCode = cleanValue(req.body?.institution_code);
+  const email = cleanOptionalValue(req.body?.email);
+  const phone = cleanOptionalValue(req.body?.phone);
+
+  if (!email && !phone) {
+    return res.status(400).json({ error: "Provide email or phone." });
+  }
+
+  let where = "WHERE u.is_active = 1";
+  const params = [];
+  if (institutionCode) {
+    where += " AND i.institution_code = ?";
+    params.push(institutionCode);
+  }
+  if (email && phone) {
+    where += " AND (u.email = ? OR u.phone = ?)";
+    params.push(email, phone);
+  } else if (email) {
+    where += " AND u.email = ?";
+    params.push(email);
+  } else {
+    where += " AND u.phone = ?";
+    params.push(phone);
+  }
+
+  const rows = await query(
+    `SELECT u.username, i.institution_code, i.institution_name
+     FROM users u
+     INNER JOIN institutions i ON i.id = u.institution_id
+     ${where}
+     ORDER BY u.id DESC
+     LIMIT 10`,
+    params
+  );
+  if (!rows.length) {
+    return res.status(404).json({ error: "No usernames matched the details provided." });
+  }
+
+  res.json({
+    message: "Matching usernames found.",
+    usernames: rows.map((row) => ({
+      username: row.username,
+      institution_code: row.institution_code,
+      institution_name: row.institution_name
+    }))
+  });
+}));
+
+app.post("/api/public/forgot-password", asyncHandler(async (req, res) => {
+  const institutionCode = cleanValue(req.body?.institution_code);
+  const username = cleanValue(req.body?.username);
+  const newPassword = cleanValue(req.body?.new_password);
+  const email = cleanOptionalValue(req.body?.email);
+  const phone = cleanOptionalValue(req.body?.phone);
+
+  if (!username || !newPassword) {
+    return res.status(400).json({ error: "username and new_password are required." });
+  }
+  if (!email && !phone) {
+    return res.status(400).json({ error: "Provide email or phone to verify identity." });
+  }
+
+  let where = "WHERE u.username = ?";
+  const params = [username];
+  if (institutionCode) {
+    where += " AND i.institution_code = ?";
+    params.push(institutionCode);
+  }
+  const rows = await query(
+    `SELECT u.id, u.email, u.phone
+     FROM users u
+     INNER JOIN institutions i ON i.id = u.institution_id
+     ${where}
+     LIMIT 1`,
+    params
+  );
+  if (!rows.length) {
+    return res.status(404).json({ error: "User was not found for the provided details." });
+  }
+
+  const user = rows[0];
+  if (email && cleanValue(user.email) !== cleanValue(email)) {
+    return res.status(401).json({ error: "Email does not match our records." });
+  }
+  if (phone && cleanValue(user.phone) !== cleanValue(phone)) {
+    return res.status(401).json({ error: "Phone does not match our records." });
+  }
+
+  const passwordHash = await hashPassword(newPassword);
+  await query("UPDATE users SET password_hash = ? WHERE id = ?", [passwordHash, user.id]);
+  res.json({ message: "Password reset successful. You can now log in." });
+}));
+
+app.post("/api/public/institutions/register", asyncHandler(async (req, res) => {
+  const institution_name = String(req.body?.institution_name || "").trim();
+  const institution_code = String(req.body?.institution_code || "").trim().toUpperCase();
+  const description = String(req.body?.description || "").trim() || null;
+  const email = String(req.body?.email || "").trim() || null;
+  const phone = String(req.body?.phone || "").trim() || null;
+  const county = String(req.body?.county || "").trim() || null;
+  const sub_county = String(req.body?.sub_county || "").trim() || null;
+  const location = String(req.body?.location || "").trim() || null;
+  const village = String(req.body?.village || "").trim() || null;
+
+  if (!institution_name || !institution_code) {
+    return res.status(400).json({ error: "institution_name and institution_code are required." });
+  }
+
+  const existing = await query(
+    "SELECT id FROM institutions WHERE institution_code = ? LIMIT 1",
+    [institution_code]
+  );
+  if (existing.length) {
+    return res.status(409).json({ error: "Institution code already exists." });
+  }
+
+  const result = await query(
+    `INSERT INTO institutions
+      (institution_name, institution_code, email, phone, county, sub_county, location, village)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    [institution_name, institution_code, email, phone, county, sub_county, location, village]
+  );
+
+  await auditLog(
+    { institution_id: result.insertId, id: null, role: "PUBLIC" },
+    "REGISTER_INSTITUTION",
+    "institutions",
+    result.insertId,
+    { institution_name, institution_code, description, email, phone }
+  );
+
+  res.status(201).json({
+    id: result.insertId,
+    message: "Institution registered successfully."
+  });
+}));
+
+app.post("/api/public/users/register", asyncHandler(async (req, res) => {
+  const institution_code = String(req.body?.institution_code || "").trim().toUpperCase();
+  const full_name = String(req.body?.full_name || "").trim();
+  const username = String(req.body?.username || "").trim();
+  const password = String(req.body?.password || "");
+  const role = String(req.body?.role || "").trim();
+  const email = String(req.body?.email || "").trim() || null;
+  const phone = String(req.body?.phone || "").trim() || null;
+  const profile_photo_path = String(req.body?.profile_photo_path || "").trim() || null;
+
+  if (!institution_code || !full_name || !username || !password || !role) {
+    return res.status(400).json({
+      error: "institution_code, full_name, username, password and role are required."
+    });
+  }
+  if (!Object.values(ROLES).includes(role)) {
+    return res.status(400).json({ error: "Invalid role selected." });
+  }
+
+  const institutions = await query(
+    "SELECT id FROM institutions WHERE institution_code = ? LIMIT 1",
+    [institution_code]
+  );
+  if (!institutions.length) {
+    return res.status(404).json({ error: "Institution code was not found." });
+  }
+  const institutionId = institutions[0].id;
+
+  const existingUser = await query(
+    "SELECT id FROM users WHERE institution_id = ? AND username = ? LIMIT 1",
+    [institutionId, username]
+  );
+  if (existingUser.length) {
+    return res.status(409).json({ error: "Username already exists in this institution." });
+  }
+
+  const passwordHash = await hashPassword(password);
+  const result = await query(
+    `INSERT INTO users
+      (institution_id, full_name, username, password_hash, role, email, phone, is_active)
+     VALUES (?, ?, ?, ?, ?, ?, ?, 1)`,
+    [institutionId, full_name, username, passwordHash, role, email, phone]
+  );
+
+  await auditLog(
+    { institution_id: institutionId, id: null, role: "PUBLIC" },
+    "REGISTER_USER",
+    "users",
+    result.insertId,
+    { username, role, profile_photo_path }
+  );
+
+  res.status(201).json({ id: result.insertId, message: "User registered successfully." });
+}));
+
+app.post("/api/public/recovery/username", asyncHandler(async (req, res) => {
+  const institution_code = String(req.body?.institution_code || "").trim().toUpperCase();
+  const email = String(req.body?.email || "").trim();
+  const phone = String(req.body?.phone || "").trim();
+
+  if (!institution_code || (!email && !phone)) {
+    return res.status(400).json({
+      error: "institution_code plus email or phone is required."
+    });
+  }
+
+  const institutions = await query(
+    "SELECT id FROM institutions WHERE institution_code = ? LIMIT 1",
+    [institution_code]
+  );
+  if (!institutions.length) {
+    return res.status(404).json({ error: "Institution code was not found." });
+  }
+
+  let rows = [];
+  if (email) {
+    rows = await query(
+      `SELECT username FROM users
+       WHERE institution_id = ? AND email = ?
+       ORDER BY id DESC LIMIT 1`,
+      [institutions[0].id, email]
+    );
+  } else {
+    rows = await query(
+      `SELECT username FROM users
+       WHERE institution_id = ? AND phone = ?
+       ORDER BY id DESC LIMIT 1`,
+      [institutions[0].id, phone]
+    );
+  }
+
+  if (!rows.length) {
+    return res.status(404).json({ error: "No user matched the supplied recovery details." });
+  }
+
+  res.json({
+    message: "Username recovered successfully.",
+    username: rows[0].username
+  });
+}));
+
+app.post("/api/public/recovery/password", asyncHandler(async (req, res) => {
+  const institution_code = String(req.body?.institution_code || "").trim().toUpperCase();
+  const username = String(req.body?.username || "").trim();
+  const email = String(req.body?.email || "").trim();
+  const phone = String(req.body?.phone || "").trim();
+  const new_password = String(req.body?.new_password || "");
+
+  if (!institution_code || !username || !new_password || (!email && !phone)) {
+    return res.status(400).json({
+      error: "institution_code, username, new_password and email or phone are required."
+    });
+  }
+
+  const institutions = await query(
+    "SELECT id FROM institutions WHERE institution_code = ? LIMIT 1",
+    [institution_code]
+  );
+  if (!institutions.length) {
+    return res.status(404).json({ error: "Institution code was not found." });
+  }
+  const institutionId = institutions[0].id;
+
+  const users = await query(
+    `SELECT id, email, phone FROM users
+     WHERE institution_id = ? AND username = ? LIMIT 1`,
+    [institutionId, username]
+  );
+  if (!users.length) {
+    return res.status(404).json({ error: "User account not found." });
+  }
+
+  const account = users[0];
+  const emailMatches = email && account.email && account.email.toLowerCase() === email.toLowerCase();
+  const phoneMatches = phone && account.phone && account.phone === phone;
+  if (!emailMatches && !phoneMatches) {
+    return res.status(401).json({ error: "Recovery details do not match account records." });
+  }
+
+  const passwordHash = await hashPassword(new_password);
+  await query("UPDATE users SET password_hash = ? WHERE id = ?", [passwordHash, account.id]);
+  await auditLog(
+    { institution_id: institutionId, id: null, role: "PUBLIC" },
+    "RECOVER_PASSWORD",
+    "users",
+    account.id,
+    { username }
+  );
+
+  res.json({ message: "Password reset completed successfully." });
 }));
 
 app.get("/api/portal/current", auth, (req, res) => {

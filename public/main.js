@@ -15,6 +15,13 @@ async function request(path, options = {}) {
   return data;
 }
 
+function setAuthNotice(message, type = "info") {
+  const el = document.getElementById("authNotice");
+  if (!el) return;
+  el.textContent = message || "";
+  el.className = `small-note auth-notice ${type}`;
+}
+
 async function login() {
   const username = document.getElementById("username").value.trim();
   const password = document.getElementById("password").value;
@@ -31,9 +38,9 @@ async function login() {
       body: JSON.stringify({ username, password, otpChannel })
     });
     localStorage.setItem("pendingUsername", username);
-    alert(`${data.message} Portal: ${data.portal}`);
+    setAuthNotice(`${data.message} Portal: ${data.portal}`, "success");
   } catch (error) {
-    alert(error.message);
+    setAuthNotice(error.message, "error");
   }
 }
 
@@ -56,9 +63,131 @@ async function verifyOtp() {
     localStorage.removeItem("pendingUsername");
     window.location.href = "/dashboard.html";
   } catch (error) {
-    alert(error.message);
+    setAuthNotice(error.message, "error");
+  }
+}
+
+async function registerInstitution() {
+  const institution_name = document.getElementById("registerInstitutionName").value.trim();
+  const institution_code = document.getElementById("registerInstitutionCode").value.trim();
+  const email = document.getElementById("registerInstitutionEmail").value.trim();
+  const phone = document.getElementById("registerInstitutionPhone").value.trim();
+  const description = document.getElementById("registerInstitutionDescription").value.trim();
+  const admin_full_name = document.getElementById("registerInstitutionAdminName").value.trim();
+  const admin_username = document.getElementById("registerInstitutionAdminUsername").value.trim();
+  const admin_password = document.getElementById("registerInstitutionAdminPassword").value;
+  const portal_role = document.getElementById("registerInstitutionPortalRole").value;
+
+  if (!institution_name || !institution_code || !admin_full_name || !admin_username || !admin_password) {
+    setAuthNotice("Institution, code, admin name, admin username and admin password are required.", "error");
+    return;
+  }
+
+  try {
+    await request("/api/public/register-institution", {
+      method: "POST",
+      body: JSON.stringify({
+        institution_name,
+        institution_code,
+        email,
+        phone,
+        description,
+        admin_full_name,
+        admin_username,
+        admin_password,
+        portal_role
+      })
+    });
+    setAuthNotice("Institution and admin account registered successfully.", "success");
+  } catch (error) {
+    setAuthNotice(error.message, "error");
+  }
+}
+
+async function registerUser() {
+  const institution_code = document.getElementById("regUserInstitutionCode").value.trim();
+  const full_name = document.getElementById("regUserFullName").value.trim();
+  const username = document.getElementById("regUserUsername").value.trim();
+  const password = document.getElementById("regUserPassword").value;
+  const role = document.getElementById("registerUserRole").value;
+  const email = document.getElementById("registerUserEmail").value.trim();
+  const phone = document.getElementById("registerUserPhone").value.trim();
+
+  if (!institution_code || !full_name || !username || !password || !role) {
+    setAuthNotice("Complete institution code, name, username, password and role.", "error");
+    return;
+  }
+
+  try {
+    await request("/api/public/register-user", {
+      method: "POST",
+      body: JSON.stringify({ institution_code, full_name, username, password, portal_role: role, email, phone })
+    });
+    setAuthNotice("User registered successfully. Please login.", "success");
+  } catch (error) {
+    setAuthNotice(error.message, "error");
+  }
+}
+
+async function recoverUsername() {
+  const institution_code = document.getElementById("forgotUsernameInstitutionCode").value.trim();
+  const contact = document.getElementById("forgotUsernameContact").value.trim();
+  if (!institution_code || !contact) {
+    setAuthNotice("Institution code and email/mobile are required.", "error");
+    return;
+  }
+  const looksLikeEmail = contact.includes("@");
+  try {
+    const data = await request("/api/public/forgot-username", {
+      method: "POST",
+      body: JSON.stringify({
+        institution_code,
+        email: looksLikeEmail ? contact : "",
+        phone: looksLikeEmail ? "" : contact
+      })
+    });
+    const list = Array.isArray(data.usernames) ? data.usernames : [];
+    if (!list.length) {
+      setAuthNotice("No username found for the supplied details.", "error");
+      return;
+    }
+    const usernames = list.map((item) => item.username).join(", ");
+    setAuthNotice(`Recovered username(s): ${usernames}`, "success");
+  } catch (error) {
+    setAuthNotice(error.message, "error");
+  }
+}
+
+async function resetPassword() {
+  const institution_code = document.getElementById("forgotPasswordInstitutionCode").value.trim();
+  const username = document.getElementById("forgotPasswordUsername").value.trim();
+  const new_password = document.getElementById("forgotPasswordNewPassword").value;
+  const contact = document.getElementById("forgotPasswordContact").value.trim();
+  if (!institution_code || !username || !new_password || !contact) {
+    setAuthNotice("Institution code, username, new password and email/mobile are required.", "error");
+    return;
+  }
+  const looksLikeEmail = contact.includes("@");
+  try {
+    await request("/api/public/forgot-password", {
+      method: "POST",
+      body: JSON.stringify({
+        institution_code,
+        username,
+        new_password,
+        email: looksLikeEmail ? contact : "",
+        phone: looksLikeEmail ? "" : contact
+      })
+    });
+    setAuthNotice("Password reset successful. Login with new password.", "success");
+  } catch (error) {
+    setAuthNotice(error.message, "error");
   }
 }
 
 document.getElementById("loginButton").addEventListener("click", login);
 document.getElementById("verifyButton").addEventListener("click", verifyOtp);
+document.getElementById("registerInstitutionButton")?.addEventListener("click", registerInstitution);
+document.getElementById("registerUserButton")?.addEventListener("click", registerUser);
+document.getElementById("forgotUsernameButton")?.addEventListener("click", recoverUsername);
+document.getElementById("forgotPasswordButton")?.addEventListener("click", resetPassword);

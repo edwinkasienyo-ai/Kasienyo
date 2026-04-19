@@ -52,7 +52,7 @@ body {
 
 .auth-card {
   width: 100%;
-  max-width: 420px;
+  max-width: 520px;
   padding: 26px;
 }
 
@@ -102,6 +102,89 @@ button:hover {
 .small-note {
   font-size: 12px;
   color: #5f7187;
+}
+
+.auth-notice {
+  margin-top: 10px;
+  border-radius: 8px;
+  padding: 8px 10px;
+  border: 1px solid #d2deec;
+  background: #f2f6fb;
+}
+
+.auth-notice.success {
+  border-color: #b6e8c6;
+  background: #ecf9f1;
+  color: #1f6b3f;
+}
+
+.auth-notice.error {
+  border-color: #f2c3c3;
+  background: #fdeeee;
+  color: #a11f1f;
+}
+
+.institution-profile-card {
+  margin-top: 16px;
+  background: rgba(255, 255, 255, 0.12);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 12px;
+  padding: 12px;
+}
+
+.institution-profile-card h3 {
+  margin: 0 0 8px;
+  color: #ffe082;
+}
+
+.institution-photo {
+  width: 100%;
+  max-width: 300px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+}
+
+.profile-grid {
+  margin-top: 8px;
+}
+
+.profile-grid p {
+  margin: 5px 0;
+  color: #e8f2ff;
+}
+
+.auth-card h4 {
+  margin: 16px 0 6px;
+  color: #1f4f7f;
+}
+
+.auth-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 10px;
+}
+
+.auth-grid > div label {
+  margin-top: 0;
+}
+
+.auth-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.link-btn {
+  background: #eef4fb;
+  color: #1f4f7f;
+  border: 1px solid #c6d8ec;
+  width: auto;
+  padding: 8px 10px;
+}
+
+.link-btn:hover {
+  background: #dfeefe;
 }
 
 .dashboard-page {

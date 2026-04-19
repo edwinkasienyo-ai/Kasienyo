@@ -20,11 +20,30 @@
         <li>Role-based access control and OTP 2FA</li>
         <li>Dashboard, analytics, document workflows and exports</li>
       </ul>
+      <div class="institution-profile-card">
+        <h3>Institution Profile</h3>
+        <img
+          class="institution-photo"
+          src="https://images.unsplash.com/photo-1562774053-701939374585?auto=format&fit=crop&w=640&q=80"
+          alt="Institution photo"
+        />
+        <p class="small-note">
+          Use the forms on the right to register institution and user accounts, recover usernames,
+          and reset forgotten passwords.
+        </p>
+        <div class="profile-grid">
+          <p><strong>Description:</strong> Multi-tenant school management and compliance platform.</p>
+          <p><strong>Email:</strong> support@iims.local</p>
+          <p><strong>Mobile:</strong> +254700000000</p>
+          <p><strong>Portal Role:</strong> Administrator / Head of Institution / Teacher / Learner</p>
+        </div>
+      </div>
     </div>
 
     <div class="login-right">
       <div class="card auth-card">
         <h3>Secure Login</h3>
+        <p id="authNotice" class="small-note auth-notice" aria-live="polite"></p>
         <label>Username</label>
         <input id="username" placeholder="Enter username" />
         <label>Password</label>
@@ -48,6 +67,66 @@
           <strong>Username:</strong> admin<br />
           <strong>Password:</strong> 1234
         </p>
+
+        <div class="separator"></div>
+        <h4>Register Institution</h4>
+        <label>Institution Name</label>
+        <input id="registerInstitutionName" placeholder="Institution Name" />
+        <label>Institution Code</label>
+        <input id="registerInstitutionCode" placeholder="Institution Code" />
+        <label>Email</label>
+        <input id="registerInstitutionEmail" placeholder="Email" />
+        <label>Mobile Number</label>
+        <input id="registerInstitutionPhone" placeholder="Mobile Number" />
+        <button id="registerInstitutionButton" type="button">Register Institution</button>
+
+        <div class="separator"></div>
+        <h4>Register User</h4>
+        <label>Institution Code</label>
+        <input id="registerUserInstitutionCode" placeholder="Institution Code" />
+        <label>Full Name</label>
+        <input id="registerUserFullName" placeholder="Full Name" />
+        <label>Username</label>
+        <input id="registerUserUsername" placeholder="Username" />
+        <label>Password</label>
+        <input id="registerUserPassword" type="password" placeholder="Password" />
+        <label>Portal Role</label>
+        <select id="registerUserRole">
+          <option value="HEAD_OF_INSTITUTION">HEAD_OF_INSTITUTION</option>
+          <option value="TEACHER">TEACHER</option>
+          <option value="NON_TEACHING_STAFF">NON_TEACHING_STAFF</option>
+          <option value="PARENT">PARENT</option>
+          <option value="LEARNER">LEARNER</option>
+        </select>
+        <label>Email</label>
+        <input id="registerUserEmail" placeholder="Email" />
+        <label>Mobile Number</label>
+        <input id="registerUserPhone" placeholder="Mobile Number" />
+        <button id="registerUserButton" type="button">Register User</button>
+
+        <div class="separator"></div>
+        <h4>Forgot Username</h4>
+        <label>Institution Code</label>
+        <input id="forgotUsernameInstitutionCode" placeholder="Institution Code" />
+        <label>Email (optional)</label>
+        <input id="forgotUsernameEmail" placeholder="Email" />
+        <label>Mobile Number (optional)</label>
+        <input id="forgotUsernamePhone" placeholder="Mobile Number" />
+        <button id="forgotUsernameButton" type="button">Recover Username</button>
+
+        <div class="separator"></div>
+        <h4>Forgot Password</h4>
+        <label>Institution Code</label>
+        <input id="forgotPasswordInstitutionCode" placeholder="Institution Code" />
+        <label>Username</label>
+        <input id="forgotPasswordUsername" placeholder="Username" />
+        <label>Email (optional)</label>
+        <input id="forgotPasswordEmail" placeholder="Email" />
+        <label>Mobile Number (optional)</label>
+        <input id="forgotPasswordPhone" placeholder="Mobile Number" />
+        <label>New Password</label>
+        <input id="forgotPasswordNewPassword" type="password" placeholder="New Password" />
+        <button id="forgotPasswordButton" type="button">Reset Password</button>
       </div>
     </div>
 
