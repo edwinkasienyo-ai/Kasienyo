@@ -524,6 +524,17 @@ function pickFields(payload, allowedFields) {
   }, {});
 }
 
+function parseStoredJson(value) {
+  if (value === null || value === undefined || value === "") {
+    return null;
+  }
+  if (typeof value === "object") {
+    return value;
+  }
+  const raw = Buffer.isBuffer(value) ? value.toString("utf8") : String(value);
+  return JSON.parse(raw);
+}
+
 async function createOtpSession({ identity, role, institutionId, payload, destination, channel }) {
   const code = generateOtpCode();
   const expiresAt = buildOtpExpiry();
@@ -783,7 +794,20 @@ app.post("/api/auth/verify-otp", asyncHandler(async (req, res) => {
 
   const session = sessions[0];
   await query("UPDATE otp_sessions SET is_used = 1 WHERE id = ?", [session.id]);
-  const payload = JSON.parse(session.payload_json);
+  let payload = null;
+  try {
+    payload = parseStoredJson(session.payload_json);
+  } catch (error) {
+    return res.status(500).json({
+      error: "OTP session payload is invalid. Please login and request a new OTP."
+    });
+  }
+  if (!payload || typeof payload !== "object") {
+    return res.status(500).json({
+      error: "OTP session payload is missing. Please login and request a new OTP."
+    });
+  }
+  payload.role = normalizeRole(payload.role);
   const token = issueToken(payload);
   await auditLog(payload, "LOGIN_SUCCESS", "auth", payload.id, { role: payload.role });
 
