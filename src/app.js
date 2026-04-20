@@ -792,21 +792,31 @@ app.post("/api/auth/verify-otp", asyncHandler(async (req, res) => {
     return res.status(401).json({ error: "Invalid or expired OTP." });
   }
 
-  const session = sessions[0];
-  await query("UPDATE otp_sessions SET is_used = 1 WHERE id = ?", [session.id]);
   let payload = null;
-  try {
-    payload = parseStoredJson(session.payload_json);
-  } catch (error) {
-    return res.status(500).json({
-      error: "OTP session payload is invalid. Please login and request a new OTP."
+  let session = null;
+  for (const candidate of sessions) {
+    try {
+      const parsed = parseStoredJson(candidate.payload_json);
+      if (parsed && typeof parsed === "object") {
+        session = candidate;
+        payload = parsed;
+        break;
+      }
+      // Invalidate empty or non-object payloads to keep OTP store healthy.
+      // eslint-disable-next-line no-await-in-loop
+      await query("UPDATE otp_sessions SET is_used = 1 WHERE id = ?", [candidate.id]);
+    } catch (error) {
+      // Invalidate malformed payload rows so future verifications skip them.
+      // eslint-disable-next-line no-await-in-loop
+      await query("UPDATE otp_sessions SET is_used = 1 WHERE id = ?", [candidate.id]);
+    }
+  }
+  if (!session || !payload) {
+    return res.status(401).json({
+      error: "Invalid or expired OTP. Please request a fresh OTP and try again."
     });
   }
-  if (!payload || typeof payload !== "object") {
-    return res.status(500).json({
-      error: "OTP session payload is missing. Please login and request a new OTP."
-    });
-  }
+  await query("UPDATE otp_sessions SET is_used = 1 WHERE id = ?", [session.id]);
   payload.role = normalizeRole(payload.role);
   const token = issueToken(payload);
   await auditLog(payload, "LOGIN_SUCCESS", "auth", payload.id, { role: payload.role });
