@@ -796,7 +796,8 @@ app.post("/api/auth/verify-otp", asyncHandler(async (req, res) => {
   const sessions = await query(
     `SELECT * FROM otp_sessions
      WHERE identity_value = ? AND otp_code = ? AND is_used = 0 AND expires_at > NOW()
-     ORDER BY id DESC LIMIT 1`,
+     ORDER BY id DESC
+     LIMIT 20`,
     [username, otp]
   );
 
