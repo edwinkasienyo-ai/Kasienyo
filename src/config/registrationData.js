@@ -49,10 +49,10 @@ const COUNTIES = [
 ];
 
 const INSTITUTION_CATEGORIES = [
-  { value: "P", label: "Primary" },
-  { value: "PJ", label: "Primary/Junior" },
-  { value: "JS", label: "Junior Secondary" },
-  { value: "SS", label: "Senior Secondary" }
+  { code: "P", label: "Primary" },
+  { code: "PJ", label: "Primary/Junior" },
+  { code: "JS", label: "Junior Secondary" },
+  { code: "SS", label: "Senior Secondary" }
 ];
 
 const KENYA_POSTAL_CODES = [
@@ -93,7 +93,10 @@ const KENYA_POSTAL_CODES = [
 const COUNTY_BY_CODE = Object.fromEntries(COUNTIES.map((item) => [item.code, item]));
 const COUNTY_BY_NAME = Object.fromEntries(COUNTIES.map((item) => [item.name.toLowerCase(), item]));
 const INSTITUTION_CATEGORY_BY_LABEL = Object.fromEntries(
-  INSTITUTION_CATEGORIES.map((item) => [item.label.toLowerCase(), item.value])
+  INSTITUTION_CATEGORIES.map((item) => [item.label.toLowerCase(), item])
+);
+const INSTITUTION_CATEGORY_BY_CODE = Object.fromEntries(
+  INSTITUTION_CATEGORIES.map((item) => [item.code, item])
 );
 
 module.exports = {
@@ -102,5 +105,6 @@ module.exports = {
   KENYA_POSTAL_CODES,
   COUNTY_BY_CODE,
   COUNTY_BY_NAME,
-  INSTITUTION_CATEGORY_BY_LABEL
+  INSTITUTION_CATEGORY_BY_LABEL,
+  INSTITUTION_CATEGORY_BY_CODE
 };

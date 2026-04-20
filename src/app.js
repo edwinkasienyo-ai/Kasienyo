@@ -294,6 +294,14 @@ function buildAgreementLines({ institution, adminUser }) {
   ];
 }
 
+app.get("/api/public/registration/meta", (_, res) => {
+  res.json({
+    counties: COUNTIES,
+    categories: INSTITUTION_CATEGORIES,
+    postalCodes: KENYA_POSTAL_CODES
+  });
+});
+
 function pickFields(payload, allowedFields) {
   return allowedFields.reduce((acc, field) => {
     if (Object.prototype.hasOwnProperty.call(payload, field)) {
@@ -538,25 +546,53 @@ app.post("/api/auth/verify-otp", asyncHandler(async (req, res) => {
 
 app.post("/api/public/register-institution", asyncHandler(async (req, res) => {
   const institutionName = cleanValue(req.body?.institution_name);
-  const institutionCode = cleanValue(req.body?.institution_code);
   const institutionEmail = cleanOptionalValue(req.body?.email);
   const institutionPhone = cleanOptionalValue(req.body?.phone);
-  const county = cleanOptionalValue(req.body?.county);
+  const countyInput = cleanOptionalValue(req.body?.county);
+  const countyCodeInput = cleanOptionalValue(req.body?.county_code);
+  const categoryInput = cleanOptionalValue(req.body?.category);
   const subCounty = cleanOptionalValue(req.body?.sub_county);
   const location = cleanOptionalValue(req.body?.location);
   const village = cleanOptionalValue(req.body?.village);
+  const postalCodeInput = cleanOptionalValue(req.body?.postal_code);
+  const townInput = cleanOptionalValue(req.body?.town);
+  const sendAgreementEmail = parseTruthy(req.body?.send_agreement_email);
+  const autoGeneratePassword = parseTruthy(req.body?.auto_generate_password);
 
   const adminFullName = cleanValue(req.body?.admin_full_name);
   const adminUsername = cleanValue(req.body?.admin_username);
-  const adminPassword = cleanValue(req.body?.admin_password);
+  const adminPasswordInput = cleanValue(req.body?.admin_password);
   const portalRoleRaw = cleanValue(req.body?.portal_role);
   const portalRole = [ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION].includes(portalRoleRaw)
     ? portalRoleRaw
     : ROLES.HEAD_OF_INSTITUTION;
 
-  if (!institutionName || !institutionCode || !adminFullName || !adminUsername || !adminPassword) {
+  const countyRecord = resolveCounty({ countyCode: countyCodeInput, countyName: countyInput });
+  if (!countyRecord) {
+    return res.status(400).json({ error: "Select a valid county." });
+  }
+  const categoryRecord = resolveInstitutionCategory({
+    categoryCode: categoryInput,
+    categoryLabel: categoryInput
+  });
+  if (!categoryRecord) {
+    return res.status(400).json({ error: "Select a valid institution category." });
+  }
+
+  const postalDetails = getPostalDetails(postalCodeInput);
+  const normalizedTown = townInput || postalDetails?.town || null;
+  const institutionCode = await nextInstitutionCode({
+    countyCode: countyRecord.code,
+    categoryCode: categoryRecord.code
+  });
+
+  const adminPassword = autoGeneratePassword
+    ? generateStrongPassword(12)
+    : adminPasswordInput;
+
+  if (!institutionName || !adminFullName || !adminUsername || !adminPassword) {
     return res.status(400).json({
-      error: "institution_name, institution_code, admin_full_name, admin_username and admin_password are required."
+      error: "institution_name, admin_full_name, admin_username and admin_password are required."
     });
   }
 
@@ -572,7 +608,16 @@ app.post("/api/public/register-institution", asyncHandler(async (req, res) => {
     `INSERT INTO institutions
       (institution_name, institution_code, email, phone, county, sub_county, location, village)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-    [institutionName, institutionCode, institutionEmail, institutionPhone, county, subCounty, location, village]
+    [
+      institutionName,
+      institutionCode,
+      institutionEmail,
+      institutionPhone,
+      countyRecord.name,
+      subCounty,
+      location,
+      normalizedTown || village
+    ]
   );
   const institutionId = institutionInsert.insertId;
   const passwordHash = await hashPassword(adminPassword);
@@ -584,11 +629,58 @@ app.post("/api/public/register-institution", asyncHandler(async (req, res) => {
     [institutionId, adminFullName, adminUsername, passwordHash, portalRole, institutionEmail, institutionPhone]
   );
 
+  const credentialMessage = [
+    "Welcome to the Integrated Management Information System for Basic Education.",
+    `Institution: ${institutionName}`,
+    `Institution Code: ${institutionCode}`,
+    `Username: ${adminUsername}`,
+    `Password: ${adminPassword}`,
+    "Please change your password immediately after first login."
+  ].join("\n");
+  const credentialDispatch = await dispatchCredentialNotice({
+    email: institutionEmail,
+    phone: institutionPhone,
+    subject: "IMIS Institution Administrator Credentials",
+    message: credentialMessage
+  });
+
+  const institutionRecord = {
+    id: institutionId,
+    institution_name: institutionName,
+    institution_code: institutionCode,
+    county: countyRecord.name,
+    email: institutionEmail,
+    phone: institutionPhone
+  };
+
+  let agreementEmailDispatch = null;
+  if (sendAgreementEmail) {
+    agreementEmailDispatch = await dispatchCredentialNotice({
+      email: institutionEmail,
+      phone: null,
+      subject: "IMIS Service Agreement Letter",
+      message: buildAgreementLines({
+        institution: institutionRecord,
+        adminUser: { username: adminUsername }
+      }).join("\n")
+    });
+  }
+
   res.status(201).json({
     message: "Institution and administrator account registered successfully.",
     institution_id: institutionId,
     institution_code: institutionCode,
-    admin_username: adminUsername
+    admin_username: adminUsername,
+    admin_password: adminPassword,
+    county: countyRecord.name,
+    county_code: countyRecord.code,
+    category: categoryRecord.label,
+    category_code: categoryRecord.code,
+    postal_code: postalDetails?.postal_code || postalCodeInput || null,
+    town: normalizedTown,
+    agreement_pdf_url: `/api/public/institutions/${institutionId}/agreement.pdf`,
+    credential_dispatch: credentialDispatch,
+    agreement_email_dispatch: agreementEmailDispatch
   });
 }));
 
@@ -596,7 +688,9 @@ app.post("/api/public/register-user", asyncHandler(async (req, res) => {
   const institutionCode = cleanValue(req.body?.institution_code);
   const fullName = cleanValue(req.body?.full_name);
   const username = cleanValue(req.body?.username);
-  const password = cleanValue(req.body?.password);
+  const passwordInput = cleanValue(req.body?.password);
+  const autoGeneratePassword = parseTruthy(req.body?.auto_generate_password);
+  const password = autoGeneratePassword ? generateStrongPassword(12) : passwordInput;
   const role = cleanValue(req.body?.portal_role);
   const email = cleanOptionalValue(req.body?.email);
   const phone = cleanOptionalValue(req.body?.phone);
@@ -634,12 +728,67 @@ app.post("/api/public/register-user", asyncHandler(async (req, res) => {
     [institutionId, fullName, username, passwordHash, role, email, phone]
   );
 
+  const [institutionRow] = await query(
+    "SELECT institution_name FROM institutions WHERE id = ? LIMIT 1",
+    [institutionId]
+  );
+
+  const message = [
+    "Welcome to the Integrated Management Information System for Basic Education.",
+    `Institution: ${institutionRow?.institution_name || "-"}`,
+    `Username: ${username}`,
+    `Password: ${password}`,
+    "Please change your password immediately after first login."
+  ].join("\n");
+  const credentialDispatch = await dispatchCredentialNotice({
+    email,
+    phone,
+    subject: "IMIS User Credentials",
+    message
+  });
+
   res.status(201).json({
     message: "User registered successfully.",
     user_id: insert.insertId,
     username,
-    role
+    role,
+    password,
+    credential_dispatch: credentialDispatch
   });
+}));
+
+app.get("/api/public/institutions", asyncHandler(async (_, res) => {
+  const rows = await query(
+    `SELECT id, institution_name, institution_code, email, phone, county, sub_county, location, village, created_at
+     FROM institutions
+     ORDER BY id DESC`
+  );
+  res.json(rows);
+}));
+
+app.get("/api/public/institutions/:id/agreement.pdf", asyncHandler(async (req, res) => {
+  const rows = await query(
+    `SELECT i.*, u.username AS admin_username
+     FROM institutions i
+     LEFT JOIN users u ON u.institution_id = i.id AND u.role IN (?, ?)
+     WHERE i.id = ?
+     ORDER BY u.id ASC
+     LIMIT 1`,
+    [ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, req.params.id]
+  );
+  if (!rows.length) {
+    return res.status(404).json({ error: "Institution not found." });
+  }
+  const institution = rows[0];
+  const lines = buildAgreementLines({
+    institution,
+    adminUser: { username: institution.admin_username || "-" }
+  });
+  sendSimplePdf(
+    res,
+    `institution-agreement-${institution.institution_code || institution.id}`,
+    lines
+  );
 }));
 
 app.post("/api/public/forgot-username", asyncHandler(async (req, res) => {
