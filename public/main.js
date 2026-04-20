@@ -23,6 +23,7 @@ function setAuthNotice(message, type = "info") {
 }
 
 let registrationMeta = null;
+let lastRegisteredInstitution = null;
 
 async function loadRegistrationMeta() {
   try {
@@ -181,6 +182,11 @@ async function registerInstitution() {
         portal_role
       })
     });
+    lastRegisteredInstitution = data || null;
+    const generatedCodeInput = document.getElementById("registerInstitutionCode");
+    if (generatedCodeInput && data?.institution_code) {
+      generatedCodeInput.value = data.institution_code;
+    }
     const agreementUrl = data?.agreement_pdf_url ? ` Agreement: ${data.agreement_pdf_url}` : "";
     const passwordInfo = data?.admin_password ? ` Password: ${data.admin_password}` : "";
     setAuthNotice(
@@ -288,21 +294,48 @@ async function resetPassword() {
   }
 }
 
+function previewAgreement() {
+  const institutionId = lastRegisteredInstitution?.institution_id;
+  if (!institutionId) {
+    setAuthNotice("Register an institution first before previewing agreement.", "error");
+    return;
+  }
+  window.open(`/api/public/institutions/${institutionId}/agreement.pdf`, "_blank");
+}
+
+async function sendAgreementNow() {
+  const institutionId = lastRegisteredInstitution?.institution_id;
+  if (!institutionId) {
+    setAuthNotice("Register an institution first before sending agreement.", "error");
+    return;
+  }
+  try {
+    const data = await request(`/api/public/institutions/${institutionId}/agreement/send`, {
+      method: "POST"
+    });
+    setAuthNotice(data.message || "Agreement dispatch completed.", "success");
+  } catch (error) {
+    setAuthNotice(error.message, "error");
+  }
+}
+
 document.getElementById("loginButton").addEventListener("click", login);
 document.getElementById("verifyButton").addEventListener("click", verifyOtp);
 document.getElementById("registerInstitutionButton")?.addEventListener("click", registerInstitution);
 document.getElementById("registerUserButton")?.addEventListener("click", registerUser);
 document.getElementById("forgotUsernameButton")?.addEventListener("click", recoverUsername);
 document.getElementById("forgotPasswordButton")?.addEventListener("click", resetPassword);
+document.getElementById("previewInstitutionAgreementButton")?.addEventListener("click", previewAgreement);
+document.getElementById("sendInstitutionAgreementButton")?.addEventListener("click", sendAgreementNow);
 
 function bindAuthSectionLinks() {
   document.querySelectorAll("[data-auth-panel], .auth-link-btn[data-target]").forEach((button) => {
     button.addEventListener("click", () => {
       const targetId = button.getAttribute("data-auth-panel") || button.getAttribute("data-target");
       if (!targetId) return;
-      document.querySelectorAll(".auth-section").forEach((section) => {
+      document.querySelectorAll(".auth-panel, .auth-section").forEach((section) => {
         if (section.id === targetId) {
-          section.hidden = !section.hidden;
+          section.hidden = false;
         } else {
           section.hidden = true;
         }
@@ -311,6 +344,13 @@ function bindAuthSectionLinks() {
   });
 }
 
+function initializeAuthPanels() {
+  document.querySelectorAll(".auth-panel").forEach((section) => {
+    section.hidden = true;
+  });
+}
+
+initializeAuthPanels();
 bindAuthSectionLinks();
 loadRegistrationMeta();
 bindInstitutionAutoFields();

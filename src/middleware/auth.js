@@ -5,9 +5,11 @@ const { ROLES } = require("../config/constants");
 
 function auth(req, res, next) {
   const authHeader = req.headers.authorization || "";
-  const token = authHeader.startsWith("Bearer ")
+  const queryToken = String(req.query?.token || "").trim();
+  const headerToken = authHeader.startsWith("Bearer ")
     ? authHeader.substring("Bearer ".length)
     : authHeader;
+  const token = headerToken || queryToken;
 
   if (!token) {
     return res.status(401).json({ error: "Authentication token is required." });
@@ -22,7 +24,8 @@ function auth(req, res, next) {
     }
 
     return query(
-      `SELECT password_expires_at, DATEDIFF(password_expires_at, NOW()) AS days_remaining
+      `SELECT password_last_changed_at, password_expires_at, must_change_password,
+              DATEDIFF(password_expires_at, NOW()) AS days_remaining
        FROM users
        WHERE id = ? AND institution_id = ?
        LIMIT 1`,
@@ -43,10 +46,15 @@ function auth(req, res, next) {
           });
         }
         req.passwordPolicy = {
+          last_changed_at: row.password_last_changed_at || null,
           expires_at: row.password_expires_at || null,
           days_remaining: Number.isFinite(daysRemaining) ? daysRemaining : null,
+          must_change_password: Number(row.must_change_password || 0) === 1,
           expired: false
         };
+        req.user.password_last_changed_at = row.password_last_changed_at || null;
+        req.user.password_expires_at = row.password_expires_at || null;
+        req.user.must_change_password = Number(row.must_change_password || 0) === 1;
         return next();
       })
       .catch((error) => {

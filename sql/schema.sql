@@ -35,6 +35,19 @@ CREATE TABLE IF NOT EXISTS users (
   CONSTRAINT fk_users_institution FOREIGN KEY (institution_id) REFERENCES institutions(id)
 );
 
+CREATE TABLE IF NOT EXISTS user_module_access_overrides (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  institution_id BIGINT NOT NULL,
+  user_id BIGINT NOT NULL,
+  module_key VARCHAR(120) NOT NULL,
+  can_access TINYINT(1) NOT NULL DEFAULT 1,
+  created_by_user_id BIGINT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  INDEX idx_user_module_override_lookup (user_id, module_key, created_at),
+  CONSTRAINT fk_user_module_overrides_institution FOREIGN KEY (institution_id) REFERENCES institutions(id),
+  CONSTRAINT fk_user_module_overrides_user FOREIGN KEY (user_id) REFERENCES users(id)
+);
+
 CREATE TABLE IF NOT EXISTS otp_sessions (
   id BIGINT PRIMARY KEY AUTO_INCREMENT,
   session_id VARCHAR(80) NOT NULL UNIQUE,

@@ -6,6 +6,31 @@ if (!token) {
 let meta = {};
 let currentModule = "dashboard";
 let currentEditId = null;
+let allowedModules = [];
+
+const MODULE_KEY_BY_ID = {
+  dashboard: "dashboard",
+  admission: "admission",
+  "management-teachers": "management-teachers",
+  "management-non-teaching": "management-non-teaching",
+  "management-teacher-resources": "management-teacher-resources",
+  attendance: "attendance",
+  "academic-exams": "academic-exams",
+  "academic-marks": "academic-marks",
+  "hr-leave": "hr-leave",
+  "hr-recruitment": "hr-recruitment",
+  "finance-fee-structure": "finance-fee-structure",
+  "finance-fee-payments": "finance-fee-payments",
+  "finance-procurement": "finance-procurement",
+  "communication-announcements": "communication-announcements",
+  "communication-messages": "communication-messages",
+  "parents-results": "parent-results",
+  "learner-materials": "learner-materials",
+  "welfare-members": "welfare-members",
+  "welfare-contributions": "welfare-contributions",
+  "welfare-loans": "welfare-loans",
+  laws: "laws"
+};
 
 const moduleConfigs = {
   admission: {
@@ -309,7 +334,7 @@ async function request(path, options = {}) {
     ...options
   });
 
-  if (response.status === 401 || response.status === 403) {
+  if (response.status === 401) {
     localStorage.clear();
     window.location.href = "/";
     return null;
@@ -320,6 +345,16 @@ async function request(path, options = {}) {
     throw new Error(data.error || "Request failed");
   }
   return data;
+}
+
+function isModuleAllowed(moduleKey) {
+  if (!moduleKey) return true;
+  if (!Array.isArray(allowedModules) || !allowedModules.length) return true;
+  return allowedModules.includes(moduleKey);
+}
+
+function isSidebarModuleAllowed(moduleId) {
+  return isModuleAllowed(MODULE_KEY_BY_ID[moduleId] || moduleId);
 }
 
 function buildInput(field) {
@@ -369,6 +404,10 @@ function cbcBandFromScore(score) {
 async function saveCurrentModule() {
   const config = moduleConfigs[currentModule];
   if (!config) return;
+  if (!isModuleAllowed(currentModule)) {
+    alert("Your role does not have access to this module.");
+    return;
+  }
 
   const payload = {};
   config.fields.forEach((field) => {
@@ -404,6 +443,10 @@ async function saveCurrentModule() {
 async function editRow(id) {
   const config = moduleConfigs[currentModule];
   if (!config) return;
+  if (!isModuleAllowed(currentModule)) {
+    alert("Your role does not have access to this module.");
+    return;
+  }
   try {
     const row = await request(`${config.endpoint}/${id}`);
     currentEditId = row.id;
@@ -416,6 +459,10 @@ async function editRow(id) {
 async function deleteRow(id) {
   const config = moduleConfigs[currentModule];
   if (!config) return;
+  if (!isModuleAllowed(currentModule)) {
+    alert("Your role does not have access to this module.");
+    return;
+  }
   const ok = window.confirm("Delete this record permanently?");
   if (!ok) return;
   try {
@@ -429,12 +476,20 @@ async function deleteRow(id) {
 async function exportPdf() {
   const config = moduleConfigs[currentModule];
   if (!config) return;
+  if (!isModuleAllowed(currentModule)) {
+    alert("Your role does not have access to this module.");
+    return;
+  }
   window.open(`${config.endpoint}/export/pdf`, "_blank");
 }
 
 async function exportExcel() {
   const config = moduleConfigs[currentModule];
   if (!config) return;
+  if (!isModuleAllowed(currentModule)) {
+    alert("Your role does not have access to this module.");
+    return;
+  }
   window.open(`${config.endpoint}/export/excel`, "_blank");
 }
 
@@ -627,6 +682,11 @@ async function changeCredentials() {
 
 function renderPasswordPolicyBanner(user = {}, portal = {}) {
   const formArea = document.getElementById("formArea");
+  const banner = document.getElementById("passwordExpiryNotice");
+  if (banner) {
+    banner.textContent = "";
+    banner.className = "small-note";
+  }
   if (!formArea) return;
   if (user.role === "SYSTEM_DEVELOPER") return;
 
@@ -647,15 +707,18 @@ function renderPasswordPolicyBanner(user = {}, portal = {}) {
     daysRemaining <= 0
       ? "Your password has expired. Change it immediately."
       : `Password policy notice: ${daysRemaining} day(s) remaining before password expiry.`;
-
-  formArea.insertAdjacentHTML(
-    "afterbegin",
-    `<div class="form-notice ${severity}" id="passwordPolicyNotice">${message}</div>`
-  );
+  if (banner) {
+    banner.textContent = message;
+    banner.className = `small-note ${severity}`;
+  }
 }
 
 function bindSidebar() {
   document.querySelectorAll(".sidebar button[data-module]").forEach((button) => {
+    if (!isSidebarModuleAllowed(button.dataset.module)) {
+      button.style.display = "none";
+      return;
+    }
     button.addEventListener("click", async () => {
       currentModule = button.dataset.module;
       currentEditId = null;
@@ -683,12 +746,16 @@ async function init() {
   try {
     [meta] = await Promise.all([request("/api/meta")]);
     const portalData = await request("/api/portal/current");
+    allowedModules = Array.isArray(portalData?.allowed_modules) ? portalData.allowed_modules : [];
     const meData = await request("/api/auth/me");
     document.getElementById("portalLabel").textContent = `${portalData.portal} (${portalData.role})`;
     bindSidebar();
     bindTopbarButtons();
     await loadDashboard();
     renderPasswordPolicyBanner(meData, portalData);
+    if (meData?.must_change_password) {
+      alert("Password policy notice: your password was reset and must be changed immediately.");
+    }
   } catch (error) {
     alert(error.message);
   }

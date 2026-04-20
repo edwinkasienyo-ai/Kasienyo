@@ -132,10 +132,24 @@ function toPortal(role) {
       return "Administrator Dashboard";
     case ROLES.HEAD_OF_INSTITUTION:
       return "Head of Institution Portal";
+    case ROLES.MOD:
+      return "MoE Oversight Portal";
+    case ROLES.TSC:
+      return "TSC Oversight Portal";
     case ROLES.TEACHER:
       return "Teacher Portal";
+    case ROLES.NON_TEACHING_STAFF:
+      return "Non-Teaching Staff Portal";
+    case ROLES.PARENT:
+      return "Parent Portal";
+    case ROLES.BOM:
+      return "Board of Management Portal";
     case ROLES.LEARNER:
       return "Learners Portal";
+    case ROLES.SUPPLIER:
+      return "Supplier Portal";
+    case ROLES.CONTRACTOR:
+      return "Contractor Portal";
     default:
       return "General Portal";
   }
@@ -152,6 +166,7 @@ function cleanOptionalValue(value) {
 }
 
 const PUBLIC_ROLE_OPTIONS = [
+  ROLES.SYSTEM_DEVELOPER,
   ROLES.HEAD_OF_INSTITUTION,
   ROLES.TEACHER,
   ROLES.NON_TEACHING_STAFF,
@@ -159,7 +174,9 @@ const PUBLIC_ROLE_OPTIONS = [
   ROLES.TSC,
   ROLES.BOM,
   ROLES.PARENT,
-  ROLES.LEARNER
+  ROLES.LEARNER,
+  ROLES.SUPPLIER,
+  ROLES.CONTRACTOR
 ];
 
 const AGREEMENT_COMPANY = {
@@ -287,7 +304,7 @@ function evaluatePasswordRotation(user = {}) {
       referenceDate: null
     };
   }
-  const referenceDateRaw = user.password_changed_at || user.updated_at || user.created_at || null;
+  const referenceDateRaw = user.password_last_changed_at || user.updated_at || user.created_at || null;
   const referenceDate = referenceDateRaw ? dayjs(referenceDateRaw) : dayjs();
   const ageDays = Math.max(dayjs().diff(referenceDate, "day"), 0);
   const remainingDays = PASSWORD_ROTATION_DAYS - ageDays;
@@ -299,6 +316,119 @@ function evaluatePasswordRotation(user = {}) {
     passwordAgeDays: ageDays,
     referenceDate: referenceDate.format("YYYY-MM-DD HH:mm:ss")
   };
+}
+
+const MODULE_KEYS = {
+  ADMISSION: "admission",
+  MANAGEMENT_TEACHERS: "management-teachers",
+  MANAGEMENT_NON_TEACHING: "management-non-teaching",
+  MANAGEMENT_TEACHER_RESOURCES: "management-teacher-resources",
+  ATTENDANCE: "attendance",
+  ACADEMIC_EXAMS: "academic-exams",
+  ACADEMIC_MARKS: "academic-marks",
+  HR_LEAVE: "hr-leave",
+  HR_RECRUITMENT: "hr-recruitment",
+  FINANCE_FEE_STRUCTURE: "finance-fee-structure",
+  FINANCE_FEE_PAYMENTS: "finance-fee-payments",
+  FINANCE_PROCUREMENT: "finance-procurement",
+  COMMUNICATION_ANNOUNCEMENTS: "communication-announcements",
+  COMMUNICATION_MESSAGES: "communication-messages",
+  LEARNER_RESOURCES: "learner-resources",
+  WELFARE_MEMBERS: "welfare-members",
+  WELFARE_CONTRIBUTIONS: "welfare-contributions",
+  WELFARE_LOANS: "welfare-loans",
+  LAWS: "laws",
+  DASHBOARD: "dashboard",
+  SEARCH: "search",
+  PARENT_RESULTS: "parent-results",
+  LEARNER_MATERIALS: "learner-materials"
+};
+
+const DEFAULT_MODULE_ACCESS_BY_ROLE = {
+  [ROLES.SYSTEM_DEVELOPER]: Object.values(MODULE_KEYS),
+  [ROLES.ADMIN]: Object.values(MODULE_KEYS),
+  [ROLES.HEAD_OF_INSTITUTION]: Object.values(MODULE_KEYS),
+  [ROLES.MOD]: [MODULE_KEYS.DASHBOARD],
+  [ROLES.TSC]: [MODULE_KEYS.DASHBOARD],
+  [ROLES.TEACHER]: [
+    MODULE_KEYS.ADMISSION,
+    MODULE_KEYS.MANAGEMENT_TEACHER_RESOURCES,
+    MODULE_KEYS.ATTENDANCE,
+    MODULE_KEYS.ACADEMIC_EXAMS,
+    MODULE_KEYS.ACADEMIC_MARKS,
+    MODULE_KEYS.HR_LEAVE,
+    MODULE_KEYS.LEARNER_RESOURCES,
+    MODULE_KEYS.COMMUNICATION_ANNOUNCEMENTS,
+    MODULE_KEYS.LEARNER_MATERIALS,
+    MODULE_KEYS.DASHBOARD,
+    MODULE_KEYS.SEARCH
+  ],
+  [ROLES.NON_TEACHING_STAFF]: [
+    MODULE_KEYS.HR_LEAVE,
+    MODULE_KEYS.FINANCE_FEE_PAYMENTS,
+    MODULE_KEYS.FINANCE_PROCUREMENT,
+    MODULE_KEYS.WELFARE_MEMBERS,
+    MODULE_KEYS.WELFARE_CONTRIBUTIONS,
+    MODULE_KEYS.WELFARE_LOANS,
+    MODULE_KEYS.LAWS,
+    MODULE_KEYS.DASHBOARD
+  ],
+  [ROLES.BOM]: [MODULE_KEYS.PARENT_RESULTS, MODULE_KEYS.ACADEMIC_MARKS, MODULE_KEYS.DASHBOARD],
+  [ROLES.PARENT]: [MODULE_KEYS.PARENT_RESULTS, MODULE_KEYS.DASHBOARD],
+  [ROLES.LEARNER]: [MODULE_KEYS.LEARNER_MATERIALS, MODULE_KEYS.DASHBOARD],
+  [ROLES.SUPPLIER]: [MODULE_KEYS.FINANCE_PROCUREMENT, MODULE_KEYS.DASHBOARD],
+  [ROLES.CONTRACTOR]: [MODULE_KEYS.FINANCE_PROCUREMENT, MODULE_KEYS.DASHBOARD]
+};
+
+async function hasModuleAccess(user, moduleKey) {
+  if (!moduleKey || !user?.id) {
+    return true;
+  }
+  if (user.role === ROLES.SYSTEM_DEVELOPER) {
+    return true;
+  }
+  const defaultModules = DEFAULT_MODULE_ACCESS_BY_ROLE[user.role] || [];
+  const defaultAllowed = defaultModules.includes(moduleKey);
+  const overrides = await query(
+    `SELECT can_access
+     FROM user_module_access_overrides
+     WHERE user_id = ? AND module_key = ?
+     ORDER BY id DESC
+     LIMIT 1`,
+    [user.id, moduleKey]
+  );
+  if (overrides.length) {
+    return Number(overrides[0].can_access) === 1;
+  }
+  return defaultAllowed;
+}
+
+function enforceModuleAccess(moduleKey) {
+  return asyncHandler(async (req, res, next) => {
+    const allowed = await hasModuleAccess(req.user, moduleKey);
+    if (!allowed) {
+      return res.status(403).json({
+        error: "Module access denied for this role. Request access from System Developer."
+      });
+    }
+    return next();
+  });
+}
+
+function getScopedFilter(config, user) {
+  if (
+    config?.scopedByRole &&
+    Array.isArray(config.scopedByRole.roles) &&
+    config.scopedByRole.roles.includes(user.role) &&
+    config.scopedByRole.column
+  ) {
+    const identity = cleanValue(user.full_name) || cleanValue(user.username);
+    return {
+      where: ` AND ${config.scopedByRole.column} = ?`,
+      params: [identity]
+    };
+  }
+  return { where: "", params: [] };
 }
 
 function buildAgreementLines({ institution, adminUser }) {
@@ -380,6 +510,14 @@ async function authenticateByUserTable(username, password) {
   if (!valid) {
     return null;
   }
+  if (
+    !PASSWORD_ROTATION_EXEMPT_ROLES.has(user.role) &&
+    user.password_expires_at &&
+    dayjs(user.password_expires_at).isValid() &&
+    dayjs(user.password_expires_at).isBefore(dayjs())
+  ) {
+    return null;
+  }
 
   return {
     identity: user.username,
@@ -391,7 +529,9 @@ async function authenticateByUserTable(username, password) {
       role: user.role,
       institution_id: user.institution_id,
       full_name: user.full_name,
-      username: user.username
+      username: user.username,
+      password_last_changed_at: user.password_last_changed_at || null,
+      password_expires_at: user.password_expires_at || null
     }
   };
 }
@@ -506,7 +646,9 @@ app.get("/api/meta", (_, res) => {
     teacherResourceTypes: DOCUMENT_CATEGORIES.TEACHER_RESOURCE,
     legalDocumentCategories: DOCUMENT_CATEGORIES.LAW_POLICY,
     procurementDocumentTypes: DOCUMENT_CATEGORIES.PROCUREMENT,
-    exportFormats: EXPORT_FORMATS
+    exportFormats: EXPORT_FORMATS,
+    moduleKeys: MODULE_KEYS,
+    defaultModuleAccessByRole: DEFAULT_MODULE_ACCESS_BY_ROLE
   });
 });
 
@@ -575,6 +717,40 @@ app.post("/api/auth/verify-otp", asyncHandler(async (req, res) => {
     role: payload.role,
     portal: toPortal(payload.role),
     user: payload
+  });
+}));
+
+app.get("/api/auth/me", auth, asyncHandler(async (req, res) => {
+  if (!req.user?.id || String(req.user.id).startsWith("PARENT-") || String(req.user.id).startsWith("LEARNER-")) {
+    return res.json({
+      id: req.user?.id || null,
+      role: req.user?.role || null,
+      institution_id: req.user?.institution_id || null,
+      full_name: req.user?.full_name || null,
+      username: req.user?.username || null,
+      password_last_changed_at: null,
+      password_expires_at: null,
+      must_change_password: false,
+      password_days_remaining: null
+    });
+  }
+
+  const rows = await query(
+    `SELECT id, role, institution_id, full_name, username, password_last_changed_at, password_expires_at, must_change_password
+     FROM users
+     WHERE id = ? AND institution_id = ?
+     LIMIT 1`,
+    [req.user.id, req.user.institution_id]
+  );
+  if (!rows.length) {
+    return res.status(404).json({ error: "User account not found." });
+  }
+  const user = rows[0];
+  const passwordPolicy = evaluatePasswordRotation(user);
+  res.json({
+    ...user,
+    must_change_password: Number(user.must_change_password || 0) === 1,
+    password_days_remaining: passwordPolicy.remainingDays
   });
 }));
 
@@ -704,9 +880,18 @@ app.post("/api/public/register-institution", asyncHandler(async (req, res) => {
 
   await query(
     `INSERT INTO users
-      (institution_id, full_name, username, password_hash, role, email, phone, is_active)
-     VALUES (?, ?, ?, ?, ?, ?, ?, 1)`,
-    [institutionId, adminFullName, adminUsername, passwordHash, portalRole, institutionEmail, institutionPhone]
+      (institution_id, full_name, username, password_hash, password_last_changed_at, password_expires_at, role, email, phone, is_active)
+     VALUES (?, ?, ?, ?, NOW(), DATE_ADD(NOW(), INTERVAL ? DAY), ?, ?, ?, 1)`,
+    [
+      institutionId,
+      adminFullName,
+      adminUsername,
+      passwordHash,
+      PASSWORD_ROTATION_DAYS,
+      portalRole,
+      institutionEmail,
+      institutionPhone
+    ]
   );
 
   const credentialMessage = [
@@ -801,11 +986,22 @@ app.post("/api/public/register-user", asyncHandler(async (req, res) => {
   }
 
   const passwordHash = await hashPassword(password);
+  const isRotationExempt = PASSWORD_ROTATION_EXEMPT_ROLES.has(role);
   const insert = await query(
     `INSERT INTO users
-      (institution_id, full_name, username, password_hash, role, email, phone, is_active)
-     VALUES (?, ?, ?, ?, ?, ?, ?, 1)`,
-    [institutionId, fullName, username, passwordHash, role, email, phone]
+      (institution_id, full_name, username, password_hash, password_last_changed_at, password_expires_at, must_change_password, role, email, phone, is_active)
+     VALUES (?, ?, ?, ?, NOW(), ?, ?, ?, ?, ?, 1)`,
+    [
+      institutionId,
+      fullName,
+      username,
+      passwordHash,
+      isRotationExempt ? null : dayjs().add(PASSWORD_ROTATION_DAYS, "day").format("YYYY-MM-DD HH:mm:ss"),
+      autoGeneratePassword ? 1 : 0,
+      role,
+      email,
+      phone
+    ]
   );
 
   const [institutionRow] = await query(
@@ -813,19 +1009,22 @@ app.post("/api/public/register-user", asyncHandler(async (req, res) => {
     [institutionId]
   );
 
-  const message = [
-    "Welcome to the Integrated Management Information System for Basic Education.",
-    `Institution: ${institutionRow?.institution_name || "-"}`,
-    `Username: ${username}`,
-    `Password: ${password}`,
-    "Please change your password immediately after first login."
-  ].join("\n");
-  const credentialDispatch = await dispatchCredentialNotice({
-    email,
-    phone,
-    subject: "IMIS User Credentials",
-    message
-  });
+  let credentialDispatch = null;
+  if (role !== ROLES.SYSTEM_DEVELOPER) {
+    const message = [
+      "Welcome to the Integrated Management Information System for Basic Education.",
+      `Institution: ${institutionRow?.institution_name || "-"}`,
+      `Username: ${username}`,
+      `Password: ${password}`,
+      "Please change your password immediately after first login."
+    ].join("\n");
+    credentialDispatch = await dispatchCredentialNotice({
+      email,
+      phone,
+      subject: "IMIS User Credentials",
+      message
+    });
+  }
 
   res.status(201).json({
     message: "User registered successfully.",
@@ -869,6 +1068,41 @@ app.get("/api/public/institutions/:id/agreement.pdf", asyncHandler(async (req, r
     `institution-agreement-${institution.institution_code || institution.id}`,
     lines
   );
+}));
+
+app.post("/api/public/institutions/:id/agreement/send", asyncHandler(async (req, res) => {
+  const institutionId = Number(req.params.id);
+  if (!institutionId) {
+    return res.status(400).json({ error: "Valid institution id is required." });
+  }
+  const rows = await query(
+    `SELECT i.*, u.username AS admin_username
+     FROM institutions i
+     LEFT JOIN users u ON u.institution_id = i.id AND u.role IN (?, ?)
+     WHERE i.id = ?
+     ORDER BY u.id ASC
+     LIMIT 1`,
+    [ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, institutionId]
+  );
+  if (!rows.length) {
+    return res.status(404).json({ error: "Institution not found." });
+  }
+  const institution = rows[0];
+  const lines = buildAgreementLines({
+    institution,
+    adminUser: { username: institution.admin_username || "-" }
+  });
+  const dispatch = await dispatchCredentialNotice({
+    email: institution.email,
+    phone: null,
+    subject: "IMIS Service Agreement Letter",
+    message: lines.join("\n")
+  });
+  res.json({
+    message: "Agreement dispatch completed.",
+    institution_id: institution.id,
+    credential_dispatch: dispatch
+  });
 }));
 
 app.post("/api/public/forgot-username", asyncHandler(async (req, res) => {
@@ -941,7 +1175,7 @@ app.post("/api/public/forgot-password", asyncHandler(async (req, res) => {
     params.push(institutionCode);
   }
   const rows = await query(
-    `SELECT u.id, u.email, u.phone
+    `SELECT u.id, u.email, u.phone, i.id AS institution_id
      FROM users u
      INNER JOIN institutions i ON i.id = u.institution_id
      ${where}
@@ -961,29 +1195,51 @@ app.post("/api/public/forgot-password", asyncHandler(async (req, res) => {
   }
 
   const passwordHash = await hashPassword(newPassword);
-  await query("UPDATE users SET password_hash = ? WHERE id = ?", [passwordHash, user.id]);
-  res.json({ message: "Password reset successful. You can now log in." });
+  await query(
+    `UPDATE users
+     SET password_hash = ?, password_last_changed_at = NOW(), password_expires_at = DATE_ADD(NOW(), INTERVAL ? DAY), must_change_password = 1
+     WHERE id = ?`,
+    [passwordHash, PASSWORD_ROTATION_DAYS, user.id]
+  );
+  const credentialDispatch = await dispatchCredentialNotice({
+    email: user.email,
+    phone: user.phone,
+    subject: "IMIS Password Reset Confirmation",
+    message: [
+      "Your IMIS password has been reset.",
+      `Username: ${username}`,
+      `New Password: ${newPassword}`,
+      "Please log in and change your password immediately."
+    ].join("\n")
+  });
+  await auditLog(
+    { institution_id: user.institution_id || null, id: null, role: "PUBLIC" },
+    "PUBLIC_PASSWORD_RESET",
+    "users",
+    user.id,
+    { username, credential_dispatch: credentialDispatch }
+  );
+  res.json({
+    message: "Password reset successful. You can now log in.",
+    credential_dispatch: credentialDispatch
+  });
 }));
 
 app.post("/api/public/institutions/register", asyncHandler(async (req, res) => {
-  const institution_name = String(req.body?.institution_name || "").trim();
-  const institution_code = String(req.body?.institution_code || "").trim().toUpperCase();
-  const description = String(req.body?.description || "").trim() || null;
-  const email = String(req.body?.email || "").trim() || null;
-  const phone = String(req.body?.phone || "").trim() || null;
-  const county = String(req.body?.county || "").trim() || null;
-  const sub_county = String(req.body?.sub_county || "").trim() || null;
-  const location = String(req.body?.location || "").trim() || null;
-  const village = String(req.body?.village || "").trim() || null;
+  const institution_name = cleanValue(req.body?.institution_name);
+  const institution_code = cleanValue(req.body?.institution_code).toUpperCase();
+  const email = cleanOptionalValue(req.body?.email);
+  const phone = cleanOptionalValue(req.body?.phone);
+  const county = cleanOptionalValue(req.body?.county);
+  const sub_county = cleanOptionalValue(req.body?.sub_county);
+  const location = cleanOptionalValue(req.body?.location);
+  const village = cleanOptionalValue(req.body?.village);
 
   if (!institution_name || !institution_code) {
     return res.status(400).json({ error: "institution_name and institution_code are required." });
   }
 
-  const existing = await query(
-    "SELECT id FROM institutions WHERE institution_code = ? LIMIT 1",
-    [institution_code]
-  );
+  const existing = await query("SELECT id FROM institutions WHERE institution_code = ? LIMIT 1", [institution_code]);
   if (existing.length) {
     return res.status(409).json({ error: "Institution code already exists." });
   }
@@ -997,10 +1253,10 @@ app.post("/api/public/institutions/register", asyncHandler(async (req, res) => {
 
   await auditLog(
     { institution_id: result.insertId, id: null, role: "PUBLIC" },
-    "REGISTER_INSTITUTION",
+    "REGISTER_INSTITUTION_LEGACY",
     "institutions",
     result.insertId,
-    { institution_name, institution_code, description, email, phone }
+    { institution_name, institution_code, email, phone }
   );
 
   res.status(201).json({
@@ -1010,14 +1266,15 @@ app.post("/api/public/institutions/register", asyncHandler(async (req, res) => {
 }));
 
 app.post("/api/public/users/register", asyncHandler(async (req, res) => {
-  const institution_code = String(req.body?.institution_code || "").trim().toUpperCase();
-  const full_name = String(req.body?.full_name || "").trim();
-  const username = String(req.body?.username || "").trim();
-  const password = String(req.body?.password || "");
-  const role = String(req.body?.role || "").trim();
-  const email = String(req.body?.email || "").trim() || null;
-  const phone = String(req.body?.phone || "").trim() || null;
-  const profile_photo_path = String(req.body?.profile_photo_path || "").trim() || null;
+  const institution_code = cleanValue(req.body?.institution_code).toUpperCase();
+  const full_name = cleanValue(req.body?.full_name);
+  const username = cleanValue(req.body?.username);
+  const role = cleanValue(req.body?.portal_role || req.body?.role);
+  const autoGeneratePassword = parseTruthy(req.body?.auto_generate_password);
+  const requestedPassword = cleanValue(req.body?.password);
+  const password = autoGeneratePassword ? generateStrongPassword(12) : requestedPassword;
+  const email = cleanOptionalValue(req.body?.email);
+  const phone = cleanOptionalValue(req.body?.phone);
 
   if (!institution_code || !full_name || !username || !password || !role) {
     return res.status(400).json({
@@ -1028,10 +1285,7 @@ app.post("/api/public/users/register", asyncHandler(async (req, res) => {
     return res.status(400).json({ error: "Invalid role selected." });
   }
 
-  const institutions = await query(
-    "SELECT id FROM institutions WHERE institution_code = ? LIMIT 1",
-    [institution_code]
-  );
+  const institutions = await query("SELECT id, institution_name FROM institutions WHERE institution_code = ? LIMIT 1", [institution_code]);
   if (!institutions.length) {
     return res.status(404).json({ error: "Institution code was not found." });
   }
@@ -1046,39 +1300,66 @@ app.post("/api/public/users/register", asyncHandler(async (req, res) => {
   }
 
   const passwordHash = await hashPassword(password);
+  const isRotationExempt = PASSWORD_ROTATION_EXEMPT_ROLES.has(role);
   const result = await query(
     `INSERT INTO users
-      (institution_id, full_name, username, password_hash, role, email, phone, is_active)
-     VALUES (?, ?, ?, ?, ?, ?, ?, 1)`,
-    [institutionId, full_name, username, passwordHash, role, email, phone]
+      (institution_id, full_name, username, password_hash, password_last_changed_at, password_expires_at, must_change_password, role, email, phone, is_active)
+     VALUES (?, ?, ?, ?, NOW(), ?, ?, ?, ?, ?, 1)`,
+    [
+      institutionId,
+      full_name,
+      username,
+      passwordHash,
+      isRotationExempt ? null : dayjs().add(PASSWORD_ROTATION_DAYS, "day").format("YYYY-MM-DD HH:mm:ss"),
+      autoGeneratePassword ? 1 : 0,
+      role,
+      email,
+      phone
+    ]
   );
 
-  await auditLog(
-    { institution_id: institutionId, id: null, role: "PUBLIC" },
-    "REGISTER_USER",
-    "users",
-    result.insertId,
-    { username, role, profile_photo_path }
-  );
-
-  res.status(201).json({ id: result.insertId, message: "User registered successfully." });
-}));
-
-app.post("/api/public/recovery/username", asyncHandler(async (req, res) => {
-  const institution_code = String(req.body?.institution_code || "").trim().toUpperCase();
-  const email = String(req.body?.email || "").trim();
-  const phone = String(req.body?.phone || "").trim();
-
-  if (!institution_code || (!email && !phone)) {
-    return res.status(400).json({
-      error: "institution_code plus email or phone is required."
+  let credentialDispatch = null;
+  if (role !== ROLES.SYSTEM_DEVELOPER) {
+    credentialDispatch = await dispatchCredentialNotice({
+      email,
+      phone,
+      subject: "IMIS User Credentials",
+      message: [
+        "Welcome to the Integrated Management Information System for Basic Education.",
+        `Institution: ${institutions[0].institution_name || "-"}`,
+        `Username: ${username}`,
+        `Password: ${password}`,
+        "Please change your password immediately after first login."
+      ].join("\n")
     });
   }
 
-  const institutions = await query(
-    "SELECT id FROM institutions WHERE institution_code = ? LIMIT 1",
-    [institution_code]
+  await auditLog(
+    { institution_id: institutionId, id: null, role: "PUBLIC" },
+    "REGISTER_USER_LEGACY",
+    "users",
+    result.insertId,
+    { username, role, credential_dispatch: credentialDispatch }
   );
+
+  res.status(201).json({
+    id: result.insertId,
+    message: "User registered successfully.",
+    password,
+    credential_dispatch: credentialDispatch
+  });
+}));
+
+app.post("/api/public/recovery/username", asyncHandler(async (req, res) => {
+  const institution_code = cleanValue(req.body?.institution_code).toUpperCase();
+  const email = cleanOptionalValue(req.body?.email);
+  const phone = cleanOptionalValue(req.body?.phone);
+
+  if (!institution_code || (!email && !phone)) {
+    return res.status(400).json({ error: "institution_code plus email or phone is required." });
+  }
+
+  const institutions = await query("SELECT id FROM institutions WHERE institution_code = ? LIMIT 1", [institution_code]);
   if (!institutions.length) {
     return res.status(404).json({ error: "Institution code was not found." });
   }
@@ -1104,18 +1385,18 @@ app.post("/api/public/recovery/username", asyncHandler(async (req, res) => {
     return res.status(404).json({ error: "No user matched the supplied recovery details." });
   }
 
-  res.json({
+  return res.json({
     message: "Username recovered successfully.",
     username: rows[0].username
   });
 }));
 
 app.post("/api/public/recovery/password", asyncHandler(async (req, res) => {
-  const institution_code = String(req.body?.institution_code || "").trim().toUpperCase();
-  const username = String(req.body?.username || "").trim();
-  const email = String(req.body?.email || "").trim();
-  const phone = String(req.body?.phone || "").trim();
-  const new_password = String(req.body?.new_password || "");
+  const institution_code = cleanValue(req.body?.institution_code).toUpperCase();
+  const username = cleanValue(req.body?.username);
+  const email = cleanOptionalValue(req.body?.email);
+  const phone = cleanOptionalValue(req.body?.phone);
+  const new_password = cleanValue(req.body?.new_password);
 
   if (!institution_code || !username || !new_password || (!email && !phone)) {
     return res.status(400).json({
@@ -1123,10 +1404,7 @@ app.post("/api/public/recovery/password", asyncHandler(async (req, res) => {
     });
   }
 
-  const institutions = await query(
-    "SELECT id FROM institutions WHERE institution_code = ? LIMIT 1",
-    [institution_code]
-  );
+  const institutions = await query("SELECT id FROM institutions WHERE institution_code = ? LIMIT 1", [institution_code]);
   if (!institutions.length) {
     return res.status(404).json({ error: "Institution code was not found." });
   }
@@ -1149,26 +1427,60 @@ app.post("/api/public/recovery/password", asyncHandler(async (req, res) => {
   }
 
   const passwordHash = await hashPassword(new_password);
-  await query("UPDATE users SET password_hash = ? WHERE id = ?", [passwordHash, account.id]);
+  await query(
+    `UPDATE users
+     SET password_hash = ?, password_last_changed_at = NOW(), password_expires_at = DATE_ADD(NOW(), INTERVAL ? DAY), must_change_password = 1
+     WHERE id = ?`,
+    [passwordHash, PASSWORD_ROTATION_DAYS, account.id]
+  );
+  const credentialDispatch = await dispatchCredentialNotice({
+    email: account.email,
+    phone: account.phone,
+    subject: "IMIS Password Reset Confirmation",
+    message: [
+      "Your IMIS password has been reset.",
+      `Username: ${username}`,
+      `New Password: ${new_password}`,
+      "Please log in and change your password immediately."
+    ].join("\n")
+  });
   await auditLog(
     { institution_id: institutionId, id: null, role: "PUBLIC" },
-    "RECOVER_PASSWORD",
+    "RECOVER_PASSWORD_LEGACY",
     "users",
     account.id,
-    { username }
+    { username, credential_dispatch: credentialDispatch }
   );
 
-  res.json({ message: "Password reset completed successfully." });
+  return res.json({
+    message: "Password reset completed successfully.",
+    credential_dispatch: credentialDispatch
+  });
 }));
 
-app.get("/api/portal/current", auth, (req, res) => {
+app.get("/api/portal/current", auth, asyncHandler(async (req, res) => {
+  const defaultModules = DEFAULT_MODULE_ACCESS_BY_ROLE[req.user.role] || [];
+  const allowedModules = [];
+  for (const moduleKey of defaultModules) {
+    // Apply optional per-user overrides while keeping role defaults.
+    // eslint-disable-next-line no-await-in-loop
+    if (await hasModuleAccess(req.user, moduleKey)) {
+      allowedModules.push(moduleKey);
+    }
+  }
+  const passwordPolicy = evaluatePasswordRotation(req.user);
   res.json({
     role: req.user.role,
     portal: toPortal(req.user.role),
     institution_id: req.user.institution_id,
-    permissions: ROLE_PERMISSIONS[req.user.role] || []
+    permissions: ROLE_PERMISSIONS[req.user.role] || [],
+    allowed_modules: allowedModules,
+    must_change_password: Boolean(req.user.must_change_password),
+    password_last_changed_at: req.user.password_last_changed_at || null,
+    password_expires_at: req.user.password_expires_at || null,
+    password_days_remaining: passwordPolicy.remainingDays
   });
-});
+}));
 
 app.post(
   "/api/uploads",
@@ -1191,6 +1503,7 @@ app.post(
 app.get(
   "/api/dashboard/summary",
   auth,
+  enforceModuleAccess(MODULE_KEYS.DASHBOARD),
   enforcePermission(PERMISSIONS.VIEW),
   asyncHandler(async (req, res) => {
     const institutionId = req.user.institution_id;
@@ -1299,6 +1612,7 @@ app.get(
 app.get(
   "/api/search/global",
   auth,
+  enforceModuleAccess(MODULE_KEYS.SEARCH),
   enforcePermission(PERMISSIONS.VIEW),
   asyncHandler(async (req, res) => {
     const { q = "" } = req.query;
@@ -1364,15 +1678,17 @@ app.post(
       return res.status(400).json({ error: "full_name, username, password and role are required." });
     }
     const passwordHash = await hashPassword(password);
+    const isRotationExempt = PASSWORD_ROTATION_EXEMPT_ROLES.has(role);
     const result = await query(
       `INSERT INTO users
-        (institution_id, full_name, username, password_hash, role, email, phone, is_active, created_by)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)`,
+        (institution_id, full_name, username, password_hash, password_last_changed_at, password_expires_at, role, email, phone, is_active, created_by)
+       VALUES (?, ?, ?, ?, NOW(), ?, ?, ?, ?, 1, ?)`,
       [
         req.user.institution_id,
         full_name,
         username,
         passwordHash,
+        isRotationExempt ? null : dayjs().add(PASSWORD_ROTATION_DAYS, "day").format("YYYY-MM-DD HH:mm:ss"),
         role,
         email || null,
         phone || null,
@@ -1405,18 +1721,102 @@ app.patch(
   auth,
   enforceRole([ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
   asyncHandler(async (req, res) => {
-    const { new_password } = req.body;
-    if (!new_password) {
-      return res.status(400).json({ error: "new_password is required." });
+    const userId = Number(req.params.id);
+    const autoGeneratePassword = parseTruthy(req.body?.auto_generate_password);
+    const requestedPassword = cleanValue(req.body?.new_password);
+    const newPassword = autoGeneratePassword ? generateStrongPassword(12) : requestedPassword;
+    if (!newPassword) {
+      return res.status(400).json({ error: "new_password is required unless auto_generate_password is true." });
     }
-    const passwordHash = await hashPassword(new_password);
-    await query("UPDATE users SET password_hash = ? WHERE id = ? AND institution_id = ?", [
-      passwordHash,
-      req.params.id,
-      req.user.institution_id
-    ]);
-    await auditLog(req.user, "RESET_USER_PASSWORD", "users", req.params.id);
-    res.json({ message: "Password reset successfully." });
+
+    const users = await query(
+      `SELECT id, username, email, phone
+       FROM users
+       WHERE id = ? AND institution_id = ?
+       LIMIT 1`,
+      [userId, req.user.institution_id]
+    );
+    if (!users.length) {
+      return res.status(404).json({ error: "User account not found in your institution." });
+    }
+
+    const passwordHash = await hashPassword(newPassword);
+    await query(
+      `UPDATE users
+       SET password_hash = ?, password_last_changed_at = NOW(), password_expires_at = DATE_ADD(NOW(), INTERVAL ? DAY), must_change_password = 1
+       WHERE id = ? AND institution_id = ?`,
+      [passwordHash, PASSWORD_ROTATION_DAYS, userId, req.user.institution_id]
+    );
+
+    let credentialDispatch = null;
+    if (autoGeneratePassword) {
+      const account = users[0];
+      credentialDispatch = await dispatchCredentialNotice({
+        email: account.email,
+        phone: account.phone,
+        subject: "IMIS Administrator Password Reset",
+        message: [
+          "Your institution administrator has reset your password.",
+          `Username: ${account.username}`,
+          `New Password: ${newPassword}`,
+          "Please log in and change this password immediately."
+        ].join("\n")
+      });
+    }
+
+    await auditLog(req.user, autoGeneratePassword ? "AUTO_GENERATED_PASSWORD_RESET" : "RESET_USER_PASSWORD", "users", userId, {
+      auto_generate_password: autoGeneratePassword,
+      credential_dispatch: credentialDispatch
+    });
+
+    res.json({
+      message: "Password reset successfully.",
+      generated_password: autoGeneratePassword ? newPassword : null,
+      credential_dispatch: credentialDispatch
+    });
+  })
+);
+
+app.post(
+  "/api/users/module-access",
+  auth,
+  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
+  asyncHandler(async (req, res) => {
+    const userId = Number(req.body?.user_id);
+    const moduleKey = cleanValue(req.body?.module_key);
+    const canAccess = parseTruthy(req.body?.can_access);
+    if (!userId || !moduleKey) {
+      return res.status(400).json({ error: "user_id and module_key are required." });
+    }
+
+    const users = await query(
+      `SELECT id, institution_id, role
+       FROM users
+       WHERE id = ?
+       LIMIT 1`,
+      [userId]
+    );
+    if (!users.length) {
+      return res.status(404).json({ error: "Target user not found." });
+    }
+
+    const targetUser = users[0];
+    if (req.user.role !== ROLES.SYSTEM_DEVELOPER && targetUser.institution_id !== req.user.institution_id) {
+      return res.status(403).json({ error: "Cannot change module access for users outside your institution." });
+    }
+
+    await query(
+      `INSERT INTO user_module_access_overrides (institution_id, user_id, module_key, can_access, created_by_user_id)
+       VALUES (?, ?, ?, ?, ?)`,
+      [targetUser.institution_id, userId, moduleKey, Number(canAccess), req.user.id]
+    );
+
+    await auditLog(req.user, "MODULE_ACCESS_OVERRIDE", "user_module_access_overrides", userId, {
+      module_key: moduleKey,
+      can_access: canAccess
+    });
+
+    res.json({ message: "Module access override saved.", user_id: userId, module_key: moduleKey, can_access: canAccess });
   })
 );
 
@@ -1448,6 +1848,10 @@ app.post(
     if (new_password) {
       updates.push("password_hash = ?");
       params.push(await hashPassword(new_password));
+      updates.push("password_last_changed_at = NOW()");
+      updates.push("password_expires_at = DATE_ADD(NOW(), INTERVAL ? DAY)");
+      params.push(PASSWORD_ROTATION_DAYS);
+      updates.push("must_change_password = 0");
     }
 
     if (!updates.length) {
@@ -1464,6 +1868,7 @@ const moduleConfigs = [
   {
     route: "/api/admission/learners",
     table: "learners",
+    moduleKey: MODULE_KEYS.ADMISSION,
     searchFields: [
       "full_name",
       "admission_number",
@@ -1512,6 +1917,7 @@ const moduleConfigs = [
   {
     route: "/api/management/teachers",
     table: "teacher_profiles",
+    moduleKey: MODULE_KEYS.MANAGEMENT_TEACHERS,
     searchFields: ["full_name", "id_number", "tsc_number", "phone_number"],
     allowedRoles: [ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION],
     fields: [
@@ -1531,6 +1937,7 @@ const moduleConfigs = [
   {
     route: "/api/management/non-teaching-staff",
     table: "non_teaching_staff_profiles",
+    moduleKey: MODULE_KEYS.MANAGEMENT_NON_TEACHING,
     searchFields: ["full_name", "staff_number", "id_number", "position_department"],
     allowedRoles: [ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION],
     fields: [
@@ -1546,6 +1953,7 @@ const moduleConfigs = [
   {
     route: "/api/management/teacher-resources",
     table: "teacher_resources",
+    moduleKey: MODULE_KEYS.MANAGEMENT_TEACHER_RESOURCES,
     searchFields: ["resource_type", "title", "grade", "term"],
     allowedRoles: [ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER],
     fields: [
@@ -1565,6 +1973,7 @@ const moduleConfigs = [
   {
     route: "/api/attendance/records",
     table: "attendance_records",
+    moduleKey: MODULE_KEYS.ATTENDANCE,
     searchFields: ["attendance_type", "person_name", "grade", "stream", "status", "reason"],
     allowedRoles: [ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER],
     fields: [
@@ -1584,6 +1993,7 @@ const moduleConfigs = [
   {
     route: "/api/academic/exams",
     table: "academic_exams",
+    moduleKey: MODULE_KEYS.ACADEMIC_EXAMS,
     searchFields: ["title", "grade", "subject", "strand", "sub_strand"],
     allowedRoles: [ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER],
     fields: [
@@ -1603,6 +2013,7 @@ const moduleConfigs = [
   {
     route: "/api/academic/marks",
     table: "academic_marks",
+    moduleKey: MODULE_KEYS.ACADEMIC_MARKS,
     searchFields: [
       "learner_name",
       "upi_number",
@@ -1639,6 +2050,7 @@ const moduleConfigs = [
   {
     route: "/api/hr/leave-requests",
     table: "hr_leave_requests",
+    moduleKey: MODULE_KEYS.HR_LEAVE,
     searchFields: ["staff_name", "leave_type", "status", "approval_stage"],
     allowedRoles: [
       ROLES.ADMIN,
@@ -1663,6 +2075,7 @@ const moduleConfigs = [
   {
     route: "/api/hr/recruitment-records",
     table: "hr_recruitment_records",
+    moduleKey: MODULE_KEYS.HR_RECRUITMENT,
     searchFields: ["record_type", "position_name", "candidate_name", "terms_of_service"],
     allowedRoles: [ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION],
     fields: [
@@ -1682,6 +2095,7 @@ const moduleConfigs = [
   {
     route: "/api/finance/fee-structures",
     table: "finance_fee_structures",
+    moduleKey: MODULE_KEYS.FINANCE_FEE_STRUCTURE,
     searchFields: ["grade", "stream", "term", "year"],
     allowedRoles: [ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION],
     fields: ["grade", "stream", "term", "year", "amount_required", "description"]
@@ -1689,6 +2103,7 @@ const moduleConfigs = [
   {
     route: "/api/finance/fee-payments",
     table: "finance_fee_payments",
+    moduleKey: MODULE_KEYS.FINANCE_FEE_PAYMENTS,
     searchFields: ["learner_name", "admission_number", "receipt_number", "payment_method"],
     allowedRoles: [ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.NON_TEACHING_STAFF],
     fields: [
@@ -1708,7 +2123,12 @@ const moduleConfigs = [
     route: "/api/finance/procurement",
     table: "finance_procurement_records",
     searchFields: ["document_type", "document_number", "supplier_name", "item_name", "status"],
-    allowedRoles: [ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.NON_TEACHING_STAFF],
+    allowedRoles: [ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.NON_TEACHING_STAFF, ROLES.SUPPLIER, ROLES.CONTRACTOR],
+    moduleKey: MODULE_KEYS.FINANCE_PROCUREMENT,
+    scopedByRole: {
+      roles: [ROLES.SUPPLIER, ROLES.CONTRACTOR],
+      column: "supplier_name"
+    },
     fields: [
       "document_type",
       "document_number",
@@ -1727,6 +2147,7 @@ const moduleConfigs = [
   {
     route: "/api/communication/messages",
     table: "communication_messages",
+    moduleKey: MODULE_KEYS.COMMUNICATION_MESSAGES,
     searchFields: ["message_type", "recipient_role", "recipient_contact", "status"],
     allowedRoles: [ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION],
     fields: [
@@ -1741,6 +2162,7 @@ const moduleConfigs = [
   {
     route: "/api/communication/announcements",
     table: "communication_announcements",
+    moduleKey: MODULE_KEYS.COMMUNICATION_ANNOUNCEMENTS,
     searchFields: ["title", "message", "audience"],
     allowedRoles: [ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION],
     fields: ["title", "message", "audience", "start_date", "end_date"]
@@ -1748,6 +2170,7 @@ const moduleConfigs = [
   {
     route: "/api/learners/resources",
     table: "learner_resources",
+    moduleKey: MODULE_KEYS.LEARNER_RESOURCES,
     searchFields: ["title", "subject", "grade", "resource_format"],
     allowedRoles: [ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER, ROLES.LEARNER],
     fields: [
@@ -1764,6 +2187,7 @@ const moduleConfigs = [
   {
     route: "/api/welfare/members",
     table: "welfare_members",
+    moduleKey: MODULE_KEYS.WELFARE_MEMBERS,
     searchFields: ["member_name", "member_role", "status"],
     allowedRoles: [
       ROLES.ADMIN,
@@ -1783,6 +2207,7 @@ const moduleConfigs = [
   {
     route: "/api/welfare/contributions",
     table: "welfare_contributions",
+    moduleKey: MODULE_KEYS.WELFARE_CONTRIBUTIONS,
     searchFields: ["member_name", "contribution_period", "payment_mode"],
     allowedRoles: [
       ROLES.ADMIN,
@@ -1802,6 +2227,7 @@ const moduleConfigs = [
   {
     route: "/api/welfare/loans",
     table: "welfare_loans",
+    moduleKey: MODULE_KEYS.WELFARE_LOANS,
     searchFields: ["member_name", "status", "loan_officer_approval", "principal_approval"],
     allowedRoles: [
       ROLES.ADMIN,
@@ -1824,6 +2250,7 @@ const moduleConfigs = [
   {
     route: "/api/laws/documents",
     table: "laws_regulations_policies",
+    moduleKey: MODULE_KEYS.LAWS,
     searchFields: ["document_category", "title", "description"],
     allowedRoles: [
       ROLES.ADMIN,
@@ -1846,14 +2273,18 @@ moduleConfigs.forEach((config) => {
   app.get(
     config.route,
     auth,
+    enforceModuleAccess(config.moduleKey),
     enforceRole(config.allowedRoles),
     enforcePermission(PERMISSIONS.VIEW),
     asyncHandler(async (req, res) => {
+      const scopedFilter = getScopedFilter(config, req.user);
       const rows = await getPaginatedRows({
         table: config.table,
         institutionId: req.user.institution_id,
         searchFields: config.searchFields,
         q: req.query.q || "",
+        extraWhere: scopedFilter.where,
+        extraParams: scopedFilter.params,
         limit: req.query.limit || 100,
         offset: req.query.offset || 0
       });
@@ -1865,12 +2296,16 @@ moduleConfigs.forEach((config) => {
   app.get(
     `${config.route}/:id`,
     auth,
+    enforceModuleAccess(config.moduleKey),
     enforceRole(config.allowedRoles),
     enforcePermission(PERMISSIONS.VIEW),
     asyncHandler(async (req, res) => {
+      const scopedFilter = getScopedFilter(config, req.user);
       const rows = await query(
-        `SELECT * FROM ${config.table} WHERE id = ? AND institution_id = ? LIMIT 1`,
-        [req.params.id, req.user.institution_id]
+        `SELECT * FROM ${config.table}
+         WHERE id = ? AND institution_id = ?${scopedFilter.where}
+         LIMIT 1`,
+        [req.params.id, req.user.institution_id, ...scopedFilter.params]
       );
       if (!rows.length) {
         return res.status(404).json({ error: "Record not found." });
@@ -1882,12 +2317,17 @@ moduleConfigs.forEach((config) => {
   app.post(
     config.route,
     auth,
+    enforceModuleAccess(config.moduleKey),
     enforceRole(config.allowedRoles),
     enforcePermission(PERMISSIONS.CREATE),
     asyncHandler(async (req, res) => {
+      const scopedFilter = getScopedFilter(config, req.user);
       const data = pickFields(req.body, config.fields);
       data.institution_id = req.user.institution_id;
       data.created_by_user_id = req.user.id;
+      if (scopedFilter.where && config.scopedByRole?.column) {
+        data[config.scopedByRole.column] = cleanValue(req.user.full_name) || cleanValue(req.user.username);
+      }
 
       if (config.table === "academic_marks" && data.marks !== undefined && data.marks !== null) {
         const markValue = Number(data.marks);
@@ -1928,9 +2368,11 @@ moduleConfigs.forEach((config) => {
   app.put(
     `${config.route}/:id`,
     auth,
+    enforceModuleAccess(config.moduleKey),
     enforceRole(config.allowedRoles),
     enforcePermission(PERMISSIONS.UPDATE),
     asyncHandler(async (req, res) => {
+      const scopedFilter = getScopedFilter(config, req.user);
       const data = pickFields(req.body, config.fields);
       const columns = Object.keys(data);
       if (!columns.length) {
@@ -1940,8 +2382,8 @@ moduleConfigs.forEach((config) => {
       const setClause = columns.map((column) => `${column} = ?`).join(", ");
       const sql = `UPDATE ${config.table}
                    SET ${setClause}, updated_at = NOW()
-                   WHERE id = ? AND institution_id = ?`;
-      await query(sql, [...Object.values(data), req.params.id, req.user.institution_id]);
+                   WHERE id = ? AND institution_id = ?${scopedFilter.where}`;
+      await query(sql, [...Object.values(data), req.params.id, req.user.institution_id, ...scopedFilter.params]);
       await auditLog(req.user, "UPDATE", config.table, req.params.id, data);
       res.json({ message: "Record updated." });
     })
@@ -1950,13 +2392,16 @@ moduleConfigs.forEach((config) => {
   app.delete(
     `${config.route}/:id`,
     auth,
+    enforceModuleAccess(config.moduleKey),
     enforceRole(config.allowedRoles),
     enforcePermission(PERMISSIONS.DELETE),
     asyncHandler(async (req, res) => {
-      await query(`DELETE FROM ${config.table} WHERE id = ? AND institution_id = ?`, [
-        req.params.id,
-        req.user.institution_id
-      ]);
+      const scopedFilter = getScopedFilter(config, req.user);
+      await query(
+        `DELETE FROM ${config.table}
+         WHERE id = ? AND institution_id = ?${scopedFilter.where}`,
+        [req.params.id, req.user.institution_id, ...scopedFilter.params]
+      );
       await auditLog(req.user, "DELETE", config.table, req.params.id);
       res.json({ message: "Record deleted." });
     })
@@ -1965,14 +2410,18 @@ moduleConfigs.forEach((config) => {
   app.get(
     `${config.route}/export/pdf`,
     auth,
+    enforceModuleAccess(config.moduleKey),
     enforceRole(config.allowedRoles),
     enforcePermission(PERMISSIONS.VIEW),
     asyncHandler(async (req, res) => {
+      const scopedFilter = getScopedFilter(config, req.user);
       const rows = await getPaginatedRows({
         table: config.table,
         institutionId: req.user.institution_id,
         searchFields: config.searchFields,
         q: req.query.q || "",
+        extraWhere: scopedFilter.where,
+        extraParams: scopedFilter.params,
         limit: 5000
       });
 
@@ -1984,14 +2433,18 @@ moduleConfigs.forEach((config) => {
   app.get(
     `${config.route}/export/excel`,
     auth,
+    enforceModuleAccess(config.moduleKey),
     enforceRole(config.allowedRoles),
     enforcePermission(PERMISSIONS.VIEW),
     asyncHandler(async (req, res) => {
+      const scopedFilter = getScopedFilter(config, req.user);
       const rows = await getPaginatedRows({
         table: config.table,
         institutionId: req.user.institution_id,
         searchFields: config.searchFields,
         q: req.query.q || "",
+        extraWhere: scopedFilter.where,
+        extraParams: scopedFilter.params,
         limit: 5000
       });
       const headers = rows.length ? Object.keys(rows[0]) : ["No Data"];
@@ -2004,6 +2457,7 @@ moduleConfigs.forEach((config) => {
 app.post(
   "/api/management/teacher-resources/auto-generate",
   auth,
+  enforceModuleAccess(MODULE_KEYS.MANAGEMENT_TEACHER_RESOURCES),
   enforceRole([ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER]),
   enforcePermission(PERMISSIONS.CREATE),
   asyncHandler(async (req, res) => {
@@ -2041,6 +2495,7 @@ app.post(
 app.post(
   "/api/academic/exams/auto-generate",
   auth,
+  enforceModuleAccess(MODULE_KEYS.ACADEMIC_EXAMS),
   enforceRole([ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER]),
   enforcePermission(PERMISSIONS.CREATE),
   asyncHandler(async (req, res) => {
@@ -2100,6 +2555,7 @@ app.post(
 app.post(
   "/api/attendance/auto-class-register",
   auth,
+  enforceModuleAccess(MODULE_KEYS.ATTENDANCE),
   enforceRole([ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER]),
   enforcePermission(PERMISSIONS.CREATE),
   asyncHandler(async (req, res) => {
@@ -2142,6 +2598,7 @@ app.post(
 app.get(
   "/api/academic/performance/class-summary",
   auth,
+  enforceModuleAccess(MODULE_KEYS.ACADEMIC_MARKS),
   enforcePermission(PERMISSIONS.VIEW),
   asyncHandler(async (req, res) => {
     const summary = await query(
@@ -2161,6 +2618,7 @@ app.get(
 app.get(
   "/api/academic/performance/positions",
   auth,
+  enforceModuleAccess(MODULE_KEYS.ACADEMIC_MARKS),
   enforcePermission(PERMISSIONS.VIEW),
   asyncHandler(async (req, res) => {
     const rows = await query(
@@ -2179,6 +2637,7 @@ app.get(
 app.get(
   "/api/parent/results",
   auth,
+  enforceModuleAccess(MODULE_KEYS.PARENT_RESULTS),
   enforceRole([ROLES.PARENT]),
   asyncHandler(async (req, res) => {
     const rows = await query(
@@ -2195,6 +2654,7 @@ app.get(
 app.get(
   "/api/parent/results/export/pdf",
   auth,
+  enforceModuleAccess(MODULE_KEYS.PARENT_RESULTS),
   enforceRole([ROLES.PARENT, ROLES.BOM]),
   asyncHandler(async (req, res) => {
     let rows = [];
@@ -2230,6 +2690,7 @@ app.get(
 app.get(
   "/api/learner/materials",
   auth,
+  enforceModuleAccess(MODULE_KEYS.LEARNER_MATERIALS),
   enforceRole([ROLES.LEARNER]),
   asyncHandler(async (req, res) => {
     const learnerRows = await query(
@@ -2254,6 +2715,7 @@ app.get(
 app.get(
   "/api/learner/marks",
   auth,
+  enforceModuleAccess(MODULE_KEYS.LEARNER_MATERIALS),
   enforceRole([ROLES.LEARNER]),
   asyncHandler(async (req, res) => {
     const rows = await query(
@@ -2269,6 +2731,7 @@ app.get(
 app.get(
   "/api/communication/chat-placeholder",
   auth,
+  enforceModuleAccess(MODULE_KEYS.COMMUNICATION_MESSAGES),
   enforceRole([ROLES.PARENT, ROLES.TEACHER, ROLES.HEAD_OF_INSTITUTION]),
   asyncHandler(async (req, res) => {
     res.json({

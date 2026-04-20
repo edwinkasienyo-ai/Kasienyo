@@ -302,6 +302,21 @@ button:hover {
   background: #fbfdff;
 }
 
+.auth-panel[hidden] {
+  display: none !important;
+}
+
+.auth-actions-row {
+  margin-top: 10px;
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.auth-actions-row button {
+  width: auto;
+}
+
 .auth-quick-links {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -371,6 +386,22 @@ button:hover {
   gap: 8px;
 }
 
+#passwordExpiryNotice {
+  margin: 0;
+}
+
+#passwordExpiryNotice.info {
+  color: #1f4f7f;
+}
+
+#passwordExpiryNotice.warning {
+  color: #8a5517;
+}
+
+#passwordExpiryNotice.error {
+  color: #9f1f1f;
+}
+
 .topbar-right input {
   min-width: 330px;
 }
@@ -396,6 +427,26 @@ button:hover {
   margin: 0;
   font-size: 24px;
   font-weight: 700;
+}
+
+.form-notice {
+  border-radius: 8px;
+  padding: 8px 10px;
+  margin-bottom: 10px;
+  border: 1px solid #d2deec;
+  background: #f2f6fb;
+}
+
+.form-notice.warning {
+  border-color: #f3d4a4;
+  background: #fff6ea;
+  color: #8a5517;
+}
+
+.form-notice.error {
+  border-color: #f0b7b7;
+  background: #ffeef0;
+  color: #9f1f1f;
 }
 
 .form-area {

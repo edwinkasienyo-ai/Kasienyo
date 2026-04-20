@@ -50,10 +50,16 @@
         <label>Portal role *</label>
         <select id="loginPortalRole">
           <option value="">Choose your portal role first...</option>
+          <option value="SYSTEM_DEVELOPER">System Developer</option>
           <option value="ADMIN">Administrator</option>
           <option value="HEAD_OF_INSTITUTION">Head of Institution</option>
+          <option value="MOD">Ministry of Education (MoD)</option>
+          <option value="TSC">Teachers Service Commission (TSC)</option>
           <option value="TEACHER">Teacher</option>
           <option value="NON_TEACHING_STAFF">Non-Teaching Staff</option>
+          <option value="BOM">Board of Management (BOM)</option>
+          <option value="SUPPLIER">Supplier</option>
+          <option value="CONTRACTOR">Contractor</option>
           <option value="PARENT">Parent</option>
           <option value="LEARNER">Learner</option>
         </select>
@@ -122,6 +128,10 @@
               <input id="registerInstitutionCode" placeholder="Auto-generated on submit" readonly />
             </div>
             <div>
+              <label>County Code (Auto)</label>
+              <input id="registerInstitutionCountyCode" placeholder="Auto-filled from county" readonly />
+            </div>
+            <div>
               <label>Portal Role</label>
               <select id="registerInstitutionPortalRole">
                 <option value="HEAD_OF_INSTITUTION">Head of Institution</option>
@@ -142,10 +152,11 @@
             </div>
             <div>
               <label>Auto-generate password?</label>
-              <select id="registerInstitutionAutoPassword">
-                <option value="yes">Yes</option>
-                <option value="no">No</option>
-              </select>
+              <input id="registerInstitutionAutoPassword" type="checkbox" checked />
+            </div>
+            <div>
+              <label>Email agreement after registration?</label>
+              <input id="registerInstitutionSendAgreement" type="checkbox" />
             </div>
           </div>
           <button id="registerInstitutionButton" type="button">Submit institution registration</button>
@@ -177,9 +188,15 @@
             <div>
               <label>Portal Role</label>
               <select id="registerUserRole">
+                <option value="SYSTEM_DEVELOPER">System Developer</option>
                 <option value="HEAD_OF_INSTITUTION">Head of Institution</option>
+                <option value="MOD">MoD</option>
+                <option value="TSC">TSC</option>
                 <option value="TEACHER">Teacher</option>
                 <option value="NON_TEACHING_STAFF">Non-Teaching Staff</option>
+                <option value="BOM">Board of Management (BOM)</option>
+                <option value="SUPPLIER">Supplier</option>
+                <option value="CONTRACTOR">Contractor</option>
                 <option value="PARENT">Parent</option>
                 <option value="LEARNER">Learner</option>
               </select>
@@ -194,10 +211,7 @@
             </div>
             <div>
               <label>Auto-generate password?</label>
-              <select id="registerUserAutoPassword">
-                <option value="yes">Yes</option>
-                <option value="no">No</option>
-              </select>
+              <input id="registerUserAutoPassword" type="checkbox" checked />
             </div>
           </div>
           <button id="registerUserButton" type="button">Submit user registration</button>
