@@ -90,8 +90,12 @@
               <input id="registerInstitutionName" placeholder="Institution Name" />
             </div>
             <div>
-              <label>Institution Code</label>
-              <input id="registerInstitutionCode" placeholder="Institution Code" />
+              <label>County</label>
+              <select id="registerInstitutionCounty"></select>
+            </div>
+            <div>
+              <label>Institution Category</label>
+              <select id="registerInstitutionCategory"></select>
             </div>
             <div>
               <label>Description</label>
@@ -104,6 +108,18 @@
             <div>
               <label>Mobile Number</label>
               <input id="registerInstitutionPhone" placeholder="Mobile Number" />
+            </div>
+            <div>
+              <label>Postal Code</label>
+              <select id="registerInstitutionPostalCode"></select>
+            </div>
+            <div>
+              <label>Town</label>
+              <input id="registerInstitutionTown" placeholder="Auto-populated town" readonly />
+            </div>
+            <div>
+              <label>Generated Institution Code</label>
+              <input id="registerInstitutionCode" placeholder="Auto-generated on submit" readonly />
             </div>
             <div>
               <label>Portal Role</label>
@@ -122,10 +138,21 @@
             </div>
             <div>
               <label>Admin Password</label>
-              <input id="registerInstitutionAdminPassword" type="password" placeholder="Admin Password" />
+              <input id="registerInstitutionAdminPassword" type="text" placeholder="Auto-generated admin password" />
+            </div>
+            <div>
+              <label>Auto-generate password?</label>
+              <select id="registerInstitutionAutoPassword">
+                <option value="yes">Yes</option>
+                <option value="no">No</option>
+              </select>
             </div>
           </div>
           <button id="registerInstitutionButton" type="button">Submit institution registration</button>
+          <div class="auth-actions-row">
+            <button id="previewInstitutionAgreementButton" type="button">Preview agreement (PDF)</button>
+            <button id="sendInstitutionAgreementButton" type="button">Email agreement to institution</button>
+          </div>
         </section>
 
         <section id="registerUserPanel" class="auth-panel">
@@ -145,7 +172,7 @@
             </div>
             <div>
               <label>Password</label>
-              <input id="registerUserPassword" type="password" placeholder="Password" />
+              <input id="registerUserPassword" type="text" placeholder="Auto-generated or manual password" />
             </div>
             <div>
               <label>Portal Role</label>
@@ -164,6 +191,13 @@
             <div>
               <label>Mobile Number</label>
               <input id="registerUserPhone" placeholder="Mobile Number" />
+            </div>
+            <div>
+              <label>Auto-generate password?</label>
+              <select id="registerUserAutoPassword">
+                <option value="yes">Yes</option>
+                <option value="no">No</option>
+              </select>
             </div>
           </div>
           <button id="registerUserButton" type="button">Submit user registration</button>

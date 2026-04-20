@@ -14,6 +14,12 @@ function buildOtpExpiry() {
 }
 
 async function sendOtp({ channel, destination, code }) {
+  if (channel === "sms_email") {
+    await sendOtp({ channel: "sms", destination, code });
+    await sendOtp({ channel: "email", destination, code });
+    return;
+  }
+
   if (channel === "email") {
     if (!process.env.SMTP_HOST || !process.env.SMTP_USER || !process.env.SMTP_PASS) {
       throw new Error("SMTP is not configured.");

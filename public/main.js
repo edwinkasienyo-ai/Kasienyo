@@ -22,6 +22,61 @@ function setAuthNotice(message, type = "info") {
   el.className = `small-note auth-notice ${type}`;
 }
 
+let registrationMeta = null;
+
+async function loadRegistrationMeta() {
+  try {
+    registrationMeta = await request("/api/public/registration/meta");
+  } catch (error) {
+    setAuthNotice(`Registration metadata unavailable: ${error.message}`, "error");
+    return;
+  }
+
+  const countySelect = document.getElementById("registerInstitutionCounty");
+  if (countySelect) {
+    countySelect.innerHTML = '<option value="">Select county</option>' + (registrationMeta.counties || [])
+      .map((county) => `<option value="${county.name}">${county.name}</option>`)
+      .join("");
+  }
+
+  const categorySelect = document.getElementById("registerInstitutionCategory");
+  if (categorySelect) {
+    categorySelect.innerHTML = '<option value="">Select category</option>' + (registrationMeta.categories || [])
+      .map((category) => `<option value="${category.label}">${category.label}</option>`)
+      .join("");
+  }
+
+  const postalSelect = document.getElementById("registerInstitutionPostalCode");
+  if (postalSelect) {
+    postalSelect.innerHTML = '<option value="">Select postal code</option>' + (registrationMeta.postalCodes || [])
+      .map((entry) => `<option value="${entry.postal_code}">${entry.postal_code} - ${entry.town}</option>`)
+      .join("");
+  }
+}
+
+function bindInstitutionAutoFields() {
+  const countySelect = document.getElementById("registerInstitutionCounty");
+  const postalSelect = document.getElementById("registerInstitutionPostalCode");
+  const countyCodeInput = document.getElementById("registerInstitutionCountyCode");
+  const townInput = document.getElementById("registerInstitutionTown");
+
+  if (countySelect && countyCodeInput) {
+    countySelect.addEventListener("change", () => {
+      const selected = (registrationMeta?.counties || []).find((county) => county.name === countySelect.value);
+      countyCodeInput.value = selected?.code || "";
+    });
+  }
+
+  if (postalSelect && townInput) {
+    postalSelect.addEventListener("change", () => {
+      const selected = (registrationMeta?.postalCodes || []).find(
+        (entry) => String(entry.postal_code) === String(postalSelect.value)
+      );
+      townInput.value = selected?.town || "";
+    });
+  }
+}
+
 async function login() {
   const portalRole =
     document.getElementById("loginPortalRole")?.value ||
@@ -81,36 +136,57 @@ async function verifyOtp() {
 
 async function registerInstitution() {
   const institution_name = document.getElementById("registerInstitutionName").value.trim();
-  const institution_code = document.getElementById("registerInstitutionCode").value.trim();
   const email = document.getElementById("registerInstitutionEmail").value.trim();
   const phone = document.getElementById("registerInstitutionPhone").value.trim();
   const description = document.getElementById("registerInstitutionDescription").value.trim();
+  const county = document.getElementById("registerInstitutionCounty").value.trim();
+  const category = document.getElementById("registerInstitutionCategory").value.trim();
+  const county_code = document.getElementById("registerInstitutionCountyCode").value.trim();
+  const postal_code = document.getElementById("registerInstitutionPostalCode").value.trim();
+  const town = document.getElementById("registerInstitutionTown").value.trim();
+  const sendAgreementEmail = Boolean(document.getElementById("registerInstitutionSendAgreement")?.checked);
+  const autoGeneratePassword = Boolean(document.getElementById("registerInstitutionAutoPassword")?.checked);
   const admin_full_name = document.getElementById("registerInstitutionAdminName").value.trim();
   const admin_username = document.getElementById("registerInstitutionAdminUsername").value.trim();
   const admin_password = document.getElementById("registerInstitutionAdminPassword").value;
   const portal_role = document.getElementById("registerInstitutionPortalRole").value;
 
-  if (!institution_name || !institution_code || !admin_full_name || !admin_username || !admin_password) {
-    setAuthNotice("Institution, code, admin name, admin username and admin password are required.", "error");
+  if (!institution_name || !county || !category || !admin_full_name || !admin_username) {
+    setAuthNotice("Institution, county, category, admin name and admin username are required.", "error");
+    return;
+  }
+  if (!autoGeneratePassword && !admin_password) {
+    setAuthNotice("Provide admin password or enable auto-generate password.", "error");
     return;
   }
 
   try {
-    await request("/api/public/register-institution", {
+    const data = await request("/api/public/register-institution", {
       method: "POST",
       body: JSON.stringify({
         institution_name,
-        institution_code,
+        description,
         email,
         phone,
-        description,
+        county,
+        category,
+        county_code,
+        postal_code,
+        town,
+        send_agreement_email: sendAgreementEmail,
+        auto_generate_password: autoGeneratePassword,
         admin_full_name,
         admin_username,
         admin_password,
         portal_role
       })
     });
-    setAuthNotice("Institution and admin account registered successfully.", "success");
+    const agreementUrl = data?.agreement_pdf_url ? ` Agreement: ${data.agreement_pdf_url}` : "";
+    const passwordInfo = data?.admin_password ? ` Password: ${data.admin_password}` : "";
+    setAuthNotice(
+      `Institution registered. Code: ${data.institution_code}. Admin: ${data.admin_username}.${passwordInfo}${agreementUrl}`,
+      "success"
+    );
   } catch (error) {
     setAuthNotice(error.message, "error");
   }
@@ -124,18 +200,33 @@ async function registerUser() {
   const role = document.getElementById("registerUserRole").value;
   const email = document.getElementById("registerUserEmail").value.trim();
   const phone = document.getElementById("registerUserPhone").value.trim();
+  const autoGeneratePassword = Boolean(document.getElementById("registerUserAutoPassword")?.checked);
 
-  if (!institution_code || !full_name || !username || !password || !role) {
-    setAuthNotice("Complete institution code, name, username, password and role.", "error");
+  if (!institution_code || !full_name || !username || !role) {
+    setAuthNotice("Complete institution code, name, username and role.", "error");
+    return;
+  }
+  if (!autoGeneratePassword && !password) {
+    setAuthNotice("Provide password or enable auto-generate password.", "error");
     return;
   }
 
   try {
-    await request("/api/public/register-user", {
+    const data = await request("/api/public/register-user", {
       method: "POST",
-      body: JSON.stringify({ institution_code, full_name, username, password, portal_role: role, email, phone })
+      body: JSON.stringify({
+        institution_code,
+        full_name,
+        username,
+        password,
+        portal_role: role,
+        email,
+        phone,
+        auto_generate_password: autoGeneratePassword
+      })
     });
-    setAuthNotice("User registered successfully. Please login.", "success");
+    const passwordInfo = data?.password ? ` Password: ${data.password}` : "";
+    setAuthNotice(`User registered successfully.${passwordInfo}`, "success");
   } catch (error) {
     setAuthNotice(error.message, "error");
   }
@@ -221,3 +312,5 @@ function bindAuthSectionLinks() {
 }
 
 bindAuthSectionLinks();
+loadRegistrationMeta();
+bindInstitutionAutoFields();

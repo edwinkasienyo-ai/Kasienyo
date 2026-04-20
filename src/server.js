@@ -4,7 +4,7 @@ const { query } = require("./config/db");
 const { hashPassword } = require("./utils/password");
 const { ROLES } = require("./config/constants");
 
-const PORT = Number(process.env.PORT || 5000);
+const PORT = Number(process.env.PORT || 5002);
 
 async function ensureDefaultInstitutionAndAdmin() {
   const institutionName = "Default Institution";

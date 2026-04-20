@@ -6,6 +6,8 @@ const helmet = require("helmet");
 const cookieParser = require("cookie-parser");
 const jwt = require("jsonwebtoken");
 const multer = require("multer");
+const nodemailer = require("nodemailer");
+const twilio = require("twilio");
 const { v4: uuidv4 } = require("uuid");
 const dayjs = require("dayjs");
 const { query } = require("./config/db");
@@ -28,6 +30,13 @@ const {
   DOCUMENT_CATEGORIES,
   EXPORT_FORMATS
 } = require("./config/constants");
+const {
+  COUNTIES,
+  INSTITUTION_CATEGORIES,
+  KENYA_POSTAL_CODES,
+  COUNTY_BY_CODE,
+  INSTITUTION_CATEGORY_BY_LABEL
+} = require("./config/registrationData");
 const { auth } = require("./middleware/auth");
 const { hashPassword, verifyPassword } = require("./utils/password");
 const { sendSimplePdf, sendSimpleExcel } = require("./services/exportService");
@@ -147,6 +156,143 @@ const PUBLIC_ROLE_OPTIONS = [
   ROLES.PARENT,
   ROLES.LEARNER
 ];
+
+const AGREEMENT_COMPANY = {
+  name: "Mwendegu Enterprise Limited",
+  email: "mwendeguenterpriseltd@gmail.com",
+  phone: "+254 725 757 767"
+};
+
+function padThree(value) {
+  return String(Number(value) || 0).padStart(3, "0");
+}
+
+function parseTruthy(value) {
+  if (typeof value === "boolean") return value;
+  const normalized = cleanValue(value).toLowerCase();
+  if (!normalized) return false;
+  return ["1", "true", "yes", "y", "on"].includes(normalized);
+}
+
+function resolveCounty({ countyCode, countyName }) {
+  const byCode = countyCode ? COUNTY_BY_CODE[padThree(countyCode)] : null;
+  if (byCode) return byCode;
+  if (!countyName) return null;
+  return COUNTIES.find((item) => item.name.toLowerCase() === countyName.toLowerCase()) || null;
+}
+
+function resolveInstitutionCategory({ categoryCode, categoryLabel }) {
+  const normalizedCode = cleanValue(categoryCode).toUpperCase();
+  if (normalizedCode) {
+    const byCode = INSTITUTION_CATEGORIES.find((item) => item.code === normalizedCode);
+    if (byCode) return byCode;
+  }
+  if (!categoryLabel) return null;
+  return INSTITUTION_CATEGORY_BY_LABEL[categoryLabel.toLowerCase()] || null;
+}
+
+function getPostalDetails(postalCode) {
+  const normalized = cleanValue(postalCode);
+  if (!normalized) return null;
+  return KENYA_POSTAL_CODES.find((item) => item.postal_code === normalized) || null;
+}
+
+async function nextInstitutionCode({ countyCode, categoryCode }) {
+  const prefix = `${countyCode}/${categoryCode}/`;
+  const [row] = await query(
+    "SELECT COUNT(*) total FROM institutions WHERE institution_code LIKE ?",
+    [`${prefix}%`]
+  );
+  const next = Number(row?.total || 0) + 1;
+  return `${countyCode}/${categoryCode}/${padThree(next)}`;
+}
+
+function generateStrongPassword(length = 12) {
+  const charset = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789@#$%&*!";
+  let output = "";
+  for (let index = 0; index < length; index += 1) {
+    output += charset.charAt(Math.floor(Math.random() * charset.length));
+  }
+  return output;
+}
+
+async function dispatchCredentialNotice({ email, phone, subject, message }) {
+  const report = { emailSent: false, smsSent: false, errors: [] };
+
+  if (email && process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS) {
+    try {
+      const transporter = nodemailer.createTransport({
+        host: process.env.SMTP_HOST,
+        port: Number(process.env.SMTP_PORT || 587),
+        secure: String(process.env.SMTP_SECURE || "false") === "true",
+        auth: {
+          user: process.env.SMTP_USER,
+          pass: process.env.SMTP_PASS
+        }
+      });
+      await transporter.sendMail({
+        from: process.env.SMTP_USER,
+        to: email,
+        subject,
+        text: message
+      });
+      report.emailSent = true;
+    } catch (error) {
+      report.errors.push(`Email not sent: ${error.message}`);
+    }
+  }
+
+  if (
+    phone &&
+    process.env.TWILIO_ACCOUNT_SID &&
+    process.env.TWILIO_AUTH_TOKEN &&
+    process.env.TWILIO_FROM
+  ) {
+    try {
+      const client = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
+      await client.messages.create({
+        from: process.env.TWILIO_FROM,
+        to: phone,
+        body: message
+      });
+      report.smsSent = true;
+    } catch (error) {
+      report.errors.push(`SMS not sent: ${error.message}`);
+    }
+  }
+
+  // Always print credential traffic for ops traceability.
+  // eslint-disable-next-line no-console
+  console.log(`[IMIS NOTICE] ${subject}\n${message}`);
+  return report;
+}
+
+function buildAgreementLines({ institution, adminUser }) {
+  const today = dayjs().format("YYYY-MM-DD");
+  return [
+    `${AGREEMENT_COMPANY.name} - Institution System Agreement`,
+    `Date: ${today}`,
+    "",
+    `To: The Head of Institution`,
+    `Institution: ${institution.institution_name}`,
+    `Institution Code: ${institution.institution_code}`,
+    `County: ${institution.county || "-"}`,
+    `Email: ${institution.email || "-"}`,
+    `Phone: ${institution.phone || "-"}`,
+    "",
+    "This agreement confirms that the institution will:",
+    "1. Use IMIS in line with all applicable laws and regulations.",
+    "2. Protect user credentials and sensitive learner/staff data.",
+    "3. Settle subscription/service obligations on time.",
+    "4. Prevent misuse under computer misuse and cybercrime statutes.",
+    "",
+    `Administrator/Head Account: ${adminUser?.username || "-"}`,
+    "By using this system, the institution accepts these terms as binding.",
+    "",
+    `Provider: ${AGREEMENT_COMPANY.name}`,
+    `Contacts: ${AGREEMENT_COMPANY.phone} | ${AGREEMENT_COMPANY.email}`
+  ];
+}
 
 function pickFields(payload, allowedFields) {
   return allowedFields.reduce((acc, field) => {
