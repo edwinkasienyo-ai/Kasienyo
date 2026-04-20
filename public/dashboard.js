@@ -7,6 +7,17 @@ let meta = {};
 let currentModule = "dashboard";
 let currentEditId = null;
 let allowedModules = [];
+const DASHBOARD_STAT_LABELS = {
+  totalLearners: "Total Learners Population",
+  totalPresent: "Present Today",
+  totalAbsent: "Absent Today",
+  totalBoys: "Total Boys",
+  totalGirls: "Total Girls",
+  totalLate: "Late Today",
+  totalSuspended: "Suspended",
+  totalExpelled: "Expelled",
+  totalFeesCollectedToday: "Fees Collected Today (KES)"
+};
 
 const MODULE_KEY_BY_ID = {
   dashboard: "dashboard",
@@ -347,6 +358,58 @@ async function request(path, options = {}) {
   return data;
 }
 
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
+function formatDateTime(value) {
+  if (!value) return "-";
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return String(value);
+  }
+  return parsed.toLocaleString();
+}
+
+function formatNumber(value) {
+  const amount = Number(value ?? 0);
+  return Number.isFinite(amount) ? amount.toLocaleString() : "0";
+}
+
+function formatMoney(value) {
+  const amount = Number(value ?? 0);
+  const safe = Number.isFinite(amount) ? amount : 0;
+  return `KES ${safe.toLocaleString(undefined, {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
+  })}`;
+}
+
+function buildDashboardTable(headers, rows) {
+  if (!rows.length) {
+    return '<p class="small-note">No records available.</p>';
+  }
+  return `
+    <div class="dashboard-table-wrap">
+      <table class="dashboard-table">
+        <thead>
+          <tr>${headers.map((header) => `<th>${escapeHtml(header)}</th>`).join("")}</tr>
+        </thead>
+        <tbody>
+          ${rows
+            .map((row) => `<tr>${row.map((cell) => `<td>${escapeHtml(cell)}</td>`).join("")}</tr>`)
+            .join("")}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
 function isModuleAllowed(moduleKey) {
   if (!moduleKey) return true;
   if (!Array.isArray(allowedModules) || !allowedModules.length) return true;
@@ -565,8 +628,8 @@ function renderDashboardCards(stats) {
     .map(
       ([key, value]) => `
       <div class="card stats-card">
-        <h4>${key.replace(/([A-Z])/g, " $1")}</h4>
-        <p>${value}</p>
+        <h4>${DASHBOARD_STAT_LABELS[key] || key.replace(/([A-Z])/g, " $1")}</h4>
+        <p>${key.toLowerCase().includes("fee") ? formatMoney(value) : formatNumber(value)}</p>
       </div>
     `
     )
@@ -578,17 +641,130 @@ async function loadDashboard() {
   try {
     const data = await request("/api/dashboard/summary");
     renderDashboardCards(data.stats || {});
+    const attendanceRows = (data.dailyAttendanceList || []).slice(0, 40).map((row) => [
+      row.attendance_type || "-",
+      row.person_name || "-",
+      row.person_id || "-",
+      row.grade || "-",
+      row.stream || "-",
+      row.status || "-",
+      row.reason || "-",
+      formatDateTime(row.attendance_date),
+      formatDateTime(row.time_in),
+      formatDateTime(row.time_out)
+    ]);
+    const performanceRows = (data.performanceByClass || []).map((row) => [
+      row.grade || "-",
+      row.stream || "-",
+      formatNumber(row.totalLearners),
+      formatNumber(row.totalEntries),
+      formatNumber(row.meanScore),
+      formatNumber(row.lowestScore),
+      formatNumber(row.highestScore)
+    ]);
+    const recentPaymentsRows = (data.feeCollectionSummary?.recentPayments || []).map((row) => [
+      row.learner_name || "-",
+      row.admission_number || "-",
+      row.grade || "-",
+      row.stream || "-",
+      formatMoney(row.amount_paid),
+      row.payment_method || "-",
+      row.receipt_number || "-",
+      formatDateTime(row.payment_date),
+      formatMoney(row.balance_after_payment)
+    ]);
+    const outstandingRows = (data.feeCollectionSummary?.outstandingBalances || []).map((row) => [
+      row.learner_name || "-",
+      row.admission_number || "-",
+      row.grade || "-",
+      row.stream || "-",
+      formatMoney(row.balance)
+    ]);
+    const alertsMarkup = (data.alerts || [])
+      .map(
+        (alert) => `
+        <div class="dashboard-alert ${escapeHtml(alert.severity || "info")}">
+          <strong>${escapeHtml(alert.title || "Alert")}</strong>
+          <p>${escapeHtml(alert.message || "")}</p>
+        </div>
+      `
+      )
+      .join("");
+    const announcementMarkup = (data.announcements || [])
+      .map(
+        (item) => `
+        <div class="dashboard-announcement">
+          <h4>${escapeHtml(item.title || "Announcement")}</h4>
+          <p>${escapeHtml(item.message || "")}</p>
+          <small>
+            Audience: ${escapeHtml(item.audience || "All")} | Posted: ${escapeHtml(formatDateTime(item.created_at))}
+          </small>
+        </div>
+      `
+      )
+      .join("");
+    const logRows = (data.systemActivityLogs || []).map((row) => [
+      formatDateTime(row.created_at),
+      row.actor_role || "-",
+      row.action || "-",
+      row.entity_name || "-",
+      row.entity_id || "-"
+    ]);
+    const feeSummary = data.feeCollectionSummary || {};
     document.getElementById("formArea").innerHTML = `
-      <h3>Daily Attendance List</h3>
-      <pre>${JSON.stringify(data.attendanceBreakdown || [], null, 2)}</pre>
-      <h3>Performance Per Class/Stream</h3>
-      <pre>${JSON.stringify(data.performanceByClass || [], null, 2)}</pre>
-      <h3>Alerts & Announcements</h3>
-      <pre>${JSON.stringify(data.announcements || [], null, 2)}</pre>
-      <h3>System Activity Logs</h3>
-      <pre>${JSON.stringify(data.systemActivityLogs || [], null, 2)}</pre>
+      <div class="dashboard-grid">
+        <section class="dashboard-section">
+          <h3>Daily Attendance List</h3>
+          <p class="small-note">Showing up to 40 latest records for today.</p>
+          ${buildDashboardTable(
+            ["Type", "Name", "Person ID", "Grade", "Stream", "Status", "Reason", "Attendance Time", "Time In", "Time Out"],
+            attendanceRows
+          )}
+        </section>
+        <section class="dashboard-section">
+          <h3>Performance by Class/Grade & Stream</h3>
+          ${buildDashboardTable(
+            ["Grade", "Stream", "Learners", "Entries", "Mean", "Lowest", "Highest"],
+            performanceRows
+          )}
+        </section>
+        <section class="dashboard-section">
+          <h3>Fee Collection Summary</h3>
+          <div class="dashboard-metrics">
+            <p><strong>Today:</strong> ${escapeHtml(formatMoney(feeSummary.todayTotal))} (${escapeHtml(formatNumber(feeSummary.todayPaymentsCount))} payment(s))</p>
+            <p><strong>Month to Date:</strong> ${escapeHtml(formatMoney(feeSummary.monthTotal))} (${escapeHtml(formatNumber(feeSummary.monthPaymentsCount))} payment(s))</p>
+            <p><strong>Year Total:</strong> ${escapeHtml(formatMoney(feeSummary.yearTotal))}</p>
+            <p><strong>Year Target:</strong> ${escapeHtml(formatMoney(feeSummary.yearExpected))}</p>
+            <p><strong>Variance:</strong> ${escapeHtml(formatMoney(feeSummary.yearVariance))}</p>
+            <p><strong>Outstanding Balance:</strong> ${escapeHtml(formatMoney(feeSummary.outstandingBalanceTotal))} (${escapeHtml(formatNumber(feeSummary.learnersWithOutstandingBalance))} learner(s))</p>
+          </div>
+          <h4>Recent Fee Payments</h4>
+          ${buildDashboardTable(
+            ["Learner", "Adm No", "Grade", "Stream", "Amount", "Method", "Receipt", "Payment Date", "Balance"],
+            recentPaymentsRows
+          )}
+          <h4>Learners with Outstanding Balances</h4>
+          ${buildDashboardTable(["Learner", "Adm No", "Grade", "Stream", "Balance"], outstandingRows)}
+        </section>
+        <section class="dashboard-section">
+          <h3>Alerts & Announcements</h3>
+          <h4>System Alerts</h4>
+          <div class="dashboard-alerts">
+            ${alertsMarkup || '<p class="small-note">No alerts for today.</p>'}
+          </div>
+          <h4>Active Announcements</h4>
+          <div class="dashboard-announcements">
+            ${announcementMarkup || '<p class="small-note">No active announcements.</p>'}
+          </div>
+        </section>
+        <section class="dashboard-section">
+          <h3>System Activity Logs</h3>
+          ${buildDashboardTable(["When", "Actor Role", "Action", "Entity", "Entity ID"], logRows)}
+        </section>
+      </div>
     `;
-    renderTable([]);
+    document.getElementById("tableHead").innerHTML = "";
+    document.getElementById("tableBody").innerHTML = "";
   } catch (error) {
     alert(error.message);
   }

@@ -1507,6 +1507,8 @@ app.get(
   enforcePermission(PERMISSIONS.VIEW),
   asyncHandler(async (req, res) => {
     const institutionId = req.user.institution_id;
+    const toNumber = (value) => Number(value || 0);
+    const toMoney = (value) => Number(toNumber(value).toFixed(2));
 
     const [population] = await query(
       "SELECT COUNT(*) totalLearners FROM learners WHERE institution_id = ?",
@@ -1548,10 +1550,30 @@ app.get(
       "SELECT COUNT(*) totalExpelled FROM learners WHERE institution_id = ? AND conduct_status = 'Expelled'",
       [institutionId]
     );
-    const [fees] = await query(
-      `SELECT COALESCE(SUM(amount_paid), 0) totalFees
+    const [feesToday] = await query(
+      `SELECT COALESCE(SUM(amount_paid), 0) totalFees, COUNT(*) totalPayments
        FROM finance_fee_payments
        WHERE institution_id = ? AND DATE(payment_date) = CURDATE()`,
+      [institutionId]
+    );
+    const [feesMonth] = await query(
+      `SELECT COALESCE(SUM(amount_paid), 0) totalFees, COUNT(*) totalPayments
+       FROM finance_fee_payments
+       WHERE institution_id = ?
+         AND YEAR(payment_date) = YEAR(CURDATE())
+         AND MONTH(payment_date) = MONTH(CURDATE())`,
+      [institutionId]
+    );
+    const [feesYear] = await query(
+      `SELECT COALESCE(SUM(amount_paid), 0) totalFees
+       FROM finance_fee_payments
+       WHERE institution_id = ? AND YEAR(payment_date) = YEAR(CURDATE())`,
+      [institutionId]
+    );
+    const [feeStructureYear] = await query(
+      `SELECT COALESCE(SUM(amount_required), 0) totalRequired
+       FROM finance_fee_structures
+       WHERE institution_id = ? AND year = YEAR(CURDATE())`,
       [institutionId]
     );
 
@@ -1563,46 +1585,156 @@ app.get(
        ORDER BY attendance_type, status`,
       [institutionId]
     );
+    const dailyAttendanceList = await query(
+      `SELECT id, attendance_type, person_id, person_name, grade, stream,
+              DATE_FORMAT(attendance_date, '%Y-%m-%d %H:%i:%s') attendance_date,
+              DATE_FORMAT(time_in, '%Y-%m-%d %H:%i:%s') time_in,
+              DATE_FORMAT(time_out, '%Y-%m-%d %H:%i:%s') time_out,
+              status, reason
+       FROM attendance_records
+       WHERE institution_id = ? AND DATE(attendance_date) = CURDATE()
+       ORDER BY attendance_type ASC, person_name ASC, attendance_date DESC
+       LIMIT 300`,
+      [institutionId]
+    );
 
     const performanceByClass = await query(
-      `SELECT grade, stream, ROUND(AVG(marks), 2) meanScore
+      `SELECT grade, stream,
+              COUNT(*) totalEntries,
+              COUNT(DISTINCT learner_id) totalLearners,
+              ROUND(AVG(marks), 2) meanScore,
+              ROUND(MIN(marks), 2) lowestScore,
+              ROUND(MAX(marks), 2) highestScore
        FROM academic_marks
-       WHERE institution_id = ?
+       WHERE institution_id = ? AND (year = YEAR(CURDATE()) OR year IS NULL)
        GROUP BY grade, stream
        ORDER BY grade, stream`,
       [institutionId]
     );
 
     const announcements = await query(
-      `SELECT id, title, message, created_at
+      `SELECT id, title, message, audience, start_date, end_date, created_at
        FROM communication_announcements
        WHERE institution_id = ?
-       ORDER BY id DESC LIMIT 10`,
+         AND (start_date IS NULL OR start_date <= CURDATE())
+         AND (end_date IS NULL OR end_date >= CURDATE())
+       ORDER BY created_at DESC
+       LIMIT 10`,
       [institutionId]
+    );
+    const recentFeePayments = await query(
+      `SELECT id, learner_id, learner_name, admission_number, grade, stream, amount_paid,
+              payment_method, receipt_number, balance_after_payment,
+              DATE_FORMAT(payment_date, '%Y-%m-%d %H:%i:%s') payment_date
+       FROM finance_fee_payments
+       WHERE institution_id = ?
+       ORDER BY payment_date DESC, id DESC
+       LIMIT 10`,
+      [institutionId]
+    );
+    const outstandingBalances = await query(
+      `SELECT latest.learner_id, latest.learner_name, latest.admission_number, latest.grade, latest.stream,
+              latest.balance_after_payment AS balance
+       FROM finance_fee_payments latest
+       INNER JOIN (
+         SELECT learner_id, MAX(id) latest_id
+         FROM finance_fee_payments
+         WHERE institution_id = ?
+         GROUP BY learner_id
+       ) grouped ON grouped.latest_id = latest.id
+       WHERE latest.balance_after_payment IS NOT NULL
+         AND latest.balance_after_payment > 0
+       ORDER BY latest.balance_after_payment DESC, latest.learner_name ASC
+       LIMIT 20`,
+      [institutionId]
+    );
+    const outstandingBalanceTotal = outstandingBalances.reduce(
+      (sum, row) => sum + toNumber(row.balance),
+      0
     );
 
     const logs = await query(
-      `SELECT id, actor_role, action, entity_name, created_at
+      `SELECT id, actor_user_id, actor_role, action, entity_name, entity_id, details_json, created_at
        FROM activity_logs
        WHERE institution_id = ?
        ORDER BY id DESC LIMIT 20`,
       [institutionId]
     );
+    const alerts = [];
+    if (toNumber(absent.totalAbsent) > 0) {
+      alerts.push({
+        severity: "warning",
+        title: "Learner Absenteeism",
+        message: `${toNumber(absent.totalAbsent)} learner(s) are marked absent today.`
+      });
+    }
+    if (toNumber(late.totalLate) > 0) {
+      alerts.push({
+        severity: "info",
+        title: "Late Arrivals",
+        message: `${toNumber(late.totalLate)} attendance record(s) are marked late today.`
+      });
+    }
+    if (toNumber(suspension.totalSuspended) > 0 || toNumber(expelled.totalExpelled) > 0) {
+      alerts.push({
+        severity: "error",
+        title: "Conduct Status Watch",
+        message: `${toNumber(suspension.totalSuspended)} suspended and ${toNumber(expelled.totalExpelled)} expelled learner(s) recorded.`
+      });
+    }
+    if (outstandingBalanceTotal > 0) {
+      alerts.push({
+        severity: "warning",
+        title: "Outstanding Fee Balances",
+        message: `KES ${toMoney(outstandingBalanceTotal).toLocaleString()} remains outstanding across latest learner balances.`
+      });
+    }
+    if (!announcements.length) {
+      alerts.push({
+        severity: "info",
+        title: "No Active Announcements",
+        message: "There are no active announcements scheduled for today."
+      });
+    }
+    if (!alerts.length) {
+      alerts.push({
+        severity: "success",
+        title: "All Indicators Normal",
+        message: "No dashboard alerts have been triggered for today."
+      });
+    }
+    const feeCollectionSummary = {
+      todayTotal: toMoney(feesToday.totalFees),
+      todayPaymentsCount: toNumber(feesToday.totalPayments),
+      monthTotal: toMoney(feesMonth.totalFees),
+      monthPaymentsCount: toNumber(feesMonth.totalPayments),
+      yearTotal: toMoney(feesYear.totalFees),
+      yearExpected: toMoney(feeStructureYear.totalRequired),
+      yearVariance: toMoney(toNumber(feesYear.totalFees) - toNumber(feeStructureYear.totalRequired)),
+      outstandingBalanceTotal: toMoney(outstandingBalanceTotal),
+      learnersWithOutstandingBalance: outstandingBalances.length,
+      recentPayments: recentFeePayments,
+      outstandingBalances
+    };
 
     res.json({
+      generated_at: dayjs().format("YYYY-MM-DD HH:mm:ss"),
       stats: {
-        totalLearners: population.totalLearners,
-        totalPresent: present.totalPresent,
-        totalAbsent: absent.totalAbsent,
-        totalBoys: boys.totalBoys,
-        totalGirls: girls.totalGirls,
-        totalLate: late.totalLate,
-        totalSuspended: suspension.totalSuspended,
-        totalExpelled: expelled.totalExpelled,
-        totalFeesCollectedToday: fees.totalFees
+        totalLearners: toNumber(population.totalLearners),
+        totalPresent: toNumber(present.totalPresent),
+        totalAbsent: toNumber(absent.totalAbsent),
+        totalBoys: toNumber(boys.totalBoys),
+        totalGirls: toNumber(girls.totalGirls),
+        totalLate: toNumber(late.totalLate),
+        totalSuspended: toNumber(suspension.totalSuspended),
+        totalExpelled: toNumber(expelled.totalExpelled),
+        totalFeesCollectedToday: toMoney(feesToday.totalFees)
       },
       attendanceBreakdown,
+      dailyAttendanceList,
       performanceByClass,
+      feeCollectionSummary,
+      alerts,
       announcements,
       systemActivityLogs: logs
     });
