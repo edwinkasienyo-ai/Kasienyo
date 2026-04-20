@@ -358,6 +358,14 @@ async function request(path, options = {}) {
   return data;
 }
 
+function resetDataTable(message = "No records found.") {
+  const head = document.getElementById("tableHead");
+  const body = document.getElementById("tableBody");
+  if (!head || !body) return;
+  head.innerHTML = "";
+  body.innerHTML = `<tr><td>${escapeHtml(message)}</td></tr>`;
+}
+
 function escapeHtml(value) {
   return String(value ?? "")
     .replaceAll("&", "&amp;")
@@ -829,8 +837,89 @@ async function globalSearch() {
       <p><span class="tag">Learners: ${result.learners.length}</span>
       <span class="tag">Teachers: ${result.teachers.length}</span>
       <span class="tag">Parents/BOM: ${result.parentsAndBom.length}</span></p>
+      <div class="dashboard-section">
+        <h4>Filter Search Results</h4>
+        <div class="search-filter-grid">
+          <div>
+            <label for="searchScope">Scope</label>
+            <select id="searchScope">
+              <option value="all">All</option>
+              <option value="learners">Learners</option>
+              <option value="teachers">Teachers</option>
+              <option value="parents-bom">Parents/BOM</option>
+            </select>
+          </div>
+          <div>
+            <label for="searchGradeFilter">Grade</label>
+            <input id="searchGradeFilter" placeholder="e.g. Grade 7" />
+          </div>
+          <div>
+            <label for="searchStreamFilter">Stream</label>
+            <input id="searchStreamFilter" placeholder="e.g. Blue" />
+          </div>
+          <div>
+            <label for="searchStatusFilter">Status</label>
+            <input id="searchStatusFilter" placeholder="e.g. In Session, Active" />
+          </div>
+          <div>
+            <label for="searchRoleFilter">Role</label>
+            <input id="searchRoleFilter" placeholder="e.g. TEACHER, BOM, PARENT" />
+          </div>
+        </div>
+        <div class="actions-row">
+          <button id="applySearchFiltersButton">Apply Filters</button>
+          <button id="clearSearchFiltersButton">Clear Filters</button>
+        </div>
+      </div>
     `;
-    renderTable([...(result.learners || []), ...(result.teachers || []), ...(result.parentsAndBom || [])]);
+    const learnersData = Array.isArray(result.learners) ? result.learners : [];
+    const teachersData = Array.isArray(result.teachers) ? result.teachers : [];
+    const parentsBomData = Array.isArray(result.parentsAndBom) ? result.parentsAndBom : [];
+    let combinedRows = [...learnersData, ...teachersData, ...parentsBomData];
+    renderTable(combinedRows);
+
+    const applyFilters = () => {
+      const scope = (document.getElementById("searchScope")?.value || "all").toLowerCase();
+      const gradeFilter = (document.getElementById("searchGradeFilter")?.value || "").trim().toLowerCase();
+      const streamFilter = (document.getElementById("searchStreamFilter")?.value || "").trim().toLowerCase();
+      const statusFilter = (document.getElementById("searchStatusFilter")?.value || "").trim().toLowerCase();
+      const roleFilter = (document.getElementById("searchRoleFilter")?.value || "").trim().toLowerCase();
+
+      const sourceRows =
+        scope === "learners"
+          ? learnersData
+          : scope === "teachers"
+            ? teachersData
+            : scope === "parents-bom"
+              ? parentsBomData
+              : combinedRows;
+      const filteredRows = sourceRows.filter((row) => {
+        const rowRole = String(row.role || "").toLowerCase();
+        const rowGrade = String(row.grade || "").toLowerCase();
+        const rowStream = String(row.stream || "").toLowerCase();
+        const rowStatus = String(row.status || "").toLowerCase();
+        if (gradeFilter && !rowGrade.includes(gradeFilter)) return false;
+        if (streamFilter && !rowStream.includes(streamFilter)) return false;
+        if (statusFilter && !rowStatus.includes(statusFilter)) return false;
+        if (roleFilter && !rowRole.includes(roleFilter)) return false;
+        return true;
+      });
+      renderTable(filteredRows);
+      if (!filteredRows.length) {
+        resetDataTable("No records match your selected filters.");
+      }
+    };
+
+    document.getElementById("applySearchFiltersButton")?.addEventListener("click", applyFilters);
+    document.getElementById("clearSearchFiltersButton")?.addEventListener("click", () => {
+      ["searchGradeFilter", "searchStreamFilter", "searchStatusFilter", "searchRoleFilter"].forEach((id) => {
+        const el = document.getElementById(id);
+        if (el) el.value = "";
+      });
+      const scopeEl = document.getElementById("searchScope");
+      if (scopeEl) scopeEl.value = "all";
+      renderTable(combinedRows);
+    });
   } catch (error) {
     alert(error.message);
   }

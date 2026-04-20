@@ -1822,41 +1822,133 @@ app.get(
   enforceModuleAccess(MODULE_KEYS.SEARCH),
   enforcePermission(PERMISSIONS.VIEW),
   asyncHandler(async (req, res) => {
-    const { q = "" } = req.query;
+    const {
+      q = "",
+      target = "all",
+      grade = "",
+      stream = "",
+      learner_status = "",
+      teacher_category = "",
+      limit = 20
+    } = req.query;
     const institutionId = req.user.institution_id;
+    const normalizedTarget = cleanValue(target).toLowerCase();
+    const rowLimit = Math.min(Math.max(Number(limit) || 20, 1), 100);
 
-    const learnerRows = await getPaginatedRows({
-      table: "learners",
-      institutionId,
-      searchFields: [
-        "full_name",
-        "admission_number",
-        "upi_number",
-        "assessment_number",
-        "birth_certificate_number"
-      ],
-      q,
-      limit: 20
-    });
-    const teacherRows = await getPaginatedRows({
-      table: "teacher_profiles",
-      institutionId,
-      searchFields: ["full_name", "id_number", "tsc_number"],
-      q,
-      limit: 20
-    });
-    const parentRows = await getPaginatedRows({
-      table: "learners",
-      institutionId,
-      searchFields: ["parent_full_name", "upi_number", "assessment_number"],
-      q,
-      limit: 20
-    });
+    const includeLearners = ["all", "learners", "learner"].includes(normalizedTarget);
+    const includeTeachers = ["all", "teachers", "teacher"].includes(normalizedTarget);
+    const includeParents = ["all", "parents", "parent"].includes(normalizedTarget);
+    const includeBom = ["all", "bom"].includes(normalizedTarget);
+
+    const learnerExtraWhereParts = [];
+    const learnerExtraParams = [];
+    if (cleanValue(grade)) {
+      learnerExtraWhereParts.push(" AND grade = ?");
+      learnerExtraParams.push(cleanValue(grade));
+    }
+    if (cleanValue(stream)) {
+      learnerExtraWhereParts.push(" AND stream = ?");
+      learnerExtraParams.push(cleanValue(stream));
+    }
+    if (cleanValue(learner_status)) {
+      learnerExtraWhereParts.push(" AND status = ?");
+      learnerExtraParams.push(cleanValue(learner_status));
+    }
+    const learnerExtraWhere = learnerExtraWhereParts.join("");
+
+    const teacherExtraWhereParts = [];
+    const teacherExtraParams = [];
+    if (cleanValue(teacher_category)) {
+      teacherExtraWhereParts.push(" AND category = ?");
+      teacherExtraParams.push(cleanValue(teacher_category));
+    }
+    const teacherExtraWhere = teacherExtraWhereParts.join("");
+
+    const learnerRows = includeLearners
+      ? await getPaginatedRows({
+        table: "learners",
+        institutionId,
+        searchFields: [
+          "full_name",
+          "admission_number",
+          "upi_number",
+          "assessment_number",
+          "birth_certificate_number"
+        ],
+        q,
+        extraWhere: learnerExtraWhere,
+        extraParams: learnerExtraParams,
+        limit: rowLimit
+      })
+      : [];
+    const teacherRows = includeTeachers
+      ? await getPaginatedRows({
+        table: "teacher_profiles",
+        institutionId,
+        searchFields: ["full_name", "id_number", "tsc_number", "major_subject", "other_subject"],
+        q,
+        extraWhere: teacherExtraWhere,
+        extraParams: teacherExtraParams,
+        limit: rowLimit
+      })
+      : [];
+    const parentRows = includeParents
+      ? await getPaginatedRows({
+        table: "learners",
+        institutionId,
+        searchFields: [
+          "parent_full_name",
+          "parent_phone",
+          "parent_email",
+          "upi_number",
+          "assessment_number",
+          "birth_certificate_number"
+        ],
+        q,
+        extraWhere: learnerExtraWhere,
+        extraParams: learnerExtraParams,
+        limit: rowLimit
+      })
+      : [];
+    const bomRows = includeBom
+      ? await query(
+        `SELECT id, full_name, username, role, email, phone, is_active, created_at
+         FROM users
+         WHERE institution_id = ?
+           AND UPPER(REPLACE(role, ' ', '_')) IN (?, ?)
+           AND (
+             ? = ''
+             OR full_name LIKE CONCAT('%', ?, '%')
+             OR username LIKE CONCAT('%', ?, '%')
+             OR email LIKE CONCAT('%', ?, '%')
+             OR phone LIKE CONCAT('%', ?, '%')
+           )
+         ORDER BY id DESC
+         LIMIT ?`,
+        [institutionId, ROLES.BOM, "BOARD_OF_MANAGEMENT", cleanValue(q), cleanValue(q), cleanValue(q), cleanValue(q), cleanValue(q), rowLimit]
+      )
+      : [];
 
     res.json({
+      filters_applied: {
+        target: normalizedTarget || "all",
+        grade: cleanValue(grade) || null,
+        stream: cleanValue(stream) || null,
+        learner_status: cleanValue(learner_status) || null,
+        teacher_category: cleanValue(teacher_category) || null,
+        limit: rowLimit
+      },
+      totals: {
+        learners: learnerRows.length,
+        teachers: teacherRows.length,
+        parents: parentRows.length,
+        bom: bomRows.length
+      },
       learners: learnerRows,
       teachers: teacherRows,
-      parentsAndBom: parentRows
+      parents: parentRows,
+      bom: bomRows,
+      parentsAndBom: [...parentRows, ...bomRows]
     });
   })
 );

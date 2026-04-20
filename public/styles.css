@@ -611,6 +611,17 @@ th {
   font-size: 11px;
 }
 
+.search-filter-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 8px;
+  margin: 10px 0;
+}
+
+.search-filter-grid label {
+  margin-top: 0;
+}
+
 @media (max-width: 1080px) {
   .login-page {
     grid-template-columns: 1fr;
