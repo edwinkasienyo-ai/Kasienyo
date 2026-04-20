@@ -25,6 +25,23 @@ function setAuthNotice(message, type = "info") {
 let registrationMeta = null;
 let lastRegisteredInstitution = null;
 
+function normalizeRoleValue(role) {
+  const normalized = String(role || "").trim().toUpperCase().replaceAll(/[\s-]+/g, "_");
+  if (normalized === "NON_TEACHING" || normalized === "NONTEACHING" || normalized === "NON_TEACHING_STAFF") {
+    return "NON_TEACHING_STAFF";
+  }
+  if (normalized === "HEAD" || normalized === "HEAD_OF_SCHOOL") {
+    return "HEAD_OF_INSTITUTION";
+  }
+  if (normalized === "BOARD_OF_MANAGEMENT") {
+    return "BOM";
+  }
+  if (normalized === "SYSTEMDEVELOPER") {
+    return "SYSTEM_DEVELOPER";
+  }
+  return normalized;
+}
+
 async function loadRegistrationMeta() {
   try {
     registrationMeta = await request("/api/public/registration/meta");
@@ -79,15 +96,16 @@ function bindInstitutionAutoFields() {
 }
 
 async function login() {
-  const portalRole =
+  const selectedPortalRole = normalizeRoleValue(
     document.getElementById("loginPortalRole")?.value ||
     document.getElementById("portalRole")?.value ||
-    "";
+    ""
+  );
   const username = document.getElementById("username").value.trim();
   const password = document.getElementById("password").value;
   const otpChannel = document.getElementById("otpChannel").value;
 
-  if (!portalRole) {
+  if (!selectedPortalRole) {
     setAuthNotice("Choose portal role first.", "error");
     return;
   }
@@ -101,12 +119,20 @@ async function login() {
       method: "POST",
       body: JSON.stringify({ username, password, otpChannel })
     });
-    if (data?.role && data.role !== portalRole) {
-      setAuthNotice(`Selected role does not match account role (${data.role}).`, "error");
+    const accountRole = normalizeRoleValue(data?.role);
+    if (accountRole && accountRole !== selectedPortalRole) {
+      setAuthNotice(
+        `Selected role does not match account role (${data.role}). Choose the correct role and retry.`,
+        "error"
+      );
       return;
     }
     localStorage.setItem("pendingUsername", username);
-    setAuthNotice(`${data.message} Portal: ${data.portal}`, "success");
+    const deliveredBy = data?.otp_channel_used ? ` via ${data.otp_channel_used}` : "";
+    const otpPreviewMessage = data?.otp_preview
+      ? ` OTP (for testing): ${data.otp_preview}`
+      : "";
+    setAuthNotice(`${data.message}${deliveredBy}. Portal: ${data.portal}.${otpPreviewMessage}`, "success");
   } catch (error) {
     setAuthNotice(error.message, "error");
   }

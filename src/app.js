@@ -100,7 +100,7 @@ async function auditLog(user, action, entity, entityId, details = null) {
 }
 
 function hasPermission(role, permission) {
-  return (ROLE_PERMISSIONS[role] || []).includes(permission);
+  return (ROLE_PERMISSIONS[normalizeRole(role)] || []).includes(permission);
 }
 
 function enforcePermission(permission) {
@@ -114,10 +114,11 @@ function enforcePermission(permission) {
 
 function enforceRole(roles = []) {
   return (req, res, next) => {
-    if (req.user.role === ROLES.SYSTEM_DEVELOPER) {
+    const normalizedRole = normalizeRole(req.user.role);
+    if (normalizedRole === ROLES.SYSTEM_DEVELOPER) {
       return next();
     }
-    if (!roles.includes(req.user.role)) {
+    if (!roles.includes(normalizedRole)) {
       return res.status(403).json({ error: "Role is not allowed for this action." });
     }
     return next();
@@ -125,7 +126,7 @@ function enforceRole(roles = []) {
 }
 
 function toPortal(role) {
-  switch (role) {
+  switch (normalizeRole(role)) {
     case ROLES.SYSTEM_DEVELOPER:
       return "System Developer Console";
     case ROLES.ADMIN:
@@ -158,6 +159,29 @@ function toPortal(role) {
 function cleanValue(value) {
   if (value === null || value === undefined) return "";
   return String(value).trim();
+}
+
+function normalizeRole(value) {
+  const base = cleanValue(value).toUpperCase().replace(/[\s-]+/g, "_");
+  if (!base) return "";
+  const roleAliases = {
+    ADMINISTRATOR: ROLES.ADMIN,
+    SCHOOL_ADMIN: ROLES.ADMIN,
+    HEAD: ROLES.HEAD_OF_INSTITUTION,
+    HEAD_TEACHER: ROLES.HEAD_OF_INSTITUTION,
+    PRINCIPAL: ROLES.HEAD_OF_INSTITUTION,
+    HEAD_OF_SCHOOL: ROLES.HEAD_OF_INSTITUTION,
+    NON_TEACHING: ROLES.NON_TEACHING_STAFF,
+    NONTEACHING: ROLES.NON_TEACHING_STAFF,
+    BOARD_OF_MANAGEMENT: ROLES.BOM,
+    SYSTEMDEVELOPER: ROLES.SYSTEM_DEVELOPER,
+    MINISTRY_OF_EDUCATION: ROLES.MOD,
+    MINISTRY_OF_BASIC_EDUCATION: ROLES.MOD
+  };
+  if (roleAliases[base]) {
+    return roleAliases[base];
+  }
+  return Object.values(ROLES).includes(base) ? base : base;
 }
 
 function cleanOptionalValue(value) {
@@ -197,6 +221,29 @@ function parseTruthy(value) {
   const normalized = cleanValue(value).toLowerCase();
   if (!normalized) return false;
   return ["1", "true", "yes", "y", "on"].includes(normalized);
+}
+
+function isOtpChannelConfigured(channel) {
+  const normalized = cleanValue(channel).toLowerCase();
+  if (!normalized || normalized === "console") {
+    return true;
+  }
+  const smtpReady = Boolean(process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS);
+  const smsReady = Boolean(
+    process.env.TWILIO_ACCOUNT_SID &&
+      process.env.TWILIO_AUTH_TOKEN &&
+      process.env.TWILIO_FROM
+  );
+  if (normalized === "email") {
+    return smtpReady;
+  }
+  if (normalized === "sms") {
+    return smsReady;
+  }
+  if (normalized === "sms_email") {
+    return smtpReady && smsReady;
+  }
+  return false;
 }
 
 function resolveCounty({ countyCode, countyName }) {
@@ -293,7 +340,7 @@ async function dispatchCredentialNotice({ email, phone, subject, message }) {
 }
 
 function evaluatePasswordRotation(user = {}) {
-  const role = cleanValue(user.role);
+  const role = normalizeRole(user.role);
   if (!PASSWORD_ROTATION_DAYS || PASSWORD_ROTATION_EXEMPT_ROLES.has(role)) {
     return {
       requiredDays: PASSWORD_ROTATION_DAYS,
@@ -384,10 +431,11 @@ async function hasModuleAccess(user, moduleKey) {
   if (!moduleKey || !user?.id) {
     return true;
   }
-  if (user.role === ROLES.SYSTEM_DEVELOPER) {
+  const normalizedRole = normalizeRole(user.role);
+  if (normalizedRole === ROLES.SYSTEM_DEVELOPER) {
     return true;
   }
-  const defaultModules = DEFAULT_MODULE_ACCESS_BY_ROLE[user.role] || [];
+  const defaultModules = DEFAULT_MODULE_ACCESS_BY_ROLE[normalizedRole] || [];
   const defaultAllowed = defaultModules.includes(moduleKey);
   const overrides = await query(
     `SELECT can_access
@@ -416,10 +464,11 @@ function enforceModuleAccess(moduleKey) {
 }
 
 function getScopedFilter(config, user) {
+  const normalizedRole = normalizeRole(user.role);
   if (
     config?.scopedByRole &&
     Array.isArray(config.scopedByRole.roles) &&
-    config.scopedByRole.roles.includes(user.role) &&
+    config.scopedByRole.roles.includes(normalizedRole) &&
     config.scopedByRole.column
   ) {
     const identity = cleanValue(user.full_name) || cleanValue(user.username);
@@ -495,6 +544,7 @@ async function createOtpSession({ identity, role, institutionId, payload, destin
     ]
   );
   await sendOtp({ channel, destination, code });
+  return { code, expiresAt };
 }
 
 async function authenticateByUserTable(username, password) {
@@ -506,32 +556,39 @@ async function authenticateByUserTable(username, password) {
     return null;
   }
   const user = users[0];
+  const normalizedRole = normalizeRole(user.role);
   const valid = await verifyPassword(password, user.password_hash);
   if (!valid) {
     return null;
   }
   if (
-    !PASSWORD_ROTATION_EXEMPT_ROLES.has(user.role) &&
+    !PASSWORD_ROTATION_EXEMPT_ROLES.has(normalizedRole) &&
     user.password_expires_at &&
     dayjs(user.password_expires_at).isValid() &&
     dayjs(user.password_expires_at).isBefore(dayjs())
   ) {
-    return null;
+    return {
+      blocked: true,
+      role: normalizedRole,
+      error:
+        "Password expired. Use Forgot Password or contact your administrator/System Developer for reset."
+    };
   }
 
   return {
     identity: user.username,
-    role: user.role,
+    role: normalizedRole,
     institution_id: user.institution_id,
     destination: user.email || user.phone || user.username,
     payload: {
       id: user.id,
-      role: user.role,
+      role: normalizedRole,
       institution_id: user.institution_id,
       full_name: user.full_name,
       username: user.username,
       password_last_changed_at: user.password_last_changed_at || null,
-      password_expires_at: user.password_expires_at || null
+      password_expires_at: user.password_expires_at || null,
+      must_change_password: Number(user.must_change_password || 0) === 1
     }
   };
 }
@@ -663,8 +720,16 @@ app.post("/api/auth/login", asyncHandler(async (req, res) => {
     return res.status(400).json({ error: "Username and password are required." });
   }
 
+  const userAccount = await authenticateByUserTable(username, password);
+  if (userAccount?.blocked) {
+    return res.status(403).json({
+      error: userAccount.error,
+      role: userAccount.role,
+      action_required: "PASSWORD_RESET_REQUIRED"
+    });
+  }
   let account =
-    (await authenticateByUserTable(username, password)) ||
+    userAccount ||
     (await authenticateParentByLearner(username, password)) ||
     (await authenticateLearner(username, password));
 
@@ -672,8 +737,9 @@ app.post("/api/auth/login", asyncHandler(async (req, res) => {
     return res.status(401).json({ error: "Invalid username or password." });
   }
 
-  const channel = otpChannel || process.env.OTP_CHANNEL || "console";
-  await createOtpSession({
+  const requestedChannel = cleanValue(otpChannel || process.env.OTP_CHANNEL || "console").toLowerCase() || "console";
+  const channel = isOtpChannelConfigured(requestedChannel) ? requestedChannel : "console";
+  const otpSession = await createOtpSession({
     identity: account.identity,
     role: account.role,
     institutionId: account.institution_id,
@@ -681,11 +747,20 @@ app.post("/api/auth/login", asyncHandler(async (req, res) => {
     destination: account.destination,
     channel
   });
+  const exposeOtpPreview =
+    process.env.NODE_ENV !== "production" || parseTruthy(process.env.EXPOSE_OTP_PREVIEW);
 
   return res.json({
-    message: "OTP sent successfully.",
+    message:
+      channel === requestedChannel
+        ? "OTP sent successfully."
+        : `OTP sent successfully using console fallback because '${requestedChannel}' is not configured.`,
     role: account.role,
-    portal: toPortal(account.role)
+    portal: toPortal(account.role),
+    otp_channel: channel,
+    otp_channel_used: channel,
+    otp_preview: exposeOtpPreview ? otpSession.code : null,
+    otp_expires_at: exposeOtpPreview ? otpSession.expiresAt : null
   });
 }));
 
