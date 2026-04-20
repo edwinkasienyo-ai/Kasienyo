@@ -8,202 +8,212 @@
   </head>
   <body class="login-page">
     <div class="login-left">
-      <h1>INTEGRATED INFORMATION MANAGEMENT SYSTEM</h1>
-      <h2>FOR BASIC LEARNING INSTITUTIONS</h2>
-      <p>
-        Modern, secure, and scalable multi-tenant institutional platform with Admission,
-        Management, Academics, HR, Finance, Communication, Parents Portal, Welfare and
-        Laws/Regulations modules.
-      </p>
-      <ul>
-        <li>Institution-level data isolation</li>
-        <li>Role-based access control and OTP 2FA</li>
-        <li>Dashboard, analytics, document workflows and exports</li>
-      </ul>
-      <div class="institution-profile-card">
-        <h3>Institution Profile</h3>
+      <div class="hero-panel">
         <img
-          class="institution-photo"
-          src="https://images.unsplash.com/photo-1562774053-701939374585?auto=format&fit=crop&w=640&q=80"
-          alt="Institution photo"
+          class="hero-image"
+          src="https://images.unsplash.com/photo-1523050854058-8df90110c9f1?auto=format&fit=crop&w=1280&q=80"
+          alt="Learners and graduation celebration"
         />
-        <p class="small-note">
-          Use the forms on the right to register institution and user accounts, recover usernames,
-          and reset forgotten passwords.
-        </p>
-        <div class="profile-grid">
-          <p><strong>Description:</strong> Multi-tenant school management and compliance platform.</p>
-          <p><strong>Email:</strong> support@iims.local</p>
-          <p><strong>Mobile:</strong> +254700000000</p>
-          <p><strong>Portal Role:</strong> Administrator / Head of Institution / Teacher / Learner</p>
+        <div class="hero-caption">
+          <h1>INTEGRATED MANAGEMENT INFORMATION SYSTEM (IMIS)</h1>
+          <h2>FOR BASIC LEARNING INSTITUTIONS</h2>
         </div>
       </div>
+      <div class="info-strip">A smart, secure, scalable digital platform for modern education management.</div>
+      <div class="info-strip">
+        IMIS unifies administration, academics, finance, and communication for basic learning institutions
+        with role-based access for administrators, teachers, learners, parents, BoM, and support staff.
+      </div>
+      <div class="info-strip">
+        Admissions, attendance, assessments, fees, payroll, analytics, CBC-aligned reporting, SMS, and
+        M-Pesa-ready workflows built for reliable, secure operations in public and private schools.
+      </div>
+      <div class="info-strip">
+        <strong>Governance:</strong> Teachers Service Commission (TSC) and Ministry of Education officials retain
+        policy and compliance oversight; each Head of Institution (HoI) manages institution-level operations
+        with accountable school-level dashboards.
+      </div>
+      <div class="contact-strip">
+        <span>+254 725 757 767</span>
+        <span>mwendeguenterpriseltd@gmail.com</span>
+      </div>
+      <div class="credit-strip">THIS SYSTEM WAS DEVELOPED BY MWENDEGU ENTERPRISE LIMITED &copy; 2017</div>
     </div>
 
     <div class="login-right">
       <div class="card auth-card">
-        <h3>Secure Login</h3>
+        <h3>Welcome back</h3>
+        <p class="small-note">Sign in to IMIS with your credentials, then verify with OTP.</p>
         <p id="authNotice" class="small-note auth-notice" aria-live="polite"></p>
-        <section class="auth-primary">
+
+        <p class="step-label">STEP 1 — CREDENTIALS</p>
+        <label>Portal role *</label>
+        <select id="loginPortalRole">
+          <option value="">Choose your portal role first...</option>
+          <option value="ADMIN">Administrator</option>
+          <option value="HEAD_OF_INSTITUTION">Head of Institution</option>
+          <option value="TEACHER">Teacher</option>
+          <option value="NON_TEACHING_STAFF">Non-Teaching Staff</option>
+          <option value="PARENT">Parent</option>
+          <option value="LEARNER">Learner</option>
+        </select>
+        <label>Username</label>
+        <input id="username" placeholder="Enter username" />
+        <label>Password</label>
+        <input id="password" type="password" placeholder="Enter password" />
+        <label>OTP channel</label>
+        <select id="otpChannel">
+          <option value="sms_email">SMS &amp; Email</option>
+          <option value="email">Email only</option>
+          <option value="sms">SMS only</option>
+          <option value="console">Console</option>
+        </select>
+        <button id="loginButton" type="button">Send OTP</button>
+
+        <p class="step-label">STEP 2 — ONE-TIME PASSWORD</p>
+        <label>OTP code</label>
+        <input id="otp" placeholder="Enter the code you received" />
+        <button id="verifyButton" type="button">Verify &amp; enter</button>
+
+        <div class="auth-link-row">
+          <button class="link-btn" type="button" data-auth-panel="registerInstitutionPanel">Register institution</button>
+          <button class="link-btn" type="button" data-auth-panel="registerUserPanel">Register user</button>
+          <button class="link-btn" type="button" data-auth-panel="forgotPasswordPanel">Forgot password</button>
+          <button class="link-btn" type="button" data-auth-panel="forgotUsernamePanel">Forgot username</button>
+        </div>
+
+        <section id="registerInstitutionPanel" class="auth-panel">
+          <h4>Register Institution</h4>
           <div class="auth-grid">
             <div>
+              <label>Institution Name</label>
+              <input id="registerInstitutionName" placeholder="Institution Name" />
+            </div>
+            <div>
+              <label>Institution Code</label>
+              <input id="registerInstitutionCode" placeholder="Institution Code" />
+            </div>
+            <div>
+              <label>Description</label>
+              <input id="registerInstitutionDescription" placeholder="Brief description" />
+            </div>
+            <div>
+              <label>Email</label>
+              <input id="registerInstitutionEmail" placeholder="Email" />
+            </div>
+            <div>
+              <label>Mobile Number</label>
+              <input id="registerInstitutionPhone" placeholder="Mobile Number" />
+            </div>
+            <div>
+              <label>Portal Role</label>
+              <select id="registerInstitutionPortalRole">
+                <option value="HEAD_OF_INSTITUTION">Head of Institution</option>
+                <option value="ADMIN">Administrator</option>
+              </select>
+            </div>
+            <div>
+              <label>Admin Full Name</label>
+              <input id="registerInstitutionAdminName" placeholder="Admin Full Name" />
+            </div>
+            <div>
+              <label>Admin Username</label>
+              <input id="registerInstitutionAdminUsername" placeholder="Admin Username" />
+            </div>
+            <div>
+              <label>Admin Password</label>
+              <input id="registerInstitutionAdminPassword" type="password" placeholder="Admin Password" />
+            </div>
+          </div>
+          <button id="registerInstitutionButton" type="button">Submit institution registration</button>
+        </section>
+
+        <section id="registerUserPanel" class="auth-panel">
+          <h4>Register User</h4>
+          <div class="auth-grid">
+            <div>
+              <label>Institution Code</label>
+              <input id="registerUserInstitutionCode" placeholder="Institution Code" />
+            </div>
+            <div>
+              <label>Full Name</label>
+              <input id="registerUserFullName" placeholder="Full Name" />
+            </div>
+            <div>
               <label>Username</label>
-              <input id="username" placeholder="Enter username" />
+              <input id="registerUserUsername" placeholder="Username" />
             </div>
             <div>
               <label>Password</label>
-              <input id="password" type="password" placeholder="Enter password" />
+              <input id="registerUserPassword" type="password" placeholder="Password" />
+            </div>
+            <div>
+              <label>Portal Role</label>
+              <select id="registerUserRole">
+                <option value="HEAD_OF_INSTITUTION">Head of Institution</option>
+                <option value="TEACHER">Teacher</option>
+                <option value="NON_TEACHING_STAFF">Non-Teaching Staff</option>
+                <option value="PARENT">Parent</option>
+                <option value="LEARNER">Learner</option>
+              </select>
+            </div>
+            <div>
+              <label>Email</label>
+              <input id="registerUserEmail" placeholder="Email" />
+            </div>
+            <div>
+              <label>Mobile Number</label>
+              <input id="registerUserPhone" placeholder="Mobile Number" />
             </div>
           </div>
-          <label>OTP Channel</label>
-          <select id="otpChannel">
-            <option value="console">Console</option>
-            <option value="email">Email</option>
-            <option value="sms">SMS</option>
-          </select>
-          <button id="loginButton">Send OTP</button>
-
-          <label>One-Time Password (OTP)</label>
-          <input id="otp" placeholder="Enter OTP code" />
-          <button id="verifyButton">Verify OTP</button>
-
-          <p class="small-note">
-            Default administrator login:<br />
-            <strong>Username:</strong> admin<br />
-            <strong>Password:</strong> 1234
-          </p>
+          <button id="registerUserButton" type="button">Submit user registration</button>
         </section>
 
-        <div class="auth-sections">
-          <section class="auth-section">
-            <h4>Register Institution</h4>
-            <div class="auth-grid">
-              <div>
-                <label>Institution Name</label>
-                <input id="registerInstitutionName" placeholder="Institution Name" />
-              </div>
-              <div>
-                <label>Institution Code</label>
-                <input id="registerInstitutionCode" placeholder="Institution Code" />
-              </div>
-              <div>
-                <label>Email</label>
-                <input id="registerInstitutionEmail" placeholder="Email" />
-              </div>
-              <div>
-                <label>Mobile Number</label>
-                <input id="registerInstitutionPhone" placeholder="Mobile Number" />
-              </div>
-              <div>
-                <label>Admin Full Name</label>
-                <input id="registerInstitutionAdminName" placeholder="Admin Full Name" />
-              </div>
-              <div>
-                <label>Admin Username</label>
-                <input id="registerInstitutionAdminUsername" placeholder="Admin Username" />
-              </div>
-              <div>
-                <label>Admin Password</label>
-                <input id="registerInstitutionAdminPassword" type="password" placeholder="Admin Password" />
-              </div>
-              <div>
-                <label>Portal Role</label>
-                <select id="registerInstitutionPortalRole">
-                  <option value="HEAD_OF_INSTITUTION">HEAD_OF_INSTITUTION</option>
-                  <option value="ADMIN">ADMIN</option>
-                </select>
-              </div>
+        <section id="forgotPasswordPanel" class="auth-panel">
+          <h4>Forgot Password</h4>
+          <div class="auth-grid">
+            <div>
+              <label>Institution Code</label>
+              <input id="forgotPasswordInstitutionCode" placeholder="Institution Code" />
             </div>
-            <button id="registerInstitutionButton" type="button">Register Institution</button>
-          </section>
+            <div>
+              <label>Username</label>
+              <input id="forgotPasswordUsername" placeholder="Username" />
+            </div>
+            <div>
+              <label>Email (optional)</label>
+              <input id="forgotPasswordEmail" placeholder="Email" />
+            </div>
+            <div>
+              <label>Mobile Number (optional)</label>
+              <input id="forgotPasswordPhone" placeholder="Mobile Number" />
+            </div>
+            <div>
+              <label>New Password</label>
+              <input id="forgotPasswordNewPassword" type="password" placeholder="New Password" />
+            </div>
+          </div>
+          <button id="forgotPasswordButton" type="button">Reset password</button>
+        </section>
 
-          <section class="auth-section">
-            <h4>Register User</h4>
-            <div class="auth-grid">
-              <div>
-                <label>Institution Code</label>
-                <input id="registerUserInstitutionCode" placeholder="Institution Code" />
-              </div>
-              <div>
-                <label>Full Name</label>
-                <input id="registerUserFullName" placeholder="Full Name" />
-              </div>
-              <div>
-                <label>Username</label>
-                <input id="registerUserUsername" placeholder="Username" />
-              </div>
-              <div>
-                <label>Password</label>
-                <input id="registerUserPassword" type="password" placeholder="Password" />
-              </div>
-              <div>
-                <label>Portal Role</label>
-                <select id="registerUserRole">
-                  <option value="HEAD_OF_INSTITUTION">HEAD_OF_INSTITUTION</option>
-                  <option value="TEACHER">TEACHER</option>
-                  <option value="NON_TEACHING_STAFF">NON_TEACHING_STAFF</option>
-                  <option value="PARENT">PARENT</option>
-                  <option value="LEARNER">LEARNER</option>
-                </select>
-              </div>
-              <div>
-                <label>Email</label>
-                <input id="registerUserEmail" placeholder="Email" />
-              </div>
-              <div>
-                <label>Mobile Number</label>
-                <input id="registerUserPhone" placeholder="Mobile Number" />
-              </div>
+        <section id="forgotUsernamePanel" class="auth-panel">
+          <h4>Forgot Username</h4>
+          <div class="auth-grid">
+            <div>
+              <label>Institution Code</label>
+              <input id="forgotUsernameInstitutionCode" placeholder="Institution Code" />
             </div>
-            <button id="registerUserButton" type="button">Register User</button>
-          </section>
-
-          <section class="auth-section">
-            <h4>Forgot Username</h4>
-            <div class="auth-grid">
-              <div>
-                <label>Institution Code</label>
-                <input id="forgotUsernameInstitutionCode" placeholder="Institution Code" />
-              </div>
-              <div>
-                <label>Email (optional)</label>
-                <input id="forgotUsernameEmail" placeholder="Email" />
-              </div>
-              <div>
-                <label>Mobile Number (optional)</label>
-                <input id="forgotUsernamePhone" placeholder="Mobile Number" />
-              </div>
+            <div>
+              <label>Email (optional)</label>
+              <input id="forgotUsernameEmail" placeholder="Email" />
             </div>
-            <button id="forgotUsernameButton" type="button">Recover Username</button>
-          </section>
-
-          <section class="auth-section">
-            <h4>Forgot Password</h4>
-            <div class="auth-grid">
-              <div>
-                <label>Institution Code</label>
-                <input id="forgotPasswordInstitutionCode" placeholder="Institution Code" />
-              </div>
-              <div>
-                <label>Username</label>
-                <input id="forgotPasswordUsername" placeholder="Username" />
-              </div>
-              <div>
-                <label>Email (optional)</label>
-                <input id="forgotPasswordEmail" placeholder="Email" />
-              </div>
-              <div>
-                <label>Mobile Number (optional)</label>
-                <input id="forgotPasswordPhone" placeholder="Mobile Number" />
-              </div>
-              <div>
-                <label>New Password</label>
-                <input id="forgotPasswordNewPassword" type="password" placeholder="New Password" />
-              </div>
+            <div>
+              <label>Mobile Number (optional)</label>
+              <input id="forgotUsernamePhone" placeholder="Mobile Number" />
             </div>
-            <button id="forgotPasswordButton" type="button">Reset Password</button>
-          </section>
-        </div>
+          </div>
+          <button id="forgotUsernameButton" type="button">Recover username</button>
+        </section>
       </div>
     </div>
 

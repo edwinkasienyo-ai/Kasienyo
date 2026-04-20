@@ -23,10 +23,15 @@ function setAuthNotice(message, type = "info") {
 }
 
 async function login() {
+  const portalRole = document.getElementById("portalRole").value;
   const username = document.getElementById("username").value.trim();
   const password = document.getElementById("password").value;
   const otpChannel = document.getElementById("otpChannel").value;
 
+  if (!portalRole) {
+    setAuthNotice("Choose portal role first.", "error");
+    return;
+  }
   if (!username || !password) {
     alert("Username and password are required.");
     return;
@@ -191,3 +196,20 @@ document.getElementById("registerInstitutionButton")?.addEventListener("click", 
 document.getElementById("registerUserButton")?.addEventListener("click", registerUser);
 document.getElementById("forgotUsernameButton")?.addEventListener("click", recoverUsername);
 document.getElementById("forgotPasswordButton")?.addEventListener("click", resetPassword);
+
+function bindAuthSectionLinks() {
+  document.querySelectorAll(".auth-link-btn[data-target]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const targetId = button.getAttribute("data-target");
+      document.querySelectorAll(".auth-section").forEach((section) => {
+        if (section.id === targetId) {
+          section.hidden = !section.hidden;
+        } else {
+          section.hidden = true;
+        }
+      });
+    });
+  });
+}
+
+bindAuthSectionLinks();
