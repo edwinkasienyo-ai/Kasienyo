@@ -625,6 +625,35 @@ async function changeCredentials() {
   }
 }
 
+function renderPasswordPolicyBanner(user = {}, portal = {}) {
+  const formArea = document.getElementById("formArea");
+  if (!formArea) return;
+  if (user.role === "SYSTEM_DEVELOPER") return;
+
+  const expiresAt = user.password_expires_at;
+  let daysRemaining = Number(user.password_days_remaining ?? NaN);
+  if (Number.isNaN(daysRemaining) && expiresAt) {
+    const expiryDate = new Date(expiresAt);
+    if (!Number.isNaN(expiryDate.getTime())) {
+      const diffMs = expiryDate.getTime() - Date.now();
+      daysRemaining = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
+    }
+  }
+  if (!Number.isFinite(daysRemaining)) return;
+
+  const severity =
+    daysRemaining <= 3 ? "error" : daysRemaining <= 10 ? "warning" : "info";
+  const message =
+    daysRemaining <= 0
+      ? "Your password has expired. Change it immediately."
+      : `Password policy notice: ${daysRemaining} day(s) remaining before password expiry.`;
+
+  formArea.insertAdjacentHTML(
+    "afterbegin",
+    `<div class="form-notice ${severity}" id="passwordPolicyNotice">${message}</div>`
+  );
+}
+
 function bindSidebar() {
   document.querySelectorAll(".sidebar button[data-module]").forEach((button) => {
     button.addEventListener("click", async () => {
@@ -654,10 +683,12 @@ async function init() {
   try {
     [meta] = await Promise.all([request("/api/meta")]);
     const portalData = await request("/api/portal/current");
+    const meData = await request("/api/auth/me");
     document.getElementById("portalLabel").textContent = `${portalData.portal} (${portalData.role})`;
     bindSidebar();
     bindTopbarButtons();
     await loadDashboard();
+    renderPasswordPolicyBanner(meData, portalData);
   } catch (error) {
     alert(error.message);
   }

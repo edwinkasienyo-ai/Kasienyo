@@ -114,6 +114,9 @@ function enforcePermission(permission) {
 
 function enforceRole(roles = []) {
   return (req, res, next) => {
+    if (req.user.role === ROLES.SYSTEM_DEVELOPER) {
+      return next();
+    }
     if (!roles.includes(req.user.role)) {
       return res.status(403).json({ error: "Role is not allowed for this action." });
     }
@@ -123,6 +126,8 @@ function enforceRole(roles = []) {
 
 function toPortal(role) {
   switch (role) {
+    case ROLES.SYSTEM_DEVELOPER:
+      return "System Developer Console";
     case ROLES.ADMIN:
       return "Administrator Dashboard";
     case ROLES.HEAD_OF_INSTITUTION:
@@ -162,6 +167,9 @@ const AGREEMENT_COMPANY = {
   email: "mwendeguenterpriseltd@gmail.com",
   phone: "+254 725 757 767"
 };
+
+const PASSWORD_ROTATION_DAYS = Number(process.env.PASSWORD_ROTATION_DAYS || 30);
+const PASSWORD_ROTATION_EXEMPT_ROLES = new Set([ROLES.SYSTEM_DEVELOPER]);
 
 function padThree(value) {
   return String(Number(value) || 0).padStart(3, "0");
@@ -265,6 +273,32 @@ async function dispatchCredentialNotice({ email, phone, subject, message }) {
   // eslint-disable-next-line no-console
   console.log(`[IMIS NOTICE] ${subject}\n${message}`);
   return report;
+}
+
+function evaluatePasswordRotation(user = {}) {
+  const role = cleanValue(user.role);
+  if (!PASSWORD_ROTATION_DAYS || PASSWORD_ROTATION_EXEMPT_ROLES.has(role)) {
+    return {
+      requiredDays: PASSWORD_ROTATION_DAYS,
+      exempt: true,
+      remainingDays: null,
+      overdue: false,
+      passwordAgeDays: null,
+      referenceDate: null
+    };
+  }
+  const referenceDateRaw = user.password_changed_at || user.updated_at || user.created_at || null;
+  const referenceDate = referenceDateRaw ? dayjs(referenceDateRaw) : dayjs();
+  const ageDays = Math.max(dayjs().diff(referenceDate, "day"), 0);
+  const remainingDays = PASSWORD_ROTATION_DAYS - ageDays;
+  return {
+    requiredDays: PASSWORD_ROTATION_DAYS,
+    exempt: false,
+    remainingDays,
+    overdue: remainingDays < 0,
+    passwordAgeDays: ageDays,
+    referenceDate: referenceDate.format("YYYY-MM-DD HH:mm:ss")
+  };
 }
 
 function buildAgreementLines({ institution, adminUser }) {
@@ -541,6 +575,52 @@ app.post("/api/auth/verify-otp", asyncHandler(async (req, res) => {
     role: payload.role,
     portal: toPortal(payload.role),
     user: payload
+  });
+}));
+
+app.patch("/api/users/:id/force-reset-password", auth, enforceRole([ROLES.SYSTEM_DEVELOPER]), asyncHandler(async (req, res) => {
+  const userId = Number(req.params.id);
+  if (!userId) {
+    return res.status(400).json({ error: "Valid user id is required." });
+  }
+  const users = await query("SELECT id, full_name, username, email, phone, institution_id FROM users WHERE id = ? LIMIT 1", [userId]);
+  if (!users.length) {
+    return res.status(404).json({ error: "User account not found." });
+  }
+
+  const generatedPassword = generateStrongPassword(12);
+  const passwordHash = await hashPassword(generatedPassword);
+  await query(
+    `UPDATE users
+     SET password_hash = ?, password_last_changed_at = NOW(), password_expires_at = DATE_ADD(NOW(), INTERVAL 30 DAY)
+     WHERE id = ?`,
+    [passwordHash, userId]
+  );
+
+  const user = users[0];
+  const credentialDispatch = await dispatchCredentialNotice({
+    email: user.email,
+    phone: user.phone,
+    subject: "IMIS Password Reset by System Developer",
+    message: [
+      "Your IMIS password has been reset by the system developer.",
+      `Institution ID: ${user.institution_id}`,
+      `Username: ${user.username}`,
+      `Password: ${generatedPassword}`,
+      "Please change your password immediately after login."
+    ].join("\n")
+  });
+
+  await auditLog(req.user, "SYSTEM_DEVELOPER_FORCE_RESET_PASSWORD", "users", userId, {
+    username: user.username,
+    credential_dispatch: credentialDispatch
+  });
+
+  res.json({
+    message: "Password reset and credential dispatch completed.",
+    username: user.username,
+    generated_password: generatedPassword,
+    credential_dispatch: credentialDispatch
   });
 }));
 

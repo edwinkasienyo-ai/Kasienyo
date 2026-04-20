@@ -185,6 +185,32 @@ button:hover {
   color: #5f7187;
 }
 
+.password-expiry-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+  border-radius: 999px;
+  border: 1px solid #d4e2f2;
+  background: #eef5ff;
+  color: #1f4f7f;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 5px 10px;
+}
+
+.password-expiry-pill.warning {
+  border-color: #f3d4a4;
+  background: #fff6ea;
+  color: #8a5517;
+}
+
+.password-expiry-pill.danger {
+  border-color: #f0b7b7;
+  background: #ffeef0;
+  color: #9f1f1f;
+}
+
 .auth-notice {
   margin-top: 10px;
   border-radius: 8px;

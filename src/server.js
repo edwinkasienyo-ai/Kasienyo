@@ -53,8 +53,33 @@ async function ensureDefaultInstitutionAndAdmin() {
   }
 }
 
+async function ensureUserPasswordPolicyColumns() {
+  const passwordChangedRows = await query(
+    `SELECT COUNT(*) total
+     FROM INFORMATION_SCHEMA.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = 'users'
+       AND COLUMN_NAME = 'password_changed_at'`
+  );
+  if (!Number(passwordChangedRows[0]?.total || 0)) {
+    await query("ALTER TABLE users ADD COLUMN password_changed_at DATETIME NULL");
+  }
+
+  const mustChangeRows = await query(
+    `SELECT COUNT(*) total
+     FROM INFORMATION_SCHEMA.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = 'users'
+       AND COLUMN_NAME = 'must_change_password'`
+  );
+  if (!Number(mustChangeRows[0]?.total || 0)) {
+    await query("ALTER TABLE users ADD COLUMN must_change_password TINYINT(1) NOT NULL DEFAULT 0");
+  }
+}
+
 async function start() {
   await query("SELECT 1");
+  await ensureUserPasswordPolicyColumns();
   await ensureDefaultInstitutionAndAdmin();
   app.listen(PORT, () => {
     // eslint-disable-next-line no-console
