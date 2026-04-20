@@ -532,7 +532,19 @@ function parseStoredJson(value) {
     return value;
   }
   const raw = Buffer.isBuffer(value) ? value.toString("utf8") : String(value);
-  return JSON.parse(raw);
+  const normalized = raw.trim();
+  if (!normalized || normalized === "[object Object]") {
+    return null;
+  }
+  // Guard malformed legacy payload rows that are not JSON strings.
+  if (!normalized.startsWith("{") && !normalized.startsWith("[")) {
+    return null;
+  }
+  try {
+    return JSON.parse(normalized);
+  } catch (error) {
+    return null;
+  }
 }
 
 async function createOtpSession({ identity, role, institutionId, payload, destination, channel }) {
