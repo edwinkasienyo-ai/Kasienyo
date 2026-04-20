@@ -23,7 +23,10 @@ function setAuthNotice(message, type = "info") {
 }
 
 async function login() {
-  const portalRole = document.getElementById("portalRole").value;
+  const portalRole =
+    document.getElementById("loginPortalRole")?.value ||
+    document.getElementById("portalRole")?.value ||
+    "";
   const username = document.getElementById("username").value.trim();
   const password = document.getElementById("password").value;
   const otpChannel = document.getElementById("otpChannel").value;
@@ -42,6 +45,10 @@ async function login() {
       method: "POST",
       body: JSON.stringify({ username, password, otpChannel })
     });
+    if (data?.role && data.role !== portalRole) {
+      setAuthNotice(`Selected role does not match account role (${data.role}).`, "error");
+      return;
+    }
     localStorage.setItem("pendingUsername", username);
     setAuthNotice(`${data.message} Portal: ${data.portal}`, "success");
   } catch (error) {
@@ -198,9 +205,10 @@ document.getElementById("forgotUsernameButton")?.addEventListener("click", recov
 document.getElementById("forgotPasswordButton")?.addEventListener("click", resetPassword);
 
 function bindAuthSectionLinks() {
-  document.querySelectorAll(".auth-link-btn[data-target]").forEach((button) => {
+  document.querySelectorAll("[data-auth-panel], .auth-link-btn[data-target]").forEach((button) => {
     button.addEventListener("click", () => {
-      const targetId = button.getAttribute("data-target");
+      const targetId = button.getAttribute("data-auth-panel") || button.getAttribute("data-target");
+      if (!targetId) return;
       document.querySelectorAll(".auth-section").forEach((section) => {
         if (section.id === targetId) {
           section.hidden = !section.hidden;
