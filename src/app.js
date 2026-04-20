@@ -547,6 +547,336 @@ function parseStoredJson(value) {
   }
 }
 
+function isEmailContact(value) {
+  const contact = cleanValue(value);
+  return contact.includes("@");
+}
+
+async function sendCommunicationPayload({ messageType, destination, messageBody }) {
+  const normalizedType = cleanValue(messageType).toUpperCase() || "SMS";
+  const contact = cleanValue(destination);
+  const body = cleanValue(messageBody);
+  if (!contact) {
+    throw new Error("Recipient contact is required for dispatch.");
+  }
+  if (!body) {
+    throw new Error("Message body is required for dispatch.");
+  }
+
+  if (normalizedType === "PUSH") {
+    // eslint-disable-next-line no-console
+    console.log(`[IIMS PUSH] ${contact}: ${body}`);
+    return;
+  }
+
+  const preferEmail =
+    normalizedType === "EMAIL" || (normalizedType !== "SMS" && isEmailContact(contact));
+  if (preferEmail) {
+    if (!process.env.SMTP_HOST || !process.env.SMTP_USER || !process.env.SMTP_PASS) {
+      throw new Error("SMTP is not configured.");
+    }
+    const transporter = nodemailer.createTransport({
+      host: process.env.SMTP_HOST,
+      port: Number(process.env.SMTP_PORT || 587),
+      secure: String(process.env.SMTP_SECURE || "false") === "true",
+      auth: {
+        user: process.env.SMTP_USER,
+        pass: process.env.SMTP_PASS
+      }
+    });
+    await transporter.sendMail({
+      from: process.env.SMTP_USER,
+      to: contact,
+      subject: `IIMS ${normalizedType || "Notification"}`,
+      text: body
+    });
+    return;
+  }
+
+  if (
+    !process.env.TWILIO_ACCOUNT_SID ||
+    !process.env.TWILIO_AUTH_TOKEN ||
+    !process.env.TWILIO_FROM
+  ) {
+    throw new Error("Twilio is not configured.");
+  }
+  const client = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
+  await client.messages.create({
+    from: process.env.TWILIO_FROM,
+    to: contact,
+    body
+  });
+}
+
+async function resolveCommunicationRecipients({ institutionId, recipientRole, recipientContact }) {
+  const contacts = new Set();
+  const normalizedRole = normalizeRole(recipientRole);
+  const directContact = cleanValue(recipientContact);
+  if (directContact) {
+    contacts.add(directContact);
+  }
+
+  if (normalizedRole) {
+    if (normalizedRole === ROLES.PARENT) {
+      const learnerRows = await query(
+        `SELECT parent_phone, parent_email
+         FROM learners
+         WHERE institution_id = ?`,
+        [institutionId]
+      );
+      learnerRows.forEach((row) => {
+        if (cleanValue(row.parent_phone)) contacts.add(cleanValue(row.parent_phone));
+        if (cleanValue(row.parent_email)) contacts.add(cleanValue(row.parent_email));
+      });
+    } else {
+      const userRows = await query(
+        `SELECT phone, email
+         FROM users
+         WHERE institution_id = ? AND UPPER(REPLACE(role, ' ', '_')) = ?`,
+        [institutionId, normalizedRole]
+      );
+      userRows.forEach((row) => {
+        if (cleanValue(row.phone)) contacts.add(cleanValue(row.phone));
+        if (cleanValue(row.email)) contacts.add(cleanValue(row.email));
+      });
+    }
+  }
+
+  return [...contacts].filter(Boolean);
+}
+
+async function dispatchCommunicationMessage({
+  institutionId,
+  messageType,
+  recipientRole,
+  recipientContact,
+  messageBody,
+  createdByUserId
+}) {
+  const normalizedType = cleanValue(messageType) || "SMS";
+  const normalizedRole = normalizeRole(recipientRole);
+  const normalizedBody = cleanValue(messageBody);
+  if (!normalizedBody) {
+    throw new Error("message_body is required.");
+  }
+  if (!normalizedRole && !cleanValue(recipientContact)) {
+    throw new Error("recipient_role or recipient_contact is required.");
+  }
+
+  const recipients = await resolveCommunicationRecipients({
+    institutionId,
+    recipientRole: normalizedRole,
+    recipientContact
+  });
+  if (!recipients.length) {
+    throw new Error("No recipient contacts matched the supplied role/contact.");
+  }
+
+  const dispatchResults = [];
+  for (const destination of recipients) {
+    let status = "Sent";
+    let errorMessage = null;
+    try {
+      // eslint-disable-next-line no-await-in-loop
+      await sendCommunicationPayload({
+        messageType: normalizedType,
+        destination,
+        messageBody: normalizedBody
+      });
+    } catch (error) {
+      status = "Failed";
+      errorMessage = error.message;
+    }
+    // eslint-disable-next-line no-await-in-loop
+    const insert = await query(
+      `INSERT INTO communication_messages
+        (institution_id, message_type, recipient_role, recipient_contact, message_body, status, sent_at, created_by_user_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        institutionId,
+        normalizedType,
+        normalizedRole || null,
+        destination,
+        normalizedBody,
+        status,
+        status === "Sent" ? dayjs().format("YYYY-MM-DD HH:mm:ss") : null,
+        createdByUserId
+      ]
+    );
+    dispatchResults.push({
+      id: insert.insertId,
+      recipient_contact: destination,
+      status,
+      error: errorMessage
+    });
+  }
+
+  return dispatchResults;
+}
+
+async function dispatchQueuedMessageRecord({ institutionId, recordId, actorUserId }) {
+  const rows = await query(
+    `SELECT id, message_type, recipient_role, recipient_contact, message_body, status
+     FROM communication_messages
+     WHERE institution_id = ? AND id = ?
+     LIMIT 1`,
+    [institutionId, recordId]
+  );
+  if (!rows.length) {
+    throw new Error("Message record not found.");
+  }
+  const record = rows[0];
+  let status = "Sent";
+  let errorMessage = null;
+  try {
+    await sendCommunicationPayload({
+      messageType: record.message_type,
+      destination: record.recipient_contact,
+      messageBody: record.message_body
+    });
+  } catch (error) {
+    status = "Failed";
+    errorMessage = error.message;
+  }
+  await query(
+    `UPDATE communication_messages
+     SET status = ?, sent_at = ?, created_by_user_id = COALESCE(created_by_user_id, ?), updated_at = NOW()
+     WHERE id = ? AND institution_id = ?`,
+    [
+      status,
+      status === "Sent" ? dayjs().format("YYYY-MM-DD HH:mm:ss") : null,
+      actorUserId,
+      record.id,
+      institutionId
+    ]
+  );
+  return {
+    id: record.id,
+    recipient_contact: record.recipient_contact,
+    status,
+    error: errorMessage
+  };
+}
+
+async function dispatchStoredCommunicationRow(row = {}) {
+  const id = Number(row.id);
+  const messageType = cleanValue(row.message_type) || "SMS";
+  const destination = cleanValue(row.recipient_contact);
+  const messageBody = cleanValue(row.message_body);
+  if (!id) {
+    return { id: null, status: "Failed", error: "Invalid message record id." };
+  }
+  if (!destination || !messageBody) {
+    await query(
+      `UPDATE communication_messages
+       SET status = 'Failed', sent_at = NULL, updated_at = NOW()
+       WHERE id = ?`,
+      [id]
+    );
+    return {
+      id,
+      status: "Failed",
+      error: "Recipient contact or message body is missing."
+    };
+  }
+
+  let status = "Sent";
+  let errorMessage = null;
+  try {
+    await sendCommunicationPayload({ messageType, destination, messageBody });
+  } catch (error) {
+    status = "Failed";
+    errorMessage = error.message;
+  }
+  await query(
+    `UPDATE communication_messages
+     SET status = ?, sent_at = ?, updated_at = NOW()
+     WHERE id = ?`,
+    [status, status === "Sent" ? dayjs().format("YYYY-MM-DD HH:mm:ss") : null, id]
+  );
+  return { id, status, error: errorMessage };
+}
+
+async function ensureChatRoom({
+  institutionId,
+  roomKey,
+  participantRoles = [],
+  createdByUserId = null
+}) {
+  const normalizedRoomKey = cleanValue(roomKey);
+  if (!normalizedRoomKey) {
+    throw new Error("room_key is required.");
+  }
+  const normalizedRoles = [...new Set((participantRoles || [])
+    .map((role) => normalizeRole(role))
+    .filter(Boolean))];
+  await query(
+    `INSERT INTO communication_chat_rooms
+      (institution_id, room_key, participant_roles_json, created_by_user_id, is_active)
+     VALUES (?, ?, ?, ?, 1)
+     ON DUPLICATE KEY UPDATE
+       participant_roles_json = VALUES(participant_roles_json),
+       is_active = 1,
+       updated_at = NOW()`,
+    [
+      institutionId,
+      normalizedRoomKey,
+      JSON.stringify(normalizedRoles),
+      createdByUserId ? String(createdByUserId) : null
+    ]
+  );
+  const rooms = await query(
+    `SELECT id, room_key, participant_roles_json, created_by_user_id, created_at, updated_at, is_active
+     FROM communication_chat_rooms
+     WHERE institution_id = ? AND room_key = ?
+     LIMIT 1`,
+    [institutionId, normalizedRoomKey]
+  );
+  const room = rooms[0] || null;
+  return {
+    room: room
+      ? {
+        ...room,
+        participant_roles: parseStoredJson(room.participant_roles_json) || []
+      }
+      : null
+  };
+}
+
+async function saveChatMessage({
+  institutionId,
+  threadKey,
+  senderUserId,
+  senderRole,
+  senderName,
+  audienceRole,
+  messageBody
+}) {
+  const cleanedThreadKey = cleanValue(threadKey);
+  const cleanedMessageBody = cleanValue(messageBody);
+  if (!cleanedThreadKey) {
+    throw new Error("thread/room key is required.");
+  }
+  if (!cleanedMessageBody) {
+    throw new Error("message_body is required.");
+  }
+  const insert = await query(
+    `INSERT INTO communication_chat_messages
+      (institution_id, thread_key, sender_user_id, sender_role, sender_name, audience_role, message_body)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    [
+      institutionId,
+      cleanedThreadKey,
+      senderUserId ? String(senderUserId) : null,
+      normalizeRole(senderRole),
+      cleanValue(senderName) || null,
+      normalizeRole(audienceRole) || null,
+      cleanedMessageBody
+    ]
+  );
+  return insert.insertId;
+}
+
 async function createOtpSession({ identity, role, institutionId, payload, destination, channel }) {
   const code = generateOtpCode();
   const expiresAt = buildOtpExpiry();
@@ -2640,7 +2970,7 @@ moduleConfigs.forEach((config) => {
   );
 
   app.get(
-    `${config.route}/:id`,
+    `${config.route}/:id(\\d+)`,
     auth,
     enforceModuleAccess(config.moduleKey),
     enforceRole(config.allowedRoles),
@@ -2712,7 +3042,7 @@ moduleConfigs.forEach((config) => {
   );
 
   app.put(
-    `${config.route}/:id`,
+    `${config.route}/:id(\\d+)`,
     auth,
     enforceModuleAccess(config.moduleKey),
     enforceRole(config.allowedRoles),
@@ -2736,7 +3066,7 @@ moduleConfigs.forEach((config) => {
   );
 
   app.delete(
-    `${config.route}/:id`,
+    `${config.route}/:id(\\d+)`,
     auth,
     enforceModuleAccess(config.moduleKey),
     enforceRole(config.allowedRoles),
@@ -3084,6 +3414,390 @@ app.get(
       message:
         "Parent/Teacher chat endpoint placeholder is enabled. Plug a websocket service for live chat."
     });
+  })
+);
+
+app.post(
+  "/api/communication/messages/dispatch",
+  auth,
+  enforceModuleAccess(MODULE_KEYS.COMMUNICATION_MESSAGES),
+  enforceRole([ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
+  enforcePermission(PERMISSIONS.CREATE),
+  asyncHandler(async (req, res) => {
+    const { message_type, recipient_role, recipient_contact, message_body } = req.body;
+    const results = await dispatchCommunicationMessage({
+      institutionId: req.user.institution_id,
+      messageType: message_type,
+      recipientRole: recipient_role,
+      recipientContact: recipient_contact,
+      messageBody: message_body,
+      createdByUserId: req.user.id
+    });
+    await auditLog(req.user, "DISPATCH_COMMUNICATION_MESSAGE", "communication_messages", null, {
+      message_type,
+      recipient_role,
+      recipient_contact,
+      total_recipients: results.length
+    });
+    res.status(201).json({
+      message: "Communication dispatch completed.",
+      total_recipients: results.length,
+      success_count: results.filter((item) => item.status === "Sent").length,
+      failed_count: results.filter((item) => item.status === "Failed").length,
+      results
+    });
+  })
+);
+
+app.post(
+  "/api/communication/messages/bulk-dispatch",
+  auth,
+  enforceModuleAccess(MODULE_KEYS.COMMUNICATION_MESSAGES),
+  enforceRole([ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
+  enforcePermission(PERMISSIONS.CREATE),
+  asyncHandler(async (req, res) => {
+    const { items = [] } = req.body;
+    if (!Array.isArray(items) || !items.length) {
+      return res.status(400).json({ error: "items array is required." });
+    }
+    const aggregate = [];
+    for (const item of items) {
+      // eslint-disable-next-line no-await-in-loop
+      const rows = await dispatchCommunicationMessage({
+        institutionId: req.user.institution_id,
+        messageType: item.message_type,
+        recipientRole: item.recipient_role,
+        recipientContact: item.recipient_contact,
+        messageBody: item.message_body,
+        createdByUserId: req.user.id
+      });
+      aggregate.push(...rows);
+    }
+    await auditLog(req.user, "BULK_DISPATCH_COMMUNICATION_MESSAGE", "communication_messages", null, {
+      total_items: items.length,
+      total_recipients: aggregate.length
+    });
+    res.status(201).json({
+      message: "Bulk communication dispatch completed.",
+      total_items: items.length,
+      total_recipients: aggregate.length,
+      success_count: aggregate.filter((item) => item.status === "Sent").length,
+      failed_count: aggregate.filter((item) => item.status === "Failed").length
+    });
+  })
+);
+
+app.post(
+  "/api/communication/messages/:id(\\d+)/dispatch",
+  auth,
+  enforceModuleAccess(MODULE_KEYS.COMMUNICATION_MESSAGES),
+  enforceRole([ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
+  enforcePermission(PERMISSIONS.CREATE),
+  asyncHandler(async (req, res) => {
+    const result = await dispatchQueuedMessageRecord({
+      institutionId: req.user.institution_id,
+      recordId: Number(req.params.id),
+      actorUserId: req.user.id
+    });
+    await auditLog(req.user, "DISPATCH_COMMUNICATION_MESSAGE_RECORD", "communication_messages", req.params.id, {
+      status: result.status,
+      recipient_contact: result.recipient_contact,
+      error: result.error || null
+    });
+    res.json({
+      message: result.status === "Sent" ? "Message dispatched successfully." : "Message dispatch failed.",
+      result
+    });
+  })
+);
+
+app.post(
+  "/api/communication/messages/dispatch-queued",
+  auth,
+  enforceModuleAccess(MODULE_KEYS.COMMUNICATION_MESSAGES),
+  enforceRole([ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
+  enforcePermission(PERMISSIONS.CREATE),
+  asyncHandler(async (req, res) => {
+    const requestedLimit = Number(req.body?.limit || 50);
+    const limit = Math.min(Math.max(Number.isFinite(requestedLimit) ? requestedLimit : 50, 1), 500);
+    const queuedRows = await query(
+      `SELECT id, message_type, recipient_contact, message_body
+       FROM communication_messages
+       WHERE institution_id = ? AND status = 'Queued'
+       ORDER BY id ASC
+       LIMIT ?`,
+      [req.user.institution_id, limit]
+    );
+    const results = [];
+    for (const row of queuedRows) {
+      // eslint-disable-next-line no-await-in-loop
+      results.push(await dispatchStoredCommunicationRow(row));
+    }
+    const dispatched = results.filter((item) => item.status === "Sent").length;
+    const failed = results.filter((item) => item.status === "Failed").length;
+    await auditLog(req.user, "DISPATCH_QUEUED_COMMUNICATION_MESSAGES", "communication_messages", null, {
+      processed: results.length,
+      dispatched,
+      failed
+    });
+    res.json({
+      message: "Queued communication dispatch completed.",
+      processed: results.length,
+      dispatched,
+      failed,
+      results
+    });
+  })
+);
+
+app.get(
+  "/api/communication/messages/delivery-summary",
+  auth,
+  enforceModuleAccess(MODULE_KEYS.COMMUNICATION_MESSAGES),
+  enforceRole([ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
+  enforcePermission(PERMISSIONS.VIEW),
+  asyncHandler(async (req, res) => {
+    const rows = await query(
+      `SELECT message_type, status, COUNT(*) total
+       FROM communication_messages
+       WHERE institution_id = ?
+       GROUP BY message_type, status
+       ORDER BY message_type, status`,
+      [req.user.institution_id]
+    );
+    const recentFailed = await query(
+      `SELECT id, message_type, recipient_role, recipient_contact, message_body, status, created_at
+       FROM communication_messages
+       WHERE institution_id = ? AND status = 'Failed'
+       ORDER BY id DESC
+       LIMIT 20`,
+      [req.user.institution_id]
+    );
+    const queuedRows = await query(
+      `SELECT id, message_type, recipient_role, recipient_contact, created_at
+       FROM communication_messages
+       WHERE institution_id = ? AND status = 'Queued'
+       ORDER BY id ASC
+       LIMIT 50`,
+      [req.user.institution_id]
+    );
+    res.json({ summary: rows, recent_failed: recentFailed, queued: queuedRows });
+  })
+);
+
+app.post(
+  "/api/communication/chat/rooms",
+  auth,
+  enforceModuleAccess(MODULE_KEYS.COMMUNICATION_MESSAGES),
+  enforceRole([ROLES.PARENT, ROLES.TEACHER, ROLES.HEAD_OF_INSTITUTION, ROLES.ADMIN]),
+  enforcePermission(PERMISSIONS.CREATE),
+  asyncHandler(async (req, res) => {
+    const roomKey = cleanValue(req.body?.room_key);
+    const participantRoles = Array.isArray(req.body?.participant_roles) ? req.body.participant_roles : [];
+    const roomData = await ensureChatRoom({
+      institutionId: req.user.institution_id,
+      roomKey,
+      participantRoles,
+      createdByUserId: req.user.id
+    });
+    await auditLog(req.user, "CHAT_ROOM_UPSERT", "communication_chat_rooms", roomData.room?.id || null, {
+      room_key: roomKey,
+      participant_roles: participantRoles
+    });
+    res.status(201).json({ message: "Chat room is ready.", room: roomData.room });
+  })
+);
+
+app.get(
+  "/api/communication/chat/rooms",
+  auth,
+  enforceModuleAccess(MODULE_KEYS.COMMUNICATION_MESSAGES),
+  enforceRole([ROLES.PARENT, ROLES.TEACHER, ROLES.HEAD_OF_INSTITUTION, ROLES.ADMIN]),
+  enforcePermission(PERMISSIONS.VIEW),
+  asyncHandler(async (req, res) => {
+    const rooms = await query(
+      `SELECT r.id, r.room_key, r.participant_roles_json, r.is_active, r.created_at, r.updated_at,
+              COALESCE(msg.messages_count, 0) messages_count,
+              msg.last_message_at,
+              msg.preview_message
+       FROM communication_chat_rooms r
+       LEFT JOIN (
+         SELECT institution_id,
+                thread_key,
+                COUNT(*) messages_count,
+                MAX(created_at) last_message_at,
+                SUBSTRING_INDEX(GROUP_CONCAT(message_body ORDER BY id DESC SEPARATOR '||'), '||', 1) preview_message
+         FROM communication_chat_messages
+         WHERE institution_id = ?
+         GROUP BY institution_id, thread_key
+       ) msg ON msg.institution_id = r.institution_id AND msg.thread_key = r.room_key
+       WHERE r.institution_id = ? AND r.is_active = 1
+       ORDER BY COALESCE(msg.last_message_at, r.updated_at) DESC
+       LIMIT 200`,
+      [req.user.institution_id, req.user.institution_id]
+    );
+    res.json({
+      rooms: rooms.map((room) => {
+        const participantRoles = parseStoredJson(room.participant_roles_json) || [];
+        return {
+          ...room,
+          participant_roles: participantRoles,
+          participants_count: participantRoles.length
+        };
+      })
+    });
+  })
+);
+
+app.post(
+  "/api/communication/chat/rooms/:roomKey/messages",
+  auth,
+  enforceModuleAccess(MODULE_KEYS.COMMUNICATION_MESSAGES),
+  enforceRole([ROLES.PARENT, ROLES.TEACHER, ROLES.HEAD_OF_INSTITUTION, ROLES.ADMIN]),
+  enforcePermission(PERMISSIONS.CREATE),
+  asyncHandler(async (req, res) => {
+    const roomKey = cleanValue(decodeURIComponent(req.params.roomKey || ""));
+    const messageBody = cleanValue(req.body?.message_body);
+    if (!roomKey) {
+      return res.status(400).json({ error: "roomKey is required." });
+    }
+    if (!messageBody) {
+      return res.status(400).json({ error: "message_body is required." });
+    }
+    await ensureChatRoom({
+      institutionId: req.user.institution_id,
+      roomKey,
+      participantRoles: req.body?.participant_roles || [],
+      createdByUserId: req.user.id
+    });
+    const senderName = cleanValue(req.user.full_name) || cleanValue(req.user.username) || "Unknown Sender";
+    const insert = await query(
+      `INSERT INTO communication_chat_messages
+        (institution_id, thread_key, sender_user_id, sender_role, sender_name, audience_role, message_body)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [
+        req.user.institution_id,
+        roomKey,
+        String(req.user.id),
+        normalizeRole(req.user.role),
+        senderName,
+        normalizeRole(req.body?.audience_role) || null,
+        messageBody
+      ]
+    );
+    await auditLog(req.user, "CHAT_MESSAGE_SEND", "communication_chat_messages", insert.insertId, {
+      thread_key: roomKey
+    });
+    res.status(201).json({ id: insert.insertId, message: "Chat message sent.", room_key: roomKey });
+  })
+);
+
+app.get(
+  "/api/communication/chat/rooms/:roomKey/messages",
+  auth,
+  enforceModuleAccess(MODULE_KEYS.COMMUNICATION_MESSAGES),
+  enforceRole([ROLES.PARENT, ROLES.TEACHER, ROLES.HEAD_OF_INSTITUTION, ROLES.ADMIN]),
+  enforcePermission(PERMISSIONS.VIEW),
+  asyncHandler(async (req, res) => {
+    const roomKey = cleanValue(decodeURIComponent(req.params.roomKey || ""));
+    const limit = Math.min(Math.max(Number(req.query.limit) || 100, 1), 500);
+    if (!roomKey) {
+      return res.status(400).json({ error: "roomKey is required." });
+    }
+    const rows = await query(
+      `SELECT id, thread_key, sender_user_id, sender_role, sender_name, audience_role, message_body, is_read, created_at
+       FROM communication_chat_messages
+       WHERE institution_id = ? AND thread_key = ?
+       ORDER BY id DESC
+       LIMIT ?`,
+      [req.user.institution_id, roomKey, limit]
+    );
+    res.json({ room_key: roomKey, messages: rows.reverse() });
+  })
+);
+
+app.post(
+  "/api/communication/chat/messages",
+  auth,
+  enforceModuleAccess(MODULE_KEYS.COMMUNICATION_MESSAGES),
+  enforceRole([ROLES.PARENT, ROLES.TEACHER, ROLES.HEAD_OF_INSTITUTION, ROLES.ADMIN]),
+  enforcePermission(PERMISSIONS.CREATE),
+  asyncHandler(async (req, res) => {
+    const { conversation_key, recipient_role, message_body } = req.body;
+    const threadKey =
+      cleanValue(conversation_key) || `${req.user.institution_id}:${normalizeRole(req.user.role)}:${cleanValue(recipient_role)}`;
+    if (!cleanValue(message_body)) {
+      return res.status(400).json({ error: "message_body is required." });
+    }
+    await ensureChatRoom({
+      institutionId: req.user.institution_id,
+      roomKey: threadKey,
+      participantRoles: [req.user.role, recipient_role].filter(Boolean),
+      createdByUserId: req.user.id
+    });
+    const senderName = cleanValue(req.user.full_name) || cleanValue(req.user.username) || "Unknown Sender";
+    const insert = await query(
+      `INSERT INTO communication_chat_messages
+        (institution_id, thread_key, sender_user_id, sender_role, sender_name, audience_role, message_body)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [
+        req.user.institution_id,
+        threadKey,
+        String(req.user.id),
+        normalizeRole(req.user.role),
+        senderName,
+        normalizeRole(recipient_role) || null,
+        cleanValue(message_body)
+      ]
+    );
+    await auditLog(req.user, "CHAT_MESSAGE_SEND", "communication_chat_messages", insert.insertId, {
+      thread_key: threadKey
+    });
+    res.status(201).json({ id: insert.insertId, message: "Chat message sent.", conversation_key: threadKey });
+  })
+);
+
+app.get(
+  "/api/communication/chat/messages",
+  auth,
+  enforceModuleAccess(MODULE_KEYS.COMMUNICATION_MESSAGES),
+  enforceRole([ROLES.PARENT, ROLES.TEACHER, ROLES.HEAD_OF_INSTITUTION, ROLES.ADMIN]),
+  enforcePermission(PERMISSIONS.VIEW),
+  asyncHandler(async (req, res) => {
+    const conversationKey = cleanValue(req.query.conversation_key);
+    const limit = Math.min(Math.max(Number(req.query.limit) || 100, 1), 500);
+    if (!conversationKey) {
+      return res.status(400).json({ error: "conversation_key query parameter is required." });
+    }
+    const rows = await query(
+      `SELECT id, thread_key AS conversation_key, sender_user_id, sender_role, sender_name, audience_role AS recipient_role, message_body, created_at
+       FROM communication_chat_messages
+       WHERE institution_id = ? AND thread_key = ?
+       ORDER BY id DESC
+       LIMIT ?`,
+      [req.user.institution_id, conversationKey, limit]
+    );
+    res.json(rows.reverse());
+  })
+);
+
+app.get(
+  "/api/communication/chat/conversations",
+  auth,
+  enforceModuleAccess(MODULE_KEYS.COMMUNICATION_MESSAGES),
+  enforceRole([ROLES.PARENT, ROLES.TEACHER, ROLES.HEAD_OF_INSTITUTION, ROLES.ADMIN]),
+  enforcePermission(PERMISSIONS.VIEW),
+  asyncHandler(async (req, res) => {
+    const rows = await query(
+      `SELECT thread_key AS conversation_key, MAX(created_at) last_message_at, COUNT(*) total_messages
+       FROM communication_chat_messages
+       WHERE institution_id = ?
+       GROUP BY thread_key
+       ORDER BY last_message_at DESC
+       LIMIT 200`,
+      [req.user.institution_id]
+    );
+    res.json(rows);
   })
 );
 

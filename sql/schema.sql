@@ -388,6 +388,24 @@ CREATE TABLE IF NOT EXISTS communication_announcements (
   CONSTRAINT fk_announcement_institution FOREIGN KEY (institution_id) REFERENCES institutions(id)
 );
 
+CREATE TABLE IF NOT EXISTS communication_chat_messages (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  institution_id BIGINT NOT NULL,
+  thread_key VARCHAR(160) NOT NULL,
+  parent_learner_id BIGINT NULL,
+  sender_user_id VARCHAR(100) NULL,
+  sender_role VARCHAR(60) NOT NULL,
+  sender_name VARCHAR(255) NULL,
+  audience_role VARCHAR(60) NULL,
+  message_body TEXT NOT NULL,
+  is_read TINYINT(1) DEFAULT 0,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  INDEX idx_chat_inst_thread (institution_id, thread_key, created_at),
+  INDEX idx_chat_inst_read (institution_id, is_read),
+  CONSTRAINT fk_chat_institution FOREIGN KEY (institution_id) REFERENCES institutions(id)
+);
+
 CREATE TABLE IF NOT EXISTS learner_resources (
   id BIGINT PRIMARY KEY AUTO_INCREMENT,
   institution_id BIGINT NOT NULL,

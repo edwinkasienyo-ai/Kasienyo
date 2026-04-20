@@ -602,6 +602,139 @@ async function loadModuleData(config) {
   }
 }
 
+async function dispatchCommunicationMessage(id) {
+  if (!id) return;
+  try {
+    await request(`/api/communication/messages/${id}/dispatch`, { method: "POST" });
+    alert("Message dispatched successfully.");
+    if (currentModule === "communication-messages") {
+      await loadModuleData(moduleConfigs["communication-messages"]);
+    }
+  } catch (error) {
+    alert(error.message);
+  }
+}
+
+async function dispatchQueuedMessages() {
+  const limitInput = prompt("Dispatch how many queued messages? (default 50)", "50");
+  if (limitInput === null) return;
+  const parsedLimit = Number(limitInput);
+  const limit = Number.isFinite(parsedLimit) && parsedLimit > 0 ? parsedLimit : 50;
+  try {
+    const result = await request("/api/communication/messages/dispatch-queued", {
+      method: "POST",
+      body: JSON.stringify({ limit })
+    });
+    alert(
+      `Queued dispatch complete. Sent: ${result.dispatched || 0}, Failed: ${result.failed || 0}, Processed: ${result.processed || 0}.`
+    );
+    if (currentModule === "communication-messages") {
+      await loadModuleData(moduleConfigs["communication-messages"]);
+    }
+  } catch (error) {
+    alert(error.message);
+  }
+}
+
+async function openCommunicationChat() {
+  try {
+    const rooms = await request("/api/communication/chat/rooms");
+    const roomRows = Array.isArray(rooms?.rooms)
+      ? rooms.rooms.map((room) => [
+        room.room_key || "-",
+        room.participants_count ?? "-",
+        room.messages_count ?? "-",
+        formatDateTime(room.last_message_at || room.created_at),
+        room.preview_message || "-"
+      ])
+      : [];
+    document.getElementById("moduleTitle").textContent = "Communication Chat";
+    document.getElementById("cards").innerHTML = "";
+    document.getElementById("formArea").innerHTML = `
+      <h3>Parent/Teacher Chat Rooms</h3>
+      <div class="actions-row">
+        <button id="createChatRoomButton">Create Room</button>
+        <button id="sendChatMessageButton">Send Message</button>
+        <button id="refreshChatRoomsButton">Refresh</button>
+      </div>
+      <p class="small-note">Use room key format like: learner-123, class-grade7-blue, or parent-teacher-briefing.</p>
+      ${buildDashboardTable(
+        ["Room Key", "Participants", "Messages", "Last Activity", "Latest Message"],
+        roomRows
+      )}
+    `;
+    resetDataTable("Select a chat room and use the buttons above.");
+    document.getElementById("refreshChatRoomsButton")?.addEventListener("click", openCommunicationChat);
+    document.getElementById("createChatRoomButton")?.addEventListener("click", async () => {
+      const roomKey = prompt("Enter room key:", "parent-teacher-general");
+      if (!roomKey) return;
+      const participantRoles = prompt(
+        "Enter participant roles (comma separated):",
+        "PARENT,TEACHER,HEAD_OF_INSTITUTION"
+      );
+      if (!participantRoles) return;
+      try {
+        const created = await request("/api/communication/chat/rooms", {
+          method: "POST",
+          body: JSON.stringify({
+            room_key: roomKey,
+            participant_roles: participantRoles
+              .split(",")
+              .map((role) => role.trim())
+              .filter(Boolean)
+          })
+        });
+        alert(`Room ready: ${created.room?.room_key || roomKey}`);
+        await openCommunicationChat();
+      } catch (error) {
+        alert(error.message);
+      }
+    });
+    document.getElementById("sendChatMessageButton")?.addEventListener("click", async () => {
+      const roomKey = prompt("Enter target room key:");
+      if (!roomKey) return;
+      const messageBody = prompt("Enter message:");
+      if (!messageBody) return;
+      try {
+        await request(`/api/communication/chat/rooms/${encodeURIComponent(roomKey)}/messages`, {
+          method: "POST",
+          body: JSON.stringify({ message_body: messageBody })
+        });
+        alert("Chat message sent.");
+        const messages = await request(
+          `/api/communication/chat/rooms/${encodeURIComponent(roomKey)}/messages?limit=80`
+        );
+        const messageRows = Array.isArray(messages?.messages)
+          ? messages.messages.map((message) => [
+            formatDateTime(message.created_at),
+            message.sender_role || "-",
+            message.sender_name || "-",
+            message.message_body || "-"
+          ])
+          : [];
+        resetDataTable("No chat messages in this room yet.");
+        if (messageRows.length) {
+          const head = document.getElementById("tableHead");
+          const body = document.getElementById("tableBody");
+          if (head && body) {
+            head.innerHTML = `<tr><th>When</th><th>Sender Role</th><th>Sender</th><th>Message</th></tr>`;
+            body.innerHTML = messageRows
+              .map(
+                (row) =>
+                  `<tr>${row.map((value) => `<td>${escapeHtml(value)}</td>`).join("")}</tr>`
+              )
+              .join("");
+          }
+        }
+      } catch (error) {
+        alert(error.message);
+      }
+    });
+  } catch (error) {
+    alert(error.message);
+  }
+}
+
 function renderCrudModule(moduleKey) {
   const config = moduleConfigs[moduleKey];
   document.getElementById("moduleTitle").textContent = config.title;
@@ -619,6 +752,8 @@ function renderCrudModule(moduleKey) {
       <button id="downloadExcelButton">Download Excel</button>
       <button id="printButton">Print</button>
       <button id="viewButton">View</button>
+      ${moduleKey === "communication-messages" ? '<button id="dispatchQueuedMessagesButton">Dispatch Queued</button>' : ""}
+      ${moduleKey === "communication-messages" ? '<button id="openChatButton">Open Chat</button>' : ""}
     </div>
   `;
   document.getElementById("saveButton").onclick = saveCurrentModule;
@@ -628,6 +763,10 @@ function renderCrudModule(moduleKey) {
   document.getElementById("downloadExcelButton").onclick = exportExcel;
   document.getElementById("printButton").onclick = () => window.print();
   document.getElementById("viewButton").onclick = () => loadModuleData(config);
+  if (moduleKey === "communication-messages") {
+    document.getElementById("dispatchQueuedMessagesButton")?.addEventListener("click", dispatchQueuedMessages);
+    document.getElementById("openChatButton")?.addEventListener("click", openCommunicationChat);
+  }
   loadModuleData(config);
 }
 
@@ -1028,4 +1167,5 @@ async function init() {
 
 window.editRow = editRow;
 window.deleteRow = deleteRow;
+window.dispatchCommunicationMessage = dispatchCommunicationMessage;
 init();

@@ -119,6 +119,29 @@ async function ensureUserPasswordPolicyColumns() {
       )`
     );
   }
+
+  const communicationChatRoomsRows = await query(
+    `SELECT COUNT(*) total
+     FROM INFORMATION_SCHEMA.TABLES
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = 'communication_chat_rooms'`
+  );
+  if (!Number(communicationChatRoomsRows[0]?.total || 0)) {
+    await query(
+      `CREATE TABLE communication_chat_rooms (
+        id BIGINT PRIMARY KEY AUTO_INCREMENT,
+        institution_id BIGINT NOT NULL,
+        room_key VARCHAR(160) NOT NULL,
+        participant_roles_json JSON NULL,
+        created_by_user_id VARCHAR(100) NULL,
+        is_active TINYINT(1) DEFAULT 1,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        UNIQUE KEY uq_chat_room_inst_key (institution_id, room_key),
+        INDEX idx_chat_room_inst_created (institution_id, created_at)
+      )`
+    );
+  }
 }
 
 async function start() {

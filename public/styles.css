@@ -622,6 +622,44 @@ th {
   margin-top: 0;
 }
 
+.chat-panel {
+  border: 1px solid #dce6f3;
+  border-radius: 10px;
+  background: #f8fbff;
+  padding: 10px;
+  margin-top: 10px;
+}
+
+.chat-messages {
+  border: 1px solid #dce6f3;
+  border-radius: 8px;
+  background: #fff;
+  padding: 8px;
+  max-height: 240px;
+  overflow-y: auto;
+  margin-bottom: 8px;
+}
+
+.chat-message-item {
+  border-bottom: 1px solid #edf2f9;
+  padding: 6px 0;
+}
+
+.chat-message-item:last-child {
+  border-bottom: none;
+}
+
+.chat-message-meta {
+  font-size: 11px;
+  color: #5f7187;
+  margin-bottom: 4px;
+}
+
+.chat-message-text {
+  margin: 0;
+  color: #1f2d3d;
+}
+
 @media (max-width: 1080px) {
   .login-page {
     grid-template-columns: 1fr;
