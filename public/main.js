@@ -359,6 +359,12 @@ function bindAuthSectionLinks() {
     button.addEventListener("click", () => {
       const targetId = button.getAttribute("data-auth-panel") || button.getAttribute("data-target");
       if (!targetId) return;
+      document.querySelectorAll("[data-auth-panel], .auth-link-btn[data-target]").forEach((btn) => {
+        btn.classList.toggle(
+          "active",
+          (btn.getAttribute("data-auth-panel") || btn.getAttribute("data-target")) === targetId
+        );
+      });
       document.querySelectorAll(".auth-panel, .auth-section").forEach((section) => {
         if (section.id === targetId) {
           section.hidden = false;
@@ -373,6 +379,9 @@ function bindAuthSectionLinks() {
 function initializeAuthPanels() {
   document.querySelectorAll(".auth-panel").forEach((section) => {
     section.hidden = true;
+  });
+  document.querySelectorAll("[data-auth-panel], .auth-link-btn[data-target]").forEach((button) => {
+    button.classList.remove("active");
   });
 }
 

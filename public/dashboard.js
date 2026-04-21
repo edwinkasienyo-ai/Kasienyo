@@ -7,6 +7,7 @@ let meta = {};
 let currentModule = "dashboard";
 let currentEditId = null;
 let allowedModules = [];
+let portalContext = null;
 const DASHBOARD_STAT_LABELS = {
   totalLearners: "Total Learners Population",
   totalPresent: "Present Today",
@@ -41,6 +42,30 @@ const MODULE_KEY_BY_ID = {
   "welfare-contributions": "welfare-contributions",
   "welfare-loans": "welfare-loans",
   laws: "laws"
+};
+
+const MODULE_DESCRIPTIONS = {
+  dashboard: "Real-time institution intelligence and activity overview.",
+  admission: "Manage learner admissions, profiles, and onboarding records.",
+  "management-teachers": "Maintain teacher profiles and professional details.",
+  "management-non-teaching": "Manage non-teaching staff records and roles.",
+  "management-teacher-resources": "Organize lesson plans, schemes, and class resources.",
+  attendance: "Track daily attendance, punctuality, and attendance analytics.",
+  "academic-exams": "Create and manage assessments by class, strand, and term.",
+  "academic-marks": "Capture marks and compute performance bands and summaries.",
+  "hr-leave": "Process leave applications, approvals, and HR workflows.",
+  "hr-recruitment": "Handle vacancies, appointments, and HR letter workflows.",
+  "finance-fee-structure": "Define fees by class, stream, term, and year.",
+  "finance-fee-payments": "Record fee payments, balances, and payment methods.",
+  "finance-procurement": "Manage procurement documents, vouchers, and supplier records.",
+  "communication-announcements": "Publish institution announcements for targeted audiences.",
+  "communication-messages": "Queue, dispatch, and monitor multi-channel communication.",
+  "parents-results": "Provide parent and BOM-facing learner performance visibility.",
+  "learner-materials": "Offer learner access to learning materials and marks.",
+  "welfare-members": "Register and manage welfare membership profiles.",
+  "welfare-contributions": "Track periodic welfare member contributions.",
+  "welfare-loans": "Administer welfare loan requests, approvals, and repayment status.",
+  laws: "Store and retrieve institutional policies and legal documents."
 };
 
 const moduleConfigs = {
@@ -375,6 +400,22 @@ function escapeHtml(value) {
     .replaceAll("'", "&#39;");
 }
 
+function toLabel(value) {
+  return String(value || "")
+    .replaceAll("_", " ")
+    .replaceAll("-", " ")
+    .replace(/([a-z])([A-Z])/g, "$1 $2")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function formatCellValue(value) {
+  if (value === null || value === undefined || value === "") return "-";
+  if (typeof value === "object") return escapeHtml(JSON.stringify(value));
+  return escapeHtml(value);
+}
+
 function formatDateTime(value) {
   if (!value) return "-";
   const parsed = new Date(value);
@@ -426,6 +467,37 @@ function isModuleAllowed(moduleKey) {
 
 function isSidebarModuleAllowed(moduleId) {
   return isModuleAllowed(MODULE_KEY_BY_ID[moduleId] || moduleId);
+}
+
+function setActiveSidebarButton(moduleId) {
+  document.querySelectorAll(".sidebar button[data-module]").forEach((button) => {
+    button.classList.toggle("active", Boolean(moduleId) && button.dataset.module === moduleId);
+  });
+  document.querySelectorAll(".quick-action-card[data-module]").forEach((card) => {
+    card.classList.toggle("active", Boolean(moduleId) && card.getAttribute("data-module") === moduleId);
+  });
+  applyThemeAccentByModule(moduleId || "dashboard");
+}
+
+function applyThemeAccentByModule(moduleId) {
+  const accentByModule = {
+    dashboard: "#22b6ff",
+    admission: "#2b8ce6",
+    attendance: "#20b875",
+    "academic-exams": "#9b59ff",
+    "academic-marks": "#00a7d1",
+    "finance-fee-structure": "#2b8ce6",
+    "finance-fee-payments": "#0ea5e9",
+    "finance-procurement": "#4f46e5",
+    "communication-messages": "#10b981",
+    "communication-announcements": "#0ea5e9",
+    "welfare-members": "#9b59ff",
+    "welfare-contributions": "#7c3aed",
+    "welfare-loans": "#8b5cf6",
+    laws: "#1f6ca7"
+  };
+  const accent = accentByModule[moduleId] || "#22b6ff";
+  document.documentElement.style.setProperty("--accent-500", accent);
 }
 
 function buildInput(field) {
@@ -570,22 +642,24 @@ function renderTable(rows) {
 
   if (!rows.length) {
     head.innerHTML = "";
-    body.innerHTML = "<tr><td>No records found.</td></tr>";
+    body.innerHTML = '<tr><td class="table-empty-state">No records found.</td></tr>';
     return;
   }
 
   const allKeys = Object.keys(rows[0]).filter((key) => !["details_json", "generated_exam_text"].includes(key));
   const shownKeys = allKeys.slice(0, 10);
-  head.innerHTML = `<tr>${shownKeys.map((key) => `<th>${key}</th>`).join("")}<th>Actions</th></tr>`;
+  head.innerHTML = `<tr>${shownKeys.map((key) => `<th>${toLabel(key)}</th>`).join("")}<th>Actions</th></tr>`;
+  const canDispatch = currentModule === "communication-messages";
 
   body.innerHTML = rows
     .map(
       (row) => `
       <tr>
-        ${shownKeys.map((key) => `<td>${row[key] ?? ""}</td>`).join("")}
-        <td>
-          <button onclick="editRow(${row.id})">Edit</button>
-          <button onclick="deleteRow(${row.id})" class="danger">Delete</button>
+        ${shownKeys.map((key) => `<td>${formatCellValue(row[key])}</td>`).join("")}
+        <td class="table-actions-cell">
+          <button class="table-action-btn" onclick="editRow(${row.id})">Edit</button>
+          <button class="table-action-btn danger" onclick="deleteRow(${row.id})">Delete</button>
+          ${canDispatch ? `<button class="table-action-btn" onclick="dispatchCommunicationMessage(${row.id})">Dispatch</button>` : ""}
         </td>
       </tr>
     `
@@ -593,9 +667,29 @@ function renderTable(rows) {
     .join("");
 }
 
+function renderModuleSummary(config, rows = []) {
+  const cards = document.getElementById("cards");
+  if (!cards || !config) return;
+  cards.innerHTML = `
+    <div class="card stats-card metric-emphasis">
+      <h4>Module</h4>
+      <p>${escapeHtml(config.title)}</p>
+    </div>
+    <div class="card stats-card">
+      <h4>Records Loaded</h4>
+      <p>${formatNumber(rows.length)}</p>
+    </div>
+    <div class="card stats-card">
+      <h4>Data Endpoint</h4>
+      <p>${escapeHtml(config.endpoint)}</p>
+    </div>
+  `;
+}
+
 async function loadModuleData(config) {
   try {
     const rows = await request(config.endpoint);
+    renderModuleSummary(config, rows || []);
     renderTable(rows || []);
   } catch (error) {
     alert(error.message);
@@ -637,6 +731,8 @@ async function dispatchQueuedMessages() {
 }
 
 async function openCommunicationChat() {
+  setActiveSidebarButton("communication-messages");
+  currentModule = "communication-messages";
   try {
     const rooms = await request("/api/communication/chat/rooms");
     const roomRows = Array.isArray(rooms?.rooms)
@@ -649,8 +745,21 @@ async function openCommunicationChat() {
       ])
       : [];
     document.getElementById("moduleTitle").textContent = "Communication Chat";
-    document.getElementById("cards").innerHTML = "";
+    document.getElementById("cards").innerHTML = `
+      <div class="card stats-card metric-emphasis">
+        <h4>Chat Rooms</h4>
+        <p>${formatNumber(roomRows.length)}</p>
+      </div>
+      <div class="card stats-card">
+        <h4>Communication Mode</h4>
+        <p>Parent • Teacher • Admin</p>
+      </div>
+    `;
     document.getElementById("formArea").innerHTML = `
+      <div class="module-header-card">
+        <h3>Parent/Teacher Chat Rooms</h3>
+        <p>Create structured chat rooms, send secure messages, and monitor conversation activity.</p>
+      </div>
       <h3>Parent/Teacher Chat Rooms</h3>
       <div class="actions-row">
         <button id="createChatRoomButton">Create Room</button>
@@ -737,10 +846,27 @@ async function openCommunicationChat() {
 
 function renderCrudModule(moduleKey) {
   const config = moduleConfigs[moduleKey];
+  setActiveSidebarButton(moduleKey);
   document.getElementById("moduleTitle").textContent = config.title;
-  document.getElementById("cards").innerHTML = "";
+  document.getElementById("cards").innerHTML = `
+    <div class="card stats-card metric-emphasis">
+      <h4>Active Module</h4>
+      <p>${escapeHtml(config.title)}</p>
+    </div>
+    <div class="card stats-card">
+      <h4>Operations</h4>
+      <p>Create • Update • Export</p>
+    </div>
+    <div class="card stats-card">
+      <h4>Access</h4>
+      <p>Role-based controlled</p>
+    </div>
+  `;
   document.getElementById("formArea").innerHTML = `
-    <h3>${config.title}</h3>
+    <div class="section-card-header">
+      <h3>${config.title}</h3>
+      <p class="small-note">${escapeHtml(MODULE_DESCRIPTIONS[moduleKey] || "Manage records and actions for this module.")}</p>
+    </div>
     <div class="form-grid">
       ${config.fields.map(buildInput).join("")}
     </div>
@@ -774,7 +900,7 @@ function renderDashboardCards(stats) {
   document.getElementById("cards").innerHTML = Object.entries(stats)
     .map(
       ([key, value]) => `
-      <div class="card stats-card">
+      <div class="card stats-card metric-card metric-${escapeHtml(key)}">
         <h4>${DASHBOARD_STAT_LABELS[key] || key.replace(/([A-Z])/g, " $1")}</h4>
         <p>${key.toLowerCase().includes("fee") ? formatMoney(value) : formatNumber(value)}</p>
       </div>
@@ -784,6 +910,7 @@ function renderDashboardCards(stats) {
 }
 
 async function loadDashboard() {
+  setActiveSidebarButton("dashboard");
   document.getElementById("moduleTitle").textContent = "Dashboard";
   try {
     const data = await request("/api/dashboard/summary");
@@ -859,6 +986,17 @@ async function loadDashboard() {
     ]);
     const feeSummary = data.feeCollectionSummary || {};
     document.getElementById("formArea").innerHTML = `
+      <section class="dashboard-hero">
+        <div>
+          <h3>Institution Performance Cockpit</h3>
+          <p class="small-note">Monitor academics, attendance, finance, alerts, and activity in one place.</p>
+        </div>
+        <div class="dashboard-hero-meta">
+          <span class="tag">Portal: ${escapeHtml(portalContext?.portal || "-")}</span>
+          <span class="tag">Role: ${escapeHtml(portalContext?.role || "-")}</span>
+          <span class="tag">Generated: ${escapeHtml(formatDateTime(data.generated_at))}</span>
+        </div>
+      </section>
       <div class="dashboard-grid">
         <section class="dashboard-section">
           <h3>Daily Attendance List</h3>
@@ -918,10 +1056,17 @@ async function loadDashboard() {
 }
 
 async function loadParentOrBomResults() {
+  setActiveSidebarButton("parents-results");
   document.getElementById("moduleTitle").textContent = "Parent/BOM Results";
-  document.getElementById("cards").innerHTML = "";
+  document.getElementById("cards").innerHTML = `
+    <div class="card stats-card metric-emphasis">
+      <h4>Parent/BOM Portal</h4>
+      <p>Results and reports visibility</p>
+    </div>
+  `;
   document.getElementById("formArea").innerHTML = `
     <h3>Results View</h3>
+    <p class="small-note">Review learner assessment outcomes and export printable reports.</p>
     <div class="actions-row">
       <button id="exportParentPdf">Download Results PDF</button>
       <button id="printParent">Print</button>
@@ -941,10 +1086,17 @@ async function loadParentOrBomResults() {
 }
 
 async function loadLearnerMaterials() {
+  setActiveSidebarButton("learner-materials");
   document.getElementById("moduleTitle").textContent = "Learner Learning Materials and Marks";
-  document.getElementById("cards").innerHTML = "";
+  document.getElementById("cards").innerHTML = `
+    <div class="card stats-card metric-emphasis">
+      <h4>Learner Portal</h4>
+      <p>Materials, revision content, and marks</p>
+    </div>
+  `;
   document.getElementById("formArea").innerHTML = `
     <h3>Learner Portal Resources</h3>
+    <p class="small-note">Refresh to load the latest learning resources and performance records.</p>
     <div class="actions-row">
       <button id="refreshLearner">Refresh</button>
       <button id="printLearner">Print</button>
@@ -965,18 +1117,44 @@ async function loadLearnerMaterials() {
 }
 
 async function globalSearch() {
+  setActiveSidebarButton(null);
   const q = document.getElementById("globalSearch").value.trim();
   if (!q) return;
   try {
     const result = await request(`/api/search/global?q=${encodeURIComponent(q)}`);
     document.getElementById("moduleTitle").textContent = `Search Results: ${q}`;
-    document.getElementById("cards").innerHTML = "";
+    const summaryDescription =
+      portalContext?.role === "SYSTEM_DEVELOPER"
+        ? "Cross-portal search intelligence view."
+        : "Search intelligence view for your institution.";
+    document.getElementById("cards").innerHTML = `
+      <div class="card stats-card">
+        <h4>Learners Found</h4>
+        <p>${formatNumber(result.learners?.length || 0)}</p>
+      </div>
+      <div class="card stats-card">
+        <h4>Teachers Found</h4>
+        <p>${formatNumber(result.teachers?.length || 0)}</p>
+      </div>
+      <div class="card stats-card metric-emphasis">
+        <h4>Parents/BOM Found</h4>
+        <p>${formatNumber(result.parentsAndBom?.length || 0)}</p>
+      </div>
+    `;
     document.getElementById("formArea").innerHTML = `
-      <h3>Search Result Summary</h3>
-      <p><span class="tag">Learners: ${result.learners.length}</span>
-      <span class="tag">Teachers: ${result.teachers.length}</span>
-      <span class="tag">Parents/BOM: ${result.parentsAndBom.length}</span></p>
-      <div class="dashboard-section">
+      <div class="module-header-card">
+        <h3>Global Search Intelligence</h3>
+        <p>${escapeHtml(summaryDescription)}</p>
+      </div>
+      <div class="search-summary-card">
+        <h3>Search Result Summary</h3>
+        <div class="pill-row summary-counts">
+          <span class="status-pill">Learners: ${result.learners.length}</span>
+          <span class="status-pill">Teachers: ${result.teachers.length}</span>
+          <span class="status-pill">Parents/BOM: ${result.parentsAndBom.length}</span>
+        </div>
+      </div>
+      <div class="dashboard-section search-filter-card">
         <h4>Filter Search Results</h4>
         <div class="search-filter-grid">
           <div>
@@ -1129,6 +1307,7 @@ function bindSidebar() {
       if (currentModule === "dashboard") return loadDashboard();
       if (currentModule === "parents-results") return loadParentOrBomResults();
       if (currentModule === "learner-materials") return loadLearnerMaterials();
+      if (currentModule === "communication-messages") return renderCrudModule(currentModule);
       if (moduleConfigs[currentModule]) return renderCrudModule(currentModule);
       return null;
     });
@@ -1146,15 +1325,43 @@ function bindTopbarButtons() {
     .addEventListener("click", changeCredentials);
 }
 
+function bindQuickActionCards() {
+  document.querySelectorAll(".quick-action-card[data-module]").forEach((card) => {
+    card.addEventListener("click", async () => {
+      const targetModule = card.getAttribute("data-module");
+      if (!targetModule || !isSidebarModuleAllowed(targetModule)) return;
+      currentModule = targetModule;
+      currentEditId = null;
+      if (targetModule === "dashboard") {
+        await loadDashboard();
+        return;
+      }
+      if (targetModule === "parents-results") {
+        await loadParentOrBomResults();
+        return;
+      }
+      if (targetModule === "learner-materials") {
+        await loadLearnerMaterials();
+        return;
+      }
+      if (moduleConfigs[targetModule]) {
+        renderCrudModule(targetModule);
+      }
+    });
+  });
+}
+
 async function init() {
   try {
     [meta] = await Promise.all([request("/api/meta")]);
     const portalData = await request("/api/portal/current");
+    portalContext = portalData || null;
     allowedModules = Array.isArray(portalData?.allowed_modules) ? portalData.allowed_modules : [];
     const meData = await request("/api/auth/me");
     document.getElementById("portalLabel").textContent = `${portalData.portal} (${portalData.role})`;
     bindSidebar();
     bindTopbarButtons();
+    bindQuickActionCards();
     await loadDashboard();
     renderPasswordPolicyBanner(meData, portalData);
     if (meData?.must_change_password) {

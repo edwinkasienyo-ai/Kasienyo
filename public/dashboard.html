@@ -7,53 +7,96 @@
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body class="dashboard-page">
-    <aside class="sidebar">
-      <h2>IIMS SYSTEM</h2>
-      <p id="portalLabel" class="portal-label">Portal</p>
-      <button data-module="dashboard">Dashboard</button>
-      <button data-module="admission">Admission</button>
-      <button data-module="management-teachers">Teachers Profile</button>
-      <button data-module="management-non-teaching">Non-Teaching Staff</button>
-      <button data-module="management-teacher-resources">Teacher Resources</button>
-      <button data-module="attendance">Attendance Management</button>
-      <button data-module="academic-exams">Exam Management</button>
-      <button data-module="academic-marks">Marks Entry</button>
-      <button data-module="hr-leave">HR Leave</button>
-      <button data-module="hr-recruitment">HR Recruitment</button>
-      <button data-module="finance-fee-structure">Fee Structure</button>
-      <button data-module="finance-fee-payments">Fee Payments</button>
-      <button data-module="finance-procurement">Procurement</button>
-      <button data-module="communication-announcements">Announcements</button>
-      <button data-module="communication-messages">SMS/Communication</button>
-      <button data-module="parents-results">Parents/BOM Results</button>
-      <button data-module="learner-materials">Learner Materials</button>
-      <button data-module="welfare-members">Welfare Members</button>
-      <button data-module="welfare-contributions">Welfare Contributions</button>
-      <button data-module="welfare-loans">Welfare Loans</button>
-      <button data-module="laws">Laws/Regulations/Policies</button>
-      <button id="logoutButton" class="danger">Logout</button>
-    </aside>
-
-    <main class="main-content">
-      <header class="topbar">
-        <h1 id="moduleTitle">Dashboard</h1>
-        <div class="topbar-right">
-          <p id="passwordExpiryNotice" class="small-note"></p>
-          <input id="globalSearch" placeholder="Global search by learner/teacher/parent..." />
-          <button id="searchButton">Search</button>
-          <button id="changeCredentialsButton">Change Credentials</button>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="sidebar-header">
+          <div class="sidebar-brand">
+            <h2>IIMS SYSTEM</h2>
+            <p>Integrated Management Information System</p>
+          </div>
+          <p id="portalLabel" class="portal-label">Portal</p>
         </div>
-      </header>
+        <div class="nav-group-label">Core</div>
+        <button data-module="dashboard">Dashboard</button>
+        <button data-module="admission">Admission</button>
+        <button data-module="attendance">Attendance Management</button>
+        <div class="nav-group-label">Management & Academics</div>
+        <button data-module="management-teachers">Teachers Profile</button>
+        <button data-module="management-non-teaching">Non-Teaching Staff</button>
+        <button data-module="management-teacher-resources">Teacher Resources</button>
+        <button data-module="academic-exams">Exam Management</button>
+        <button data-module="academic-marks">Marks Entry</button>
+        <div class="nav-group-label">HR & Finance</div>
+        <button data-module="hr-leave">HR Leave</button>
+        <button data-module="hr-recruitment">HR Recruitment</button>
+        <button data-module="finance-fee-structure">Fee Structure</button>
+        <button data-module="finance-fee-payments">Fee Payments</button>
+        <button data-module="finance-procurement">Procurement</button>
+        <div class="nav-group-label">Communication & Welfare</div>
+        <button data-module="communication-announcements">Announcements</button>
+        <button data-module="communication-messages">SMS/Communication</button>
+        <button data-module="parents-results">Parents/BOM Results</button>
+        <button data-module="learner-materials">Learner Materials</button>
+        <button data-module="welfare-members">Welfare Members</button>
+        <button data-module="welfare-contributions">Welfare Contributions</button>
+        <button data-module="welfare-loans">Welfare Loans</button>
+        <button data-module="laws">Laws/Regulations/Policies</button>
+        <button id="logoutButton" class="danger">Logout</button>
+      </aside>
 
-      <section id="cards" class="cards"></section>
-      <section id="formArea" class="form-area"></section>
-      <section class="table-area">
-        <table id="dataTable">
-          <thead id="tableHead"></thead>
-          <tbody id="tableBody"></tbody>
-        </table>
-      </section>
-    </main>
+      <main class="main-content">
+        <header class="topbar">
+          <div class="topbar-left">
+            <h1 id="moduleTitle">Dashboard</h1>
+            <p id="passwordExpiryNotice" class="small-note"></p>
+          </div>
+          <div class="topbar-right">
+            <input id="globalSearch" placeholder="Global search by learner/teacher/parent..." />
+            <button id="searchButton">Search</button>
+            <button id="changeCredentialsButton">Change Credentials</button>
+          </div>
+        </header>
+
+        <section class="dashboard-toolbar">
+          <div class="quick-action-grid">
+            <button class="quick-action-card" data-module="dashboard" type="button">
+              <h4>Overview</h4>
+              <p>Monitor live institution insights</p>
+            </button>
+            <button class="quick-action-card" data-module="admission" type="button">
+              <h4>Admissions</h4>
+              <p>Manage learner onboarding records</p>
+            </button>
+            <button class="quick-action-card" data-module="attendance" type="button">
+              <h4>Attendance</h4>
+              <p>Track daily class and staff presence</p>
+            </button>
+            <button class="quick-action-card" data-module="finance-fee-payments" type="button">
+              <h4>Finance</h4>
+              <p>Review fee collection and balances</p>
+            </button>
+            <button class="quick-action-card" data-module="communication-messages" type="button">
+              <h4>Communication</h4>
+              <p>Dispatch messages and open chat</p>
+            </button>
+            <button class="quick-action-card" data-module="laws" type="button">
+              <h4>Policies</h4>
+              <p>Access laws and governance files</p>
+            </button>
+          </div>
+        </section>
+
+        <section id="cards" class="cards"></section>
+        <section id="formArea" class="form-area"></section>
+        <section class="table-area">
+          <p class="table-hint">Module records are displayed below with quick edit and export actions.</p>
+          <table id="dataTable">
+            <thead id="tableHead"></thead>
+            <tbody id="tableBody"></tbody>
+          </table>
+        </section>
+      </main>
+    </div>
 
     <script src="/dashboard.js"></script>
   </body>
