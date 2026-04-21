@@ -211,6 +211,12 @@ const AGREEMENT_COMPANY = {
 
 const PASSWORD_ROTATION_DAYS = Number(process.env.PASSWORD_ROTATION_DAYS || 30);
 const PASSWORD_ROTATION_EXEMPT_ROLES = new Set([ROLES.SYSTEM_DEVELOPER]);
+const PASSWORD_MIN_LENGTH = Number(process.env.PASSWORD_MIN_LENGTH || 12);
+const LOGIN_MAX_ATTEMPTS = Number(process.env.LOGIN_MAX_ATTEMPTS || 5);
+const LOGIN_LOCKOUT_MINUTES = Number(process.env.LOGIN_LOCKOUT_MINUTES || 15);
+const OTP_MAX_VERIFY_ATTEMPTS = Number(process.env.OTP_MAX_VERIFY_ATTEMPTS || 5);
+const REQUEST_RATE_WINDOW_MS = Number(process.env.REQUEST_RATE_WINDOW_MS || 15 * 60 * 1000);
+const REQUEST_RATE_TRACKER = new Map();
 
 function padThree(value) {
   return String(Number(value) || 0).padStart(3, "0");
@@ -221,6 +227,208 @@ function parseTruthy(value) {
   const normalized = cleanValue(value).toLowerCase();
   if (!normalized) return false;
   return ["1", "true", "yes", "y", "on"].includes(normalized);
+}
+
+function getClientIp(req) {
+  const forwarded = cleanValue(req.headers["x-forwarded-for"]);
+  if (forwarded) {
+    return forwarded.split(",")[0].trim();
+  }
+  return cleanValue(req.ip || req.socket?.remoteAddress || "unknown");
+}
+
+function enforceRateLimit({ bucket, maxRequests, windowMs }) {
+  return (req, res, next) => {
+    const key = `${bucket}:${getClientIp(req)}`;
+    const now = Date.now();
+    const windowStart = now - windowMs;
+    const history = REQUEST_RATE_TRACKER.get(key) || [];
+    const recent = history.filter((stamp) => stamp > windowStart);
+    if (recent.length >= maxRequests) {
+      const retryMs = Math.max(windowMs - (now - recent[0]), 1000);
+      return res.status(429).json({
+        error: "Too many requests. Please wait and try again.",
+        retry_after_seconds: Math.ceil(retryMs / 1000)
+      });
+    }
+    recent.push(now);
+    REQUEST_RATE_TRACKER.set(key, recent);
+    if (REQUEST_RATE_TRACKER.size > 5000) {
+      for (const [storedKey, stamps] of REQUEST_RATE_TRACKER.entries()) {
+        const kept = stamps.filter((stamp) => stamp > windowStart);
+        if (!kept.length) REQUEST_RATE_TRACKER.delete(storedKey);
+        else REQUEST_RATE_TRACKER.set(storedKey, kept);
+      }
+    }
+    return next();
+  };
+}
+
+const authLoginRateLimit = enforceRateLimit({
+  bucket: "auth-login",
+  maxRequests: Number(process.env.RATE_LIMIT_AUTH_LOGIN_MAX || 40),
+  windowMs: REQUEST_RATE_WINDOW_MS
+});
+const otpVerifyRateLimit = enforceRateLimit({
+  bucket: "auth-otp-verify",
+  maxRequests: Number(process.env.RATE_LIMIT_OTP_VERIFY_MAX || 80),
+  windowMs: REQUEST_RATE_WINDOW_MS
+});
+const publicWriteRateLimit = enforceRateLimit({
+  bucket: "public-write",
+  maxRequests: Number(process.env.RATE_LIMIT_PUBLIC_WRITE_MAX || 60),
+  windowMs: REQUEST_RATE_WINDOW_MS
+});
+const accountMutationRateLimit = enforceRateLimit({
+  bucket: "account-mutation",
+  maxRequests: Number(process.env.RATE_LIMIT_ACCOUNT_MUTATION_MAX || 60),
+  windowMs: REQUEST_RATE_WINDOW_MS
+});
+
+function enforcePublicSecurity(req, res, next) {
+  const body = req.body && typeof req.body === "object" ? req.body : {};
+  const compactKeys = Object.keys(body);
+  if (compactKeys.length > 120) {
+    return res.status(400).json({ error: "Request payload has too many fields." });
+  }
+  const contentType = cleanValue(req.headers["content-type"]).toLowerCase();
+  if (contentType && !contentType.includes("application/json")) {
+    return res.status(415).json({ error: "Only application/json content type is accepted." });
+  }
+  const bodySize = Buffer.byteLength(JSON.stringify(req.body || {}), "utf8");
+  const maxBodyBytes = Number(process.env.MAX_PUBLIC_BODY_BYTES || 1024 * 1024);
+  if (bodySize > maxBodyBytes) {
+    return res.status(413).json({ error: "Request payload is too large." });
+  }
+  return next();
+}
+
+function evaluatePasswordStrength(password) {
+  const value = cleanValue(password);
+  const errors = [];
+  if (value.length < PASSWORD_MIN_LENGTH) {
+    errors.push(`must be at least ${PASSWORD_MIN_LENGTH} characters`);
+  }
+  if (!/[A-Z]/.test(value)) {
+    errors.push("must contain at least one uppercase letter");
+  }
+  if (!/[a-z]/.test(value)) {
+    errors.push("must contain at least one lowercase letter");
+  }
+  if (!/\d/.test(value)) {
+    errors.push("must contain at least one number");
+  }
+  if (!/[^A-Za-z0-9]/.test(value)) {
+    errors.push("must contain at least one special character");
+  }
+  return errors;
+}
+
+function requireStrongPassword(password, fieldLabel = "password") {
+  const errors = evaluatePasswordStrength(password);
+  if (errors.length) {
+    const label = cleanValue(fieldLabel) || "password";
+    return `${label} ${errors.join(", ")}.`;
+  }
+  return null;
+}
+
+function normalizeDateTime(value) {
+  if (!value) return null;
+  const parsed = dayjs(value);
+  if (!parsed.isValid()) return null;
+  return parsed.format("YYYY-MM-DD HH:mm:ss");
+}
+
+function isAccountLocked(user = {}) {
+  const lockedUntil = normalizeDateTime(user.locked_until);
+  if (!lockedUntil) return false;
+  return dayjs(lockedUntil).isAfter(dayjs());
+}
+
+async function recordFailedLoginAttempt(user = {}) {
+  const userId = Number(user.id || 0);
+  if (!userId) {
+    return { attempts: 0, remainingAttempts: LOGIN_MAX_ATTEMPTS, lockedUntil: null };
+  }
+  const nextAttempts = Number(user.failed_login_attempts || 0) + 1;
+  const shouldLock = nextAttempts >= LOGIN_MAX_ATTEMPTS;
+  const lockedUntil = shouldLock
+    ? dayjs().add(LOGIN_LOCKOUT_MINUTES, "minute").format("YYYY-MM-DD HH:mm:ss")
+    : null;
+  await query(
+    `UPDATE users
+     SET failed_login_attempts = ?, last_failed_login_at = NOW(), locked_until = ?
+     WHERE id = ?`,
+    [nextAttempts, lockedUntil, userId]
+  );
+  return {
+    attempts: nextAttempts,
+    remainingAttempts: Math.max(LOGIN_MAX_ATTEMPTS - nextAttempts, 0),
+    lockedUntil
+  };
+}
+
+async function resetLoginFailureState(userId) {
+  if (!Number(userId)) return;
+  await query(
+    `UPDATE users
+     SET failed_login_attempts = 0, locked_until = NULL
+     WHERE id = ?`,
+    [userId]
+  );
+}
+
+async function getActiveUserSecurityState(username) {
+  const rows = await query(
+    `SELECT id, role, failed_login_attempts, locked_until
+     FROM users
+     WHERE username = ? AND is_active = 1
+     ORDER BY id DESC
+     LIMIT 1`,
+    [cleanValue(username)]
+  );
+  return rows.length ? rows[0] : null;
+}
+
+async function recordOtpFailure(identity) {
+  const activeRows = await query(
+    `SELECT id, verify_attempts, max_attempts
+     FROM otp_sessions
+     WHERE identity_value = ? AND is_used = 0 AND expires_at > NOW()
+     ORDER BY id DESC
+     LIMIT 1`,
+    [cleanValue(identity)]
+  );
+  if (!activeRows.length) {
+    return null;
+  }
+  const active = activeRows[0];
+  const attempts = Number(active.verify_attempts || 0) + 1;
+  const maxAttempts = Math.max(Number(active.max_attempts || OTP_MAX_VERIFY_ATTEMPTS), 1);
+  const exhausted = attempts >= maxAttempts;
+  await query(
+    `UPDATE otp_sessions
+     SET verify_attempts = ?, last_attempt_at = NOW(), is_used = ?
+     WHERE id = ?`,
+    [attempts, exhausted ? 1 : 0, active.id]
+  );
+  return {
+    attempts,
+    remainingAttempts: Math.max(maxAttempts - attempts, 0),
+    exhausted
+  };
+}
+
+async function recordOtpSuccess(sessionId) {
+  const numericId = Number(sessionId || 0);
+  if (!numericId) return;
+  await query(
+    `UPDATE otp_sessions
+     SET verify_attempts = 0, last_attempt_at = NOW()
+     WHERE id = ?`,
+    [numericId]
+  );
 }
 
 function isOtpChannelConfigured(channel) {
@@ -281,11 +489,17 @@ async function nextInstitutionCode({ countyCode, categoryCode }) {
 
 function generateStrongPassword(length = 12) {
   const charset = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789@#$%&*!";
-  let output = "";
-  for (let index = 0; index < length; index += 1) {
-    output += charset.charAt(Math.floor(Math.random() * charset.length));
+  const targetLength = Math.max(Number(length) || 12, PASSWORD_MIN_LENGTH);
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    let output = "";
+    for (let index = 0; index < targetLength; index += 1) {
+      output += charset.charAt(Math.floor(Math.random() * charset.length));
+    }
+    if (!requireStrongPassword(output)) {
+      return output;
+    }
   }
-  return output;
+  return `Aa1!${uuidv4().replace(/-/g, "").slice(0, Math.max(targetLength - 4, 8))}`;
 }
 
 async function dispatchCredentialNotice({ email, phone, subject, message }) {
@@ -882,8 +1096,8 @@ async function createOtpSession({ identity, role, institutionId, payload, destin
   const expiresAt = buildOtpExpiry();
   await query(
     `INSERT INTO otp_sessions
-      (session_id, identity_value, role_name, institution_id, payload_json, otp_code, expires_at, otp_channel, destination)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      (session_id, identity_value, role_name, institution_id, payload_json, otp_code, expires_at, otp_channel, destination, verify_attempts, max_attempts, last_attempt_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, NULL)`,
     [
       uuidv4(),
       identity,
@@ -893,7 +1107,8 @@ async function createOtpSession({ identity, role, institutionId, payload, destin
       code,
       expiresAt,
       channel,
-      destination
+      destination,
+      OTP_MAX_VERIFY_ATTEMPTS
     ]
   );
   await sendOtp({ channel, destination, code });
@@ -1067,10 +1282,17 @@ app.get("/api/health", asyncHandler(async (_, res) => {
   res.json({ status: "ok", service: "IIMS API" });
 }));
 
-app.post("/api/auth/login", asyncHandler(async (req, res) => {
+app.post("/api/auth/login", authLoginRateLimit, asyncHandler(async (req, res) => {
   const { username, password, otpChannel } = req.body;
   if (!username || !password) {
     return res.status(400).json({ error: "Username and password are required." });
+  }
+  const securityUser = await getActiveUserSecurityState(username);
+  if (isAccountLocked(securityUser)) {
+    return res.status(423).json({
+      error: "Account temporarily locked due to repeated failed login attempts.",
+      locked_until: normalizeDateTime(securityUser.locked_until)
+    });
   }
 
   const userAccount = await authenticateByUserTable(username, password);
@@ -1087,7 +1309,17 @@ app.post("/api/auth/login", asyncHandler(async (req, res) => {
     (await authenticateLearner(username, password));
 
   if (!account) {
-    return res.status(401).json({ error: "Invalid username or password." });
+    const failureState = await recordFailedLoginAttempt(securityUser || {});
+    return res.status(failureState?.lockedUntil ? 423 : 401).json({
+      error: failureState?.lockedUntil
+        ? "Account temporarily locked due to repeated failed login attempts."
+        : "Invalid username or password.",
+      remaining_attempts: failureState?.remainingAttempts,
+      locked_until: failureState?.lockedUntil
+    });
+  }
+  if (securityUser?.id) {
+    await resetLoginFailureState(securityUser.id);
   }
 
   const requestedChannel = cleanValue(otpChannel || process.env.OTP_CHANNEL || "console").toLowerCase() || "console";
@@ -1117,7 +1349,7 @@ app.post("/api/auth/login", asyncHandler(async (req, res) => {
   });
 }));
 
-app.post("/api/auth/verify-otp", asyncHandler(async (req, res) => {
+app.post("/api/auth/verify-otp", otpVerifyRateLimit, asyncHandler(async (req, res) => {
   const { username, otp } = req.body;
   if (!username || !otp) {
     return res.status(400).json({ error: "Username and OTP are required." });
@@ -1132,7 +1364,11 @@ app.post("/api/auth/verify-otp", asyncHandler(async (req, res) => {
   );
 
   if (!sessions.length) {
-    return res.status(401).json({ error: "Invalid or expired OTP." });
+    const failure = await recordOtpFailure(username);
+    return res.status(401).json({
+      error: "Invalid or expired OTP.",
+      remaining_attempts: failure?.remainingAttempts ?? null
+    });
   }
 
   let payload = null;
@@ -1155,11 +1391,14 @@ app.post("/api/auth/verify-otp", asyncHandler(async (req, res) => {
     }
   }
   if (!session || !payload) {
+    const failure = await recordOtpFailure(username);
     return res.status(401).json({
-      error: "Invalid or expired OTP. Please request a fresh OTP and try again."
+      error: "Invalid or expired OTP. Please request a fresh OTP and try again.",
+      remaining_attempts: failure?.remainingAttempts ?? null
     });
   }
   await query("UPDATE otp_sessions SET is_used = 1 WHERE id = ?", [session.id]);
+  await recordOtpSuccess(session.id);
   payload.role = normalizeRole(payload.role);
   const token = issueToken(payload);
   await auditLog(payload, "LOGIN_SUCCESS", "auth", payload.id, { role: payload.role });
@@ -1206,7 +1445,7 @@ app.get("/api/auth/me", auth, asyncHandler(async (req, res) => {
   });
 }));
 
-app.patch("/api/users/:id/force-reset-password", auth, enforceRole([ROLES.SYSTEM_DEVELOPER]), asyncHandler(async (req, res) => {
+app.patch("/api/users/:id/force-reset-password", auth, accountMutationRateLimit, enforceRole([ROLES.SYSTEM_DEVELOPER]), asyncHandler(async (req, res) => {
   const userId = Number(req.params.id);
   if (!userId) {
     return res.status(400).json({ error: "Valid user id is required." });
@@ -1220,7 +1459,13 @@ app.patch("/api/users/:id/force-reset-password", auth, enforceRole([ROLES.SYSTEM
   const passwordHash = await hashPassword(generatedPassword);
   await query(
     `UPDATE users
-     SET password_hash = ?, password_last_changed_at = NOW(), password_expires_at = DATE_ADD(NOW(), INTERVAL 30 DAY)
+     SET password_hash = ?,
+         password_last_changed_at = NOW(),
+         password_expires_at = DATE_ADD(NOW(), INTERVAL 30 DAY),
+         must_change_password = 1,
+         failed_login_attempts = 0,
+         locked_until = NULL,
+         last_failed_login_at = NULL
      WHERE id = ?`,
     [passwordHash, userId]
   );
@@ -1252,7 +1497,7 @@ app.patch("/api/users/:id/force-reset-password", auth, enforceRole([ROLES.SYSTEM
   });
 }));
 
-app.post("/api/public/register-institution", asyncHandler(async (req, res) => {
+app.post("/api/public/register-institution", publicWriteRateLimit, enforcePublicSecurity, asyncHandler(async (req, res) => {
   const institutionName = cleanValue(req.body?.institution_name);
   const institutionEmail = cleanOptionalValue(req.body?.email);
   const institutionPhone = cleanOptionalValue(req.body?.phone);
@@ -1297,6 +1542,10 @@ app.post("/api/public/register-institution", asyncHandler(async (req, res) => {
   const adminPassword = autoGeneratePassword
     ? generateStrongPassword(12)
     : adminPasswordInput;
+  const weakAdminPasswordError = requireStrongPassword(adminPassword, "admin_password");
+  if (weakAdminPasswordError) {
+    return res.status(400).json({ error: weakAdminPasswordError });
+  }
 
   if (!institutionName || !adminFullName || !adminUsername || !adminPassword) {
     return res.status(400).json({
@@ -1401,13 +1650,17 @@ app.post("/api/public/register-institution", asyncHandler(async (req, res) => {
   });
 }));
 
-app.post("/api/public/register-user", asyncHandler(async (req, res) => {
+app.post("/api/public/register-user", publicWriteRateLimit, enforcePublicSecurity, asyncHandler(async (req, res) => {
   const institutionCode = cleanValue(req.body?.institution_code);
   const fullName = cleanValue(req.body?.full_name);
   const username = cleanValue(req.body?.username);
   const passwordInput = cleanValue(req.body?.password);
   const autoGeneratePassword = parseTruthy(req.body?.auto_generate_password);
   const password = autoGeneratePassword ? generateStrongPassword(12) : passwordInput;
+  const weakPasswordError = requireStrongPassword(password, "password");
+  if (weakPasswordError) {
+    return res.status(400).json({ error: weakPasswordError });
+  }
   const role = cleanValue(req.body?.portal_role);
   const email = cleanOptionalValue(req.body?.email);
   const phone = cleanOptionalValue(req.body?.phone);
@@ -1522,7 +1775,7 @@ app.get("/api/public/institutions/:id/agreement.pdf", asyncHandler(async (req, r
   );
 }));
 
-app.post("/api/public/institutions/:id/agreement/send", asyncHandler(async (req, res) => {
+app.post("/api/public/institutions/:id/agreement/send", publicWriteRateLimit, enforcePublicSecurity, asyncHandler(async (req, res) => {
   const institutionId = Number(req.params.id);
   if (!institutionId) {
     return res.status(400).json({ error: "Valid institution id is required." });
@@ -1557,7 +1810,7 @@ app.post("/api/public/institutions/:id/agreement/send", asyncHandler(async (req,
   });
 }));
 
-app.post("/api/public/forgot-username", asyncHandler(async (req, res) => {
+app.post("/api/public/forgot-username", publicWriteRateLimit, enforcePublicSecurity, asyncHandler(async (req, res) => {
   const institutionCode = cleanValue(req.body?.institution_code);
   const email = cleanOptionalValue(req.body?.email);
   const phone = cleanOptionalValue(req.body?.phone);
@@ -1606,10 +1859,14 @@ app.post("/api/public/forgot-username", asyncHandler(async (req, res) => {
   });
 }));
 
-app.post("/api/public/forgot-password", asyncHandler(async (req, res) => {
+app.post("/api/public/forgot-password", publicWriteRateLimit, enforcePublicSecurity, asyncHandler(async (req, res) => {
   const institutionCode = cleanValue(req.body?.institution_code);
   const username = cleanValue(req.body?.username);
   const newPassword = cleanValue(req.body?.new_password);
+  const weakNewPasswordError = requireStrongPassword(newPassword, "new_password");
+  if (weakNewPasswordError) {
+    return res.status(400).json({ error: weakNewPasswordError });
+  }
   const email = cleanOptionalValue(req.body?.email);
   const phone = cleanOptionalValue(req.body?.phone);
 
@@ -1649,7 +1906,13 @@ app.post("/api/public/forgot-password", asyncHandler(async (req, res) => {
   const passwordHash = await hashPassword(newPassword);
   await query(
     `UPDATE users
-     SET password_hash = ?, password_last_changed_at = NOW(), password_expires_at = DATE_ADD(NOW(), INTERVAL ? DAY), must_change_password = 1
+     SET password_hash = ?,
+         password_last_changed_at = NOW(),
+         password_expires_at = DATE_ADD(NOW(), INTERVAL ? DAY),
+         must_change_password = 1,
+         failed_login_attempts = 0,
+         locked_until = NULL,
+         last_failed_login_at = NULL
      WHERE id = ?`,
     [passwordHash, PASSWORD_ROTATION_DAYS, user.id]
   );
@@ -1677,7 +1940,7 @@ app.post("/api/public/forgot-password", asyncHandler(async (req, res) => {
   });
 }));
 
-app.post("/api/public/institutions/register", asyncHandler(async (req, res) => {
+app.post("/api/public/institutions/register", publicWriteRateLimit, enforcePublicSecurity, asyncHandler(async (req, res) => {
   const institution_name = cleanValue(req.body?.institution_name);
   const institution_code = cleanValue(req.body?.institution_code).toUpperCase();
   const email = cleanOptionalValue(req.body?.email);
@@ -1717,7 +1980,7 @@ app.post("/api/public/institutions/register", asyncHandler(async (req, res) => {
   });
 }));
 
-app.post("/api/public/users/register", asyncHandler(async (req, res) => {
+app.post("/api/public/users/register", publicWriteRateLimit, enforcePublicSecurity, asyncHandler(async (req, res) => {
   const institution_code = cleanValue(req.body?.institution_code).toUpperCase();
   const full_name = cleanValue(req.body?.full_name);
   const username = cleanValue(req.body?.username);
@@ -1725,6 +1988,10 @@ app.post("/api/public/users/register", asyncHandler(async (req, res) => {
   const autoGeneratePassword = parseTruthy(req.body?.auto_generate_password);
   const requestedPassword = cleanValue(req.body?.password);
   const password = autoGeneratePassword ? generateStrongPassword(12) : requestedPassword;
+  const weakPasswordError = requireStrongPassword(password, "password");
+  if (weakPasswordError) {
+    return res.status(400).json({ error: weakPasswordError });
+  }
   const email = cleanOptionalValue(req.body?.email);
   const phone = cleanOptionalValue(req.body?.phone);
 
@@ -1802,7 +2069,7 @@ app.post("/api/public/users/register", asyncHandler(async (req, res) => {
   });
 }));
 
-app.post("/api/public/recovery/username", asyncHandler(async (req, res) => {
+app.post("/api/public/recovery/username", publicWriteRateLimit, enforcePublicSecurity, asyncHandler(async (req, res) => {
   const institution_code = cleanValue(req.body?.institution_code).toUpperCase();
   const email = cleanOptionalValue(req.body?.email);
   const phone = cleanOptionalValue(req.body?.phone);
@@ -1843,12 +2110,16 @@ app.post("/api/public/recovery/username", asyncHandler(async (req, res) => {
   });
 }));
 
-app.post("/api/public/recovery/password", asyncHandler(async (req, res) => {
+app.post("/api/public/recovery/password", publicWriteRateLimit, enforcePublicSecurity, asyncHandler(async (req, res) => {
   const institution_code = cleanValue(req.body?.institution_code).toUpperCase();
   const username = cleanValue(req.body?.username);
   const email = cleanOptionalValue(req.body?.email);
   const phone = cleanOptionalValue(req.body?.phone);
   const new_password = cleanValue(req.body?.new_password);
+  const weakNewPasswordError = requireStrongPassword(new_password, "new_password");
+  if (weakNewPasswordError) {
+    return res.status(400).json({ error: weakNewPasswordError });
+  }
 
   if (!institution_code || !username || !new_password || (!email && !phone)) {
     return res.status(400).json({
@@ -1881,7 +2152,13 @@ app.post("/api/public/recovery/password", asyncHandler(async (req, res) => {
   const passwordHash = await hashPassword(new_password);
   await query(
     `UPDATE users
-     SET password_hash = ?, password_last_changed_at = NOW(), password_expires_at = DATE_ADD(NOW(), INTERVAL ? DAY), must_change_password = 1
+     SET password_hash = ?,
+         password_last_changed_at = NOW(),
+         password_expires_at = DATE_ADD(NOW(), INTERVAL ? DAY),
+         must_change_password = 1,
+         failed_login_attempts = 0,
+         locked_until = NULL,
+         last_failed_login_at = NULL
      WHERE id = ?`,
     [passwordHash, PASSWORD_ROTATION_DAYS, account.id]
   );
@@ -2347,11 +2624,16 @@ app.get(
 app.post(
   "/api/users",
   auth,
+  accountMutationRateLimit,
   enforceRole([ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
   asyncHandler(async (req, res) => {
     const { full_name, username, password, role, email, phone } = req.body;
     if (!full_name || !username || !password || !role) {
       return res.status(400).json({ error: "full_name, username, password and role are required." });
+    }
+    const weakPasswordError = requireStrongPassword(password, "password");
+    if (weakPasswordError) {
+      return res.status(400).json({ error: weakPasswordError });
     }
     const passwordHash = await hashPassword(password);
     const isRotationExempt = PASSWORD_ROTATION_EXEMPT_ROLES.has(role);
@@ -2395,6 +2677,7 @@ app.patch(
 app.patch(
   "/api/users/:id/password",
   auth,
+  accountMutationRateLimit,
   enforceRole([ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
   asyncHandler(async (req, res) => {
     const userId = Number(req.params.id);
@@ -2403,6 +2686,10 @@ app.patch(
     const newPassword = autoGeneratePassword ? generateStrongPassword(12) : requestedPassword;
     if (!newPassword) {
       return res.status(400).json({ error: "new_password is required unless auto_generate_password is true." });
+    }
+    const weakNewPasswordError = requireStrongPassword(newPassword, "new_password");
+    if (weakNewPasswordError) {
+      return res.status(400).json({ error: weakNewPasswordError });
     }
 
     const users = await query(
@@ -2419,7 +2706,13 @@ app.patch(
     const passwordHash = await hashPassword(newPassword);
     await query(
       `UPDATE users
-       SET password_hash = ?, password_last_changed_at = NOW(), password_expires_at = DATE_ADD(NOW(), INTERVAL ? DAY), must_change_password = 1
+       SET password_hash = ?,
+           password_last_changed_at = NOW(),
+           password_expires_at = DATE_ADD(NOW(), INTERVAL ? DAY),
+           must_change_password = 1,
+           failed_login_attempts = 0,
+           locked_until = NULL,
+           last_failed_login_at = NULL
        WHERE id = ? AND institution_id = ?`,
       [passwordHash, PASSWORD_ROTATION_DAYS, userId, req.user.institution_id]
     );
@@ -2499,6 +2792,7 @@ app.post(
 app.post(
   "/api/profile/change-credentials",
   auth,
+  accountMutationRateLimit,
   asyncHandler(async (req, res) => {
     const { current_password, new_username, new_password } = req.body;
     const users = await query("SELECT * FROM users WHERE id = ? AND institution_id = ? LIMIT 1", [
@@ -2522,12 +2816,19 @@ app.post(
       params.push(new_username);
     }
     if (new_password) {
+      const weakNewPasswordError = requireStrongPassword(new_password, "new_password");
+      if (weakNewPasswordError) {
+        return res.status(400).json({ error: weakNewPasswordError });
+      }
       updates.push("password_hash = ?");
       params.push(await hashPassword(new_password));
       updates.push("password_last_changed_at = NOW()");
       updates.push("password_expires_at = DATE_ADD(NOW(), INTERVAL ? DAY)");
       params.push(PASSWORD_ROTATION_DAYS);
       updates.push("must_change_password = 0");
+      updates.push("failed_login_attempts = 0");
+      updates.push("locked_until = NULL");
+      updates.push("last_failed_login_at = NULL");
     }
 
     if (!updates.length) {

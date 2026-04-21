@@ -155,6 +155,39 @@ async function ensureUserPasswordPolicyColumns() {
     await query("ALTER TABLE users ADD COLUMN must_change_password TINYINT(1) NOT NULL DEFAULT 0");
   }
 
+  const loginAttemptsRows = await query(
+    `SELECT COUNT(*) total
+     FROM INFORMATION_SCHEMA.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = 'users'
+       AND COLUMN_NAME = 'failed_login_attempts'`
+  );
+  if (!Number(loginAttemptsRows[0]?.total || 0)) {
+    await query("ALTER TABLE users ADD COLUMN failed_login_attempts INT NOT NULL DEFAULT 0");
+  }
+
+  const lockUntilRows = await query(
+    `SELECT COUNT(*) total
+     FROM INFORMATION_SCHEMA.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = 'users'
+       AND COLUMN_NAME = 'lock_until'`
+  );
+  if (!Number(lockUntilRows[0]?.total || 0)) {
+    await query("ALTER TABLE users ADD COLUMN lock_until DATETIME NULL");
+  }
+
+  const lastFailedLoginRows = await query(
+    `SELECT COUNT(*) total
+     FROM INFORMATION_SCHEMA.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = 'users'
+       AND COLUMN_NAME = 'last_failed_login_at'`
+  );
+  if (!Number(lastFailedLoginRows[0]?.total || 0)) {
+    await query("ALTER TABLE users ADD COLUMN last_failed_login_at DATETIME NULL");
+  }
+
   const moduleAccessRows = await query(
     `SELECT COUNT(*) total
      FROM INFORMATION_SCHEMA.TABLES
@@ -197,6 +230,39 @@ async function ensureUserPasswordPolicyColumns() {
         INDEX idx_chat_room_inst_created (institution_id, created_at)
       )`
     );
+  }
+
+  const otpVerifyAttemptsRows = await query(
+    `SELECT COUNT(*) total
+     FROM INFORMATION_SCHEMA.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = 'otp_sessions'
+       AND COLUMN_NAME = 'verify_attempts'`
+  );
+  if (!Number(otpVerifyAttemptsRows[0]?.total || 0)) {
+    await query("ALTER TABLE otp_sessions ADD COLUMN verify_attempts INT NOT NULL DEFAULT 0");
+  }
+
+  const otpMaxAttemptsRows = await query(
+    `SELECT COUNT(*) total
+     FROM INFORMATION_SCHEMA.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = 'otp_sessions'
+       AND COLUMN_NAME = 'max_attempts'`
+  );
+  if (!Number(otpMaxAttemptsRows[0]?.total || 0)) {
+    await query("ALTER TABLE otp_sessions ADD COLUMN max_attempts INT NOT NULL DEFAULT 5");
+  }
+
+  const otpLastAttemptRows = await query(
+    `SELECT COUNT(*) total
+     FROM INFORMATION_SCHEMA.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = 'otp_sessions'
+       AND COLUMN_NAME = 'last_attempt_at'`
+  );
+  if (!Number(otpLastAttemptRows[0]?.total || 0)) {
+    await query("ALTER TABLE otp_sessions ADD COLUMN last_attempt_at DATETIME NULL");
   }
 }
 
