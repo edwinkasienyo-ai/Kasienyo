@@ -18,6 +18,7 @@ const {
   GRADES,
   FORMS,
   TERMS,
+  YEAR_JOINED_OPTIONS,
   GENDER_OPTIONS,
   ADMISSION_STATUS,
   ORPHAN_STATUS,
@@ -212,11 +213,18 @@ const AGREEMENT_COMPANY = {
 const PASSWORD_ROTATION_DAYS = Number(process.env.PASSWORD_ROTATION_DAYS || 30);
 const PASSWORD_ROTATION_EXEMPT_ROLES = new Set([ROLES.SYSTEM_DEVELOPER]);
 const PASSWORD_MIN_LENGTH = Number(process.env.PASSWORD_MIN_LENGTH || 12);
+const USERNAME_MIN_LENGTH = Number(process.env.USERNAME_MIN_LENGTH || 5);
 const LOGIN_MAX_ATTEMPTS = Number(process.env.LOGIN_MAX_ATTEMPTS || 5);
 const LOGIN_LOCKOUT_MINUTES = Number(process.env.LOGIN_LOCKOUT_MINUTES || 15);
 const OTP_MAX_VERIFY_ATTEMPTS = Number(process.env.OTP_MAX_VERIFY_ATTEMPTS || 5);
+const OTP_RESEND_COOLDOWN_SECONDS = Number(process.env.OTP_RESEND_COOLDOWN_SECONDS || 30);
+const ACCOUNT_MUTATION_COOLDOWN_SECONDS = Number(process.env.ACCOUNT_MUTATION_COOLDOWN_SECONDS || 5);
+const LOGIN_JITTER_MAX_MS = Number(process.env.LOGIN_JITTER_MAX_MS || 350);
 const REQUEST_RATE_WINDOW_MS = Number(process.env.REQUEST_RATE_WINDOW_MS || 15 * 60 * 1000);
+const MAX_PUBLIC_BODY_KEYS = Number(process.env.MAX_PUBLIC_BODY_KEYS || 120);
 const REQUEST_RATE_TRACKER = new Map();
+const OTP_REQUEST_TRACKER = new Map();
+const ACCOUNT_MUTATION_TRACKER = new Map();
 
 function padThree(value) {
   return String(Number(value) || 0).padStart(3, "0");
@@ -227,6 +235,13 @@ function parseTruthy(value) {
   const normalized = cleanValue(value).toLowerCase();
   if (!normalized) return false;
   return ["1", "true", "yes", "y", "on"].includes(normalized);
+}
+
+async function delayWithRandomJitter() {
+  const maxDelay = Math.max(LOGIN_JITTER_MAX_MS, 0);
+  if (!maxDelay) return;
+  const delay = Math.floor(Math.random() * (maxDelay + 1));
+  await new Promise((resolve) => setTimeout(resolve, delay));
 }
 
 function getClientIp(req) {
@@ -264,6 +279,25 @@ function enforceRateLimit({ bucket, maxRequests, windowMs }) {
   };
 }
 
+function enforceAccountMutationCooldown() {
+  return (req, res, next) => {
+    const actorKey = cleanValue(req.user?.id || req.user?.username || "anonymous");
+    const key = `acct-mutation:${actorKey}`;
+    const now = Date.now();
+    const previous = ACCOUNT_MUTATION_TRACKER.get(key) || 0;
+    const minIntervalMs = Math.max(ACCOUNT_MUTATION_COOLDOWN_SECONDS, 0) * 1000;
+    if (minIntervalMs > 0 && previous && now - previous < minIntervalMs) {
+      const retryAfter = Math.ceil((minIntervalMs - (now - previous)) / 1000);
+      return res.status(429).json({
+        error: "Account mutation cooldown active. Retry shortly.",
+        retry_after_seconds: retryAfter
+      });
+    }
+    ACCOUNT_MUTATION_TRACKER.set(key, now);
+    return next();
+  };
+}
+
 const authLoginRateLimit = enforceRateLimit({
   bucket: "auth-login",
   maxRequests: Number(process.env.RATE_LIMIT_AUTH_LOGIN_MAX || 40),
@@ -284,11 +318,12 @@ const accountMutationRateLimit = enforceRateLimit({
   maxRequests: Number(process.env.RATE_LIMIT_ACCOUNT_MUTATION_MAX || 60),
   windowMs: REQUEST_RATE_WINDOW_MS
 });
+const accountMutationCooldown = enforceAccountMutationCooldown();
 
 function enforcePublicSecurity(req, res, next) {
   const body = req.body && typeof req.body === "object" ? req.body : {};
   const compactKeys = Object.keys(body);
-  if (compactKeys.length > 120) {
+  if (compactKeys.length > MAX_PUBLIC_BODY_KEYS) {
     return res.status(400).json({ error: "Request payload has too many fields." });
   }
   const contentType = cleanValue(req.headers["content-type"]).toLowerCase();
@@ -329,6 +364,20 @@ function requireStrongPassword(password, fieldLabel = "password") {
   if (errors.length) {
     const label = cleanValue(fieldLabel) || "password";
     return `${label} ${errors.join(", ")}.`;
+  }
+  return null;
+}
+
+function validateUsername(username, fieldLabel = "username") {
+  const value = cleanValue(username);
+  if (!value) {
+    return `${fieldLabel} is required.`;
+  }
+  if (value.length < USERNAME_MIN_LENGTH) {
+    return `${fieldLabel} must be at least ${USERNAME_MIN_LENGTH} characters.`;
+  }
+  if (!/^[A-Za-z0-9._-]+$/.test(value)) {
+    return `${fieldLabel} can only include letters, numbers, dot, underscore or dash.`;
   }
   return null;
 }
@@ -429,6 +478,22 @@ async function recordOtpSuccess(sessionId) {
      WHERE id = ?`,
     [numericId]
   );
+}
+
+function checkOtpRequestCooldown(identity) {
+  const key = cleanValue(identity).toLowerCase();
+  if (!key || OTP_RESEND_COOLDOWN_SECONDS <= 0) {
+    return { allowed: true, remainingSeconds: 0 };
+  }
+  const now = Date.now();
+  const previous = OTP_REQUEST_TRACKER.get(key) || 0;
+  const cooldownMs = OTP_RESEND_COOLDOWN_SECONDS * 1000;
+  if (previous && now - previous < cooldownMs) {
+    const remaining = Math.ceil((cooldownMs - (now - previous)) / 1000);
+    return { allowed: false, remainingSeconds: remaining };
+  }
+  OTP_REQUEST_TRACKER.set(key, now);
+  return { allowed: true, remainingSeconds: 0 };
 }
 
 function isOtpChannelConfigured(channel) {
@@ -592,6 +657,8 @@ const MODULE_KEYS = {
   FINANCE_FEE_STRUCTURE: "finance-fee-structure",
   FINANCE_FEE_PAYMENTS: "finance-fee-payments",
   FINANCE_PROCUREMENT: "finance-procurement",
+  FINANCE_PAYROLL: "finance-payroll",
+  FINANCE_SALARY_ADVANCE: "finance-salary-advance",
   COMMUNICATION_ANNOUNCEMENTS: "communication-announcements",
   COMMUNICATION_MESSAGES: "communication-messages",
   LEARNER_RESOURCES: "learner-resources",
@@ -628,6 +695,8 @@ const DEFAULT_MODULE_ACCESS_BY_ROLE = {
     MODULE_KEYS.HR_LEAVE,
     MODULE_KEYS.FINANCE_FEE_PAYMENTS,
     MODULE_KEYS.FINANCE_PROCUREMENT,
+    MODULE_KEYS.FINANCE_PAYROLL,
+    MODULE_KEYS.FINANCE_SALARY_ADVANCE,
     MODULE_KEYS.WELFARE_MEMBERS,
     MODULE_KEYS.WELFARE_CONTRIBUTIONS,
     MODULE_KEYS.WELFARE_LOANS,
@@ -1165,8 +1234,10 @@ async function authenticateParentByLearner(username, password) {
   const learners = await query(
     `SELECT id, institution_id, full_name, parent_full_name, parent_phone, parent_email, parent_id_number
      FROM learners
-     WHERE birth_certificate_number = ? AND parent_id_number = ? LIMIT 1`,
-    [username, password]
+     WHERE (birth_certificate_number = ? OR upi_number = ? OR assessment_number = ?)
+       AND parent_id_number = ?
+     LIMIT 1`,
+    [username, username, username, password]
   );
 
   if (!learners.length) {
@@ -1257,6 +1328,7 @@ app.get("/api/meta", (_, res) => {
     permissions: PERMISSIONS,
     rolePermissions: ROLE_PERMISSIONS,
     gradeOptions: GRADES,
+    yearJoinedOptions: YEAR_JOINED_OPTIONS,
     formOptions: FORMS,
     termOptions: TERMS,
     genderOptions: GENDER_OPTIONS,
@@ -1287,8 +1359,14 @@ app.post("/api/auth/login", authLoginRateLimit, asyncHandler(async (req, res) =>
   if (!username || !password) {
     return res.status(400).json({ error: "Username and password are required." });
   }
+  const usernameValidationError = validateUsername(username, "username");
+  if (usernameValidationError) {
+    await delayWithRandomJitter();
+    return res.status(400).json({ error: usernameValidationError });
+  }
   const securityUser = await getActiveUserSecurityState(username);
   if (isAccountLocked(securityUser)) {
+    await delayWithRandomJitter();
     return res.status(423).json({
       error: "Account temporarily locked due to repeated failed login attempts.",
       locked_until: normalizeDateTime(securityUser.locked_until)
@@ -1297,6 +1375,7 @@ app.post("/api/auth/login", authLoginRateLimit, asyncHandler(async (req, res) =>
 
   const userAccount = await authenticateByUserTable(username, password);
   if (userAccount?.blocked) {
+    await delayWithRandomJitter();
     return res.status(403).json({
       error: userAccount.error,
       role: userAccount.role,
@@ -1310,6 +1389,7 @@ app.post("/api/auth/login", authLoginRateLimit, asyncHandler(async (req, res) =>
 
   if (!account) {
     const failureState = await recordFailedLoginAttempt(securityUser || {});
+    await delayWithRandomJitter();
     return res.status(failureState?.lockedUntil ? 423 : 401).json({
       error: failureState?.lockedUntil
         ? "Account temporarily locked due to repeated failed login attempts."
@@ -1320,6 +1400,13 @@ app.post("/api/auth/login", authLoginRateLimit, asyncHandler(async (req, res) =>
   }
   if (securityUser?.id) {
     await resetLoginFailureState(securityUser.id);
+  }
+  const otpCooldown = checkOtpRequestCooldown(account.identity);
+  if (!otpCooldown.allowed) {
+    return res.status(429).json({
+      error: "OTP already requested recently. Please wait before requesting another code.",
+      otp_resend_available_after_seconds: otpCooldown.remainingSeconds
+    });
   }
 
   const requestedChannel = cleanValue(otpChannel || process.env.OTP_CHANNEL || "console").toLowerCase() || "console";
@@ -1345,7 +1432,8 @@ app.post("/api/auth/login", authLoginRateLimit, asyncHandler(async (req, res) =>
     otp_channel: channel,
     otp_channel_used: channel,
     otp_preview: exposeOtpPreview ? otpSession.code : null,
-    otp_expires_at: exposeOtpPreview ? otpSession.expiresAt : null
+    otp_expires_at: exposeOtpPreview ? otpSession.expiresAt : null,
+    otp_resend_available_after_seconds: OTP_RESEND_COOLDOWN_SECONDS
   });
 }));
 
@@ -1445,7 +1533,7 @@ app.get("/api/auth/me", auth, asyncHandler(async (req, res) => {
   });
 }));
 
-app.patch("/api/users/:id/force-reset-password", auth, accountMutationRateLimit, enforceRole([ROLES.SYSTEM_DEVELOPER]), asyncHandler(async (req, res) => {
+app.patch("/api/users/:id/force-reset-password", auth, accountMutationRateLimit, accountMutationCooldown, enforceRole([ROLES.SYSTEM_DEVELOPER]), asyncHandler(async (req, res) => {
   const userId = Number(req.params.id);
   if (!userId) {
     return res.status(400).json({ error: "Valid user id is required." });
@@ -1497,6 +1585,85 @@ app.patch("/api/users/:id/force-reset-password", auth, accountMutationRateLimit,
   });
 }));
 
+app.patch("/api/system-developer/credentials", auth, accountMutationRateLimit, accountMutationCooldown, enforceRole([ROLES.SYSTEM_DEVELOPER]), asyncHandler(async (req, res) => {
+  const currentUsername = cleanValue(req.body?.current_username) || cleanValue(req.user.username);
+  const newUsername = cleanOptionalValue(req.body?.new_username);
+  const newPasswordRaw = cleanOptionalValue(req.body?.new_password);
+  const autoGeneratePassword = parseTruthy(req.body?.auto_generate_password);
+  const newPassword = autoGeneratePassword ? generateStrongPassword(14) : newPasswordRaw;
+
+  if (!currentUsername) {
+    return res.status(400).json({ error: "current_username is required." });
+  }
+  if (!newUsername && !newPassword) {
+    return res.status(400).json({
+      error: "Provide new_username or new_password (or set auto_generate_password=true)."
+    });
+  }
+  if (newUsername) {
+    const usernameValidationError = validateUsername(newUsername, "new_username");
+    if (usernameValidationError) {
+      return res.status(400).json({ error: usernameValidationError });
+    }
+  }
+  if (newPassword) {
+    const weakPasswordError = requireStrongPassword(newPassword, "new_password");
+    if (weakPasswordError) {
+      return res.status(400).json({ error: weakPasswordError });
+    }
+  }
+
+  const users = await query(
+    `SELECT id, username
+     FROM users
+     WHERE username = ?
+       AND role = ?
+     ORDER BY id ASC
+     LIMIT 1`,
+    [currentUsername, ROLES.SYSTEM_DEVELOPER]
+  );
+  if (!users.length) {
+    return res.status(404).json({ error: "System Developer account not found." });
+  }
+  const targetUser = users[0];
+
+  if (newUsername && newUsername !== targetUser.username) {
+    const existing = await query("SELECT id FROM users WHERE username = ? LIMIT 1", [newUsername]);
+    if (existing.length) {
+      return res.status(409).json({ error: "new_username is already in use." });
+    }
+  }
+
+  const updates = [];
+  const params = [];
+  if (newUsername) {
+    updates.push("username = ?");
+    params.push(newUsername);
+  }
+  if (newPassword) {
+    updates.push("password_hash = ?");
+    params.push(await hashPassword(newPassword));
+    updates.push("password_last_changed_at = NOW()");
+    updates.push("password_expires_at = NULL");
+    updates.push("must_change_password = 0");
+    updates.push("failed_login_attempts = 0");
+    updates.push("locked_until = NULL");
+    updates.push("last_failed_login_at = NULL");
+  }
+  await query(`UPDATE users SET ${updates.join(", ")} WHERE id = ?`, [...params, targetUser.id]);
+  await auditLog(req.user, "SYSTEM_DEVELOPER_UPDATE_CREDENTIALS", "users", targetUser.id, {
+    previous_username: targetUser.username,
+    new_username: newUsername || targetUser.username,
+    password_rotated: Boolean(newPassword),
+    auto_generated_password: autoGeneratePassword
+  });
+  res.json({
+    message: "System Developer credentials updated successfully.",
+    username: newUsername || targetUser.username,
+    generated_password: autoGeneratePassword ? newPassword : null
+  });
+}));
+
 app.post("/api/public/register-institution", publicWriteRateLimit, enforcePublicSecurity, asyncHandler(async (req, res) => {
   const institutionName = cleanValue(req.body?.institution_name);
   const institutionEmail = cleanOptionalValue(req.body?.email);
@@ -1514,8 +1681,12 @@ app.post("/api/public/register-institution", publicWriteRateLimit, enforcePublic
 
   const adminFullName = cleanValue(req.body?.admin_full_name);
   const adminUsername = cleanValue(req.body?.admin_username);
+  const adminUsernameValidationError = validateUsername(adminUsername, "admin_username");
+  if (adminUsernameValidationError) {
+    return res.status(400).json({ error: adminUsernameValidationError });
+  }
   const adminPasswordInput = cleanValue(req.body?.admin_password);
-  const portalRoleRaw = cleanValue(req.body?.portal_role);
+  const portalRoleRaw = normalizeRole(cleanValue(req.body?.portal_role));
   const portalRole = [ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION].includes(portalRoleRaw)
     ? portalRoleRaw
     : ROLES.HEAD_OF_INSTITUTION;
@@ -1654,6 +1825,10 @@ app.post("/api/public/register-user", publicWriteRateLimit, enforcePublicSecurit
   const institutionCode = cleanValue(req.body?.institution_code);
   const fullName = cleanValue(req.body?.full_name);
   const username = cleanValue(req.body?.username);
+  const usernameValidationError = validateUsername(username, "username");
+  if (usernameValidationError) {
+    return res.status(400).json({ error: usernameValidationError });
+  }
   const passwordInput = cleanValue(req.body?.password);
   const autoGeneratePassword = parseTruthy(req.body?.auto_generate_password);
   const password = autoGeneratePassword ? generateStrongPassword(12) : passwordInput;
@@ -1661,7 +1836,7 @@ app.post("/api/public/register-user", publicWriteRateLimit, enforcePublicSecurit
   if (weakPasswordError) {
     return res.status(400).json({ error: weakPasswordError });
   }
-  const role = cleanValue(req.body?.portal_role);
+  const role = normalizeRole(cleanValue(req.body?.portal_role));
   const email = cleanOptionalValue(req.body?.email);
   const phone = cleanOptionalValue(req.body?.phone);
 
@@ -2610,8 +2785,16 @@ app.get(
 app.get(
   "/api/users",
   auth,
-  enforceRole([ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
+  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
   asyncHandler(async (req, res) => {
+    if (normalizeRole(req.user.role) === ROLES.SYSTEM_DEVELOPER) {
+      const users = await query(
+        `SELECT id, institution_id, full_name, username, role, email, phone, is_active, created_at
+         FROM users
+         ORDER BY institution_id ASC, id DESC`
+      );
+      return res.json(users);
+    }
     const users = await query(
       `SELECT id, institution_id, full_name, username, role, email, phone, is_active, created_at
        FROM users WHERE institution_id = ? ORDER BY id DESC`,
@@ -2625,7 +2808,8 @@ app.post(
   "/api/users",
   auth,
   accountMutationRateLimit,
-  enforceRole([ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
+  accountMutationCooldown,
+  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
   asyncHandler(async (req, res) => {
     const { full_name, username, password, role, email, phone } = req.body;
     if (!full_name || !username || !password || !role) {
@@ -2635,25 +2819,53 @@ app.post(
     if (weakPasswordError) {
       return res.status(400).json({ error: weakPasswordError });
     }
+    const usernameValidationError = validateUsername(username, "username");
+    if (usernameValidationError) {
+      return res.status(400).json({ error: usernameValidationError });
+    }
+    const normalizedRole = normalizeRole(role);
+    if (!PUBLIC_ROLE_OPTIONS.includes(normalizedRole)) {
+      return res.status(400).json({
+        error: `role must be one of: ${PUBLIC_ROLE_OPTIONS.join(", ")}`
+      });
+    }
     const passwordHash = await hashPassword(password);
-    const isRotationExempt = PASSWORD_ROTATION_EXEMPT_ROLES.has(role);
+    const isRotationExempt = PASSWORD_ROTATION_EXEMPT_ROLES.has(normalizedRole);
+    const targetInstitutionId =
+      normalizeRole(req.user.role) === ROLES.SYSTEM_DEVELOPER
+        ? Number(req.body?.institution_id || req.user.institution_id)
+        : req.user.institution_id;
+    if (!targetInstitutionId) {
+      return res.status(400).json({ error: "institution_id is required for this operation." });
+    }
+    const existingUser = await query(
+      "SELECT id FROM users WHERE institution_id = ? AND username = ? LIMIT 1",
+      [targetInstitutionId, username]
+    );
+    if (existingUser.length) {
+      return res.status(409).json({ error: "Username already exists for this institution." });
+    }
     const result = await query(
       `INSERT INTO users
         (institution_id, full_name, username, password_hash, password_last_changed_at, password_expires_at, role, email, phone, is_active, created_by)
        VALUES (?, ?, ?, ?, NOW(), ?, ?, ?, ?, 1, ?)`,
       [
-        req.user.institution_id,
+        targetInstitutionId,
         full_name,
         username,
         passwordHash,
         isRotationExempt ? null : dayjs().add(PASSWORD_ROTATION_DAYS, "day").format("YYYY-MM-DD HH:mm:ss"),
-        role,
+        normalizedRole,
         email || null,
         phone || null,
         req.user.id
       ]
     );
-    await auditLog(req.user, "CREATE_USER", "users", result.insertId, { username, role });
+    await auditLog(req.user, "CREATE_USER", "users", result.insertId, {
+      username,
+      role: normalizedRole,
+      institution_id: targetInstitutionId
+    });
     res.status(201).json({ id: result.insertId, message: "User created successfully." });
   })
 );
@@ -2661,14 +2873,27 @@ app.post(
 app.patch(
   "/api/users/:id/status",
   auth,
-  enforceRole([ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
+  accountMutationRateLimit,
+  accountMutationCooldown,
+  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
   asyncHandler(async (req, res) => {
     const { is_active } = req.body;
-    await query("UPDATE users SET is_active = ? WHERE id = ? AND institution_id = ?", [
-      Number(Boolean(is_active)),
-      req.params.id,
-      req.user.institution_id
-    ]);
+    const userId = Number(req.params.id);
+    const normalizedRequesterRole = normalizeRole(req.user.role);
+    const users = await query(
+      `SELECT id, institution_id, username
+       FROM users
+       WHERE id = ?
+       LIMIT 1`,
+      [userId]
+    );
+    if (!users.length) {
+      return res.status(404).json({ error: "User account not found." });
+    }
+    if (normalizedRequesterRole !== ROLES.SYSTEM_DEVELOPER && users[0].institution_id !== req.user.institution_id) {
+      return res.status(403).json({ error: "You can only change user status within your institution." });
+    }
+    await query("UPDATE users SET is_active = ? WHERE id = ?", [Number(Boolean(is_active)), userId]);
     await auditLog(req.user, "CHANGE_USER_STATUS", "users", req.params.id, { is_active });
     res.json({ message: "User status updated." });
   })
@@ -2678,7 +2903,8 @@ app.patch(
   "/api/users/:id/password",
   auth,
   accountMutationRateLimit,
-  enforceRole([ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
+  accountMutationCooldown,
+  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
   asyncHandler(async (req, res) => {
     const userId = Number(req.params.id);
     const autoGeneratePassword = parseTruthy(req.body?.auto_generate_password);
@@ -2693,14 +2919,18 @@ app.patch(
     }
 
     const users = await query(
-      `SELECT id, username, email, phone
+      `SELECT id, institution_id, username, email, phone
        FROM users
-       WHERE id = ? AND institution_id = ?
+       WHERE id = ?
        LIMIT 1`,
-      [userId, req.user.institution_id]
+      [userId]
     );
     if (!users.length) {
-      return res.status(404).json({ error: "User account not found in your institution." });
+      return res.status(404).json({ error: "User account not found." });
+    }
+    const normalizedRequesterRole = normalizeRole(req.user.role);
+    if (normalizedRequesterRole !== ROLES.SYSTEM_DEVELOPER && users[0].institution_id !== req.user.institution_id) {
+      return res.status(403).json({ error: "You can only reset user passwords within your institution." });
     }
 
     const passwordHash = await hashPassword(newPassword);
@@ -2713,8 +2943,8 @@ app.patch(
            failed_login_attempts = 0,
            locked_until = NULL,
            last_failed_login_at = NULL
-       WHERE id = ? AND institution_id = ?`,
-      [passwordHash, PASSWORD_ROTATION_DAYS, userId, req.user.institution_id]
+       WHERE id = ?`,
+      [passwordHash, PASSWORD_ROTATION_DAYS, userId]
     );
 
     let credentialDispatch = null;
@@ -2742,6 +2972,198 @@ app.patch(
       message: "Password reset successfully.",
       generated_password: autoGeneratePassword ? newPassword : null,
       credential_dispatch: credentialDispatch
+    });
+  })
+);
+
+app.delete(
+  "/api/users/:id",
+  auth,
+  accountMutationRateLimit,
+  accountMutationCooldown,
+  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
+  asyncHandler(async (req, res) => {
+    const userId = Number(req.params.id);
+    if (!userId) {
+      return res.status(400).json({ error: "Valid user id is required." });
+    }
+    if (Number(req.user.id) === userId) {
+      return res.status(400).json({ error: "You cannot delete your own account." });
+    }
+    const users = await query(
+      `SELECT id, institution_id, username, role
+       FROM users
+       WHERE id = ?
+       LIMIT 1`,
+      [userId]
+    );
+    if (!users.length) {
+      return res.status(404).json({ error: "User account not found." });
+    }
+    const targetUser = users[0];
+    const requesterRole = normalizeRole(req.user.role);
+    if (requesterRole !== ROLES.SYSTEM_DEVELOPER && targetUser.institution_id !== req.user.institution_id) {
+      return res.status(403).json({ error: "You can only delete users within your institution." });
+    }
+    if (requesterRole !== ROLES.SYSTEM_DEVELOPER && normalizeRole(targetUser.role) === ROLES.SYSTEM_DEVELOPER) {
+      return res.status(403).json({ error: "Only the System Developer can delete this account." });
+    }
+    await query("DELETE FROM users WHERE id = ?", [userId]);
+    await auditLog(req.user, "DELETE_USER", "users", userId, {
+      username: targetUser.username,
+      role: targetUser.role
+    });
+    res.json({ message: "User deleted successfully." });
+  })
+);
+
+app.post(
+  "/api/finance/payroll/auto-generate",
+  auth,
+  enforceModuleAccess(MODULE_KEYS.FINANCE_PAYROLL),
+  enforceRole([ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
+  enforcePermission(PERMISSIONS.CREATE),
+  asyncHandler(async (req, res) => {
+    const payrollMonth = cleanValue(req.body?.payroll_month) || dayjs().format("MMMM");
+    const payrollYear = Number(req.body?.payroll_year || dayjs().year());
+    const basicSalary = Number(req.body?.basic_salary || 0);
+    const allowances = Number(req.body?.allowances || 0);
+    const deductions = Number(req.body?.deductions || 0);
+    const paymentStatus = cleanValue(req.body?.payment_status) || "Pending";
+    const paymentDate = cleanOptionalValue(req.body?.payment_date) || null;
+    const remarks = cleanOptionalValue(req.body?.remarks);
+    const netSalary = basicSalary + allowances - deductions;
+
+    const teachers = await query(
+      `SELECT id, full_name, tsc_number staff_number, id_number
+       FROM teacher_profiles
+       WHERE institution_id = ?`,
+      [req.user.institution_id]
+    );
+    const nonTeaching = await query(
+      `SELECT id, full_name, staff_number, id_number
+       FROM non_teaching_staff_profiles
+       WHERE institution_id = ?`,
+      [req.user.institution_id]
+    );
+    const records = [
+      ...teachers.map((row) => ({ ...row, staff_profile_type: "Teacher" })),
+      ...nonTeaching.map((row) => ({ ...row, staff_profile_type: "Non-Teaching Staff" }))
+    ];
+    if (!records.length) {
+      return res.status(400).json({ error: "No teacher or non-teaching staff records found for payroll generation." });
+    }
+
+    for (const item of records) {
+      // eslint-disable-next-line no-await-in-loop
+      await query(
+        `INSERT INTO finance_payroll_records
+          (institution_id, staff_profile_type, staff_profile_id, staff_name, staff_number, id_number, payroll_month, payroll_year,
+           basic_salary, allowances, deductions, net_salary, payment_status, payment_date, remarks, created_by_user_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          req.user.institution_id,
+          item.staff_profile_type,
+          item.id,
+          item.full_name,
+          item.staff_number || null,
+          item.id_number || null,
+          payrollMonth,
+          payrollYear,
+          basicSalary,
+          allowances,
+          deductions,
+          netSalary,
+          paymentStatus,
+          paymentDate,
+          remarks,
+          req.user.id
+        ]
+      );
+    }
+
+    await auditLog(req.user, "AUTO_GENERATE_PAYROLL", "finance_payroll_records", null, {
+      payroll_month: payrollMonth,
+      payroll_year: payrollYear,
+      generated_count: records.length
+    });
+    res.status(201).json({
+      message: "Payroll records auto-generated.",
+      generated_count: records.length,
+      payroll_month: payrollMonth,
+      payroll_year: payrollYear
+    });
+  })
+);
+
+app.post(
+  "/api/finance/salary-advances/auto-process",
+  auth,
+  enforceModuleAccess(MODULE_KEYS.FINANCE_SALARY_ADVANCE),
+  enforceRole([ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.NON_TEACHING_STAFF]),
+  enforcePermission(PERMISSIONS.UPDATE),
+  asyncHandler(async (req, res) => {
+    const requestId = Number(req.body?.request_id);
+    if (!requestId) {
+      return res.status(400).json({ error: "request_id is required." });
+    }
+    const decision = cleanValue(req.body?.decision).toLowerCase();
+    if (!["approve", "reject"].includes(decision)) {
+      return res.status(400).json({ error: "decision must be approve or reject." });
+    }
+    const amountApproved = Number(req.body?.amount_approved || 0);
+    const deductionPlan = cleanOptionalValue(req.body?.deduction_plan);
+    const rows = await query(
+      `SELECT id, institution_id, staff_name, amount_requested, approval_status
+       FROM finance_salary_advances
+       WHERE id = ? AND institution_id = ?
+       LIMIT 1`,
+      [requestId, req.user.institution_id]
+    );
+    if (!rows.length) {
+      return res.status(404).json({ error: "Salary advance request not found." });
+    }
+    const target = rows[0];
+    if (target.approval_status === "Approved" || target.approval_status === "Rejected") {
+      return res.status(409).json({ error: "Salary advance request already processed." });
+    }
+
+    const approvalStatus = decision === "approve" ? "Approved" : "Rejected";
+    const approvedAmount = decision === "approve" ? (amountApproved > 0 ? amountApproved : Number(target.amount_requested || 0)) : 0;
+    await query(
+      `UPDATE finance_salary_advances
+       SET approval_status = ?,
+           approved_by_user_id = ?,
+           approved_at = NOW(),
+           amount_approved = ?,
+           processing_status = ?,
+           processed_date = ?,
+           repayment_status = ?,
+           deduction_plan = ?,
+           updated_at = NOW()
+       WHERE id = ? AND institution_id = ?`,
+      [
+        approvalStatus,
+        req.user.id,
+        approvedAmount,
+        decision === "approve" ? "Processed" : "Declined",
+        decision === "approve" ? dayjs().format("YYYY-MM-DD HH:mm:ss") : null,
+        decision === "approve" ? "In Progress" : "Not Applicable",
+        deductionPlan,
+        requestId,
+        req.user.institution_id
+      ]
+    );
+    await auditLog(req.user, "PROCESS_SALARY_ADVANCE", "finance_salary_advances", requestId, {
+      decision,
+      approved_amount: approvedAmount
+    });
+    res.json({
+      message: `Salary advance ${decision === "approve" ? "approved" : "rejected"} successfully.`,
+      request_id: requestId,
+      staff_name: target.staff_name,
+      approval_status: approvalStatus,
+      amount_approved: approvedAmount
     });
   })
 );
@@ -2793,6 +3215,7 @@ app.post(
   "/api/profile/change-credentials",
   auth,
   accountMutationRateLimit,
+  accountMutationCooldown,
   asyncHandler(async (req, res) => {
     const { current_password, new_username, new_password } = req.body;
     const users = await query("SELECT * FROM users WHERE id = ? AND institution_id = ? LIMIT 1", [
@@ -2812,6 +3235,20 @@ app.post(
     const params = [];
 
     if (new_username) {
+      const usernameValidationError = validateUsername(new_username, "new_username");
+      if (usernameValidationError) {
+        return res.status(400).json({ error: usernameValidationError });
+      }
+      const duplicates = await query(
+        `SELECT id
+         FROM users
+         WHERE institution_id = ? AND username = ? AND id <> ?
+         LIMIT 1`,
+        [req.user.institution_id, new_username, user.id]
+      );
+      if (duplicates.length) {
+        return res.status(409).json({ error: "new_username is already in use." });
+      }
       updates.push("username = ?");
       params.push(new_username);
     }
@@ -3097,6 +3534,54 @@ const moduleConfigs = [
     ]
   },
   {
+    route: "/api/finance/payroll",
+    table: "finance_payroll_records",
+    moduleKey: MODULE_KEYS.FINANCE_PAYROLL,
+    searchFields: ["staff_name", "staff_number", "payroll_month", "payroll_year", "payment_status"],
+    allowedRoles: [ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.NON_TEACHING_STAFF],
+    fields: [
+      "staff_profile_type",
+      "staff_profile_id",
+      "staff_name",
+      "staff_number",
+      "id_number",
+      "payroll_month",
+      "payroll_year",
+      "basic_salary",
+      "allowances",
+      "deductions",
+      "net_salary",
+      "payment_status",
+      "payment_date",
+      "remarks"
+    ]
+  },
+  {
+    route: "/api/finance/salary-advances",
+    table: "finance_salary_advances",
+    moduleKey: MODULE_KEYS.FINANCE_SALARY_ADVANCE,
+    searchFields: ["staff_name", "staff_number", "approval_status", "processing_status", "repayment_status"],
+    allowedRoles: [ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.NON_TEACHING_STAFF],
+    fields: [
+      "staff_profile_type",
+      "staff_profile_id",
+      "staff_name",
+      "staff_number",
+      "amount_requested",
+      "request_date",
+      "reason",
+      "approval_status",
+      "approved_by_user_id",
+      "approved_at",
+      "amount_approved",
+      "processing_status",
+      "processed_date",
+      "repayment_status",
+      "clearance_date",
+      "deduction_plan"
+    ]
+  },
+  {
     route: "/api/finance/procurement",
     table: "finance_procurement_records",
     searchFields: ["document_type", "document_number", "supplier_name", "item_name", "status"],
@@ -3328,6 +3813,27 @@ moduleConfigs.forEach((config) => {
       if (config.table === "finance_procurement_records" && !data.document_number) {
         const prefix = (data.document_type || "DOC").replace(/\s+/g, "").toUpperCase();
         data.document_number = `${prefix}-${Date.now()}`;
+      }
+
+      if (config.table === "finance_payroll_records") {
+        const basicSalary = Number(data.basic_salary || 0);
+        const allowances = Number(data.allowances || 0);
+        const deductions = Number(data.deductions || 0);
+        data.basic_salary = basicSalary;
+        data.allowances = allowances;
+        data.deductions = deductions;
+        data.net_salary = Number.isFinite(Number(data.net_salary))
+          ? Number(data.net_salary)
+          : basicSalary + allowances - deductions;
+      }
+
+      if (config.table === "finance_salary_advances") {
+        data.amount_requested = Number(data.amount_requested || 0);
+        if (data.amount_approved !== undefined && data.amount_approved !== null && data.amount_approved !== "") {
+          data.amount_approved = Number(data.amount_approved);
+        } else {
+          delete data.amount_approved;
+        }
       }
 
       const columns = Object.keys(data);

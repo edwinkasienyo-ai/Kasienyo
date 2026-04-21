@@ -42,6 +42,16 @@ function normalizeRoleValue(role) {
   return normalized;
 }
 
+function validateUsernameValue(username, fieldLabel = "Username") {
+  const value = String(username || "").trim();
+  if (!value) return `${fieldLabel} is required.`;
+  if (value.length < 5) return `${fieldLabel} must be at least 5 characters.`;
+  if (!/^[A-Za-z0-9._-]+$/.test(value)) {
+    return `${fieldLabel} can only contain letters, numbers, dot, underscore, or dash.`;
+  }
+  return null;
+}
+
 async function loadRegistrationMeta() {
   try {
     registrationMeta = await request("/api/public/registration/meta");
@@ -107,6 +117,15 @@ async function login() {
 
   if (!selectedPortalRole) {
     setAuthNotice("Choose portal role first.", "error");
+    return;
+  }
+  const usernameValidationError = validateUsernameValue(username, "Username");
+  if (usernameValidationError) {
+    setAuthNotice(usernameValidationError, "error");
+    return;
+  }
+  if (selectedPortalRole === "SYSTEM_DEVELOPER" && username && username !== "952252") {
+    setAuthNotice("System Developer default username is 952252 (unless amended).", "error");
     return;
   }
   if (!username || !password) {
@@ -236,6 +255,11 @@ async function registerUser() {
 
   if (!institution_code || !full_name || !username || !role) {
     setAuthNotice("Complete institution code, name, username and role.", "error");
+    return;
+  }
+  const usernameValidationError = validateUsernameValue(username, "Username");
+  if (usernameValidationError) {
+    setAuthNotice(usernameValidationError, "error");
     return;
   }
   if (!autoGeneratePassword && !password) {

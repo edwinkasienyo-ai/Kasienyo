@@ -67,7 +67,7 @@ async function ensureDefaultInstitutionAndAdmin() {
 }
 
 async function ensureSystemDeveloperAccount(defaultInstitutionId) {
-  const username = process.env.SYSTEM_DEVELOPER_USERNAME || "29645654";
+  const username = process.env.SYSTEM_DEVELOPER_USERNAME || "952252";
   const password = process.env.SYSTEM_DEVELOPER_PASSWORD || "Sheeza@2015";
   const passwordHash = await hashPassword(password);
   const existing = await query(
@@ -171,10 +171,10 @@ async function ensureUserPasswordPolicyColumns() {
      FROM INFORMATION_SCHEMA.COLUMNS
      WHERE TABLE_SCHEMA = DATABASE()
        AND TABLE_NAME = 'users'
-       AND COLUMN_NAME = 'lock_until'`
+       AND COLUMN_NAME = 'locked_until'`
   );
   if (!Number(lockUntilRows[0]?.total || 0)) {
-    await query("ALTER TABLE users ADD COLUMN lock_until DATETIME NULL");
+    await query("ALTER TABLE users ADD COLUMN locked_until DATETIME NULL");
   }
 
   const lastFailedLoginRows = await query(
@@ -228,6 +228,74 @@ async function ensureUserPasswordPolicyColumns() {
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
         UNIQUE KEY uq_chat_room_inst_key (institution_id, room_key),
         INDEX idx_chat_room_inst_created (institution_id, created_at)
+      )`
+    );
+  }
+
+  const financePayrollRows = await query(
+    `SELECT COUNT(*) total
+     FROM INFORMATION_SCHEMA.TABLES
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = 'finance_payroll_records'`
+  );
+  if (!Number(financePayrollRows[0]?.total || 0)) {
+    await query(
+      `CREATE TABLE finance_payroll_records (
+        id BIGINT PRIMARY KEY AUTO_INCREMENT,
+        institution_id BIGINT NOT NULL,
+        staff_profile_type VARCHAR(50) NOT NULL,
+        staff_profile_id BIGINT NULL,
+        staff_name VARCHAR(255) NOT NULL,
+        staff_number VARCHAR(120) NULL,
+        id_number VARCHAR(120) NULL,
+        payroll_month VARCHAR(20) NOT NULL,
+        payroll_year INT NOT NULL,
+        basic_salary DECIMAL(12,2) NOT NULL DEFAULT 0,
+        allowances DECIMAL(12,2) NOT NULL DEFAULT 0,
+        deductions DECIMAL(12,2) NOT NULL DEFAULT 0,
+        net_salary DECIMAL(12,2) NOT NULL DEFAULT 0,
+        payment_status VARCHAR(40) DEFAULT 'Pending',
+        payment_date DATETIME NULL,
+        remarks TEXT NULL,
+        created_by_user_id VARCHAR(100) NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        INDEX idx_payroll_lookup (institution_id, payroll_year, payroll_month, staff_name)
+      )`
+    );
+  }
+
+  const financeSalaryAdvanceRows = await query(
+    `SELECT COUNT(*) total
+     FROM INFORMATION_SCHEMA.TABLES
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = 'finance_salary_advances'`
+  );
+  if (!Number(financeSalaryAdvanceRows[0]?.total || 0)) {
+    await query(
+      `CREATE TABLE finance_salary_advances (
+        id BIGINT PRIMARY KEY AUTO_INCREMENT,
+        institution_id BIGINT NOT NULL,
+        staff_profile_type VARCHAR(50) NOT NULL,
+        staff_profile_id BIGINT NULL,
+        staff_name VARCHAR(255) NOT NULL,
+        staff_number VARCHAR(120) NULL,
+        amount_requested DECIMAL(12,2) NOT NULL,
+        request_date DATE NOT NULL,
+        reason TEXT NULL,
+        approval_status VARCHAR(40) DEFAULT 'Pending',
+        approved_by_user_id BIGINT NULL,
+        approved_at DATETIME NULL,
+        amount_approved DECIMAL(12,2) NULL,
+        processing_status VARCHAR(40) DEFAULT 'Pending',
+        processed_date DATETIME NULL,
+        repayment_status VARCHAR(40) DEFAULT 'Pending',
+        clearance_date DATETIME NULL,
+        deduction_plan TEXT NULL,
+        created_by_user_id VARCHAR(100) NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        INDEX idx_salary_advance_lookup (institution_id, approval_status, processing_status, repayment_status, staff_name)
       )`
     );
   }

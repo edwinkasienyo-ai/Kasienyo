@@ -33,6 +33,8 @@ const MODULE_KEY_BY_ID = {
   "hr-recruitment": "hr-recruitment",
   "finance-fee-structure": "finance-fee-structure",
   "finance-fee-payments": "finance-fee-payments",
+  "finance-payroll": "finance-payroll",
+  "finance-salary-advance": "finance-salary-advance",
   "finance-procurement": "finance-procurement",
   "communication-announcements": "communication-announcements",
   "communication-messages": "communication-messages",
@@ -57,6 +59,8 @@ const MODULE_DESCRIPTIONS = {
   "hr-recruitment": "Handle vacancies, appointments, and HR letter workflows.",
   "finance-fee-structure": "Define fees by class, stream, term, and year.",
   "finance-fee-payments": "Record fee payments, balances, and payment methods.",
+  "finance-payroll": "Manage staff payroll generation, net pay, and payroll status.",
+  "finance-salary-advance": "Manage salary advance requests, approvals, and repayment tracking.",
   "finance-procurement": "Manage procurement documents, vouchers, and supplier records.",
   "communication-announcements": "Publish institution announcements for targeted audiences.",
   "communication-messages": "Queue, dispatch, and monitor multi-channel communication.",
@@ -96,7 +100,7 @@ const moduleConfigs = {
       { name: "location", label: "Location" },
       { name: "sub_location", label: "Sub Location" },
       { name: "village", label: "Village" },
-      { name: "year_joined", label: "Year Joined", type: "number" },
+      { name: "year_joined", label: "Year Joined", type: "select", optionsKey: "yearJoinedOptions" },
       { name: "term_joined", label: "Term Joined", type: "select", optionsKey: "termOptions" },
       { name: "orphan_condition", label: "Condition", type: "select", optionsKey: "orphanStatus" },
       { name: "status", label: "Status", type: "select", optionsKey: "admissionStatus" },
@@ -265,6 +269,44 @@ const moduleConfigs = {
       { name: "receipt_number", label: "Receipt Number" },
       { name: "payment_date", label: "Payment Date", type: "datetime-local" },
       { name: "balance_after_payment", label: "Balance After Payment", type: "number" }
+    ]
+  },
+  "finance-payroll": {
+    title: "Finance - Staff Payroll",
+    endpoint: "/api/finance/payroll",
+    fields: [
+      { name: "staff_profile_type", label: "Staff Type", type: "select", options: ["Teacher", "Non-Teaching Staff"] },
+      { name: "staff_profile_id", label: "Staff Profile ID", type: "number" },
+      { name: "staff_name", label: "Staff Name" },
+      { name: "staff_number", label: "Staff Number" },
+      { name: "id_number", label: "ID Number" },
+      { name: "payroll_month", label: "Payroll Month" },
+      { name: "payroll_year", label: "Payroll Year", type: "number" },
+      { name: "basic_salary", label: "Basic Salary", type: "number" },
+      { name: "allowances", label: "Allowances", type: "number" },
+      { name: "deductions", label: "Deductions", type: "number" },
+      { name: "net_salary", label: "Net Salary", type: "number" },
+      { name: "payment_status", label: "Payment Status", type: "select", options: ["Pending", "Processed", "Paid", "On Hold"] },
+      { name: "payment_date", label: "Payment Date", type: "datetime-local" },
+      { name: "remarks", label: "Remarks", type: "textarea" }
+    ]
+  },
+  "finance-salary-advance": {
+    title: "Finance - Salary Advances",
+    endpoint: "/api/finance/salary-advances",
+    fields: [
+      { name: "staff_profile_type", label: "Staff Type", type: "select", options: ["Teacher", "Non-Teaching Staff"] },
+      { name: "staff_profile_id", label: "Staff Profile ID", type: "number" },
+      { name: "staff_name", label: "Staff Name" },
+      { name: "staff_number", label: "Staff Number" },
+      { name: "amount_requested", label: "Amount Requested", type: "number" },
+      { name: "request_date", label: "Request Date", type: "date" },
+      { name: "reason", label: "Reason", type: "textarea" },
+      { name: "approval_status", label: "Approval Status", type: "select", options: ["Pending", "Approved", "Rejected"] },
+      { name: "amount_approved", label: "Amount Approved", type: "number" },
+      { name: "processing_status", label: "Processing Status", type: "select", options: ["Pending", "Processed", "Declined"] },
+      { name: "repayment_status", label: "Repayment Status", type: "select", options: ["Pending", "In Progress", "Completed", "Not Applicable"] },
+      { name: "deduction_plan", label: "Deduction Plan", type: "textarea" }
     ]
   },
   "finance-procurement": {
@@ -488,6 +530,8 @@ function applyThemeAccentByModule(moduleId) {
     "academic-marks": "#00a7d1",
     "finance-fee-structure": "#2b8ce6",
     "finance-fee-payments": "#0ea5e9",
+    "finance-payroll": "#1d4ed8",
+    "finance-salary-advance": "#2563eb",
     "finance-procurement": "#4f46e5",
     "communication-messages": "#10b981",
     "communication-announcements": "#0ea5e9",
@@ -878,6 +922,8 @@ function renderCrudModule(moduleKey) {
       <button id="downloadExcelButton">Download Excel</button>
       <button id="printButton">Print</button>
       <button id="viewButton">View</button>
+      ${moduleKey === "finance-payroll" ? '<button id="autoGeneratePayrollButton">Auto Generate Payroll</button>' : ""}
+      ${moduleKey === "finance-salary-advance" ? '<button id="processAdvanceButton">Process Selected Advance</button>' : ""}
       ${moduleKey === "communication-messages" ? '<button id="dispatchQueuedMessagesButton">Dispatch Queued</button>' : ""}
       ${moduleKey === "communication-messages" ? '<button id="openChatButton">Open Chat</button>' : ""}
     </div>
@@ -889,6 +935,76 @@ function renderCrudModule(moduleKey) {
   document.getElementById("downloadExcelButton").onclick = exportExcel;
   document.getElementById("printButton").onclick = () => window.print();
   document.getElementById("viewButton").onclick = () => loadModuleData(config);
+  if (moduleKey === "finance-payroll") {
+    document.getElementById("autoGeneratePayrollButton")?.addEventListener("click", async () => {
+      const payrollMonth = prompt("Payroll month (e.g. April):", "");
+      if (payrollMonth === null) return;
+      const payrollYearInput = prompt("Payroll year (e.g. 2026):", String(new Date().getFullYear()));
+      if (payrollYearInput === null) return;
+      const basicSalaryInput = prompt("Default basic salary for auto-generation:", "0");
+      if (basicSalaryInput === null) return;
+      const allowancesInput = prompt("Default allowances:", "0");
+      if (allowancesInput === null) return;
+      const deductionsInput = prompt("Default deductions:", "0");
+      if (deductionsInput === null) return;
+      try {
+        const result = await request("/api/finance/payroll/auto-generate", {
+          method: "POST",
+          body: JSON.stringify({
+            payroll_month: payrollMonth,
+            payroll_year: Number(payrollYearInput),
+            basic_salary: Number(basicSalaryInput),
+            allowances: Number(allowancesInput),
+            deductions: Number(deductionsInput)
+          })
+        });
+        alert(result.message || "Payroll auto-generation complete.");
+        await loadModuleData(config);
+      } catch (error) {
+        alert(error.message);
+      }
+    });
+  }
+  if (moduleKey === "finance-salary-advance") {
+    document.getElementById("processAdvanceButton")?.addEventListener("click", async () => {
+      const requestIdInput = prompt("Enter Salary Advance Request ID to process:");
+      if (!requestIdInput) return;
+      const decisionInput = (prompt("Decision (approve/reject):", "approve") || "").trim().toLowerCase();
+      if (!decisionInput) return;
+      if (!["approve", "reject"].includes(decisionInput)) {
+        alert("Decision must be 'approve' or 'reject'.");
+        return;
+      }
+      const approvedAmountInput =
+        decisionInput === "approve"
+          ? prompt("Approved amount (leave blank to use requested amount):", "")
+          : "";
+      const deductionPlanInput =
+        decisionInput === "approve"
+          ? prompt("Deduction plan details:", "")
+          : "";
+      try {
+        const payload = {
+          request_id: Number(requestIdInput),
+          decision: decisionInput
+        };
+        if (approvedAmountInput) {
+          payload.amount_approved = Number(approvedAmountInput);
+        }
+        if (deductionPlanInput) {
+          payload.deduction_plan = deductionPlanInput;
+        }
+        const result = await request("/api/finance/salary-advances/auto-process", {
+          method: "POST",
+          body: JSON.stringify(payload)
+        });
+        alert(result.message || "Salary advance processed.");
+        await loadModuleData(config);
+      } catch (error) {
+        alert(error.message);
+      }
+    });
+  }
   if (moduleKey === "communication-messages") {
     document.getElementById("dispatchQueuedMessagesButton")?.addEventListener("click", dispatchQueuedMessages);
     document.getElementById("openChatButton")?.addEventListener("click", openCommunicationChat);

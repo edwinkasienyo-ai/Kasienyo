@@ -64,6 +64,7 @@ const GRADES = [
 
 const FORMS = ["Form 3", "Form 4"];
 const TERMS = ["Term One", "Term Two", "Term Three"];
+const YEAR_JOINED_OPTIONS = Array.from({ length: 24 }, (_, index) => 2017 + index);
 const GENDER_OPTIONS = ["Male", "Female", "Others"];
 const ADMISSION_STATUS = [
   "In Session",
@@ -170,6 +171,7 @@ module.exports = {
   GRADES,
   FORMS,
   TERMS,
+  YEAR_JOINED_OPTIONS,
   GENDER_OPTIONS,
   ADMISSION_STATUS,
   ORPHAN_STATUS,
