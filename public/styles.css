@@ -438,22 +438,29 @@ button:hover {
 
 .dashboard-page {
   min-height: 100vh;
+  height: 100vh;
   display: flex;
+  overflow: hidden;
   background: radial-gradient(circle at top right, #ebf5ff 0%, #f7faff 44%, #f2f6fc 100%);
 }
 
 .app-shell {
   min-height: 100vh;
+  height: 100vh;
   width: 100%;
   display: flex;
+  overflow: hidden;
 }
 
 .sidebar {
+  flex: 0 0 280px;
   width: 280px;
+  height: 100vh;
   background: linear-gradient(180deg, #0c2f52 0%, #0f3860 45%, #114067 100%);
   color: #fff;
   padding: 18px;
   overflow-y: auto;
+  overflow-x: hidden;
   border-right: 1px solid rgba(255, 255, 255, 0.1);
   box-shadow: 10px 0 24px rgba(9, 38, 67, 0.2);
 }
@@ -529,7 +536,11 @@ button:hover {
 
 .main-content {
   flex: 1;
+  min-width: 0;
+  height: 100vh;
   padding: 20px;
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 
 .topbar {
@@ -1235,14 +1246,28 @@ tbody tr:hover {
 
   .dashboard-page {
     flex-direction: column;
+    height: auto;
+    overflow: visible;
+  }
+
+  .app-shell {
+    height: auto;
+    overflow: visible;
   }
 
   .sidebar {
     width: 100%;
+    height: auto;
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 8px;
     align-items: start;
+    overflow: visible;
+  }
+
+  .main-content {
+    height: auto;
+    overflow: visible;
   }
 
   .sidebar h2,
