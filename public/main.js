@@ -45,11 +45,41 @@ function normalizeRoleValue(role) {
   if (normalized === "NON_TEACHING" || normalized === "NONTEACHING" || normalized === "NON_TEACHING_STAFF") {
     return "NON_TEACHING_STAFF";
   }
+  if (normalized === "SUPPORT_STAFF") {
+    return "NON_TEACHING_STAFF";
+  }
   if (normalized === "HEAD" || normalized === "HEAD_OF_SCHOOL") {
+    return "HEAD_OF_INSTITUTION";
+  }
+  if (
+    normalized === "HOI" ||
+    normalized === "HOI_ADMINISTRATOR" ||
+    normalized === "HOI_ADMIN" ||
+    normalized === "D_HOI" ||
+    normalized === "DEPUTY_HOI" ||
+    normalized === "DEPUTY_HEAD_OF_INSTITUTION"
+  ) {
     return "HEAD_OF_INSTITUTION";
   }
   if (normalized === "BOARD_OF_MANAGEMENT") {
     return "BOM";
+  }
+  if (normalized === "BOM_MEMBER") {
+    return "BOM";
+  }
+  if (normalized === "PARENT_GUARDIAN") {
+    return "PARENT";
+  }
+  if (
+    normalized === "SUPPLIERS_CONTRACTORS_SERVICE_PROVIDERS" ||
+    normalized === "SUPPLIERS_CONTUCTORS_SERVICE_PROVIDERS" ||
+    normalized === "SUPPLIER_CONTRACTOR_SERVICE_PROVIDER" ||
+    normalized === "SERVICE_PROVIDER"
+  ) {
+    return "SUPPLIER";
+  }
+  if (normalized === "MOE" || normalized === "MINISTRY_OF_EDUCATION_MOE") {
+    return "MOD";
   }
   if (normalized === "SYSTEMDEVELOPER") {
     return "SYSTEM_DEVELOPER";
@@ -65,6 +95,33 @@ function validateUsernameValue(username, fieldLabel = "Username") {
     return `${fieldLabel} can only contain letters, numbers, dot, underscore, or dash.`;
   }
   return null;
+}
+
+function updateLoginFieldState() {
+  const selectedPortalRole = normalizeRoleValue(
+    document.getElementById("loginPortalRole")?.value ||
+    document.getElementById("portalRole")?.value ||
+    ""
+  );
+  const isRoleSelected = Boolean(selectedPortalRole);
+  const controlledInputIds = ["username", "password", "otpChannel", "otp"];
+  controlledInputIds.forEach((id) => {
+    const element = document.getElementById(id);
+    if (element) {
+      element.disabled = !isRoleSelected;
+    }
+  });
+  const loginButton = document.getElementById("loginButton");
+  if (loginButton) {
+    loginButton.disabled = !isRoleSelected;
+  }
+  const verifyButton = document.getElementById("verifyButton");
+  if (verifyButton) {
+    verifyButton.disabled = !isRoleSelected;
+  }
+  if (!isRoleSelected) {
+    setAuthNotice("Choose portal role to activate username, password, OTP channel, and OTP code fields.", "info");
+  }
 }
 
 async function loadRegistrationMeta() {
@@ -424,8 +481,10 @@ function initializeAuthPanels() {
   });
 }
 
+document.getElementById("loginPortalRole")?.addEventListener("change", updateLoginFieldState);
 initializeAuthPanels();
 bindAuthSectionLinks();
 loadRegistrationMeta();
 bindInstitutionAutoFields();
 loadPublicHeroImage();
+updateLoginFieldState();

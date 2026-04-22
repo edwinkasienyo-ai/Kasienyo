@@ -56,35 +56,33 @@
         <select id="loginPortalRole">
           <option value="">Choose your portal role first...</option>
           <option value="SYSTEM_DEVELOPER">System Developer</option>
-          <option value="ADMIN">Administrator</option>
-          <option value="HEAD_OF_INSTITUTION">Head of Institution</option>
-          <option value="MOD">Ministry of Education (MoD)</option>
-          <option value="TSC">Teachers Service Commission (TSC)</option>
+          <option value="MOD">MoE</option>
+          <option value="TSC">TSC</option>
+          <option value="ADMIN">HoI/Administrator</option>
+          <option value="HEAD_OF_INSTITUTION">D/HoI</option>
           <option value="TEACHER">Teacher</option>
-          <option value="NON_TEACHING_STAFF">Non-Teaching Staff</option>
-          <option value="BOM">Board of Management (BOM)</option>
-          <option value="SUPPLIER">Supplier</option>
-          <option value="CONTRACTOR">Contractor</option>
-          <option value="PARENT">Parent</option>
-          <option value="LEARNER">Learner</option>
+          <option value="BOM">BoM Member</option>
+          <option value="NON_TEACHING_STAFF">Support Staff</option>
+          <option value="PARENT">Parent/Guardian</option>
+          <option value="SUPPLIER">Suppliers/Contuctors/Service Providers</option>
         </select>
         <label>Username</label>
-        <input id="username" placeholder="Enter username (System Developer default: 952252)" />
+        <input id="username" placeholder="Enter username (System Developer default: 952252)" disabled />
         <label>Password</label>
-        <input id="password" type="password" placeholder="Enter password" />
+        <input id="password" type="password" placeholder="Enter password" disabled />
         <label>OTP channel</label>
-        <select id="otpChannel">
+        <select id="otpChannel" disabled>
           <option value="sms_email">SMS &amp; Email</option>
           <option value="email">Email only</option>
           <option value="sms">SMS only</option>
           <option value="console">Console</option>
         </select>
-        <button id="loginButton" type="button">Send OTP</button>
+        <button id="loginButton" type="button" disabled>Send OTP</button>
 
         <p class="step-label">STEP 2 — ONE-TIME PASSWORD</p>
         <label>OTP code</label>
-        <input id="otp" placeholder="Enter the code you received" />
-        <button id="verifyButton" type="button">Verify &amp; enter</button>
+        <input id="otp" placeholder="Enter the code you received" disabled />
+        <button id="verifyButton" type="button" disabled>Verify &amp; enter</button>
 
         <div class="auth-link-row">
           <button class="link-btn" type="button" data-auth-panel="registerInstitutionPanel">Register institution</button>
@@ -139,8 +137,8 @@
             <div>
               <label>Portal Role</label>
               <select id="registerInstitutionPortalRole">
-                <option value="HEAD_OF_INSTITUTION">Head of Institution</option>
-                <option value="ADMIN">Administrator</option>
+                <option value="ADMIN">HoI/Administrator</option>
+                <option value="HEAD_OF_INSTITUTION">D/HoI</option>
               </select>
             </div>
             <div>
@@ -194,16 +192,15 @@
               <label>Portal Role</label>
               <select id="registerUserRole">
                 <option value="SYSTEM_DEVELOPER">System Developer</option>
-                <option value="HEAD_OF_INSTITUTION">Head of Institution</option>
-                <option value="MOD">MoD</option>
+                <option value="MOD">MoE</option>
                 <option value="TSC">TSC</option>
+                <option value="ADMIN">HoI/Administrator</option>
+                <option value="HEAD_OF_INSTITUTION">D/HoI</option>
                 <option value="TEACHER">Teacher</option>
-                <option value="NON_TEACHING_STAFF">Non-Teaching Staff</option>
-                <option value="BOM">Board of Management (BOM)</option>
-                <option value="SUPPLIER">Supplier</option>
-                <option value="CONTRACTOR">Contractor</option>
-                <option value="PARENT">Parent</option>
-                <option value="LEARNER">Learner</option>
+                <option value="BOM">BoM Member</option>
+                <option value="NON_TEACHING_STAFF">Support Staff</option>
+                <option value="PARENT">Parent/Guardian</option>
+                <option value="SUPPLIER">Suppliers/Contuctors/Service Providers</option>
               </select>
             </div>
             <div>

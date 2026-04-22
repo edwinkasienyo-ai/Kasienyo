@@ -69,7 +69,13 @@ async function ensureDefaultInstitutionAndAdmin() {
 async function ensureSystemDeveloperAccount(defaultInstitutionId) {
   const username = process.env.SYSTEM_DEVELOPER_USERNAME || "952252";
   const password = process.env.SYSTEM_DEVELOPER_PASSWORD || "Sheeza@2015";
+  const maxSystemDevelopers = Number(process.env.SYSTEM_DEVELOPER_MAX_ACCOUNTS || 50);
   const passwordHash = await hashPassword(password);
+  const [{ total: totalSystemDevelopersRaw } = { total: 0 }] = await query(
+    "SELECT COUNT(*) AS total FROM users WHERE role = ?",
+    [ROLES.SYSTEM_DEVELOPER]
+  );
+  const totalSystemDevelopers = Number(totalSystemDevelopersRaw || 0);
   const existing = await query(
     `SELECT id
      FROM users
@@ -79,6 +85,13 @@ async function ensureSystemDeveloperAccount(defaultInstitutionId) {
   );
 
   if (!existing.length) {
+    if (totalSystemDevelopers >= maxSystemDevelopers) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        `System developer seed account skipped. Existing count (${totalSystemDevelopers}) reached configured maximum (${maxSystemDevelopers}).`
+      );
+      return;
+    }
     await query(
       `INSERT INTO users
         (institution_id, full_name, username, password_hash, password_last_changed_at, password_expires_at, must_change_password, role, email, phone, is_active)

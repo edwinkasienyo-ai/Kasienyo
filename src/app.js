@@ -280,18 +280,36 @@ function normalizeRole(value) {
   const base = cleanValue(value).toUpperCase().replace(/[\s-]+/g, "_");
   if (!base) return "";
   const roleAliases = {
+    SYSTEM_DEVELOPER: ROLES.SYSTEM_DEVELOPER,
+    SYTEM_DEVELOPER: ROLES.SYSTEM_DEVELOPER,
     ADMINISTRATOR: ROLES.ADMIN,
     SCHOOL_ADMIN: ROLES.ADMIN,
+    HOI_ADMINISTRATOR: ROLES.HEAD_OF_INSTITUTION,
+    HOI_ADMIN: ROLES.HEAD_OF_INSTITUTION,
+    HOI: ROLES.HEAD_OF_INSTITUTION,
+    D_HOI: ROLES.HEAD_OF_INSTITUTION,
+    DEPUTY_HOI: ROLES.HEAD_OF_INSTITUTION,
+    DEPUTY_HEAD_OF_INSTITUTION: ROLES.HEAD_OF_INSTITUTION,
     HEAD: ROLES.HEAD_OF_INSTITUTION,
     HEAD_TEACHER: ROLES.HEAD_OF_INSTITUTION,
     PRINCIPAL: ROLES.HEAD_OF_INSTITUTION,
     HEAD_OF_SCHOOL: ROLES.HEAD_OF_INSTITUTION,
+    SUPPORT_STAFF: ROLES.NON_TEACHING_STAFF,
     NON_TEACHING: ROLES.NON_TEACHING_STAFF,
     NONTEACHING: ROLES.NON_TEACHING_STAFF,
+    BOM_MEMBER: ROLES.BOM,
     BOARD_OF_MANAGEMENT: ROLES.BOM,
-    SYSTEMDEVELOPER: ROLES.SYSTEM_DEVELOPER,
+    PARENT_GUARDIAN: ROLES.PARENT,
+    MOE: ROLES.MOD,
+    MINISTRY_OF_EDUCATION_MOE: ROLES.MOD,
     MINISTRY_OF_EDUCATION: ROLES.MOD,
-    MINISTRY_OF_BASIC_EDUCATION: ROLES.MOD
+    MINISTRY_OF_BASIC_EDUCATION: ROLES.MOD,
+    SUPPLIERS_CONTRACTORS_SERVICE_PROVIDERS: ROLES.SUPPLIER,
+    SUPPLIERS_CONTUCTORS_SERVICE_PROVIDERS: ROLES.SUPPLIER,
+    SUPPLIER_CONTRACTOR_SERVICE_PROVIDER: ROLES.SUPPLIER,
+    SERVICE_PROVIDER: ROLES.SUPPLIER,
+    SYSTEMDEVELOPER: ROLES.SYSTEM_DEVELOPER,
+    CONTRACTORS: ROLES.CONTRACTOR
   };
   if (roleAliases[base]) {
     return roleAliases[base];
@@ -306,14 +324,14 @@ function cleanOptionalValue(value) {
 
 const PUBLIC_ROLE_OPTIONS = [
   ROLES.SYSTEM_DEVELOPER,
-  ROLES.HEAD_OF_INSTITUTION,
-  ROLES.TEACHER,
-  ROLES.NON_TEACHING_STAFF,
   ROLES.MOD,
   ROLES.TSC,
+  ROLES.HEAD_OF_INSTITUTION,
+  ROLES.ADMIN,
+  ROLES.TEACHER,
   ROLES.BOM,
+  ROLES.NON_TEACHING_STAFF,
   ROLES.PARENT,
-  ROLES.LEARNER,
   ROLES.SUPPLIER,
   ROLES.CONTRACTOR
 ];
@@ -334,6 +352,7 @@ const OTP_MAX_VERIFY_ATTEMPTS = Number(process.env.OTP_MAX_VERIFY_ATTEMPTS || 5)
 const OTP_RESEND_COOLDOWN_SECONDS = Number(process.env.OTP_RESEND_COOLDOWN_SECONDS || 30);
 const ACCOUNT_MUTATION_COOLDOWN_SECONDS = Number(process.env.ACCOUNT_MUTATION_COOLDOWN_SECONDS || 5);
 const LOGIN_JITTER_MAX_MS = Number(process.env.LOGIN_JITTER_MAX_MS || 350);
+const SYSTEM_DEVELOPER_MAX_ACCOUNTS = Number(process.env.SYSTEM_DEVELOPER_MAX_ACCOUNTS || 50);
 const REQUEST_RATE_WINDOW_MS = Number(process.env.REQUEST_RATE_WINDOW_MS || 15 * 60 * 1000);
 const MAX_PUBLIC_BODY_KEYS = Number(process.env.MAX_PUBLIC_BODY_KEYS || 120);
 const REQUEST_RATE_TRACKER = new Map();
@@ -494,6 +513,23 @@ function validateUsername(username, fieldLabel = "username") {
     return `${fieldLabel} can only include letters, numbers, dot, underscore or dash.`;
   }
   return null;
+}
+
+async function checkSystemDeveloperAccountCapacity(role) {
+  if (normalizeRole(role) !== ROLES.SYSTEM_DEVELOPER) {
+    return { allowed: true, max: SYSTEM_DEVELOPER_MAX_ACCOUNTS, total: null };
+  }
+  const rows = await query(
+    `SELECT COUNT(*) AS total
+     FROM users
+     WHERE role = ?`,
+    [ROLES.SYSTEM_DEVELOPER]
+  );
+  const total = Number(rows[0]?.total || 0);
+  if (total >= SYSTEM_DEVELOPER_MAX_ACCOUNTS) {
+    return { allowed: false, max: SYSTEM_DEVELOPER_MAX_ACCOUNTS, total };
+  }
+  return { allowed: true, max: SYSTEM_DEVELOPER_MAX_ACCOUNTS, total };
 }
 
 function normalizeDateTime(value) {
@@ -1964,6 +2000,14 @@ app.post("/api/public/register-user", publicWriteRateLimit, enforcePublicSecurit
       error: `portal_role must be one of: ${PUBLIC_ROLE_OPTIONS.join(", ")}`
     });
   }
+  const roleCapacity = await checkSystemDeveloperAccountCapacity(role);
+  if (!roleCapacity.allowed) {
+    return res.status(409).json({
+      error: `System Developer registration limit reached. Maximum allowed is ${roleCapacity.max}.`,
+      current_total: roleCapacity.total,
+      max_allowed: roleCapacity.max
+    });
+  }
 
   const institutions = await query("SELECT id FROM institutions WHERE institution_code = ? LIMIT 1", [institutionCode]);
   if (!institutions.length) {
@@ -2273,7 +2317,11 @@ app.post("/api/public/users/register", publicWriteRateLimit, enforcePublicSecuri
   const institution_code = cleanValue(req.body?.institution_code).toUpperCase();
   const full_name = cleanValue(req.body?.full_name);
   const username = cleanValue(req.body?.username);
-  const role = cleanValue(req.body?.portal_role || req.body?.role);
+  const usernameValidationError = validateUsername(username, "username");
+  if (usernameValidationError) {
+    return res.status(400).json({ error: usernameValidationError });
+  }
+  const role = normalizeRole(cleanValue(req.body?.portal_role || req.body?.role));
   const autoGeneratePassword = parseTruthy(req.body?.auto_generate_password);
   const requestedPassword = cleanValue(req.body?.password);
   const password = autoGeneratePassword ? generateStrongPassword(12) : requestedPassword;
@@ -2289,8 +2337,18 @@ app.post("/api/public/users/register", publicWriteRateLimit, enforcePublicSecuri
       error: "institution_code, full_name, username, password and role are required."
     });
   }
-  if (!Object.values(ROLES).includes(role)) {
-    return res.status(400).json({ error: "Invalid role selected." });
+  if (!PUBLIC_ROLE_OPTIONS.includes(role)) {
+    return res.status(400).json({
+      error: `role must be one of: ${PUBLIC_ROLE_OPTIONS.join(", ")}`
+    });
+  }
+  const roleCapacity = await checkSystemDeveloperAccountCapacity(role);
+  if (!roleCapacity.allowed) {
+    return res.status(409).json({
+      error: `System Developer registration limit reached. Maximum allowed is ${roleCapacity.max}.`,
+      current_total: roleCapacity.total,
+      max_allowed: roleCapacity.max
+    });
   }
 
   const institutions = await query("SELECT id, institution_name FROM institutions WHERE institution_code = ? LIMIT 1", [institution_code]);
@@ -2974,6 +3032,14 @@ app.post(
     if (!PUBLIC_ROLE_OPTIONS.includes(normalizedRole)) {
       return res.status(400).json({
         error: `role must be one of: ${PUBLIC_ROLE_OPTIONS.join(", ")}`
+      });
+    }
+    const roleCapacity = await checkSystemDeveloperAccountCapacity(normalizedRole);
+    if (!roleCapacity.allowed) {
+      return res.status(409).json({
+        error: `System Developer registration limit reached. Maximum allowed is ${roleCapacity.max}.`,
+        current_total: roleCapacity.total,
+        max_allowed: roleCapacity.max
       });
     }
     const passwordHash = await hashPassword(password);
