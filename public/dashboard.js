@@ -92,31 +92,138 @@ function isSystemAdminRole() {
 async function renderSystemRegistration() {
   setActiveSidebarButton("system-register");
   document.getElementById("moduleTitle").textContent = "Register (Institution/User)";
+  if (!isSystemAdminRole()) {
+    alert("Only System Developer, HoI/Administrator can access registration center.");
+    return loadDashboard();
+  }
   try {
-    const institutions = await request("/api/public/institutions");
-    const institutionRows = (institutions || []).slice(0, 80);
+    const options = await request("/api/users/registrar-options");
+    const institutionRows = Array.isArray(options?.institutions) ? options.institutions : [];
+    const roleOptions = Array.isArray(options?.assignable_roles) ? options.assignable_roles : [];
+    const canRegisterInstitution = Boolean(options?.can_register_institution);
+    const canManageAllInstitutions = Boolean(options?.can_manage_all_institutions);
+    const defaultInstitutionId = Number(options?.institution_scope_id || 0) || Number(portalContext?.institution_id || 0) || 0;
+    const defaultInstitution = institutionRows.find((item) => Number(item.id) === defaultInstitutionId) || institutionRows[0] || null;
+    const defaultInstitutionCode = defaultInstitution?.institution_code || "";
+    const defaultRole = roleOptions[0] || "";
     document.getElementById("cards").innerHTML = `
       <div class="card stats-card metric-emphasis">
         <h4>Registration Center</h4>
         <p>${formatNumber(institutionRows.length)} institution record(s)</p>
       </div>
       <div class="card stats-card">
-        <h4>Actions</h4>
-        <p>Institution + User onboarding</p>
+        <h4>Assignable Roles</h4>
+        <p>${formatNumber(roleOptions.length)}</p>
       </div>
       <div class="card stats-card">
         <h4>Scope</h4>
-        <p>Public registration workflows</p>
+        <p>${canManageAllInstitutions ? "Global (System Developer)" : "Institution only (HoI/Admin)"}</p>
       </div>
     `;
     document.getElementById("formArea").innerHTML = `
       <div class="module-header-card">
-        <h3>Registration and Onboarding</h3>
-        <p>Use these workflows to register institutions, create users, and generate agreement outputs.</p>
+        <h3>Registration and Onboarding Center</h3>
+        <p>All registration is done inside the system. HoI/Admin are restricted to their institution and cannot create System Developer, MoE, or TSC users.</p>
       </div>
-      <div class="actions-row">
-        <button id="openIndexPortalButton">Open Login/Registration Portal</button>
-        <button id="refreshInstitutionRegistryButton">Refresh Registry</button>
+      ${canRegisterInstitution ? `
+      <div class="section-card">
+        <div class="section-card-header">
+          <h3>Register Institution (System Developer only)</h3>
+          <p class="small-note">Creates institution and HoI/Administrator account in one secure flow.</p>
+        </div>
+        <div class="form-grid">
+          <label>Institution Name</label>
+          <input id="sysInstitutionName" placeholder="Institution name" />
+          <label>County</label>
+          <input id="sysInstitutionCounty" placeholder="County" />
+          <label>County Code</label>
+          <input id="sysInstitutionCountyCode" placeholder="Auto/Manual county code e.g. 001" />
+          <label>Category</label>
+          <input id="sysInstitutionCategory" placeholder="Institution category label/code" />
+          <label>Sub County</label>
+          <input id="sysInstitutionSubCounty" placeholder="Sub county (optional)" />
+          <label>Location</label>
+          <input id="sysInstitutionLocation" placeholder="Location (optional)" />
+          <label>Village/Town</label>
+          <input id="sysInstitutionVillage" placeholder="Village or town (optional)" />
+          <label>Postal Code</label>
+          <input id="sysInstitutionPostalCode" placeholder="Postal code (optional)" />
+          <label>Town</label>
+          <input id="sysInstitutionTown" placeholder="Town (optional)" />
+          <label>Institution Email</label>
+          <input id="sysInstitutionEmail" placeholder="Email (optional)" />
+          <label>Institution Phone</label>
+          <input id="sysInstitutionPhone" placeholder="Phone (optional)" />
+          <label>Admin Full Name</label>
+          <input id="sysInstitutionAdminName" placeholder="HoI/Administrator full name" />
+          <label>Admin Username</label>
+          <input id="sysInstitutionAdminUsername" placeholder="Admin username" />
+          <label>Admin Role</label>
+          <select id="sysInstitutionAdminRole">
+            <option value="ADMIN">HoI/Administrator</option>
+            <option value="HEAD_OF_INSTITUTION">D/HoI</option>
+          </select>
+          <label>Admin Password</label>
+          <input id="sysInstitutionAdminPassword" type="text" placeholder="Admin password (unless auto-generated)" />
+          <label>Auto-generate password</label>
+          <select id="sysInstitutionAutoPassword">
+            <option value="true">Yes</option>
+            <option value="false">No</option>
+          </select>
+          <label>Email agreement</label>
+          <select id="sysInstitutionSendAgreement">
+            <option value="false">No</option>
+            <option value="true">Yes</option>
+          </select>
+        </div>
+        <div class="actions-row">
+          <button id="sysRegisterInstitutionButton">Register Institution</button>
+        </div>
+      </div>
+      ` : ""}
+      <div class="section-card">
+        <div class="section-card-header">
+          <h3>Register User (Inside Institution Scope)</h3>
+          <p class="small-note">System Developer can target any institution; HoI/Admin are locked to their own institution.</p>
+        </div>
+        <div class="form-grid">
+          <label>Institution</label>
+          <select id="sysUserInstitutionId">
+            ${institutionRows
+              .map(
+                (item) =>
+                  `<option value="${item.id}" ${Number(item.id) === Number(defaultInstitution?.id || 0) ? "selected" : ""}>${escapeHtml(
+                    item.institution_name || "Institution"
+                  )} (${escapeHtml(item.institution_code || "-")})</option>`
+              )
+              .join("")}
+          </select>
+          <label>Institution Code</label>
+          <input id="sysUserInstitutionCodePreview" value="${escapeHtml(defaultInstitutionCode)}" readonly />
+          <label>Full Name</label>
+          <input id="sysUserFullName" placeholder="Full name" />
+          <label>Username</label>
+          <input id="sysUserUsername" placeholder="Username" />
+          <label>Role</label>
+          <select id="sysUserRole">
+            ${roleOptions.map((role) => `<option value="${escapeHtml(role)}">${escapeHtml(toLabel(role))}</option>`).join("")}
+          </select>
+          <label>Email</label>
+          <input id="sysUserEmail" placeholder="Email (optional)" />
+          <label>Phone</label>
+          <input id="sysUserPhone" placeholder="Phone (optional)" />
+          <label>Password</label>
+          <input id="sysUserPassword" type="text" placeholder="Password" />
+          <label>Auto-generate password</label>
+          <select id="sysUserAutoPassword">
+            <option value="false">No</option>
+            <option value="true">Yes</option>
+          </select>
+        </div>
+        <div class="actions-row">
+          <button id="sysRegisterUserButton">Register User</button>
+          <button id="refreshInstitutionRegistryButton">Refresh Registry</button>
+        </div>
       </div>
       ${buildDashboardTable(
         ["Institution", "Code", "County", "Email", "Phone", "Created"],
@@ -131,8 +238,80 @@ async function renderSystemRegistration() {
       )}
     `;
     resetDataTable("Registration center loaded.");
-    document.getElementById("openIndexPortalButton")?.addEventListener("click", () => {
-      window.open("/", "_blank");
+    const institutionSelect = document.getElementById("sysUserInstitutionId");
+    const institutionCodePreview = document.getElementById("sysUserInstitutionCodePreview");
+    const refreshInstitutionCodePreview = () => {
+      if (!institutionSelect || !institutionCodePreview) return;
+      const selected = institutionRows.find((item) => Number(item.id) === Number(institutionSelect.value));
+      institutionCodePreview.value = selected?.institution_code || "";
+    };
+    if (institutionSelect) {
+      if (!canManageAllInstitutions) {
+        institutionSelect.disabled = true;
+      }
+      institutionSelect.addEventListener("change", refreshInstitutionCodePreview);
+      refreshInstitutionCodePreview();
+    }
+
+    document.getElementById("sysRegisterInstitutionButton")?.addEventListener("click", async () => {
+      try {
+        const payload = {
+          institution_name: String(document.getElementById("sysInstitutionName")?.value || "").trim(),
+          county: String(document.getElementById("sysInstitutionCounty")?.value || "").trim(),
+          county_code: String(document.getElementById("sysInstitutionCountyCode")?.value || "").trim(),
+          category: String(document.getElementById("sysInstitutionCategory")?.value || "").trim(),
+          sub_county: String(document.getElementById("sysInstitutionSubCounty")?.value || "").trim(),
+          location: String(document.getElementById("sysInstitutionLocation")?.value || "").trim(),
+          village: String(document.getElementById("sysInstitutionVillage")?.value || "").trim(),
+          postal_code: String(document.getElementById("sysInstitutionPostalCode")?.value || "").trim(),
+          town: String(document.getElementById("sysInstitutionTown")?.value || "").trim(),
+          email: String(document.getElementById("sysInstitutionEmail")?.value || "").trim(),
+          phone: String(document.getElementById("sysInstitutionPhone")?.value || "").trim(),
+          admin_full_name: String(document.getElementById("sysInstitutionAdminName")?.value || "").trim(),
+          admin_username: String(document.getElementById("sysInstitutionAdminUsername")?.value || "").trim(),
+          admin_password: String(document.getElementById("sysInstitutionAdminPassword")?.value || ""),
+          portal_role: String(document.getElementById("sysInstitutionAdminRole")?.value || "ADMIN"),
+          auto_generate_password: String(document.getElementById("sysInstitutionAutoPassword")?.value || "true") === "true",
+          send_agreement_email: String(document.getElementById("sysInstitutionSendAgreement")?.value || "false") === "true"
+        };
+        const result = await request("/api/institutions", {
+          method: "POST",
+          body: JSON.stringify(payload)
+        });
+        alert(
+          `Institution registered. Code: ${result.institution_code}. Admin: ${result.admin_username}.` +
+          (result.admin_password ? ` Password: ${result.admin_password}` : "")
+        );
+        await renderSystemRegistration();
+      } catch (error) {
+        alert(error.message);
+      }
+    });
+
+    document.getElementById("sysRegisterUserButton")?.addEventListener("click", async () => {
+      try {
+        const payload = {
+          institution_id: Number(document.getElementById("sysUserInstitutionId")?.value || 0) || undefined,
+          full_name: String(document.getElementById("sysUserFullName")?.value || "").trim(),
+          username: String(document.getElementById("sysUserUsername")?.value || "").trim(),
+          role: String(document.getElementById("sysUserRole")?.value || defaultRole),
+          email: String(document.getElementById("sysUserEmail")?.value || "").trim(),
+          phone: String(document.getElementById("sysUserPhone")?.value || "").trim()
+        };
+        const autoGenerate = String(document.getElementById("sysUserAutoPassword")?.value || "false") === "true";
+        if (autoGenerate) {
+          payload.password = `Aa1!${Math.random().toString(36).slice(-9)}#`;
+        } else {
+          payload.password = String(document.getElementById("sysUserPassword")?.value || "");
+        }
+        const result = await request("/api/users", {
+          method: "POST",
+          body: JSON.stringify(payload)
+        });
+        alert(result.message || "User registered successfully.");
+      } catch (error) {
+        alert(error.message);
+      }
     });
     document.getElementById("refreshInstitutionRegistryButton")?.addEventListener("click", renderSystemRegistration);
   } catch (error) {
@@ -979,6 +1158,62 @@ function formatMoney(value) {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2
   })}`;
+}
+
+function escapeHtmlAttribute(value) {
+  return escapeHtml(value).replaceAll("`", "&#96;");
+}
+
+function toFlagLabel(value) {
+  if (value === true) return "Yes";
+  if (value === false) return "No";
+  if (value === null || value === undefined || value === "") return "Unknown";
+  return String(value);
+}
+
+function inferAuditSeverity(row) {
+  const action = String(row?.action || "").toUpperCase();
+  const activity = String(row?.activity_done || "").toUpperCase();
+  if (action.includes("FAILED") || action.includes("LOCKED") || action.includes("DENY")) return "danger";
+  if (action.includes("LOGOUT")) return "muted";
+  if (action.includes("LOGIN") || action.includes("OTP")) return "success";
+  if (activity.includes("DELETE") || activity.includes("PURGE")) return "warning";
+  return "info";
+}
+
+function toAuditStripMarkup(row) {
+  const severity = inferAuditSeverity(row);
+  const username = row.username || row.user_name || "-";
+  const passwordCorrect = toFlagLabel(row.password_correct);
+  const otpCorrect = toFlagLabel(row.otp_correct);
+  const ipAddress = row.ip_address || "-";
+  const machineName = row.machine_name || "-";
+  const loginTime = formatDateTime(row.login_time || row.created_at);
+  const logoutTime = formatDateTime(row.logout_time);
+  const activityDone = row.activity_done || row.action || "-";
+  const actorRole = row.actor_role || "-";
+  const institutionId = row.institution_id || "-";
+  const title = `${activityDone} • ${actorRole}`;
+  const rawDetails = row?.details_json && typeof row.details_json === "object"
+    ? JSON.stringify(row.details_json)
+    : row?.details_json || "";
+  return `
+    <div class="audit-strip severity-${escapeHtmlAttribute(severity)}" title="${escapeHtmlAttribute(rawDetails)}">
+      <div class="audit-strip-title">${escapeHtml(title)}</div>
+      <div class="audit-strip-line">
+        <span class="audit-chip">User: ${escapeHtml(username)}</span>
+        <span class="audit-chip">Password Correct: ${escapeHtml(passwordCorrect)}</span>
+        <span class="audit-chip">OTP Correct: ${escapeHtml(otpCorrect)}</span>
+        <span class="audit-chip">IP Address: ${escapeHtml(ipAddress)}</span>
+        <span class="audit-chip">Machine: ${escapeHtml(machineName)}</span>
+        <span class="audit-chip">Login Time: ${escapeHtml(loginTime)}</span>
+        <span class="audit-chip">Logout Time: ${escapeHtml(logoutTime)}</span>
+        <span class="audit-chip">Activity: ${escapeHtml(activityDone)}</span>
+        <span class="audit-chip">Role: ${escapeHtml(actorRole)}</span>
+        <span class="audit-chip">Institution: ${escapeHtml(String(institutionId))}</span>
+      </div>
+    </div>
+  `;
 }
 
 function buildDashboardTable(headers, rows) {
@@ -1938,9 +2173,15 @@ function bindSidebar() {
 
 function bindTopbarButtons() {
   document.getElementById("searchButton").addEventListener("click", globalSearch);
-  document.getElementById("logoutButton").addEventListener("click", () => {
-    localStorage.clear();
-    window.location.href = "/";
+  document.getElementById("logoutButton").addEventListener("click", async () => {
+    try {
+      await request("/api/auth/logout", { method: "POST" });
+    } catch (_) {
+      // Continue local logout even when audit endpoint fails.
+    } finally {
+      localStorage.clear();
+      window.location.href = "/";
+    }
   });
   document
     .getElementById("changeCredentialsButton")

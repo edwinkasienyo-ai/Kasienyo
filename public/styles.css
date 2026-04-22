@@ -1015,6 +1015,99 @@ tbody tr:hover {
   color: #e1f0ff;
 }
 
+.registration-panel {
+  border: 1px solid var(--line-200);
+  border-radius: var(--radius-md);
+  background: #fff;
+  box-shadow: var(--shadow-sm);
+  padding: 14px;
+  margin-bottom: 12px;
+}
+
+.registration-panel h4 {
+  margin: 0 0 10px;
+  color: var(--primary-900);
+}
+
+.registration-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 10px 12px;
+}
+
+.registration-grid .field-full {
+  grid-column: 1 / -1;
+}
+
+.registration-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.registration-status {
+  margin-top: 10px;
+}
+
+.audit-timeline {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.audit-event-card {
+  border: 1px solid var(--line-200);
+  border-left: 6px solid #2e7dd1;
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: var(--shadow-sm);
+  padding: 10px 12px;
+}
+
+.audit-event-card.fail {
+  border-left-color: #d93025;
+  background: #fff8f8;
+}
+
+.audit-event-card.success {
+  border-left-color: #1f9d5c;
+  background: #f7fff9;
+}
+
+.audit-event-card.warning {
+  border-left-color: #d98600;
+  background: #fffdf4;
+}
+
+.audit-event-card.info {
+  border-left-color: #2e7dd1;
+  background: #f8fbff;
+}
+
+.audit-event-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.audit-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border-radius: 999px;
+  border: 1px solid #dbe8f7;
+  background: #eef5ff;
+  color: #224f7e;
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.audit-chip b {
+  font-weight: 800;
+}
+
 .search-summary-card h3 {
   margin-top: 0;
   margin-bottom: 8px;

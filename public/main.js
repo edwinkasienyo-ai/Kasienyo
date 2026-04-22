@@ -253,111 +253,11 @@ async function verifyOtp() {
 }
 
 async function registerInstitution() {
-  const institution_name = document.getElementById("registerInstitutionName").value.trim();
-  const email = document.getElementById("registerInstitutionEmail").value.trim();
-  const phone = document.getElementById("registerInstitutionPhone").value.trim();
-  const description = document.getElementById("registerInstitutionDescription").value.trim();
-  const county = document.getElementById("registerInstitutionCounty").value.trim();
-  const category = document.getElementById("registerInstitutionCategory").value.trim();
-  const county_code = document.getElementById("registerInstitutionCountyCode").value.trim();
-  const postal_code = document.getElementById("registerInstitutionPostalCode").value.trim();
-  const town = document.getElementById("registerInstitutionTown").value.trim();
-  const sendAgreementEmail = Boolean(document.getElementById("registerInstitutionSendAgreement")?.checked);
-  const autoGeneratePassword = Boolean(document.getElementById("registerInstitutionAutoPassword")?.checked);
-  const admin_full_name = document.getElementById("registerInstitutionAdminName").value.trim();
-  const admin_username = document.getElementById("registerInstitutionAdminUsername").value.trim();
-  const admin_password = document.getElementById("registerInstitutionAdminPassword").value;
-  const portal_role = document.getElementById("registerInstitutionPortalRole").value;
-
-  if (!institution_name || !county || !category || !admin_full_name || !admin_username) {
-    setAuthNotice("Institution, county, category, admin name and admin username are required.", "error");
-    return;
-  }
-  if (!autoGeneratePassword && !admin_password) {
-    setAuthNotice("Provide admin password or enable auto-generate password.", "error");
-    return;
-  }
-
-  try {
-    const data = await request("/api/public/register-institution", {
-      method: "POST",
-      body: JSON.stringify({
-        institution_name,
-        description,
-        email,
-        phone,
-        county,
-        category,
-        county_code,
-        postal_code,
-        town,
-        send_agreement_email: sendAgreementEmail,
-        auto_generate_password: autoGeneratePassword,
-        admin_full_name,
-        admin_username,
-        admin_password,
-        portal_role
-      })
-    });
-    lastRegisteredInstitution = data || null;
-    const generatedCodeInput = document.getElementById("registerInstitutionCode");
-    if (generatedCodeInput && data?.institution_code) {
-      generatedCodeInput.value = data.institution_code;
-    }
-    const agreementUrl = data?.agreement_pdf_url ? ` Agreement: ${data.agreement_pdf_url}` : "";
-    const passwordInfo = data?.admin_password ? ` Password: ${data.admin_password}` : "";
-    setAuthNotice(
-      `Institution registered. Code: ${data.institution_code}. Admin: ${data.admin_username}.${passwordInfo}${agreementUrl}`,
-      "success"
-    );
-  } catch (error) {
-    setAuthNotice(error.message, "error");
-  }
+  setAuthNotice("Institution registration is available only after login in the dashboard.", "error");
 }
 
 async function registerUser() {
-  const institution_code = document.getElementById("registerUserInstitutionCode").value.trim();
-  const full_name = document.getElementById("registerUserFullName").value.trim();
-  const username = document.getElementById("registerUserUsername").value.trim();
-  const password = document.getElementById("registerUserPassword").value;
-  const role = document.getElementById("registerUserRole").value;
-  const email = document.getElementById("registerUserEmail").value.trim();
-  const phone = document.getElementById("registerUserPhone").value.trim();
-  const autoGeneratePassword = Boolean(document.getElementById("registerUserAutoPassword")?.checked);
-
-  if (!institution_code || !full_name || !username || !role) {
-    setAuthNotice("Complete institution code, name, username and role.", "error");
-    return;
-  }
-  const usernameValidationError = validateUsernameValue(username, "Username");
-  if (usernameValidationError) {
-    setAuthNotice(usernameValidationError, "error");
-    return;
-  }
-  if (!autoGeneratePassword && !password) {
-    setAuthNotice("Provide password or enable auto-generate password.", "error");
-    return;
-  }
-
-  try {
-    const data = await request("/api/public/register-user", {
-      method: "POST",
-      body: JSON.stringify({
-        institution_code,
-        full_name,
-        username,
-        password,
-        portal_role: role,
-        email,
-        phone,
-        auto_generate_password: autoGeneratePassword
-      })
-    });
-    const passwordInfo = data?.password ? ` Password: ${data.password}` : "";
-    setAuthNotice(`User registered successfully.${passwordInfo}`, "success");
-  } catch (error) {
-    setAuthNotice(error.message, "error");
-  }
+  setAuthNotice("User registration is available only after login in the dashboard.", "error");
 }
 
 async function recoverUsername() {
@@ -417,38 +317,17 @@ async function resetPassword() {
 }
 
 function previewAgreement() {
-  const institutionId = lastRegisteredInstitution?.institution_id;
-  if (!institutionId) {
-    setAuthNotice("Register an institution first before previewing agreement.", "error");
-    return;
-  }
-  window.open(`/api/public/institutions/${institutionId}/agreement.pdf`, "_blank");
+  setAuthNotice("Agreement preview is available in the in-system registration center.", "error");
 }
 
 async function sendAgreementNow() {
-  const institutionId = lastRegisteredInstitution?.institution_id;
-  if (!institutionId) {
-    setAuthNotice("Register an institution first before sending agreement.", "error");
-    return;
-  }
-  try {
-    const data = await request(`/api/public/institutions/${institutionId}/agreement/send`, {
-      method: "POST"
-    });
-    setAuthNotice(data.message || "Agreement dispatch completed.", "success");
-  } catch (error) {
-    setAuthNotice(error.message, "error");
-  }
+  setAuthNotice("Agreement dispatch is available in the in-system registration center.", "error");
 }
 
 document.getElementById("loginButton").addEventListener("click", login);
 document.getElementById("verifyButton").addEventListener("click", verifyOtp);
-document.getElementById("registerInstitutionButton")?.addEventListener("click", registerInstitution);
-document.getElementById("registerUserButton")?.addEventListener("click", registerUser);
 document.getElementById("forgotUsernameButton")?.addEventListener("click", recoverUsername);
 document.getElementById("forgotPasswordButton")?.addEventListener("click", resetPassword);
-document.getElementById("previewInstitutionAgreementButton")?.addEventListener("click", previewAgreement);
-document.getElementById("sendInstitutionAgreementButton")?.addEventListener("click", sendAgreementNow);
 
 function bindAuthSectionLinks() {
   document.querySelectorAll("[data-auth-panel], .auth-link-btn[data-target]").forEach((button) => {

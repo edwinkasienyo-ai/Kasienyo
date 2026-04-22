@@ -347,6 +347,7 @@ const PUBLIC_ROLE_OPTIONS = [
   ROLES.SUPPLIER,
   ROLES.CONTRACTOR
 ];
+const HIGH_PRIVILEGE_REGISTRATION_ROLES = new Set([ROLES.SYSTEM_DEVELOPER, ROLES.MOD, ROLES.TSC]);
 
 const AGREEMENT_COMPANY = {
   name: "Mwendegu Enterprise Limited",
@@ -395,6 +396,28 @@ function getClientIp(req) {
     return forwarded.split(",")[0].trim();
   }
   return cleanValue(req.ip || req.socket?.remoteAddress || "unknown");
+}
+
+function getClientMachineName(req) {
+  return (
+    cleanValue(req.headers["x-machine-name"]) ||
+    cleanValue(req.headers["x-client-machine"]) ||
+    cleanValue(req.headers["x-forwarded-host"]) ||
+    cleanValue(req.hostname) ||
+    cleanValue(req.headers.host) ||
+    "unknown-machine"
+  );
+}
+
+function buildAuthAuditDetails(req, username, extra = {}) {
+  return {
+    username: cleanValue(username),
+    ip_address: getClientIp(req),
+    machine_name: getClientMachineName(req),
+    user_agent: cleanValue(req.headers["user-agent"]),
+    request_time: dayjs().format("YYYY-MM-DD HH:mm:ss"),
+    ...extra
+  };
 }
 
 function enforceRateLimit({ bucket, maxRequests, windowMs }) {
@@ -727,6 +750,31 @@ function generateStrongPassword(length = 12) {
     }
   }
   return `Aa1!${uuidv4().replace(/-/g, "").slice(0, Math.max(targetLength - 4, 8))}`;
+}
+
+function canRegisterInstitution(user) {
+  const role = normalizeRole(user?.role);
+  return role === ROLES.SYSTEM_DEVELOPER;
+}
+
+function canRegisterPrivilegedUsers(user) {
+  return normalizeRole(user?.role) === ROLES.SYSTEM_DEVELOPER;
+}
+
+function canRegisterInstitutionUsers(user) {
+  const role = normalizeRole(user?.role);
+  return [ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION].includes(role);
+}
+
+function getAssignableRolesForActor(user) {
+  const role = normalizeRole(user?.role);
+  if (role === ROLES.SYSTEM_DEVELOPER) {
+    return [...PUBLIC_ROLE_OPTIONS];
+  }
+  if ([ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION].includes(role)) {
+    return PUBLIC_ROLE_OPTIONS.filter((item) => !HIGH_PRIVILEGE_REGISTRATION_ROLES.has(item));
+  }
+  return [];
 }
 
 async function dispatchCredentialNotice({ email, phone, subject, message }) {
@@ -1555,7 +1603,8 @@ app.get("/api/meta", (_, res) => {
     procurementDocumentTypes: DOCUMENT_CATEGORIES.PROCUREMENT,
     exportFormats: EXPORT_FORMATS,
     moduleKeys: MODULE_KEYS,
-    defaultModuleAccessByRole: DEFAULT_MODULE_ACCESS_BY_ROLE
+    defaultModuleAccessByRole: DEFAULT_MODULE_ACCESS_BY_ROLE,
+    otpChannels: ["console", "email", "sms", "sms_email"]
   });
 });
 
@@ -1566,16 +1615,55 @@ app.get("/api/health", asyncHandler(async (_, res) => {
 
 app.post("/api/auth/login", authLoginRateLimit, asyncHandler(async (req, res) => {
   const { username, password, otpChannel } = req.body;
+  const auditBase = buildAuthAuditDetails(req, username, {
+    password_correct: false,
+    otp_correct: false
+  });
   if (!username || !password) {
+    await auditLog(
+      { institution_id: null, id: null, role: "PUBLIC" },
+      "LOGIN_FAILED",
+      "auth",
+      null,
+      {
+        ...auditBase,
+        reason: "MISSING_CREDENTIALS"
+      }
+    );
     return res.status(400).json({ error: "Username and password are required." });
   }
   const usernameValidationError = validateUsername(username, "username");
   if (usernameValidationError) {
+    await auditLog(
+      { institution_id: null, id: null, role: "PUBLIC" },
+      "LOGIN_FAILED",
+      "auth",
+      null,
+      {
+        ...auditBase,
+        reason: "INVALID_USERNAME_FORMAT"
+      }
+    );
     await delayWithRandomJitter();
     return res.status(400).json({ error: usernameValidationError });
   }
   const securityUser = await getActiveUserSecurityState(username);
   if (isAccountLocked(securityUser)) {
+    await auditLog(
+      {
+        institution_id: securityUser?.institution_id || null,
+        id: securityUser?.id || null,
+        role: securityUser?.role || "PUBLIC"
+      },
+      "ACCOUNT_LOCKED",
+      "auth",
+      securityUser?.id || null,
+      {
+        ...auditBase,
+        reason: "ACCOUNT_TEMPORARILY_LOCKED",
+        locked_until: normalizeDateTime(securityUser?.locked_until)
+      }
+    );
     await delayWithRandomJitter();
     return res.status(423).json({
       error: "Account temporarily locked due to repeated failed login attempts.",
@@ -1585,6 +1673,21 @@ app.post("/api/auth/login", authLoginRateLimit, asyncHandler(async (req, res) =>
 
   const userAccount = await authenticateByUserTable(username, password);
   if (userAccount?.blocked) {
+    await auditLog(
+      {
+        institution_id: userAccount?.institution_id || securityUser?.institution_id || null,
+        id: userAccount?.payload?.id || securityUser?.id || null,
+        role: userAccount?.role || securityUser?.role || "PUBLIC"
+      },
+      "LOGIN_FAILED",
+      "auth",
+      userAccount?.payload?.id || securityUser?.id || null,
+      {
+        ...auditBase,
+        password_correct: true,
+        reason: "PASSWORD_EXPIRED"
+      }
+    );
     await delayWithRandomJitter();
     return res.status(403).json({
       error: userAccount.error,
@@ -1609,9 +1712,10 @@ app.post("/api/auth/login", authLoginRateLimit, asyncHandler(async (req, res) =>
       "auth",
       securityUser?.id || null,
       {
-        username: cleanValue(username),
+        ...auditBase,
         remaining_attempts: failureState?.remainingAttempts ?? null,
-        locked_until: failureState?.lockedUntil || null
+        locked_until: failureState?.lockedUntil || null,
+        reason: "INVALID_PASSWORD_OR_UNKNOWN_USER"
       }
     );
     await delayWithRandomJitter();
@@ -1628,6 +1732,23 @@ app.post("/api/auth/login", authLoginRateLimit, asyncHandler(async (req, res) =>
   }
   const otpCooldown = checkOtpRequestCooldown(account.identity);
   if (!otpCooldown.allowed) {
+    await auditLog(
+      {
+        institution_id: account?.institution_id || securityUser?.institution_id || null,
+        id: account?.payload?.id || securityUser?.id || null,
+        role: account?.role || securityUser?.role || "PUBLIC"
+      },
+      "OTP_RESEND_BLOCKED",
+      "otp_sessions",
+      null,
+      {
+        ...buildAuthAuditDetails(req, username, {
+          password_correct: true,
+          otp_correct: false,
+          otp_resend_available_after_seconds: otpCooldown.remainingSeconds
+        })
+      }
+    );
     return res.status(429).json({
       error: "OTP already requested recently. Please wait before requesting another code.",
       otp_resend_available_after_seconds: otpCooldown.remainingSeconds
@@ -1646,6 +1767,24 @@ app.post("/api/auth/login", authLoginRateLimit, asyncHandler(async (req, res) =>
   });
   const exposeOtpPreview =
     process.env.NODE_ENV !== "production" || parseTruthy(process.env.EXPOSE_OTP_PREVIEW);
+  await auditLog(
+    {
+      institution_id: account?.institution_id || null,
+      id: account?.payload?.id || null,
+      role: account?.role || "PUBLIC"
+    },
+    "OTP_REQUESTED",
+    "otp_sessions",
+    null,
+    {
+      ...buildAuthAuditDetails(req, username, {
+        password_correct: true,
+        otp_correct: false,
+        otp_channel: channel,
+        otp_expires_at: otpSession.expiresAt
+      })
+    }
+  );
 
   return res.json({
     message:
@@ -1664,6 +1803,10 @@ app.post("/api/auth/login", authLoginRateLimit, asyncHandler(async (req, res) =>
 
 app.post("/api/auth/verify-otp", otpVerifyRateLimit, asyncHandler(async (req, res) => {
   const { username, otp } = req.body;
+  const otpAuditBase = buildAuthAuditDetails(req, username, {
+    password_correct: true,
+    otp_correct: false
+  });
   if (!username || !otp) {
     return res.status(400).json({ error: "Username and OTP are required." });
   }
@@ -1684,7 +1827,7 @@ app.post("/api/auth/verify-otp", otpVerifyRateLimit, asyncHandler(async (req, re
       "otp_sessions",
       null,
       {
-        username: cleanValue(username),
+        ...otpAuditBase,
         remaining_attempts: failure?.remainingAttempts ?? null
       }
     );
@@ -1721,7 +1864,7 @@ app.post("/api/auth/verify-otp", otpVerifyRateLimit, asyncHandler(async (req, re
       "otp_sessions",
       null,
       {
-        username: cleanValue(username),
+        ...otpAuditBase,
         reason: "MALFORMED_OR_INVALID_STORED_SESSION",
         remaining_attempts: failure?.remainingAttempts ?? null
       }
@@ -1734,8 +1877,16 @@ app.post("/api/auth/verify-otp", otpVerifyRateLimit, asyncHandler(async (req, re
   await query("UPDATE otp_sessions SET is_used = 1 WHERE id = ?", [session.id]);
   await recordOtpSuccess(session.id);
   payload.role = normalizeRole(payload.role);
+  payload.login_session_started_at = dayjs().format("YYYY-MM-DD HH:mm:ss");
   const token = issueToken(payload);
-  await auditLog(payload, "LOGIN_SUCCESS", "auth", payload.id, { role: payload.role });
+  await auditLog(payload, "LOGIN_SUCCESS", "auth", payload.id, {
+    ...buildAuthAuditDetails(req, payload.username || username, {
+      password_correct: true,
+      otp_correct: true,
+      login_time: payload.login_session_started_at,
+      role: payload.role
+    })
+  });
 
   res.json({
     token,
@@ -1777,6 +1928,19 @@ app.get("/api/auth/me", auth, asyncHandler(async (req, res) => {
     must_change_password: Number(user.must_change_password || 0) === 1,
     password_days_remaining: passwordPolicy.remainingDays
   });
+}));
+
+app.post("/api/auth/logout", auth, asyncHandler(async (req, res) => {
+  await auditLog(req.user, "LOGOUT", "auth", req.user?.id || null, {
+    ...buildAuthAuditDetails(req, req.user?.username, {
+      password_correct: true,
+      otp_correct: true,
+      login_time: req.user?.login_session_started_at || null,
+      logout_time: dayjs().format("YYYY-MM-DD HH:mm:ss"),
+      activity_done: "LOGOUT"
+    })
+  });
+  res.json({ message: "Logged out successfully." });
 }));
 
 app.patch("/api/users/:id/force-reset-password", auth, accountMutationRateLimit, accountMutationCooldown, enforceRole([ROLES.SYSTEM_DEVELOPER]), asyncHandler(async (req, res) => {
@@ -1911,272 +2075,24 @@ app.patch("/api/system-developer/credentials", auth, accountMutationRateLimit, a
 }));
 
 app.post("/api/public/register-institution", publicWriteRateLimit, enforcePublicSecurity, asyncHandler(async (req, res) => {
-  const institutionName = cleanValue(req.body?.institution_name);
-  const institutionEmail = cleanOptionalValue(req.body?.email);
-  const institutionPhone = cleanOptionalValue(req.body?.phone);
-  const countyInput = cleanOptionalValue(req.body?.county);
-  const countyCodeInput = cleanOptionalValue(req.body?.county_code);
-  const categoryInput = cleanOptionalValue(req.body?.category);
-  const subCounty = cleanOptionalValue(req.body?.sub_county);
-  const location = cleanOptionalValue(req.body?.location);
-  const village = cleanOptionalValue(req.body?.village);
-  const postalCodeInput = cleanOptionalValue(req.body?.postal_code);
-  const townInput = cleanOptionalValue(req.body?.town);
-  const sendAgreementEmail = parseTruthy(req.body?.send_agreement_email);
-  const autoGeneratePassword = parseTruthy(req.body?.auto_generate_password);
-
-  const adminFullName = cleanValue(req.body?.admin_full_name);
-  const adminUsername = cleanValue(req.body?.admin_username);
-  const adminUsernameValidationError = validateUsername(adminUsername, "admin_username");
-  if (adminUsernameValidationError) {
-    return res.status(400).json({ error: adminUsernameValidationError });
-  }
-  const adminPasswordInput = cleanValue(req.body?.admin_password);
-  const portalRoleRaw = normalizeRole(cleanValue(req.body?.portal_role));
-  const portalRole = [ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION].includes(portalRoleRaw)
-    ? portalRoleRaw
-    : ROLES.HEAD_OF_INSTITUTION;
-
-  const countyRecord = resolveCounty({ countyCode: countyCodeInput, countyName: countyInput });
-  if (!countyRecord) {
-    return res.status(400).json({ error: "Select a valid county." });
-  }
-  const categoryRecord = resolveInstitutionCategory({
-    categoryCode: categoryInput,
-    categoryLabel: categoryInput
-  });
-  if (!categoryRecord) {
-    return res.status(400).json({ error: "Select a valid institution category." });
-  }
-
-  const postalDetails = getPostalDetails(postalCodeInput);
-  const normalizedTown = townInput || postalDetails?.town || null;
-  const institutionCode = await nextInstitutionCode({
-    countyCode: countyRecord.code,
-    categoryCode: categoryRecord.code
-  });
-
-  const adminPassword = autoGeneratePassword
-    ? generateStrongPassword(12)
-    : adminPasswordInput;
-  const weakAdminPasswordError = requireStrongPassword(adminPassword, "admin_password");
-  if (weakAdminPasswordError) {
-    return res.status(400).json({ error: weakAdminPasswordError });
-  }
-
-  if (!institutionName || !adminFullName || !adminUsername || !adminPassword) {
-    return res.status(400).json({
-      error: "institution_name, admin_full_name, admin_username and admin_password are required."
-    });
-  }
-
-  const existingInstitution = await query(
-    "SELECT id FROM institutions WHERE institution_code = ? LIMIT 1",
-    [institutionCode]
-  );
-  if (existingInstitution.length) {
-    return res.status(409).json({ error: "Institution code already exists." });
-  }
-
-  const institutionInsert = await query(
-    `INSERT INTO institutions
-      (institution_name, institution_code, email, phone, county, sub_county, location, village)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-    [
-      institutionName,
-      institutionCode,
-      institutionEmail,
-      institutionPhone,
-      countyRecord.name,
-      subCounty,
-      location,
-      normalizedTown || village
-    ]
-  );
-  const institutionId = institutionInsert.insertId;
-  const passwordHash = await hashPassword(adminPassword);
-
-  await query(
-    `INSERT INTO users
-      (institution_id, full_name, username, password_hash, password_last_changed_at, password_expires_at, role, email, phone, is_active)
-     VALUES (?, ?, ?, ?, NOW(), DATE_ADD(NOW(), INTERVAL ? DAY), ?, ?, ?, 1)`,
-    [
-      institutionId,
-      adminFullName,
-      adminUsername,
-      passwordHash,
-      PASSWORD_ROTATION_DAYS,
-      portalRole,
-      institutionEmail,
-      institutionPhone
-    ]
-  );
-
-  const credentialMessage = [
-    "Welcome to the Integrated Management Information System for Basic Education.",
-    `Institution: ${institutionName}`,
-    `Institution Code: ${institutionCode}`,
-    `Username: ${adminUsername}`,
-    `Password: ${adminPassword}`,
-    "Please change your password immediately after first login."
-  ].join("\n");
-  const credentialDispatch = await dispatchCredentialNotice({
-    email: institutionEmail,
-    phone: institutionPhone,
-    subject: "IMIS Institution Administrator Credentials",
-    message: credentialMessage
-  });
-
-  const institutionRecord = {
-    id: institutionId,
-    institution_name: institutionName,
-    institution_code: institutionCode,
-    county: countyRecord.name,
-    email: institutionEmail,
-    phone: institutionPhone
-  };
-
-  let agreementEmailDispatch = null;
-  if (sendAgreementEmail) {
-    agreementEmailDispatch = await dispatchCredentialNotice({
-      email: institutionEmail,
-      phone: null,
-      subject: "IMIS Service Agreement Letter",
-      message: buildAgreementLines({
-        institution: institutionRecord,
-        adminUser: { username: adminUsername }
-      }).join("\n")
-    });
-  }
-
-  res.status(201).json({
-    message: "Institution and administrator account registered successfully.",
-    institution_id: institutionId,
-    institution_code: institutionCode,
-    admin_username: adminUsername,
-    admin_password: adminPassword,
-    county: countyRecord.name,
-    county_code: countyRecord.code,
-    category: categoryRecord.label,
-    category_code: categoryRecord.code,
-    postal_code: postalDetails?.postal_code || postalCodeInput || null,
-    town: normalizedTown,
-    agreement_pdf_url: `/api/public/institutions/${institutionId}/agreement.pdf`,
-    credential_dispatch: credentialDispatch,
-    agreement_email_dispatch: agreementEmailDispatch
+  return res.status(403).json({
+    error:
+      "Public institution registration is disabled. Log in and use Register (Institution/User) inside the system."
   });
 }));
 
 app.post("/api/public/register-user", publicWriteRateLimit, enforcePublicSecurity, asyncHandler(async (req, res) => {
-  const institutionCode = cleanValue(req.body?.institution_code);
-  const fullName = cleanValue(req.body?.full_name);
-  const username = cleanValue(req.body?.username);
-  const usernameValidationError = validateUsername(username, "username");
-  if (usernameValidationError) {
-    return res.status(400).json({ error: usernameValidationError });
-  }
-  const passwordInput = cleanValue(req.body?.password);
-  const autoGeneratePassword = parseTruthy(req.body?.auto_generate_password);
-  const password = autoGeneratePassword ? generateStrongPassword(12) : passwordInput;
-  const weakPasswordError = requireStrongPassword(password, "password");
-  if (weakPasswordError) {
-    return res.status(400).json({ error: weakPasswordError });
-  }
-  const role = normalizeRole(cleanValue(req.body?.portal_role));
-  const email = cleanOptionalValue(req.body?.email);
-  const phone = cleanOptionalValue(req.body?.phone);
-
-  if (!institutionCode || !fullName || !username || !password || !role) {
-    return res.status(400).json({
-      error: "institution_code, full_name, username, password and portal_role are required."
-    });
-  }
-  if (!PUBLIC_ROLE_OPTIONS.includes(role)) {
-    return res.status(400).json({
-      error: `portal_role must be one of: ${PUBLIC_ROLE_OPTIONS.join(", ")}`
-    });
-  }
-  const roleCapacity = await checkSystemDeveloperAccountCapacity(role);
-  if (!roleCapacity.allowed) {
-    return res.status(409).json({
-      error: `System Developer registration limit reached. Maximum allowed is ${roleCapacity.max}.`,
-      current_total: roleCapacity.total,
-      max_allowed: roleCapacity.max
-    });
-  }
-
-  const institutions = await query("SELECT id FROM institutions WHERE institution_code = ? LIMIT 1", [institutionCode]);
-  if (!institutions.length) {
-    return res.status(404).json({ error: "Institution code was not found." });
-  }
-
-  const institutionId = institutions[0].id;
-  const existingUser = await query(
-    "SELECT id FROM users WHERE institution_id = ? AND username = ? LIMIT 1",
-    [institutionId, username]
-  );
-  if (existingUser.length) {
-    return res.status(409).json({ error: "Username already exists for this institution." });
-  }
-
-  const passwordHash = await hashPassword(password);
-  const isRotationExempt = PASSWORD_ROTATION_EXEMPT_ROLES.has(role);
-  const insert = await query(
-    `INSERT INTO users
-      (institution_id, full_name, username, password_hash, password_last_changed_at, password_expires_at, must_change_password, role, email, phone, is_active)
-     VALUES (?, ?, ?, ?, NOW(), ?, ?, ?, ?, ?, 1)`,
-    [
-      institutionId,
-      fullName,
-      username,
-      passwordHash,
-      isRotationExempt ? null : dayjs().add(PASSWORD_ROTATION_DAYS, "day").format("YYYY-MM-DD HH:mm:ss"),
-      autoGeneratePassword ? 1 : 0,
-      role,
-      email,
-      phone
-    ]
-  );
-
-  const [institutionRow] = await query(
-    "SELECT institution_name FROM institutions WHERE id = ? LIMIT 1",
-    [institutionId]
-  );
-
-  let credentialDispatch = null;
-  if (role !== ROLES.SYSTEM_DEVELOPER) {
-    const message = [
-      "Welcome to the Integrated Management Information System for Basic Education.",
-      `Institution: ${institutionRow?.institution_name || "-"}`,
-      `Username: ${username}`,
-      `Password: ${password}`,
-      "Please change your password immediately after first login."
-    ].join("\n");
-    credentialDispatch = await dispatchCredentialNotice({
-      email,
-      phone,
-      subject: "IMIS User Credentials",
-      message
-    });
-  }
-
-  res.status(201).json({
-    message: "User registered successfully.",
-    user_id: insert.insertId,
-    username,
-    role,
-    password,
-    credential_dispatch: credentialDispatch
+  return res.status(403).json({
+    error:
+      "Public user registration is disabled. Log in and use Register (Institution/User) inside the system."
   });
 }));
 
 app.get("/api/public/institutions", asyncHandler(async (_, res) => {
-  const rows = await query(
-    `SELECT id, institution_name, institution_code, email, phone, county, sub_county, location, village, created_at
-     FROM institutions
-     ORDER BY id DESC`
-  );
-  res.json(rows);
+  return res.status(403).json({
+    error:
+      "Public institution registry access is disabled. Log in and use Institutions & Users Registry inside the system."
+  });
 }));
 
 app.get("/api/public/institutions/:id/agreement.pdf", asyncHandler(async (req, res) => {
@@ -2370,147 +2286,34 @@ app.post("/api/public/forgot-password", publicWriteRateLimit, enforcePublicSecur
 }));
 
 app.post("/api/public/institutions/register", publicWriteRateLimit, enforcePublicSecurity, asyncHandler(async (req, res) => {
-  const institution_name = cleanValue(req.body?.institution_name);
-  const institution_code = cleanValue(req.body?.institution_code).toUpperCase();
-  const email = cleanOptionalValue(req.body?.email);
-  const phone = cleanOptionalValue(req.body?.phone);
-  const county = cleanOptionalValue(req.body?.county);
-  const sub_county = cleanOptionalValue(req.body?.sub_county);
-  const location = cleanOptionalValue(req.body?.location);
-  const village = cleanOptionalValue(req.body?.village);
-
-  if (!institution_name || !institution_code) {
-    return res.status(400).json({ error: "institution_name and institution_code are required." });
-  }
-
-  const existing = await query("SELECT id FROM institutions WHERE institution_code = ? LIMIT 1", [institution_code]);
-  if (existing.length) {
-    return res.status(409).json({ error: "Institution code already exists." });
-  }
-
-  const result = await query(
-    `INSERT INTO institutions
-      (institution_name, institution_code, email, phone, county, sub_county, location, village)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-    [institution_name, institution_code, email, phone, county, sub_county, location, village]
-  );
-
-  await auditLog(
-    { institution_id: result.insertId, id: null, role: "PUBLIC" },
-    "REGISTER_INSTITUTION_LEGACY",
-    "institutions",
-    result.insertId,
-    { institution_name, institution_code, email, phone }
-  );
-
-  res.status(201).json({
-    id: result.insertId,
-    message: "Institution registered successfully."
+  return res.status(403).json({
+    error:
+      "Public institution registration is disabled. Log in and use Register (Institution/User) inside the system."
   });
 }));
 
 app.post("/api/public/users/register", publicWriteRateLimit, enforcePublicSecurity, asyncHandler(async (req, res) => {
-  const institution_code = cleanValue(req.body?.institution_code).toUpperCase();
-  const full_name = cleanValue(req.body?.full_name);
-  const username = cleanValue(req.body?.username);
-  const usernameValidationError = validateUsername(username, "username");
-  if (usernameValidationError) {
-    return res.status(400).json({ error: usernameValidationError });
-  }
-  const role = normalizeRole(cleanValue(req.body?.portal_role || req.body?.role));
-  const autoGeneratePassword = parseTruthy(req.body?.auto_generate_password);
-  const requestedPassword = cleanValue(req.body?.password);
-  const password = autoGeneratePassword ? generateStrongPassword(12) : requestedPassword;
-  const weakPasswordError = requireStrongPassword(password, "password");
-  if (weakPasswordError) {
-    return res.status(400).json({ error: weakPasswordError });
-  }
-  const email = cleanOptionalValue(req.body?.email);
-  const phone = cleanOptionalValue(req.body?.phone);
-
-  if (!institution_code || !full_name || !username || !password || !role) {
-    return res.status(400).json({
-      error: "institution_code, full_name, username, password and role are required."
-    });
-  }
-  if (!PUBLIC_ROLE_OPTIONS.includes(role)) {
-    return res.status(400).json({
-      error: `role must be one of: ${PUBLIC_ROLE_OPTIONS.join(", ")}`
-    });
-  }
-  const roleCapacity = await checkSystemDeveloperAccountCapacity(role);
-  if (!roleCapacity.allowed) {
-    return res.status(409).json({
-      error: `System Developer registration limit reached. Maximum allowed is ${roleCapacity.max}.`,
-      current_total: roleCapacity.total,
-      max_allowed: roleCapacity.max
-    });
-  }
-
-  const institutions = await query("SELECT id, institution_name FROM institutions WHERE institution_code = ? LIMIT 1", [institution_code]);
-  if (!institutions.length) {
-    return res.status(404).json({ error: "Institution code was not found." });
-  }
-  const institutionId = institutions[0].id;
-
-  const existingUser = await query(
-    "SELECT id FROM users WHERE institution_id = ? AND username = ? LIMIT 1",
-    [institutionId, username]
-  );
-  if (existingUser.length) {
-    return res.status(409).json({ error: "Username already exists in this institution." });
-  }
-
-  const passwordHash = await hashPassword(password);
-  const isRotationExempt = PASSWORD_ROTATION_EXEMPT_ROLES.has(role);
-  const result = await query(
-    `INSERT INTO users
-      (institution_id, full_name, username, password_hash, password_last_changed_at, password_expires_at, must_change_password, role, email, phone, is_active)
-     VALUES (?, ?, ?, ?, NOW(), ?, ?, ?, ?, ?, 1)`,
-    [
-      institutionId,
-      full_name,
-      username,
-      passwordHash,
-      isRotationExempt ? null : dayjs().add(PASSWORD_ROTATION_DAYS, "day").format("YYYY-MM-DD HH:mm:ss"),
-      autoGeneratePassword ? 1 : 0,
-      role,
-      email,
-      phone
-    ]
-  );
-
-  let credentialDispatch = null;
-  if (role !== ROLES.SYSTEM_DEVELOPER) {
-    credentialDispatch = await dispatchCredentialNotice({
-      email,
-      phone,
-      subject: "IMIS User Credentials",
-      message: [
-        "Welcome to the Integrated Management Information System for Basic Education.",
-        `Institution: ${institutions[0].institution_name || "-"}`,
-        `Username: ${username}`,
-        `Password: ${password}`,
-        "Please change your password immediately after first login."
-      ].join("\n")
-    });
-  }
-
-  await auditLog(
-    { institution_id: institutionId, id: null, role: "PUBLIC" },
-    "REGISTER_USER_LEGACY",
-    "users",
-    result.insertId,
-    { username, role, credential_dispatch: credentialDispatch }
-  );
-
-  res.status(201).json({
-    id: result.insertId,
-    message: "User registered successfully.",
-    password,
-    credential_dispatch: credentialDispatch
+  return res.status(403).json({
+    error:
+      "Public user registration is disabled. Log in and use Register (Institution/User) inside the system."
   });
 }));
+
+app.post(
+  "/api/auth/logout",
+  auth,
+  asyncHandler(async (req, res) => {
+    await auditLog(req.user, "LOGOUT", "auth", req.user?.id || null, {
+      ...buildAuthAuditDetails(req, req.user?.username, {
+        password_correct: true,
+        otp_correct: true,
+        login_time: req.user?.login_session_started_at || null,
+        logout_time: dayjs().format("YYYY-MM-DD HH:mm:ss")
+      })
+    });
+    res.json({ message: "Logged out successfully." });
+  })
+);
 
 app.post("/api/public/recovery/username", publicWriteRateLimit, enforcePublicSecurity, asyncHandler(async (req, res) => {
   const institution_code = cleanValue(req.body?.institution_code).toUpperCase();
@@ -2647,12 +2450,231 @@ app.get("/api/portal/current", auth, asyncHandler(async (req, res) => {
     institution_id: req.user.institution_id,
     permissions: ROLE_PERMISSIONS[req.user.role] || [],
     allowed_modules: allowedModules,
+    assignable_roles: getAssignableRolesForActor(req.user),
+    can_register_institution: canRegisterInstitution(req.user),
+    can_register_users: canRegisterInstitutionUsers(req.user),
+    can_register_privileged_users: canRegisterPrivilegedUsers(req.user),
     must_change_password: Boolean(req.user.must_change_password),
     password_last_changed_at: req.user.password_last_changed_at || null,
     password_expires_at: req.user.password_expires_at || null,
     password_days_remaining: passwordPolicy.remainingDays
   });
 }));
+
+app.get(
+  "/api/users/registrar-options",
+  auth,
+  enforceModuleAccess(MODULE_KEYS.REGISTRATION),
+  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
+  asyncHandler(async (req, res) => {
+    const canSeeAllInstitutions = canManageAcrossInstitutions(req.user);
+    const institutionScopeId = canSeeAllInstitutions
+      ? Number(req.query?.institution_id || 0) || null
+      : Number(req.user.institution_id || 0) || null;
+    const institutions = canSeeAllInstitutions
+      ? await query(
+        `SELECT id, institution_name, institution_code, county, email, phone
+         FROM institutions
+         ${institutionScopeId ? "WHERE id = ?" : ""}
+         ORDER BY institution_name ASC`,
+        institutionScopeId ? [institutionScopeId] : []
+      )
+      : await query(
+        `SELECT id, institution_name, institution_code, county, email, phone
+         FROM institutions
+         WHERE id = ?
+         LIMIT 1`,
+        [req.user.institution_id]
+      );
+    res.json({
+      requester_role: normalizeRole(req.user.role),
+      can_manage_all_institutions: canSeeAllInstitutions,
+      institution_scope_id: institutionScopeId,
+      assignable_roles: getAssignableRolesForActor(req.user),
+      can_register_institution: canRegisterInstitution(req.user),
+      can_register_users: canRegisterInstitutionUsers(req.user),
+      can_register_privileged_users: canRegisterPrivilegedUsers(req.user),
+      institutions
+    });
+  })
+);
+
+app.post(
+  "/api/institutions",
+  auth,
+  accountMutationRateLimit,
+  accountMutationCooldown,
+  enforceModuleAccess(MODULE_KEYS.REGISTRATION),
+  enforceRole([ROLES.SYSTEM_DEVELOPER]),
+  enforcePermission(PERMISSIONS.CREATE),
+  asyncHandler(async (req, res) => {
+    const institutionName = cleanValue(req.body?.institution_name);
+    const institutionEmail = cleanOptionalValue(req.body?.email);
+    const institutionPhone = cleanOptionalValue(req.body?.phone);
+    const countyInput = cleanOptionalValue(req.body?.county);
+    const countyCodeInput = cleanOptionalValue(req.body?.county_code);
+    const categoryInput = cleanOptionalValue(req.body?.category);
+    const subCounty = cleanOptionalValue(req.body?.sub_county);
+    const location = cleanOptionalValue(req.body?.location);
+    const village = cleanOptionalValue(req.body?.village);
+    const postalCodeInput = cleanOptionalValue(req.body?.postal_code);
+    const townInput = cleanOptionalValue(req.body?.town);
+    const sendAgreementEmail = parseTruthy(req.body?.send_agreement_email);
+    const autoGeneratePassword = parseTruthy(req.body?.auto_generate_password);
+
+    const adminFullName = cleanValue(req.body?.admin_full_name);
+    const adminUsername = cleanValue(req.body?.admin_username);
+    const adminUsernameValidationError = validateUsername(adminUsername, "admin_username");
+    if (adminUsernameValidationError) {
+      return res.status(400).json({ error: adminUsernameValidationError });
+    }
+    const adminPasswordInput = cleanValue(req.body?.admin_password);
+    const portalRoleRaw = normalizeRole(cleanValue(req.body?.portal_role));
+    const portalRole = [ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION].includes(portalRoleRaw)
+      ? portalRoleRaw
+      : ROLES.HEAD_OF_INSTITUTION;
+
+    const countyRecord = resolveCounty({ countyCode: countyCodeInput, countyName: countyInput });
+    if (!countyRecord) {
+      return res.status(400).json({ error: "Select a valid county." });
+    }
+    const categoryRecord = resolveInstitutionCategory({
+      categoryCode: categoryInput,
+      categoryLabel: categoryInput
+    });
+    if (!categoryRecord) {
+      return res.status(400).json({ error: "Select a valid institution category." });
+    }
+
+    const postalDetails = getPostalDetails(postalCodeInput);
+    const normalizedTown = townInput || postalDetails?.town || null;
+    const institutionCode = await nextInstitutionCode({
+      countyCode: countyRecord.code,
+      categoryCode: categoryRecord.code
+    });
+
+    const adminPassword = autoGeneratePassword
+      ? generateStrongPassword(12)
+      : adminPasswordInput;
+    const weakAdminPasswordError = requireStrongPassword(adminPassword, "admin_password");
+    if (weakAdminPasswordError) {
+      return res.status(400).json({ error: weakAdminPasswordError });
+    }
+
+    if (!institutionName || !adminFullName || !adminUsername || !adminPassword) {
+      return res.status(400).json({
+        error: "institution_name, admin_full_name, admin_username and admin_password are required."
+      });
+    }
+
+    const existingInstitution = await query(
+      "SELECT id FROM institutions WHERE institution_code = ? LIMIT 1",
+      [institutionCode]
+    );
+    if (existingInstitution.length) {
+      return res.status(409).json({ error: "Institution code already exists." });
+    }
+
+    const institutionInsert = await query(
+      `INSERT INTO institutions
+        (institution_name, institution_code, email, phone, county, sub_county, location, village)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        institutionName,
+        institutionCode,
+        institutionEmail,
+        institutionPhone,
+        countyRecord.name,
+        subCounty,
+        location,
+        normalizedTown || village
+      ]
+    );
+    const institutionId = institutionInsert.insertId;
+    const passwordHash = await hashPassword(adminPassword);
+
+    await query(
+      `INSERT INTO users
+        (institution_id, full_name, username, password_hash, password_last_changed_at, password_expires_at, role, email, phone, is_active)
+       VALUES (?, ?, ?, ?, NOW(), DATE_ADD(NOW(), INTERVAL ? DAY), ?, ?, ?, 1)`,
+      [
+        institutionId,
+        adminFullName,
+        adminUsername,
+        passwordHash,
+        PASSWORD_ROTATION_DAYS,
+        portalRole,
+        institutionEmail,
+        institutionPhone
+      ]
+    );
+
+    const credentialMessage = [
+      "Welcome to the Integrated Management Information System for Basic Education.",
+      `Institution: ${institutionName}`,
+      `Institution Code: ${institutionCode}`,
+      `Username: ${adminUsername}`,
+      `Password: ${adminPassword}`,
+      "Please change your password immediately after first login."
+    ].join("\n");
+    const credentialDispatch = await dispatchCredentialNotice({
+      email: institutionEmail,
+      phone: institutionPhone,
+      subject: "IMIS Institution Administrator Credentials",
+      message: credentialMessage
+    });
+
+    const institutionRecord = {
+      id: institutionId,
+      institution_name: institutionName,
+      institution_code: institutionCode,
+      county: countyRecord.name,
+      email: institutionEmail,
+      phone: institutionPhone
+    };
+
+    let agreementEmailDispatch = null;
+    if (sendAgreementEmail) {
+      agreementEmailDispatch = await dispatchCredentialNotice({
+        email: institutionEmail,
+        phone: null,
+        subject: "IMIS Service Agreement Letter",
+        message: buildAgreementLines({
+          institution: institutionRecord,
+          adminUser: { username: adminUsername }
+        }).join("\n")
+      });
+    }
+
+    await auditLog(req.user, "REGISTER_INSTITUTION", "institutions", institutionId, {
+      institution_name: institutionName,
+      institution_code: institutionCode,
+      county: countyRecord.name,
+      county_code: countyRecord.code,
+      category: categoryRecord.label,
+      category_code: categoryRecord.code,
+      admin_username: adminUsername,
+      admin_role: portalRole
+    });
+
+    res.status(201).json({
+      message: "Institution and administrator account registered successfully.",
+      institution_id: institutionId,
+      institution_code: institutionCode,
+      admin_username: adminUsername,
+      admin_password: adminPassword,
+      county: countyRecord.name,
+      county_code: countyRecord.code,
+      category: categoryRecord.label,
+      category_code: categoryRecord.code,
+      postal_code: postalDetails?.postal_code || postalCodeInput || null,
+      town: normalizedTown,
+      agreement_pdf_url: `/api/public/institutions/${institutionId}/agreement.pdf`,
+      credential_dispatch: credentialDispatch,
+      agreement_email_dispatch: agreementEmailDispatch
+    });
+  })
+);
 
 app.post(
   "/api/uploads",
@@ -3110,6 +3132,7 @@ app.post(
   auth,
   accountMutationRateLimit,
   accountMutationCooldown,
+  enforceModuleAccess(MODULE_KEYS.REGISTRATION),
   enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
   asyncHandler(async (req, res) => {
     const { full_name, username, password, role, email, phone } = req.body;
@@ -3128,6 +3151,13 @@ app.post(
     if (!PUBLIC_ROLE_OPTIONS.includes(normalizedRole)) {
       return res.status(400).json({
         error: `role must be one of: ${PUBLIC_ROLE_OPTIONS.join(", ")}`
+      });
+    }
+    const assignableRoles = getAssignableRolesForActor(req.user);
+    if (!assignableRoles.includes(normalizedRole)) {
+      return res.status(403).json({
+        error:
+          "You are not allowed to register this role. HoI/Administrator can only register users for their institution and cannot create System Developer, MoE, or TSC users."
       });
     }
     const roleCapacity = await checkSystemDeveloperAccountCapacity(normalizedRole);
@@ -3582,6 +3612,22 @@ app.get(
        LIMIT ?`,
       [...params, limit]
     );
+    const normalizedLogs = logs.map((row) => {
+      const details = parseStoredJson(row.details_json) || {};
+      return {
+        ...row,
+        username: cleanValue(details.username || details.user_name) || null,
+        password_correct: parseTruthy(details.password_correct),
+        otp_correct: parseTruthy(details.otp_correct),
+        ip_address: cleanValue(details.ip_address) || null,
+        machine_name: cleanValue(details.machine_name) || null,
+        user_agent: cleanValue(details.user_agent) || null,
+        login_time: normalizeDateTime(details.login_time || details.request_time) || normalizeDateTime(row.created_at),
+        logout_time: normalizeDateTime(details.logout_time) || null,
+        activity_done: cleanValue(details.activity_done || details.action_note || row.action) || row.action,
+        details_json: details
+      };
+    });
     const [failedLoginsRow] = await query(
       `SELECT COUNT(*) total
        FROM activity_logs
@@ -3597,7 +3643,7 @@ app.get(
       params
     );
     res.json({
-      logs,
+      logs: normalizedLogs,
       metrics: {
         failed_login_events_24h: Number(failedLoginsRow?.total || 0),
         otp_fail_events_24h: Number(otpFailuresRow?.total || 0)
