@@ -2352,6 +2352,18 @@ async function init() {
     allowedModules = Array.isArray(portalData?.allowed_modules) ? portalData.allowed_modules : [];
     const meData = await request("/api/auth/me");
     document.getElementById("portalLabel").textContent = `${portalData.portal} (${portalData.role})`;
+    const buildLineEl = document.getElementById("iimsBuildLineDash");
+    if (buildLineEl) {
+      fetch("/api/build-info")
+        .then((r) => (r.ok ? r.json() : null))
+        .then((data) => {
+          const stamp = data?.build_stamp;
+          buildLineEl.textContent = stamp ? `Release ${stamp} · UI v6` : "";
+        })
+        .catch(() => {
+          buildLineEl.textContent = "";
+        });
+    }
     bindSidebar();
     bindTopbarButtons();
     bindQuickActionCards();

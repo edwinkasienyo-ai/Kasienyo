@@ -44,6 +44,9 @@ const { sendSimplePdf, sendSimpleExcel } = require("./services/exportService");
 const { generateOtpCode, buildOtpExpiry, sendOtp } = require("./services/otpService");
 const { buildSearchWhere } = require("./utils/sql");
 
+/** Bump when shipping UI/API changes so schools can confirm they run the right copy. */
+const IIMS_BUILD_STAMP = process.env.IIMS_BUILD_STAMP || "20260422-ui6";
+
 const app = express();
 
 const frontendOrigin = process.env.FRONTEND_ORIGIN || "http://localhost:5000";
@@ -1618,6 +1621,14 @@ async function getPaginatedRows({
                LIMIT ? OFFSET ?`;
   return query(sql, [...search.params, Number(limit), Number(offset)]);
 }
+
+app.get("/api/build-info", (_, res) => {
+  res.set("Cache-Control", "no-store");
+  res.json({
+    build_stamp: IIMS_BUILD_STAMP,
+    server_time: new Date().toISOString()
+  });
+});
 
 app.get("/api/meta", (_, res) => {
   res.json({

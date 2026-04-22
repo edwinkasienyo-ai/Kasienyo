@@ -16,6 +16,23 @@ select:disabled {
   cursor: not-allowed;
 }
 
+.iims-build-line {
+  margin: 10px 0 0;
+  padding: 8px 10px;
+  font-size: 11px;
+  line-height: 1.35;
+  color: #48617a;
+  background: rgba(15, 56, 96, 0.06);
+  border-radius: var(--radius-sm, 10px);
+  border: 1px solid var(--line-200, #d7e3f2);
+}
+
+.dashboard-page .sidebar .iims-build-line {
+  color: rgba(255, 255, 255, 0.75);
+  background: rgba(0, 0, 0, 0.18);
+  border-color: rgba(255, 255, 255, 0.12);
+}
+
 :root {
   --primary-900: #0f3860;
   --primary-800: #155286;

@@ -25,6 +25,20 @@ async function request(path, options = {}) {
   return data;
 }
 
+async function loadBuildStampLogin() {
+  const el = document.getElementById("iimsBuildLineLogin");
+  if (!el) return;
+  try {
+    const response = await fetch("/api/build-info");
+    const data = response.ok ? await response.json() : null;
+    const stamp = data?.build_stamp || "unknown";
+    el.textContent = `Release: ${stamp} · UI assets v6 — if this text is wrong or missing, the app is not running from the updated project folder.`;
+  } catch (_) {
+    el.textContent =
+      "Could not load release info. Ensure Node is running from your updated project (e.g. BASIC EDUCATION) and try again.";
+  }
+}
+
 async function loadPublicHeroImage() {
   const heroImageEl = document.querySelector(".hero-image");
   const heroPanelEl = document.querySelector(".hero-panel");
@@ -302,4 +316,5 @@ document.getElementById("loginPortalRole")?.addEventListener("change", updateLog
 initializeAuthPanels();
 bindAuthSectionLinks();
 loadPublicHeroImage();
+loadBuildStampLogin();
 updateLoginFieldState();
