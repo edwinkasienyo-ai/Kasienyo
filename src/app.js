@@ -5544,6 +5544,12 @@ app.get("/compliance", (_, res) => {
 app.get("/support", (_, res) => {
   res.redirect(302, "/support.html");
 });
+app.get("/opensearch.xml", (_, res) => {
+  res.sendFile(path.join(process.cwd(), "public", "opensearch.xml"));
+});
+app.get("/llms.txt", (_, res) => {
+  res.sendFile(path.join(process.cwd(), "public", "llms.txt"));
+});
 
 app.use((req, res, next) => {
   if (String(req.path || "").startsWith("/api/")) {

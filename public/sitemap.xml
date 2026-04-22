@@ -91,6 +91,16 @@
     <priority>0.1</priority>
   </url>
   <url>
+    <loc>https://imis.mwendeguenterprise.co.ke/llms.txt</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.2</priority>
+  </url>
+  <url>
+    <loc>https://imis.mwendeguenterprise.co.ke/opensearch.xml</loc>
+    <changefreq>yearly</changefreq>
+    <priority>0.1</priority>
+  </url>
+  <url>
     <loc>https://imis.mwendeguenterprise.co.ke/browserconfig.xml</loc>
     <changefreq>yearly</changefreq>
     <priority>0.1</priority>

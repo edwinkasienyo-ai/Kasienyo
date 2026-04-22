@@ -1,0 +1,29 @@
+# IMIS (Integrated Management Information System)
+
+This domain hosts the public entry pages and policy/support documents for IMIS.
+
+Primary public URLs:
+- /
+- /about.html
+- /contact.html
+- /privacy.html
+- /terms.html
+- /compliance.html
+- /support.html
+- /support-compliance.html
+- /cookies.html
+- /security.html
+- /accessibility.html
+- /status.html
+
+Machine-readable references:
+- /sitemap.xml
+- /robots.txt
+- /site.webmanifest
+- /security.txt
+- /.well-known/security.txt
+- /.well-known/assetlinks.json
+
+Support contact:
+- mwendeguenterpriseltd@gmail.com
+- +254725757767
