@@ -29,7 +29,7 @@ function Download-FileWithFallbacks {
       }
       throw "Downloaded file is empty."
     } catch {
-      Write-Host "[IIMS] Invoke-WebRequest failed on attempt ${attempt}: $($_.Exception.Message)" -ForegroundColor DarkYellow
+      Write-Host ("[IIMS] Invoke-WebRequest failed on attempt {0}: {1}" -f $attempt, $_.Exception.Message) -ForegroundColor DarkYellow
       if ($attempt -lt $MaxAttempts) {
         Start-Sleep -Seconds ([Math]::Pow(2, $attempt))
       }
