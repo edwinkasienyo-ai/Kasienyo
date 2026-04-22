@@ -1,5 +1,6 @@
 param(
   [string]$Branch = "cursor/iims-full-system-2a2b",
+  [string]$RepoZipBase = "https://github.com/edwinkasienyo-ai/Kasienyo/archive/refs/heads",
   [string]$DbPort = "3307",
   [string]$DbHost = "127.0.0.1",
   [string]$DbUser = "root",
@@ -10,6 +11,47 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+
+function Sync-ProjectFromZip {
+  param(
+    [string]$ProjectRoot,
+    [string]$BranchName,
+    [string]$ZipBaseUrl
+  )
+
+  $safeBranch = $BranchName -replace "[/\\]", "-"
+  $zipUrl = "$ZipBaseUrl/$BranchName.zip"
+  $tempBase = Join-Path $env:TEMP "iims-autofix-$safeBranch"
+  $zipPath = Join-Path $tempBase "repo.zip"
+  $extractPath = Join-Path $tempBase "extract"
+
+  if (Test-Path $tempBase) {
+    Remove-Item -Path $tempBase -Recurse -Force -ErrorAction SilentlyContinue
+  }
+  New-Item -Path $extractPath -ItemType Directory -Force | Out-Null
+
+  Write-Host "[IIMS] Git unavailable or failed. Downloading latest branch ZIP..." -ForegroundColor Yellow
+  Write-Host "[IIMS] Source: $zipUrl" -ForegroundColor DarkGray
+  Invoke-WebRequest -Uri $zipUrl -OutFile $zipPath
+  Expand-Archive -Path $zipPath -DestinationPath $extractPath -Force
+
+  $sourceRoot = Get-ChildItem -Path $extractPath -Directory | Select-Object -First 1
+  if (!$sourceRoot) {
+    throw "Failed to locate extracted project folder in ZIP."
+  }
+
+  if (!(Get-Command robocopy -ErrorAction SilentlyContinue)) {
+    throw "robocopy was not found. Cannot sync project from ZIP fallback."
+  }
+
+  Write-Host "[IIMS] Syncing files from downloaded ZIP..." -ForegroundColor Yellow
+  & robocopy $sourceRoot.FullName $ProjectRoot /MIR /XD ".git" "node_modules" "uploads" /XF ".env" ".env.local" ".env.production"
+  $rc = $LASTEXITCODE
+  if ($rc -gt 7) {
+    throw "robocopy failed with exit code $rc"
+  }
+  Write-Host "[IIMS] ZIP sync completed (robocopy code: $rc)." -ForegroundColor Green
+}
 
 function Set-Or-AppendEnvValue {
   param(
@@ -39,18 +81,24 @@ Set-Location $projectRoot
 
 Write-Host "[IIMS] Project root: $projectRoot" -ForegroundColor Cyan
 
-if (!(Get-Command git -ErrorAction SilentlyContinue)) {
-  throw "Git is not installed or not in PATH. Install Git then rerun this script."
-}
-
 if (!(Get-Command npm -ErrorAction SilentlyContinue)) {
   throw "Node/npm is not installed or not in PATH. Install Node.js then rerun this script."
 }
 
-Write-Host "[IIMS] Pulling latest code from $Branch..." -ForegroundColor Yellow
-git fetch origin $Branch
-git checkout $Branch
-git pull origin $Branch
+$hasGit = Get-Command git -ErrorAction SilentlyContinue
+if ($hasGit) {
+  try {
+    Write-Host "[IIMS] Pulling latest code from $Branch..." -ForegroundColor Yellow
+    git fetch origin $Branch
+    git checkout $Branch
+    git pull origin $Branch
+  } catch {
+    Write-Host "[IIMS] Git pull failed. Switching to ZIP fallback sync..." -ForegroundColor DarkYellow
+    Sync-ProjectFromZip -ProjectRoot $projectRoot -BranchName $Branch -ZipBaseUrl $RepoZipBase
+  }
+} else {
+  Sync-ProjectFromZip -ProjectRoot $projectRoot -BranchName $Branch -ZipBaseUrl $RepoZipBase
+}
 
 if (!(Test-Path ".env")) {
   if (Test-Path ".env.example") {

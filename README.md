@@ -108,6 +108,8 @@ What it does:
 - Import `sql/schema.sql` and `sql/seed.sql` when `mysql` CLI exists in PATH
 - Start `npm run dev`
 
+If Git is missing on Windows, the script now automatically falls back to downloading the latest branch ZIP and syncing the project files.
+
 ## Default Login
 
 - **Username:** `admin`
