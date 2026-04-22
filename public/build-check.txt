@@ -1,6 +1,8 @@
 IIMS static file check — if you can read this in the browser, Express is serving THIS project folder.
 
-Expected release stamp: 20260422-ui7 (override with IIMS_BUILD_STAMP in .env). Sidebar: System Admin scrolls under Dashboard, above Admission.
+Expected release stamp: 20260422-ui9 (override with IIMS_BUILD_STAMP in .env).
+Dashboard sidebar shows yellow line: "Static UI v9 — System Admin is directly under Dashboard".
+If terminal does not print a boxed IIMS SERVER STARTED banner with Folder (cwd), server.js is old — git pull and restart.
 
 JSON: GET /api/build-info
 Typo alias: GET /api/building-info

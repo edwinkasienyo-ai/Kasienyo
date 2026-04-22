@@ -33,6 +33,17 @@ select:disabled {
   border-color: rgba(255, 255, 255, 0.12);
 }
 
+.sidebar-static-version {
+  margin: 8px 0 0;
+  padding: 6px 8px;
+  font-size: 11px;
+  font-weight: 700;
+  color: #fff8a8;
+  background: rgba(200, 160, 0, 0.25);
+  border: 1px solid rgba(255, 230, 120, 0.45);
+  border-radius: var(--radius-sm, 10px);
+}
+
 :root {
   --primary-900: #0f3860;
   --primary-800: #155286;

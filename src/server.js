@@ -1,7 +1,7 @@
 require("dotenv").config();
 const app = require("./app");
 
-const IIMS_BUILD_STAMP = process.env.IIMS_BUILD_STAMP || "20260422-ui8";
+const IIMS_BUILD_STAMP = process.env.IIMS_BUILD_STAMP || "20260422-ui9";
 const { query } = require("./config/db");
 const { hashPassword } = require("./utils/password");
 const { ROLES } = require("./config/constants");
@@ -436,12 +436,19 @@ async function start() {
   const defaultInstitutionId = await ensureDefaultInstitutionAndAdmin();
   await ensureSystemDeveloperAccount(defaultInstitutionId);
   app.listen(PORT, () => {
+    const cwd = process.cwd();
+    const banner = `
+================================================================================
+  IIMS SERVER STARTED
+  Folder (cwd): ${cwd}
+  URL:          http://localhost:${PORT}
+  Release:      ${IIMS_BUILD_STAMP}
+  Check API:    http://localhost:${PORT}/api/build-info
+  Static test:  http://localhost:${PORT}/build-check.txt
+  If Release is NOT ${IIMS_BUILD_STAMP} or Folder is wrong, pull Git and restart.
+================================================================================`;
     // eslint-disable-next-line no-console
-    console.log(`IIMS server running on http://localhost:${PORT}`);
-    // eslint-disable-next-line no-console
-    console.log(
-      `IIMS release ${IIMS_BUILD_STAMP} — verify API: http://localhost:${PORT}/api/build-info (or /api/building-info)`
-    );
+    console.log(banner);
   });
 }
 
