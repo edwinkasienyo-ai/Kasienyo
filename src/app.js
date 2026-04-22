@@ -5494,6 +5494,30 @@ app.get("/terms", (_, res) => {
   res.redirect(302, "/terms.html");
 });
 
+app.get("/about", (_, res) => {
+  res.redirect(302, "/about.html");
+});
+
+app.get("/contact", (_, res) => {
+  res.redirect(302, "/contact.html");
+});
+
+app.get("/accessibility", (_, res) => {
+  res.redirect(302, "/accessibility.html");
+});
+
+app.get("/status", (_, res) => {
+  res.redirect(302, "/status.html");
+});
+
+app.get("/cookies", (_, res) => {
+  res.redirect(302, "/cookies.html");
+});
+
+app.get("/security", (_, res) => {
+  res.redirect(302, "/security.html");
+});
+
 app.get("/compliance", (_, res) => {
   res.redirect(302, "/compliance.html");
 });
