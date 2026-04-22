@@ -71,7 +71,21 @@ if (!fs.existsSync(uploadsPath)) {
 }
 
 app.use("/uploads", express.static(uploadsPath));
-app.use(express.static(path.join(process.cwd(), "public")));
+
+const publicRoot = path.join(process.cwd(), "public");
+const noStoreStaticExtensions = new Set([".html", ".htm", ".css", ".js", ".json"]);
+app.use(
+  express.static(publicRoot, {
+    setHeaders(res, filePath) {
+      const ext = path.extname(filePath).toLowerCase();
+      if (noStoreStaticExtensions.has(ext)) {
+        res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, private");
+        res.setHeader("Pragma", "no-cache");
+        res.setHeader("Expires", "0");
+      }
+    }
+  })
+);
 
 const upload = multer({
   storage: multer.diskStorage({
