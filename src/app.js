@@ -2165,70 +2165,32 @@ app.post("/api/public/institutions/:id/agreement/send", publicWriteRateLimit, en
 }));
 
 app.post("/api/public/forgot-username", publicWriteRateLimit, enforcePublicSecurity, asyncHandler(async (req, res) => {
-  const institutionCode = cleanValue(req.body?.institution_code);
-  const email = cleanOptionalValue(req.body?.email);
-  const phone = cleanOptionalValue(req.body?.phone);
-
-  if (!email && !phone) {
-    return res.status(400).json({ error: "Provide email or phone." });
-  }
-
-  let where = "WHERE u.is_active = 1";
-  const params = [];
-  if (institutionCode) {
-    where += " AND i.institution_code = ?";
-    params.push(institutionCode);
-  }
-  if (email && phone) {
-    where += " AND (u.email = ? OR u.phone = ?)";
-    params.push(email, phone);
-  } else if (email) {
-    where += " AND u.email = ?";
-    params.push(email);
-  } else {
-    where += " AND u.phone = ?";
-    params.push(phone);
-  }
-
-  const rows = await query(
-    `SELECT u.username, i.institution_code, i.institution_name
-     FROM users u
-     INNER JOIN institutions i ON i.id = u.institution_id
-     ${where}
-     ORDER BY u.id DESC
-     LIMIT 10`,
-    params
-  );
-  if (!rows.length) {
-    return res.status(404).json({ error: "No usernames matched the details provided." });
-  }
-
-  res.json({
-    message: "Matching usernames found.",
-    usernames: rows.map((row) => ({
-      username: row.username,
-      institution_code: row.institution_code,
-      institution_name: row.institution_name
-    }))
+  return res.status(200).json({
+    message:
+      "For username recovery, contact your institution administrator or the system developer."
   });
 }));
 
 app.post("/api/public/forgot-password", publicWriteRateLimit, enforcePublicSecurity, asyncHandler(async (req, res) => {
-  const institutionCode = cleanValue(req.body?.institution_code);
+  const institutionCode = cleanOptionalValue(req.body?.institution_code);
   const username = cleanValue(req.body?.username);
-  const newPassword = cleanValue(req.body?.new_password);
-  const weakNewPasswordError = requireStrongPassword(newPassword, "new_password");
-  if (weakNewPasswordError) {
-    return res.status(400).json({ error: weakNewPasswordError });
-  }
   const email = cleanOptionalValue(req.body?.email);
   const phone = cleanOptionalValue(req.body?.phone);
+  const otp = cleanOptionalValue(req.body?.otp);
+  const newPassword = cleanOptionalValue(req.body?.new_password);
+  const mode = otp && newPassword ? "verify" : "request";
 
-  if (!username || !newPassword) {
-    return res.status(400).json({ error: "username and new_password are required." });
+  if (!username) {
+    return res.status(400).json({ error: "username is required." });
   }
   if (!email && !phone) {
     return res.status(400).json({ error: "Provide email or phone to verify identity." });
+  }
+  if (mode === "verify") {
+    const weakNewPasswordError = requireStrongPassword(newPassword, "new_password");
+    if (weakNewPasswordError) {
+      return res.status(400).json({ error: weakNewPasswordError });
+    }
   }
 
   let where = "WHERE u.username = ?";
@@ -2257,6 +2219,63 @@ app.post("/api/public/forgot-password", publicWriteRateLimit, enforcePublicSecur
     return res.status(401).json({ error: "Phone does not match our records." });
   }
 
+  if (mode === "request") {
+    const identity = `pwdreset:${username.toLowerCase()}`;
+    const otpCooldown = checkOtpRequestCooldown(identity);
+    if (!otpCooldown.allowed) {
+      return res.status(429).json({
+        error: "OTP already requested recently. Please wait before requesting another code.",
+        otp_resend_available_after_seconds: otpCooldown.remainingSeconds
+      });
+    }
+
+    const destination = cleanValue(phone) || cleanValue(email);
+    const channel = cleanValue(phone) ? "sms" : "email";
+    const payload = {
+      username,
+      institution_id: user.institution_id,
+      recovery_type: "PASSWORD_RESET",
+      email: cleanValue(email) || null,
+      phone: cleanValue(phone) || null
+    };
+    const otpSession = await createOtpSession({
+      identity,
+      role: "PUBLIC_PASSWORD_RESET",
+      institutionId: user.institution_id,
+      payload,
+      destination,
+      channel
+    });
+    await auditLog(
+      { institution_id: user.institution_id || null, id: user.id || null, role: "PUBLIC" },
+      "PUBLIC_PASSWORD_RESET_OTP_REQUESTED",
+      "otp_sessions",
+      null,
+      { username, otp_channel: channel, otp_expires_at: otpSession.expiresAt }
+    );
+    return res.json({
+      message: `OTP sent to your ${channel === "sms" ? "phone" : "email"}.`,
+      otp_channel_used: channel,
+      otp_resend_available_after_seconds: OTP_RESEND_COOLDOWN_SECONDS
+    });
+  }
+
+  const sessions = await query(
+    `SELECT * FROM otp_sessions
+     WHERE identity_value = ?
+       AND role_name = 'PUBLIC_PASSWORD_RESET'
+       AND otp_code = ?
+       AND is_used = 0
+       AND expires_at > NOW()
+     ORDER BY id DESC
+     LIMIT 1`,
+    [`pwdreset:${username.toLowerCase()}`, otp]
+  );
+  if (!sessions.length) {
+    return res.status(401).json({ error: "Invalid or expired OTP." });
+  }
+  await query("UPDATE otp_sessions SET is_used = 1 WHERE id = ?", [sessions[0].id]);
+
   const passwordHash = await hashPassword(newPassword);
   await query(
     `UPDATE users
@@ -2277,7 +2296,6 @@ app.post("/api/public/forgot-password", publicWriteRateLimit, enforcePublicSecur
     message: [
       "Your IMIS password has been reset.",
       `Username: ${username}`,
-      `New Password: ${newPassword}`,
       "Please log in and change your password immediately."
     ].join("\n")
   });

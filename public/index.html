@@ -110,7 +110,7 @@
           <option value="SUPPLIER">Suppliers/Contuctors/Service Providers</option>
         </select>
         <label>Username</label>
-        <input id="username" placeholder="Enter username (System Developer default: 952252)" disabled />
+        <input id="username" placeholder="Enter username" disabled />
         <label>Password</label>
         <input id="password" type="password" placeholder="Enter password" disabled />
         <label>OTP channel</label>
@@ -136,10 +136,6 @@
           <h4>Forgot Password</h4>
           <div class="auth-grid">
             <div>
-              <label>Institution Code</label>
-              <input id="forgotPasswordInstitutionCode" placeholder="Institution Code" />
-            </div>
-            <div>
               <label>Username</label>
               <input id="forgotPasswordUsername" placeholder="Username" />
             </div>
@@ -152,11 +148,18 @@
               <input id="forgotPasswordPhone" placeholder="Mobile Number" />
             </div>
             <div>
+              <label>OTP Code</label>
+              <input id="forgotPasswordOtp" placeholder="Enter OTP received via email/phone" />
+            </div>
+            <div>
               <label>New Password</label>
               <input id="forgotPasswordNewPassword" type="password" placeholder="New Password" />
             </div>
           </div>
-          <button id="forgotPasswordButton" type="button">Reset password</button>
+          <div class="auth-actions-row">
+            <button id="forgotPasswordSendOtpButton" type="button">Send OTP</button>
+            <button id="forgotPasswordButton" type="button">Verify OTP &amp; Reset Password</button>
+          </div>
         </section>
 
         <p id="iimsBuildLineLogin" class="iims-build-line" aria-live="polite">
@@ -165,21 +168,10 @@
 
         <section id="forgotUsernamePanel" class="auth-panel">
           <h4>Forgot Username</h4>
-          <div class="auth-grid">
-            <div>
-              <label>Institution Code</label>
-              <input id="forgotUsernameInstitutionCode" placeholder="Institution Code" />
-            </div>
-            <div>
-              <label>Email (optional)</label>
-              <input id="forgotUsernameEmail" placeholder="Email" />
-            </div>
-            <div>
-              <label>Mobile Number (optional)</label>
-              <input id="forgotUsernamePhone" placeholder="Mobile Number" />
-            </div>
-          </div>
-          <button id="forgotUsernameButton" type="button">Recover username</button>
+          <p class="small-note">
+            Please contact your institution administrator or the system developer for username recovery assistance.
+          </p>
+          <button id="forgotUsernameButton" type="button">Show guidance</button>
         </section>
         <footer class="index-legal-footer">
           <a href="/about.html">About</a>

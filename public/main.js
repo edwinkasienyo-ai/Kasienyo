@@ -174,10 +174,6 @@ async function login() {
     setAuthNotice(usernameValidationError, "error");
     return;
   }
-  if (selectedPortalRole === "SYSTEM_DEVELOPER" && username && username !== "952252") {
-    setAuthNotice("System Developer default username is 952252 (unless amended).", "error");
-    return;
-  }
   if (!username || !password) {
     alert("Username and password are required.");
     return;
@@ -198,10 +194,7 @@ async function login() {
     }
     localStorage.setItem("pendingUsername", username);
     const deliveredBy = data?.otp_channel_used ? ` via ${data.otp_channel_used}` : "";
-    const otpPreviewMessage = data?.otp_preview
-      ? ` OTP (for testing): ${data.otp_preview}`
-      : "";
-    setAuthNotice(`${data.message}${deliveredBy}. Portal: ${data.portal}.${otpPreviewMessage}`, "success");
+    setAuthNotice(`${data.message}${deliveredBy}. Portal: ${data.portal}.`, "success");
   } catch (error) {
     setAuthNotice(error.message, "error");
   }
@@ -231,56 +224,50 @@ async function verifyOtp() {
 }
 
 async function recoverUsername() {
-  const institution_code = document.getElementById("forgotUsernameInstitutionCode").value.trim();
-  const email = document.getElementById("forgotUsernameEmail").value.trim();
-  const phone = document.getElementById("forgotUsernamePhone").value.trim();
-  if (!institution_code || (!email && !phone)) {
-    setAuthNotice("Institution code and email or mobile are required.", "error");
-    return;
-  }
-  try {
-    const data = await request("/api/public/forgot-username", {
-      method: "POST",
-      body: JSON.stringify({
-        institution_code,
-        email,
-        phone
-      })
-    });
-    const list = Array.isArray(data.usernames) ? data.usernames : [];
-    if (!list.length) {
-      setAuthNotice("No username found for the supplied details.", "error");
-      return;
-    }
-    const usernames = list.map((item) => item.username).join(", ");
-    setAuthNotice(`Recovered username(s): ${usernames}`, "success");
-  } catch (error) {
-    setAuthNotice(error.message, "error");
-  }
+  setAuthNotice(
+    "For username recovery, contact your Institution Administrator or the System Developer.",
+    "info"
+  );
 }
 
 async function resetPassword() {
-  const institution_code = document.getElementById("forgotPasswordInstitutionCode").value.trim();
   const username = document.getElementById("forgotPasswordUsername").value.trim();
-  const new_password = document.getElementById("forgotPasswordNewPassword").value;
   const email = document.getElementById("forgotPasswordEmail").value.trim();
   const phone = document.getElementById("forgotPasswordPhone").value.trim();
-  if (!institution_code || !username || !new_password || (!email && !phone)) {
-    setAuthNotice("Institution code, username, new password and email or mobile are required.", "error");
+  const otp = document.getElementById("forgotPasswordOtp").value.trim();
+  const new_password = document.getElementById("forgotPasswordNewPassword").value;
+  if (!username || (!email && !phone)) {
+    setAuthNotice("Username and email or mobile are required.", "error");
     return;
   }
   try {
-    await request("/api/public/forgot-password", {
+    if (!otp) {
+      const data = await request("/api/public/password-reset/request-otp", {
+        method: "POST",
+        body: JSON.stringify({
+          username,
+          email,
+          phone
+        })
+      });
+      setAuthNotice(data.message || "OTP sent for password reset.", "success");
+      return;
+    }
+    if (!new_password) {
+      setAuthNotice("Enter new password after OTP is received.", "error");
+      return;
+    }
+    const data = await request("/api/public/password-reset/verify-otp", {
       method: "POST",
       body: JSON.stringify({
-        institution_code,
         username,
-        new_password,
         email,
-        phone
+        phone,
+        otp,
+        new_password
       })
     });
-    setAuthNotice("Password reset successful. Login with new password.", "success");
+    setAuthNotice(data.message || "Password reset successful. Login with new password.", "success");
   } catch (error) {
     setAuthNotice(error.message, "error");
   }
