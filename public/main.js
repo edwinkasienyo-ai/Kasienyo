@@ -35,7 +35,7 @@ async function loadBuildStampLogin() {
     }
     const data = response.ok ? await response.json() : null;
     const stamp = data?.build_stamp || "unknown";
-    el.textContent = `Release: ${stamp} · UI v12 — compact left panel without scrolling.`;
+    el.textContent = `Release: ${stamp} · UI v13 — ultra-compact left panel, no scrolling.`;
   } catch (_) {
     el.textContent =
       "Could not load release info. Ensure Node is running from your updated project (e.g. BASIC EDUCATION) and try again.";
