@@ -2910,8 +2910,7 @@ app.get(
        WHERE institution_id = ?
          AND (
            conduct_status = 'Transferred'
-           OR transfer_status = 'Transferred'
-           OR transfer_status = 'Approved'
+           OR LOWER(COALESCE(conduct_status, '')) LIKE '%transfer%'
          )`,
       [institutionId]
     );
