@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://imis.mwendegu.co.ke/sitemap.xml

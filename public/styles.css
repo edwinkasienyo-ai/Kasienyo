@@ -209,6 +209,31 @@ select:disabled {
   letter-spacing: 0.03em;
 }
 
+.production-footer {
+  margin-top: 6px;
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.production-footer a {
+  display: inline-block;
+  padding: 5px 9px;
+  border-radius: 999px;
+  font-size: clamp(9px, 0.78vw, 11px);
+  font-weight: 700;
+  color: #d8f2ff;
+  text-decoration: none;
+  border: 1px solid rgba(190, 230, 255, 0.35);
+  background: rgba(8, 34, 58, 0.44);
+}
+
+.production-footer a:hover {
+  background: rgba(14, 64, 108, 0.7);
+  color: #ffffff;
+}
+
 .login-left p,
 .login-left li {
   line-height: 1.6;
@@ -1313,6 +1338,15 @@ tbody tr:hover {
 
   .contact-strip {
     grid-template-columns: 1fr;
+  }
+
+  .production-footer {
+    gap: 6px;
+  }
+
+  .production-footer a {
+    font-size: 10px;
+    padding: 5px 8px;
   }
 
   .topbar {
