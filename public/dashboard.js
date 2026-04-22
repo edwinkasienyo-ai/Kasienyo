@@ -2358,7 +2358,7 @@ async function init() {
         .then((r) => (r.ok ? r.json() : null))
         .then((data) => {
           const stamp = data?.build_stamp;
-          buildLineEl.textContent = stamp ? `Release ${stamp} · UI v6` : "";
+          buildLineEl.textContent = stamp ? `Release ${stamp} · UI v7` : "";
         })
         .catch(() => {
           buildLineEl.textContent = "";

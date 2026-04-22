@@ -45,7 +45,7 @@ const { generateOtpCode, buildOtpExpiry, sendOtp } = require("./services/otpServ
 const { buildSearchWhere } = require("./utils/sql");
 
 /** Bump when shipping UI/API changes so schools can confirm they run the right copy. */
-const IIMS_BUILD_STAMP = process.env.IIMS_BUILD_STAMP || "20260422-ui6";
+const IIMS_BUILD_STAMP = process.env.IIMS_BUILD_STAMP || "20260422-ui7";
 
 const app = express();
 
@@ -1622,13 +1622,18 @@ async function getPaginatedRows({
   return query(sql, [...search.params, Number(limit), Number(offset)]);
 }
 
-app.get("/api/build-info", (_, res) => {
+function sendBuildInfoJson(res) {
   res.set("Cache-Control", "no-store");
   res.json({
     build_stamp: IIMS_BUILD_STAMP,
-    server_time: new Date().toISOString()
+    server_time: new Date().toISOString(),
+    endpoints: ["/api/build-info", "/api/building-info"]
   });
-});
+}
+
+app.get("/api/build-info", (_, res) => sendBuildInfoJson(res));
+// Common typo when testing in the browser
+app.get("/api/building-info", (_, res) => sendBuildInfoJson(res));
 
 app.get("/api/meta", (_, res) => {
   res.json({

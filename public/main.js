@@ -29,10 +29,13 @@ async function loadBuildStampLogin() {
   const el = document.getElementById("iimsBuildLineLogin");
   if (!el) return;
   try {
-    const response = await fetch("/api/build-info");
+    let response = await fetch("/api/build-info");
+    if (!response.ok) {
+      response = await fetch("/api/building-info");
+    }
     const data = response.ok ? await response.json() : null;
     const stamp = data?.build_stamp || "unknown";
-    el.textContent = `Release: ${stamp} · UI assets v6 — if this text is wrong or missing, the app is not running from the updated project folder.`;
+    el.textContent = `Release: ${stamp} · UI assets v7 — open /build-check.txt; if it 404s or index has "Register institution", copy latest Git files into BASIC EDUCATION and restart Node.`;
   } catch (_) {
     el.textContent =
       "Could not load release info. Ensure Node is running from your updated project (e.g. BASIC EDUCATION) and try again.";

@@ -1,5 +1,7 @@
 require("dotenv").config();
 const app = require("./app");
+
+const IIMS_BUILD_STAMP = process.env.IIMS_BUILD_STAMP || "20260422-ui7";
 const { query } = require("./config/db");
 const { hashPassword } = require("./utils/password");
 const { ROLES } = require("./config/constants");
@@ -436,6 +438,10 @@ async function start() {
   app.listen(PORT, () => {
     // eslint-disable-next-line no-console
     console.log(`IIMS server running on http://localhost:${PORT}`);
+    // eslint-disable-next-line no-console
+    console.log(
+      `IIMS release ${IIMS_BUILD_STAMP} — verify API: http://localhost:${PORT}/api/build-info (or /api/building-info)`
+    );
   });
 }
 
