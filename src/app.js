@@ -3445,7 +3445,7 @@ app.delete(
   auth,
   accountMutationRateLimit,
   accountMutationCooldown,
-  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
+  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN]),
   asyncHandler(async (req, res) => {
     const userId = Number(req.params.id);
     if (!userId) {
@@ -4118,6 +4118,7 @@ app.post(
   accountMutationCooldown,
   asyncHandler(async (req, res) => {
     const { current_password, new_username, new_password } = req.body;
+    const requesterRole = normalizeRole(req.user.role);
     const users = await query("SELECT * FROM users WHERE id = ? AND institution_id = ? LIMIT 1", [
       req.user.id,
       req.user.institution_id
@@ -4135,6 +4136,11 @@ app.post(
     const params = [];
 
     if (new_username) {
+      if (![ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN].includes(requesterRole)) {
+        return res.status(403).json({
+          error: "Only the System Developer or HoI/Administrator can change usernames."
+        });
+      }
       const usernameValidationError = validateUsername(new_username, "new_username");
       if (usernameValidationError) {
         return res.status(400).json({ error: usernameValidationError });

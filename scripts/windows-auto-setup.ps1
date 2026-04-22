@@ -12,6 +12,58 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+function Download-FileWithFallbacks {
+  param(
+    [string]$Url,
+    [string]$OutFile,
+    [int]$MaxAttempts = 4
+  )
+
+  $attempt = 1
+  while ($attempt -le $MaxAttempts) {
+    try {
+      Write-Host "[IIMS] Download attempt $attempt/$MaxAttempts via Invoke-WebRequest..." -ForegroundColor DarkGray
+      Invoke-WebRequest -Uri $Url -OutFile $OutFile -UseBasicParsing
+      if ((Test-Path $OutFile) -and ((Get-Item $OutFile).Length -gt 0)) {
+        return
+      }
+      throw "Downloaded file is empty."
+    } catch {
+      Write-Host "[IIMS] Invoke-WebRequest failed on attempt $attempt: $($_.Exception.Message)" -ForegroundColor DarkYellow
+      if ($attempt -lt $MaxAttempts) {
+        Start-Sleep -Seconds ([Math]::Pow(2, $attempt))
+      }
+      $attempt++
+    }
+  }
+
+  if (Get-Command curl.exe -ErrorAction SilentlyContinue) {
+    try {
+      Write-Host "[IIMS] Trying curl.exe fallback download..." -ForegroundColor Yellow
+      & curl.exe -L --fail --retry 3 --retry-delay 2 -o $OutFile $Url
+      if ((Test-Path $OutFile) -and ((Get-Item $OutFile).Length -gt 0)) {
+        return
+      }
+    } catch {
+      Write-Host "[IIMS] curl.exe fallback failed: $($_.Exception.Message)" -ForegroundColor DarkYellow
+    }
+  }
+
+  if (Get-Command Start-BitsTransfer -ErrorAction SilentlyContinue) {
+    try {
+      Write-Host "[IIMS] Trying BITS fallback download..." -ForegroundColor Yellow
+      Start-BitsTransfer -Source $Url -Destination $OutFile -ErrorAction Stop
+      if ((Test-Path $OutFile) -and ((Get-Item $OutFile).Length -gt 0)) {
+        return
+      }
+    } catch {
+      Write-Host "[IIMS] BITS fallback failed: $($_.Exception.Message)" -ForegroundColor DarkYellow
+    }
+  }
+
+  throw "Could not download branch ZIP from $Url. Check internet/firewall/proxy settings, then rerun."
+}
+
 function Sync-ProjectFromZip {
   param(
     [string]$ProjectRoot,
@@ -32,7 +84,7 @@ function Sync-ProjectFromZip {
 
   Write-Host "[IIMS] Git unavailable or failed. Downloading latest branch ZIP..." -ForegroundColor Yellow
   Write-Host "[IIMS] Source: $zipUrl" -ForegroundColor DarkGray
-  Invoke-WebRequest -Uri $zipUrl -OutFile $zipPath
+  Download-FileWithFallbacks -Url $zipUrl -OutFile $zipPath
   Expand-Archive -Path $zipPath -DestinationPath $extractPath -Force
 
   $sourceRoot = Get-ChildItem -Path $extractPath -Directory | Select-Object -First 1
