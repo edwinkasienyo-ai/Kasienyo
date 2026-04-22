@@ -242,7 +242,18 @@ function collectForgotPasswordInputs() {
   const phone = document.getElementById("forgotPasswordPhone")?.value.trim();
   const otp = document.getElementById("forgotPasswordOtp")?.value.trim();
   const new_password = document.getElementById("forgotPasswordNewPassword")?.value;
-  return { institution_code, username, contact_method, otp_channel, email, phone, otp, new_password };
+  const confirm_new_password = document.getElementById("forgotPasswordConfirmNewPassword")?.value;
+  return {
+    institution_code,
+    username,
+    contact_method,
+    otp_channel,
+    email,
+    phone,
+    otp,
+    new_password,
+    confirm_new_password
+  };
 }
 
 async function requestForgotPasswordOtp() {
@@ -291,7 +302,7 @@ async function requestForgotPasswordOtp() {
 }
 
 async function resetPassword() {
-  const { institution_code, username, contact_method, otp_channel, email, phone, otp, new_password } =
+  const { institution_code, username, contact_method, otp_channel, email, phone, otp, new_password, confirm_new_password } =
     collectForgotPasswordInputs();
   if (!institution_code || !username) {
     setAuthNotice("Institution code and username are required.", "error");
@@ -299,6 +310,14 @@ async function resetPassword() {
   }
   if (!otp || !new_password) {
     setAuthNotice("Enter OTP code and new password to complete reset.", "error");
+    return;
+  }
+  if (!confirm_new_password) {
+    setAuthNotice("Confirm your new password to continue.", "error");
+    return;
+  }
+  if (new_password !== confirm_new_password) {
+    setAuthNotice("New password and confirm new password must match.", "error");
     return;
   }
   try {
