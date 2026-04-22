@@ -3008,7 +3008,9 @@ app.get(
     );
 
     const [financeSessionRows] = await query(
-      `SELECT academic_year, term_name, capitation_received, fee_paid, grant_other, available_balance, outstanding_balance, liabilities
+      `SELECT academic_year_label, term_name, capitation_received, fee_paid, grant_other,
+              COALESCE(available_balance, (capitation_received + fee_paid + grant_other - liabilities)) AS available_balance,
+              outstanding_balance, liabilities
        FROM finance_session_sync
        WHERE institution_id = ?
        ORDER BY id DESC
@@ -3093,7 +3095,7 @@ app.get(
       feeCollectionSummary,
       financeSessionSync: financeSession
         ? {
-          academic_year: financeSession.academic_year,
+          academic_year: financeSession.academic_year_label,
           term_name: financeSession.term_name,
           capitation_received: toMoney(financeSession.capitation_received),
           fee_paid: toMoney(financeSession.fee_paid),
@@ -3132,7 +3134,7 @@ app.post(
 
     const existing = await query(
       `SELECT id FROM finance_session_sync
-       WHERE institution_id = ? AND academic_year = ? AND term_name = ?
+       WHERE institution_id = ? AND academic_year_label = ? AND term_name = ?
        LIMIT 1`,
       [institutionId, academicYear, termName]
     );
@@ -3156,7 +3158,7 @@ app.post(
     } else {
       await query(
         `INSERT INTO finance_session_sync
-          (institution_id, academic_year, term_name, capitation_received, fee_paid, grant_other, available_balance, outstanding_balance, liabilities, created_by_user_id)
+          (institution_id, academic_year_label, term_name, capitation_received, fee_paid, grant_other, available_balance, outstanding_balance, liabilities, created_by_user_id)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           institutionId,
