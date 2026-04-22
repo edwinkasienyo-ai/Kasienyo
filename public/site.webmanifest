@@ -1,0 +1,18 @@
+{
+  "name": "INTEGRATED MANAGEMENT INFORMATION SYSTEM (IMIS)",
+  "short_name": "IMIS",
+  "description": "Secure digital platform for basic education institution management.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#0f3860",
+  "theme_color": "#0f3860",
+  "icons": [
+    {
+      "src": "/uploads/index-hero.jpg",
+      "sizes": "512x512",
+      "type": "image/jpeg",
+      "purpose": "any"
+    }
+  ]
+}

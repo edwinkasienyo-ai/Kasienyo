@@ -234,6 +234,33 @@ select:disabled {
   color: #ffffff;
 }
 
+.index-legal-footer {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px dashed rgba(195, 226, 250, 0.35);
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.index-legal-footer a {
+  display: inline-block;
+  text-decoration: none;
+  padding: 6px 10px;
+  border-radius: 999px;
+  font-size: clamp(9px, 0.78vw, 11px);
+  font-weight: 700;
+  color: #d8f2ff;
+  border: 1px solid rgba(190, 230, 255, 0.35);
+  background: rgba(8, 34, 58, 0.44);
+}
+
+.index-legal-footer a:hover {
+  background: rgba(14, 64, 108, 0.7);
+  color: #ffffff;
+}
+
 .login-left p,
 .login-left li {
   line-height: 1.6;

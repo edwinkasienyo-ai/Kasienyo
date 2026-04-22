@@ -5494,6 +5494,14 @@ app.get("/terms", (_, res) => {
   res.redirect(302, "/terms.html");
 });
 
+app.get("/compliance", (_, res) => {
+  res.redirect(302, "/compliance.html");
+});
+
+app.get("/support", (_, res) => {
+  res.redirect(302, "/support.html");
+});
+
 app.use((err, req, res, next) => {
   if (res.headersSent) {
     return next(err);
