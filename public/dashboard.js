@@ -425,6 +425,26 @@ async function request(path, options = {}) {
   return data;
 }
 
+async function uploadHeroImage(file) {
+  if (!file) {
+    throw new Error("Select an image file first.");
+  }
+  const formData = new FormData();
+  formData.append("hero_image", file);
+  const response = await fetch("/api/system/branding/hero-image", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`
+    },
+    body: formData
+  });
+  const data = await response.json();
+  if (!response.ok) {
+    throw new Error(data.error || "Hero image upload failed.");
+  }
+  return data;
+}
+
 function resetDataTable(message = "No records found.") {
   const head = document.getElementById("tableHead");
   const body = document.getElementById("tableBody");
@@ -1439,6 +1459,39 @@ function bindTopbarButtons() {
   document
     .getElementById("changeCredentialsButton")
     .addEventListener("click", changeCredentials);
+  const heroButton = document.getElementById("updateHeroImageButton");
+  const heroInput = document.getElementById("heroImageInput");
+  const canManageHeroImage = ["SYSTEM_DEVELOPER", "ADMIN", "HEAD_OF_INSTITUTION"].includes(
+    String(portalContext?.role || "")
+  );
+  if (heroButton && heroInput) {
+    if (!canManageHeroImage) {
+      heroButton.style.display = "none";
+      heroInput.disabled = true;
+      return;
+    }
+    heroButton.addEventListener("click", () => {
+      heroInput.click();
+    });
+    heroInput.addEventListener("change", async () => {
+      const file = heroInput.files?.[0];
+      if (!file) return;
+      const allowedTypes = ["image/jpeg", "image/png", "image/webp", "image/gif", "image/avif"];
+      if (!allowedTypes.includes(file.type)) {
+        alert("Unsupported image format. Use JPEG, PNG, WEBP, GIF, or AVIF.");
+        heroInput.value = "";
+        return;
+      }
+      try {
+        const result = await uploadHeroImage(file);
+        alert(result.message || "Login hero image updated.");
+      } catch (error) {
+        alert(error.message);
+      } finally {
+        heroInput.value = "";
+      }
+    });
+  }
 }
 
 function bindQuickActionCards() {

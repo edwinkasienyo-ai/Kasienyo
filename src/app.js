@@ -73,6 +73,120 @@ const upload = multer({
   })
 });
 
+const HERO_IMAGE_MANIFEST_FILE = path.join(uploadsPath, "index-hero-manifest.json");
+const HERO_IMAGE_MAX_BYTES = Number(process.env.HERO_IMAGE_MAX_BYTES || 6 * 1024 * 1024);
+const HERO_IMAGE_ALLOWED_MIME_TYPES = new Set([
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+  "image/gif",
+  "image/avif"
+]);
+const HERO_IMAGE_EXTENSION_BY_MIME = {
+  "image/jpeg": ".jpg",
+  "image/png": ".png",
+  "image/webp": ".webp",
+  "image/gif": ".gif",
+  "image/avif": ".avif"
+};
+
+const heroImageUpload = multer({
+  storage: multer.diskStorage({
+    destination: (_, __, cb) => cb(null, uploadsPath),
+    filename: (_, file, cb) => {
+      const mappedExtension = HERO_IMAGE_EXTENSION_BY_MIME[file.mimetype];
+      const sourceExtension = cleanValue(path.extname(file.originalname)).toLowerCase();
+      const extension = mappedExtension || sourceExtension || ".jpg";
+      cb(null, `index-hero-${Date.now()}${extension}`);
+    }
+  }),
+  limits: {
+    fileSize: HERO_IMAGE_MAX_BYTES
+  },
+  fileFilter: (_, file, cb) => {
+    if (!HERO_IMAGE_ALLOWED_MIME_TYPES.has(file.mimetype)) {
+      return cb(new Error("Unsupported image format. Use JPEG, PNG, WEBP, GIF, or AVIF."));
+    }
+    return cb(null, true);
+  }
+});
+
+function heroImageUploadMiddleware(req, res, next) {
+  heroImageUpload.single("hero_image")(req, res, (error) => {
+    if (!error) {
+      return next();
+    }
+    if (error.code === "LIMIT_FILE_SIZE") {
+      return res.status(400).json({
+        error: `Hero image exceeds size limit of ${Math.round(HERO_IMAGE_MAX_BYTES / (1024 * 1024))}MB.`
+      });
+    }
+    return res.status(400).json({ error: error.message || "Hero image upload failed." });
+  });
+}
+
+function readHeroImageManifest() {
+  if (!fs.existsSync(HERO_IMAGE_MANIFEST_FILE)) {
+    return null;
+  }
+  try {
+    const raw = fs.readFileSync(HERO_IMAGE_MANIFEST_FILE, "utf8");
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") return null;
+    if (!cleanValue(parsed.file_name)) return null;
+    return parsed;
+  } catch (error) {
+    return null;
+  }
+}
+
+function writeHeroImageManifest(fileName, actorUserId = null) {
+  const payload = {
+    file_name: fileName,
+    updated_at: new Date().toISOString(),
+    updated_by_user_id: actorUserId || null
+  };
+  fs.writeFileSync(HERO_IMAGE_MANIFEST_FILE, JSON.stringify(payload, null, 2), "utf8");
+}
+
+function cleanupOldHeroImages(currentFileName) {
+  const files = fs.readdirSync(uploadsPath);
+  for (const fileName of files) {
+    if (!fileName.startsWith("index-hero-")) continue;
+    if (fileName === currentFileName) continue;
+    const stalePath = path.join(uploadsPath, fileName);
+    if (fs.existsSync(stalePath)) {
+      fs.unlinkSync(stalePath);
+    }
+  }
+}
+
+function resolveHeroImageAsset() {
+  const manifest = readHeroImageManifest();
+  const candidates = [];
+  if (cleanValue(manifest?.file_name)) {
+    candidates.push(manifest.file_name);
+  }
+  candidates.push("index-hero.jpg", "index-hero.jpeg", "index-hero.png", "index-hero.webp", "index-hero.gif", "index-hero.avif");
+  for (const candidate of candidates) {
+    const absolutePath = path.join(uploadsPath, candidate);
+    if (!fs.existsSync(absolutePath)) continue;
+    const stats = fs.statSync(absolutePath);
+    return {
+      file_name: candidate,
+      hero_image_path: `/uploads/${candidate}`,
+      hero_image_url: `/uploads/${candidate}?v=${Number(stats.mtimeMs || Date.now())}`,
+      updated_at: stats.mtime.toISOString()
+    };
+  }
+  return {
+    file_name: null,
+    hero_image_path: null,
+    hero_image_url: null,
+    updated_at: null
+  };
+}
+
 function asyncHandler(handler) {
   return (req, res, next) => Promise.resolve(handler(req, res, next)).catch(next);
 }
@@ -2400,6 +2514,39 @@ app.post(
       fileName: req.file.filename,
       filePath: `/uploads/${req.file.filename}`,
       mimeType: req.file.mimetype
+    });
+  })
+);
+
+app.get(
+  "/api/public/branding/hero-image",
+  asyncHandler(async (_, res) => {
+    res.set("Cache-Control", "no-store");
+    const heroImage = resolveHeroImageAsset();
+    res.json(heroImage);
+  })
+);
+
+app.post(
+  "/api/system/branding/hero-image",
+  auth,
+  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
+  enforcePermission(PERMISSIONS.UPDATE),
+  heroImageUploadMiddleware,
+  asyncHandler(async (req, res) => {
+    if (!req.file) {
+      return res.status(400).json({ error: "Hero image file is required." });
+    }
+    cleanupOldHeroImages(req.file.filename);
+    writeHeroImageManifest(req.file.filename, req.user.id);
+    const heroImage = resolveHeroImageAsset();
+    await auditLog(req.user, "UPLOAD_LOGIN_HERO_IMAGE", "branding", null, {
+      file_name: req.file.filename,
+      hero_image_path: heroImage.hero_image_path
+    });
+    return res.json({
+      message: "Login hero image updated successfully.",
+      ...heroImage
     });
   })
 );

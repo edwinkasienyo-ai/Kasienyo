@@ -15,6 +15,21 @@ async function request(path, options = {}) {
   return data;
 }
 
+async function loadPublicHeroImage() {
+  const heroImageEl = document.querySelector(".hero-image");
+  const heroPanelEl = document.querySelector(".hero-panel");
+  if (!heroImageEl || !heroPanelEl) return;
+  const fallbackUrl = heroImageEl.getAttribute("src");
+  try {
+    const data = await request("/api/public/branding/hero-image");
+    const resolvedUrl = data?.hero_image_url || fallbackUrl;
+    heroImageEl.src = resolvedUrl;
+    heroPanelEl.style.setProperty("--hero-image-url", `url("${resolvedUrl}")`);
+  } catch (_) {
+    heroImageEl.src = fallbackUrl;
+  }
+}
+
 function setAuthNotice(message, type = "info") {
   const el = document.getElementById("authNotice");
   if (!el) return;
@@ -413,3 +428,4 @@ initializeAuthPanels();
 bindAuthSectionLinks();
 loadRegistrationMeta();
 bindInstitutionAutoFields();
+loadPublicHeroImage();
