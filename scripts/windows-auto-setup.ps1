@@ -115,15 +115,39 @@ function Get-PortOwnerProcessId {
   return $ownerPid
 }
 
-function Resolve-PortConflict {
+function Test-PortIsFree {
   param(
     [int]$TargetPort
+  )
+  $ownerPid = Get-PortOwnerProcessId -TargetPort $TargetPort
+  return -not [bool]$ownerPid
+}
+
+function Find-NextFreePort {
+  param(
+    [int]$StartingPort,
+    [int]$MaxAttempts = 25
+  )
+  $candidate = $StartingPort
+  for ($i = 0; $i -lt $MaxAttempts; $i++) {
+    if (Test-PortIsFree -TargetPort $candidate) {
+      return $candidate
+    }
+    $candidate++
+  }
+  throw "Could not find a free port in range $StartingPort-$candidate."
+}
+
+function Resolve-PortConflict {
+  param(
+    [int]$TargetPort,
+    [string]$EnvFilePath
   )
 
   $ownerPid = Get-PortOwnerProcessId -TargetPort $TargetPort
   if (!$ownerPid) {
     Write-Host "[IIMS] Port $TargetPort is free." -ForegroundColor Green
-    return
+    return $TargetPort
   }
 
   $procName = "unknown"
@@ -138,11 +162,20 @@ function Resolve-PortConflict {
   try {
     Stop-Process -Id $ownerPid -Force -ErrorAction Stop
     Start-Sleep -Milliseconds 600
-    Write-Host "[IIMS] Stopped PID $ownerPid to free port $TargetPort." -ForegroundColor Green
+    if (Test-PortIsFree -TargetPort $TargetPort) {
+      Write-Host "[IIMS] Stopped PID $ownerPid to free port $TargetPort." -ForegroundColor Green
+      return $TargetPort
+    }
+    Write-Host "[IIMS] PID $ownerPid stopped, but port $TargetPort is still occupied." -ForegroundColor DarkYellow
   } catch {
-    Write-Host "[IIMS] Could not stop PID $ownerPid automatically. Close the process and rerun script." -ForegroundColor Red
-    throw
+    Write-Host "[IIMS] Could not stop PID $ownerPid automatically. Trying next available port..." -ForegroundColor DarkYellow
   }
+
+  $fallbackPort = Find-NextFreePort -StartingPort ($TargetPort + 1)
+  Write-Host "[IIMS] Switching app port from $TargetPort to $fallbackPort." -ForegroundColor Yellow
+  Set-Or-AppendEnvValue -FilePath $EnvFilePath -Key "PORT" -Value "$fallbackPort"
+  Set-Or-AppendEnvValue -FilePath $EnvFilePath -Key "FRONTEND_ORIGIN" -Value "http://localhost:$fallbackPort"
+  return $fallbackPort
 }
 
 $projectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
@@ -215,7 +248,10 @@ if ($mysqlCmd) {
   Write-Host "       If DB is empty, import sql/schema.sql and sql/seed.sql manually." -ForegroundColor DarkYellow
 }
 
-Resolve-PortConflict -TargetPort ([int]$Port)
+$resolvedPort = Resolve-PortConflict -TargetPort ([int]$Port) -EnvFilePath ".env"
+if ($resolvedPort -ne [int]$Port) {
+  Write-Host "[IIMS] Updated .env to PORT=$resolvedPort and FRONTEND_ORIGIN=http://localhost:$resolvedPort" -ForegroundColor Green
+}
 
 Write-Host "\n[IIMS] Setup complete. Starting dev server..." -ForegroundColor Green
 npm run dev
