@@ -421,6 +421,46 @@ async function ensureUserPasswordPolicyColumns() {
       )`
     );
   }
+  const financeSessionAcademicYearRows = await query(
+    `SELECT COUNT(*) total
+     FROM INFORMATION_SCHEMA.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = 'finance_session_sync'
+       AND COLUMN_NAME = 'academic_year'`
+  );
+  if (!Number(financeSessionAcademicYearRows[0]?.total || 0)) {
+    await query("ALTER TABLE finance_session_sync ADD COLUMN academic_year VARCHAR(20) NULL");
+    await query(
+      `UPDATE finance_session_sync
+       SET academic_year = academic_year_label
+       WHERE academic_year IS NULL OR academic_year = ''`
+    );
+  }
+  const financeSessionAcademicYearLabelRows = await query(
+    `SELECT COUNT(*) total
+     FROM INFORMATION_SCHEMA.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = 'finance_session_sync'
+       AND COLUMN_NAME = 'academic_year_label'`
+  );
+  if (!Number(financeSessionAcademicYearLabelRows[0]?.total || 0)) {
+    await query("ALTER TABLE finance_session_sync ADD COLUMN academic_year_label VARCHAR(20) NULL");
+    await query(
+      `UPDATE finance_session_sync
+       SET academic_year_label = academic_year
+       WHERE academic_year_label IS NULL OR academic_year_label = ''`
+    );
+  }
+  const financeSessionAvailableBalanceRows = await query(
+    `SELECT COUNT(*) total
+     FROM INFORMATION_SCHEMA.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = 'finance_session_sync'
+       AND COLUMN_NAME = 'available_balance'`
+  );
+  if (!Number(financeSessionAvailableBalanceRows[0]?.total || 0)) {
+    await query("ALTER TABLE finance_session_sync ADD COLUMN available_balance DECIMAL(12,2) NOT NULL DEFAULT 0");
+  }
 
   const otpVerifyAttemptsRows = await query(
     `SELECT COUNT(*) total
