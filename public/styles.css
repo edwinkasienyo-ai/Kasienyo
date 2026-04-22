@@ -69,8 +69,10 @@ select:disabled {
 
 .login-page {
   min-height: 100vh;
+  height: 100vh;
   display: grid;
   grid-template-columns: 1.2fr 1fr;
+  overflow: hidden;
 }
 
 .login-left {
@@ -298,9 +300,11 @@ select:disabled {
 
 .login-right {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: center;
-  padding: 30px;
+  height: 100vh;
+  overflow-y: auto;
+  padding: 12px 16px;
 }
 
 .card {
@@ -351,15 +355,15 @@ select:disabled {
 .auth-card {
   width: 100%;
   max-width: 640px;
-  padding: 26px;
+  padding: 14px;
 }
 
 .auth-card h3 {
-  margin-top: 0;
+  margin: 0;
 }
 
 .step-label {
-  margin: 14px 0 4px;
+  margin: 8px 0 3px;
   font-size: 11px;
   font-weight: 700;
   color: #8899ab;
@@ -369,9 +373,9 @@ select:disabled {
 
 label {
   display: block;
-  margin-top: 10px;
+  margin-top: 6px;
   font-weight: 600;
-  font-size: 13px;
+  font-size: 12px;
 }
 
 input,
@@ -401,6 +405,14 @@ button {
   cursor: pointer;
   transition: transform 0.18s ease, box-shadow 0.18s ease, filter 0.18s ease;
   box-shadow: 0 8px 18px rgba(21, 82, 134, 0.22);
+}
+
+input,
+select,
+textarea,
+button {
+  padding: 8px 10px;
+  margin-top: 4px;
 }
 
 button:hover {
@@ -525,7 +537,7 @@ button:hover {
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
-  margin-top: 10px;
+  margin-top: 8px;
 }
 
 .auth-link-row button {
@@ -534,10 +546,10 @@ button:hover {
 }
 
 .auth-panel {
-  margin-top: 12px;
+  margin-top: 8px;
   border: 1px solid #dce6f3;
   border-radius: 10px;
-  padding: 12px;
+  padding: 10px;
   background: #fbfdff;
 }
 
@@ -546,7 +558,7 @@ button:hover {
 }
 
 .auth-actions-row {
-  margin-top: 10px;
+  margin-top: 8px;
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
@@ -560,6 +572,32 @@ button:hover {
   display: grid;
   grid-template-columns: 1fr;
   gap: 10px;
+}
+
+.recovery-flow-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 8px;
+}
+
+.recovery-step-card {
+  border: 1px solid #dce6f3;
+  border-radius: 10px;
+  background: linear-gradient(180deg, #ffffff 0%, #f6fbff 100%);
+  padding: 8px;
+}
+
+.recovery-step-title {
+  margin: 0 0 6px;
+  color: #1f4f7f;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  font-weight: 800;
+}
+
+.recovery-step-card .auth-grid {
+  gap: 6px;
 }
 
 .forgot-password-step {
