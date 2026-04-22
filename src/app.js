@@ -5491,8 +5491,14 @@ app.get("/", (_, res) => {
 app.get("/privacy", (_, res) => {
   res.redirect(302, "/privacy.html");
 });
+app.get("/privacy-policy", (_, res) => {
+  res.redirect(302, "/privacy.html");
+});
 
 app.get("/terms", (_, res) => {
+  res.redirect(302, "/terms.html");
+});
+app.get("/terms-of-service", (_, res) => {
   res.redirect(302, "/terms.html");
 });
 
@@ -5513,6 +5519,9 @@ app.get("/status", (_, res) => {
 });
 
 app.get("/cookies", (_, res) => {
+  res.redirect(302, "/cookies.html");
+});
+app.get("/cookie-notice", (_, res) => {
   res.redirect(302, "/cookies.html");
 });
 

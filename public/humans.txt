@@ -1,0 +1,9 @@
+/* TEAM */
+Organization: MWENDEGU ENTERPRISE LIMITED
+Product: INTEGRATED MANAGEMENT INFORMATION SYSTEM (IMIS)
+Contact: mwendeguenterpriseltd@gmail.com
+Phone: +254725757767
+
+/* SITE */
+Standards: HTML5, CSS3, JavaScript, Node.js, Express, MySQL
+Security: /security.txt and /.well-known/security.txt

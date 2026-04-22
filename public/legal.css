@@ -70,6 +70,57 @@ body {
   color: #155286;
 }
 
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 800;
+  border: 1px solid #d2e2f6;
+  background: #eef6ff;
+  color: #0f3860;
+}
+
+.status-pill.ok {
+  background: #ecfbf3;
+  color: #156b45;
+  border-color: #bce8d3;
+}
+
+.status-pill.warn {
+  background: #fff8ea;
+  color: #8a5a08;
+  border-color: #f1d9a9;
+}
+
+.status-pill.err {
+  background: #fff0f0;
+  color: #9f1f1f;
+  border-color: #f2c3c3;
+}
+
+.status-live-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.status-live-card {
+  border: 1px solid #d8e3f2;
+  border-radius: 10px;
+  background: #f9fbff;
+  padding: 10px;
+}
+
+.status-live-card h3 {
+  margin: 0 0 6px;
+  font-size: 13px;
+  color: #155286;
+}
+
 .legal-nav {
   margin-top: 18px;
   display: flex;

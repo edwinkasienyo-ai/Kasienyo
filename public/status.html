@@ -13,10 +13,20 @@
     <main class="legal-shell">
       <article class="legal-card">
         <h1>IMIS SERVICE STATUS</h1>
-        <p>THIS PAGE PROVIDES QUICK LINKS TO APPLICATION HEALTH CHECKS.</p>
-        <div class="status-item"><strong>API Health Endpoint:</strong> <a href="/api/health">/api/health</a></div>
-        <div class="status-item"><strong>Build Info Endpoint:</strong> <a href="/api/build-info">/api/build-info</a></div>
-        <div class="status-item"><strong>Security Contact File:</strong> <a href="/security.txt">/security.txt</a></div>
+        <p>THIS PAGE PROVIDES LIVE READINESS CHECKS FOR APPLICATION HEALTH, BUILD INFO, AND SECURITY CONTACT FILES.</p>
+        <div class="status-item">
+          <strong>API Health Endpoint:</strong> <a href="/api/health">/api/health</a>
+          <span id="healthStatusBadge" class="status-badge status-pending">Checking...</span>
+        </div>
+        <div class="status-item">
+          <strong>Build Info Endpoint:</strong> <a href="/api/build-info">/api/build-info</a>
+          <span id="buildStatusBadge" class="status-badge status-pending">Checking...</span>
+          <div id="buildStatusMeta" class="status-meta"></div>
+        </div>
+        <div class="status-item">
+          <strong>Security Contact File:</strong> <a href="/security.txt">/security.txt</a>
+          <span id="securityStatusBadge" class="status-badge status-pending">Checking...</span>
+        </div>
         <nav class="legal-nav">
           <a href="/">Back to Login</a>
           <a href="/support.html">Support</a>
@@ -24,5 +34,33 @@
         </nav>
       </article>
     </main>
+    <script>
+      async function checkEndpoint(url, badgeId, metaId = null) {
+        const badge = document.getElementById(badgeId);
+        const meta = metaId ? document.getElementById(metaId) : null;
+        if (!badge) return;
+        try {
+          const response = await fetch(url, { cache: "no-store" });
+          if (!response.ok) {
+            badge.textContent = `Unavailable (${response.status})`;
+            badge.className = "status-badge status-down";
+            return;
+          }
+          badge.textContent = "Operational";
+          badge.className = "status-badge status-up";
+          if (meta && (url.includes("build-info") || url.includes("building-info"))) {
+            const payload = await response.json();
+            meta.textContent = `Build: ${payload?.build_stamp || "unknown"} · Server time: ${payload?.server_time || "-"}`;
+          }
+        } catch (error) {
+          badge.textContent = "Unavailable";
+          badge.className = "status-badge status-down";
+          if (meta) meta.textContent = "";
+        }
+      }
+      checkEndpoint("/api/health", "healthStatusBadge");
+      checkEndpoint("/api/build-info", "buildStatusBadge", "buildStatusMeta");
+      checkEndpoint("/security.txt", "securityStatusBadge");
+    </script>
   </body>
 </html>
