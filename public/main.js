@@ -224,10 +224,13 @@ async function verifyOtp() {
 }
 
 async function recoverUsername() {
-  setAuthNotice(
-    "For username recovery, contact your Institution Administrator or the System Developer.",
-    "info"
-  );
+  const guidance = document.getElementById("forgotUsernameGuidance");
+  if (guidance) {
+    guidance.hidden = false;
+    guidance.textContent =
+      "For username recovery, contact your Institution Administrator or the System Developer.";
+  }
+  setAuthNotice("Username recovery guidance is shown below.", "info");
 }
 
 function collectForgotPasswordInputs() {

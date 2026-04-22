@@ -557,6 +557,22 @@ button:hover {
   display: none !important;
 }
 
+.forgot-username-guidance {
+  margin-top: 8px;
+  border-radius: 8px;
+  border: 1px solid #c9ddf3;
+  background: #edf5ff;
+  color: #1f4f7f;
+  padding: 8px 10px;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.forgot-username-guidance[hidden] {
+  display: none !important;
+}
+
 .auth-actions-row {
   margin-top: 8px;
   display: flex;
