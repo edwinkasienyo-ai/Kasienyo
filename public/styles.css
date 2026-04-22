@@ -153,6 +153,11 @@ select:disabled {
 .info-strip-a {
   background: linear-gradient(90deg, rgba(12, 45, 77, 0.95), rgba(13, 72, 125, 0.9));
   color: #ffd76d;
+  font-size: clamp(11px, 1.08vw, 15px);
+  line-height: 1.18;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .info-strip-b {
@@ -199,14 +204,32 @@ select:disabled {
   box-shadow: 0 8px 16px rgba(8, 40, 70, 0.2);
 }
 
+.contact-strip .phone-highlight {
+  color: #4b3400;
+  background: linear-gradient(90deg, #ffd24d, #f7b500);
+  border: 1px solid rgba(255, 232, 160, 0.65);
+  font-size: clamp(14px, 1.25vw, 19px);
+  letter-spacing: 0.02em;
+}
+
+.contact-strip .email-lowercase {
+  text-transform: lowercase;
+  font-size: clamp(13px, 1.08vw, 16px);
+}
+
 .credit-strip {
-  margin-top: 4px;
+  margin-top: 2px;
+  margin-bottom: 6px;
   text-align: center;
-  color: #e0f1ff;
-  font-size: clamp(9px, 0.8vw, 11px);
+  color: #fff6d8;
+  font-size: clamp(10px, 0.9vw, 12px);
   font-weight: 800;
   text-transform: uppercase;
-  letter-spacing: 0.03em;
+  letter-spacing: 0.04em;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: rgba(8, 32, 54, 0.62);
+  border: 1px solid rgba(255, 223, 134, 0.35);
 }
 
 .production-footer {
