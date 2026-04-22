@@ -87,6 +87,27 @@ Open:
 - Login page: `http://localhost:5000`
 - Dashboard: `http://localhost:5000/dashboard.html`
 
+## One-Command Auto Setup (Windows)
+
+Use this when you want setup and startup fully automated in VS Code terminal.
+
+```powershell
+npm run autofix:win
+```
+
+Optional: set the login page photo while running setup.
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/windows-auto-setup.ps1 -HeroImagePath "C:\path\to\photo.jpg"
+```
+
+What it does:
+- Pull latest `cursor/iims-full-system-2a2b`
+- Ensure `.env` values for local run (port, DB host/port/user/name, frontend origin, build stamp)
+- Install dependencies
+- Import `sql/schema.sql` and `sql/seed.sql` when `mysql` CLI exists in PATH
+- Start `npm run dev`
+
 ## Default Login
 
 - **Username:** `admin`

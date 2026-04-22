@@ -7,6 +7,7 @@
     "start": "node src/server.js",
     "dev": "nodemon src/server.js",
     "go": "npm install && npm run dev",
+    "autofix:win": "powershell -ExecutionPolicy Bypass -File scripts/windows-auto-setup.ps1",
     "hash": "node scripts/hash.js",
     "check": "node --check src/server.js && node --check src/app.js"
   },
