@@ -81,7 +81,7 @@ select:disabled {
   flex-direction: column;
   height: 100vh;
   min-height: 100vh;
-  justify-content: flex-start;
+  justify-content: space-between;
   overflow: hidden;
 }
 
@@ -102,7 +102,8 @@ select:disabled {
   border-radius: 0;
   overflow: hidden;
   border: none;
-  min-height: 205px;
+  min-height: clamp(180px, 28vh, 270px);
+  box-shadow: inset 0 -24px 36px rgba(0, 0, 0, 0.24);
 }
 
 .hero-panel::before {
@@ -118,7 +119,7 @@ select:disabled {
 
 .hero-image {
   width: 100%;
-  height: 205px;
+  height: clamp(180px, 28vh, 270px);
   object-fit: cover;
   display: block;
   position: relative;
@@ -126,21 +127,27 @@ select:disabled {
 }
 
 .left-copy-wrap {
-  padding: 5px 8px 6px;
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 8px 10px 10px;
 }
 
 .info-strip {
-  margin-top: 4px;
-  padding: 5px 7px;
+  margin-top: 0;
+  padding: 6px 8px;
   border-radius: 8px;
-  border: 1px solid rgba(255, 255, 255, 0.25);
+  border: 1px solid rgba(255, 255, 255, 0.28);
   background: linear-gradient(90deg, rgba(7, 40, 69, 0.84), rgba(17, 76, 122, 0.78));
   color: #eef6ff;
-  line-height: 1.22;
-  font-size: 9.5px;
-  font-weight: 800;
+  line-height: 1.26;
+  font-size: clamp(10px, 0.95vw, 13px);
+  font-weight: 900;
   text-transform: uppercase;
-  letter-spacing: 0.003em;
+  letter-spacing: 0.01em;
+  box-shadow: 0 5px 14px rgba(6, 24, 45, 0.2);
 }
 
 .info-strip-a {
@@ -174,30 +181,32 @@ select:disabled {
 }
 
 .contact-strip {
-  margin-top: 5px;
+  margin-top: 4px;
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 4px;
+  gap: 8px;
 }
 
 .contact-strip span {
   text-align: center;
   border-radius: 999px;
-  padding: 4px 5px;
-  font-size: 9px;
-  font-weight: 700;
+  padding: 8px 10px;
+  font-size: clamp(12px, 1.02vw, 15px);
+  font-weight: 900;
   color: #083255;
-  background: linear-gradient(90deg, #79cbff, #9ee4ff);
+  background: linear-gradient(90deg, #86d5ff, #bef0ff);
   text-transform: uppercase;
+  box-shadow: 0 8px 16px rgba(8, 40, 70, 0.2);
 }
 
 .credit-strip {
-  margin-top: 5px;
+  margin-top: 4px;
   text-align: center;
   color: #e0f1ff;
-  font-size: 8.5px;
-  font-weight: 700;
+  font-size: clamp(9px, 0.8vw, 11px);
+  font-weight: 800;
   text-transform: uppercase;
+  letter-spacing: 0.03em;
 }
 
 .login-left p,
