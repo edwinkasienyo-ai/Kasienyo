@@ -8,6 +8,7 @@ const { ROLES } = require("./config/constants");
 
 const PORT = Number(process.env.PORT || 5002);
 const JWT_SECRET_MIN_LENGTH = 16;
+const MAX_PORT_FALLBACK_ATTEMPTS = 25;
 
 function ensureJwtSecretConfig() {
   const jwtSecret = String(process.env.JWT_SECRET || "").trim();
@@ -557,21 +558,55 @@ async function start() {
   await ensureUserPasswordPolicyColumns();
   const defaultInstitutionId = await ensureDefaultInstitutionAndAdmin();
   await ensureSystemDeveloperAccount(defaultInstitutionId);
-  app.listen(PORT, () => {
-    const cwd = process.cwd();
-    const banner = `
+
+  let boundPort = PORT;
+  let server = null;
+  for (let attempt = 0; attempt < MAX_PORT_FALLBACK_ATTEMPTS; attempt++) {
+    const candidatePort = PORT + attempt;
+    // eslint-disable-next-line no-await-in-loop
+    const listenResult = await new Promise((resolve) => {
+      const instance = app.listen(candidatePort);
+      instance.once("listening", () => resolve({ ok: true, server: instance, port: candidatePort }));
+      instance.once("error", (error) => {
+        if (error && error.code === "EADDRINUSE") {
+          return resolve({ ok: false, retry: true, port: candidatePort });
+        }
+        return resolve({ ok: false, retry: false, error });
+      });
+    });
+
+    if (listenResult.ok) {
+      server = listenResult.server;
+      boundPort = listenResult.port;
+      break;
+    }
+    if (listenResult.retry) {
+      // eslint-disable-next-line no-console
+      console.warn(`[IIMS] Port ${listenResult.port} is in use. Trying next port...`);
+      continue;
+    }
+    throw listenResult.error;
+  }
+
+  if (!server) {
+    throw new Error(
+      `Unable to bind server. Ports ${PORT}-${PORT + MAX_PORT_FALLBACK_ATTEMPTS - 1} are unavailable.`
+    );
+  }
+
+  const cwd = process.cwd();
+  const banner = `
 ================================================================================
   IIMS SERVER STARTED
   Folder (cwd): ${cwd}
-  URL:          http://localhost:${PORT}
+  URL:          http://localhost:${boundPort}
   Release:      ${IIMS_BUILD_STAMP}
-  Check API:    http://localhost:${PORT}/api/build-info
-  Static test:  http://localhost:${PORT}/build-check.txt
+  Check API:    http://localhost:${boundPort}/api/build-info
+  Static test:  http://localhost:${boundPort}/build-check.txt
   If Release is NOT ${IIMS_BUILD_STAMP} or Folder is wrong, pull Git and restart.
 ================================================================================`;
-    // eslint-disable-next-line no-console
-    console.log(banner);
-  });
+  // eslint-disable-next-line no-console
+  console.log(banner);
 }
 
 start().catch((error) => {
