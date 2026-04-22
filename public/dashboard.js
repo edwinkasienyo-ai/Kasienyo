@@ -8,6 +8,7 @@ let currentModule = "dashboard";
 let currentEditId = null;
 let allowedModules = [];
 let portalContext = null;
+let dashboardRefreshTimer = null;
 const DASHBOARD_STAT_LABELS = {
   totalLearners: "Total Learners Population",
   totalPresent: "Present Today",
@@ -1553,6 +1554,21 @@ async function loadModuleData(config) {
   } catch (error) {
     alert(error.message);
   }
+}
+
+function clearDashboardAutoRefresh() {
+  if (dashboardRefreshTimer) {
+    clearInterval(dashboardRefreshTimer);
+    dashboardRefreshTimer = null;
+  }
+}
+
+function ensureDashboardAutoRefresh() {
+  clearDashboardAutoRefresh();
+  dashboardRefreshTimer = setInterval(async () => {
+    if (currentModule !== "dashboard" || document.visibilityState !== "visible") return;
+    await loadDashboard();
+  }, 2000);
 }
 
 async function dispatchCommunicationMessage(id) {

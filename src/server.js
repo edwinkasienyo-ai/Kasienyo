@@ -395,6 +395,33 @@ async function ensureUserPasswordPolicyColumns() {
     );
   }
 
+  const financeSessionSyncRows = await query(
+    `SELECT COUNT(*) total
+     FROM INFORMATION_SCHEMA.TABLES
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = 'finance_session_sync'`
+  );
+  if (!Number(financeSessionSyncRows[0]?.total || 0)) {
+    await query(
+      `CREATE TABLE finance_session_sync (
+        id BIGINT PRIMARY KEY AUTO_INCREMENT,
+        institution_id BIGINT NOT NULL,
+        academic_year_label VARCHAR(20) NOT NULL,
+        term_name VARCHAR(20) NOT NULL,
+        capitation_received DECIMAL(12,2) NOT NULL DEFAULT 0,
+        fee_paid DECIMAL(12,2) NOT NULL DEFAULT 0,
+        grant_other DECIMAL(12,2) NOT NULL DEFAULT 0,
+        outstanding_balance DECIMAL(12,2) NOT NULL DEFAULT 0,
+        liabilities DECIMAL(12,2) NOT NULL DEFAULT 0,
+        created_by_user_id VARCHAR(100) NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        UNIQUE KEY uq_fin_session (institution_id, academic_year_label, term_name),
+        INDEX idx_fin_session_lookup (institution_id, academic_year_label, term_name)
+      )`
+    );
+  }
+
   const otpVerifyAttemptsRows = await query(
     `SELECT COUNT(*) total
      FROM INFORMATION_SCHEMA.COLUMNS
@@ -426,6 +453,61 @@ async function ensureUserPasswordPolicyColumns() {
   );
   if (!Number(otpLastAttemptRows[0]?.total || 0)) {
     await query("ALTER TABLE otp_sessions ADD COLUMN last_attempt_at DATETIME NULL");
+  }
+
+  const feePaymentsAcademicYearRows = await query(
+    `SELECT COUNT(*) total
+     FROM INFORMATION_SCHEMA.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = 'finance_fee_payments'
+       AND COLUMN_NAME = 'academic_year'`
+  );
+  if (!Number(feePaymentsAcademicYearRows[0]?.total || 0)) {
+    await query("ALTER TABLE finance_fee_payments ADD COLUMN academic_year VARCHAR(20) NULL");
+  }
+
+  const feePaymentsTermRows = await query(
+    `SELECT COUNT(*) total
+     FROM INFORMATION_SCHEMA.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = 'finance_fee_payments'
+       AND COLUMN_NAME = 'term'`
+  );
+  if (!Number(feePaymentsTermRows[0]?.total || 0)) {
+    await query("ALTER TABLE finance_fee_payments ADD COLUMN term VARCHAR(40) NULL");
+  }
+
+  const feePaymentsCapitationRows = await query(
+    `SELECT COUNT(*) total
+     FROM INFORMATION_SCHEMA.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = 'finance_fee_payments'
+       AND COLUMN_NAME = 'capitation_received'`
+  );
+  if (!Number(feePaymentsCapitationRows[0]?.total || 0)) {
+    await query("ALTER TABLE finance_fee_payments ADD COLUMN capitation_received DECIMAL(12,2) NULL");
+  }
+
+  const feePaymentsGrantRows = await query(
+    `SELECT COUNT(*) total
+     FROM INFORMATION_SCHEMA.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = 'finance_fee_payments'
+       AND COLUMN_NAME = 'grant_other'`
+  );
+  if (!Number(feePaymentsGrantRows[0]?.total || 0)) {
+    await query("ALTER TABLE finance_fee_payments ADD COLUMN grant_other DECIMAL(12,2) NULL");
+  }
+
+  const feePaymentsLiabilitiesRows = await query(
+    `SELECT COUNT(*) total
+     FROM INFORMATION_SCHEMA.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = 'finance_fee_payments'
+       AND COLUMN_NAME = 'liabilities'`
+  );
+  if (!Number(feePaymentsLiabilitiesRows[0]?.total || 0)) {
+    await query("ALTER TABLE finance_fee_payments ADD COLUMN liabilities DECIMAL(12,2) NULL");
   }
 }
 

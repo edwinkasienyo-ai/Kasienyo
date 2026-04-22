@@ -3007,11 +3007,12 @@ app.get(
       0
     );
 
-    const logs = await query(
-      `SELECT id, actor_user_id, actor_role, action, entity_name, entity_id, details_json, created_at
-       FROM activity_logs
+    const [financeSessionRows] = await query(
+      `SELECT academic_year, term_name, capitation_received, fee_paid, grant_other, available_balance, outstanding_balance, liabilities
+       FROM finance_session_sync
        WHERE institution_id = ?
-       ORDER BY id DESC LIMIT 20`,
+       ORDER BY id DESC
+       LIMIT 1`,
       [institutionId]
     );
     const alerts = [];
@@ -3071,6 +3072,7 @@ app.get(
       outstandingBalances
     };
 
+    const financeSession = financeSessionRows || null;
     res.json({
       generated_at: dayjs().format("YYYY-MM-DD HH:mm:ss"),
       stats: {
@@ -3082,16 +3084,101 @@ app.get(
         totalLate: toNumber(late.totalLate),
         totalSuspended: toNumber(suspension.totalSuspended),
         totalExpelled: toNumber(expelled.totalExpelled),
+        totalTransferred: toNumber(learnersTransferred.totalTransferred),
         totalFeesCollectedToday: toMoney(feesToday.totalFees)
       },
       attendanceBreakdown,
       dailyAttendanceList,
       performanceByClass,
       feeCollectionSummary,
+      financeSessionSync: financeSession
+        ? {
+          academic_year: financeSession.academic_year,
+          term_name: financeSession.term_name,
+          capitation_received: toMoney(financeSession.capitation_received),
+          fee_paid: toMoney(financeSession.fee_paid),
+          grant_other: toMoney(financeSession.grant_other),
+          available_balance: toMoney(financeSession.available_balance),
+          outstanding_balance: toMoney(financeSession.outstanding_balance),
+          liabilities: toMoney(financeSession.liabilities)
+        }
+        : null,
       alerts,
-      announcements,
-      systemActivityLogs: logs
+      announcements
     });
+  })
+);
+
+app.post(
+  "/api/finance/session-sync",
+  auth,
+  enforceModuleAccess(MODULE_KEYS.FINANCE),
+  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
+  enforcePermission(PERMISSIONS.CREATE),
+  asyncHandler(async (req, res) => {
+    const institutionId = req.user.institution_id;
+    const academicYear = cleanValue(req.body?.academic_year);
+    const termName = cleanValue(req.body?.term_name);
+    const capitationReceived = Number(req.body?.capitation_received || 0);
+    const feePaid = Number(req.body?.fee_paid || 0);
+    const grantOther = Number(req.body?.grant_other || 0);
+    const availableBalance = Number(req.body?.available_balance || 0);
+    const outstandingBalance = Number(req.body?.outstanding_balance || 0);
+    const liabilities = Number(req.body?.liabilities || 0);
+
+    if (!academicYear || !termName) {
+      return res.status(400).json({ error: "academic_year and term_name are required." });
+    }
+
+    const existing = await query(
+      `SELECT id FROM finance_session_sync
+       WHERE institution_id = ? AND academic_year = ? AND term_name = ?
+       LIMIT 1`,
+      [institutionId, academicYear, termName]
+    );
+
+    if (existing.length) {
+      await query(
+        `UPDATE finance_session_sync
+         SET capitation_received = ?, fee_paid = ?, grant_other = ?, available_balance = ?,
+             outstanding_balance = ?, liabilities = ?, updated_at = NOW()
+         WHERE id = ?`,
+        [
+          capitationReceived,
+          feePaid,
+          grantOther,
+          availableBalance,
+          outstandingBalance,
+          liabilities,
+          existing[0].id
+        ]
+      );
+    } else {
+      await query(
+        `INSERT INTO finance_session_sync
+          (institution_id, academic_year, term_name, capitation_received, fee_paid, grant_other, available_balance, outstanding_balance, liabilities, created_by_user_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          institutionId,
+          academicYear,
+          termName,
+          capitationReceived,
+          feePaid,
+          grantOther,
+          availableBalance,
+          outstandingBalance,
+          liabilities,
+          req.user.id
+        ]
+      );
+    }
+
+    await auditLog(req.user, "UPSERT_FINANCE_SESSION_SYNC", "finance_session_sync", null, {
+      academic_year: academicYear,
+      term_name: termName
+    });
+
+    res.json({ message: "Academic session finance synchronization saved successfully." });
   })
 );
 
@@ -4438,7 +4525,14 @@ const moduleConfigs = [
       "payment_method",
       "receipt_number",
       "payment_date",
-      "balance_after_payment"
+      "balance_after_payment",
+      "academic_year",
+      "term",
+      "capitation_received",
+      "grant_other",
+      "liabilities",
+      "available_balance",
+      "outstanding_balance"
     ]
   },
   {

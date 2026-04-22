@@ -1287,6 +1287,36 @@ tbody tr:hover {
   color: #e8f4ff;
 }
 
+.dashboard-ai-insight {
+  margin: 10px 0 0;
+  padding: 8px 12px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #093a2a;
+  background: linear-gradient(90deg, #8dffcb, #5ce5b4);
+  border: 1px solid rgba(82, 215, 164, 0.7);
+  box-shadow: 0 8px 18px rgba(17, 120, 85, 0.25);
+}
+
+.dashboard-ai-insight::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #0c9a66;
+  box-shadow: 0 0 0 6px rgba(12, 154, 102, 0.2);
+}
+
+.dashboard-finance-controls {
+  margin: 10px 0;
+}
+
 .dashboard-hero-meta {
   margin-top: 10px;
   display: flex;
@@ -1298,6 +1328,10 @@ tbody tr:hover {
   background: rgba(255, 255, 255, 0.14);
   border-color: rgba(255, 255, 255, 0.24);
   color: #eaf4ff;
+}
+
+.dashboard-finance-cards {
+  margin-top: 10px;
 }
 
 .search-summary-card {
