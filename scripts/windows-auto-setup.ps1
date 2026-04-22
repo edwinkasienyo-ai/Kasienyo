@@ -76,6 +76,75 @@ function Set-Or-AppendEnvValue {
   }
 }
 
+function Get-PortOwnerProcessId {
+  param(
+    [int]$TargetPort
+  )
+
+  $ownerPid = $null
+  try {
+    if (Get-Command Get-NetTCPConnection -ErrorAction SilentlyContinue) {
+      $conn = Get-NetTCPConnection -LocalPort $TargetPort -State Listen -ErrorAction SilentlyContinue |
+        Select-Object -First 1
+      if ($conn) {
+        $ownerPid = [int]$conn.OwningProcess
+      }
+    }
+  } catch {
+    $ownerPid = $null
+  }
+
+  if (!$ownerPid) {
+    try {
+      $netstatRows = netstat -ano | Select-String ":$TargetPort\\s"
+      foreach ($row in $netstatRows) {
+        $parts = ($row.ToString() -replace "\\s+", " ").Trim().Split(" ")
+        if ($parts.Length -ge 5 -and $parts[1] -like "*:$TargetPort") {
+          $candidate = [int]$parts[-1]
+          if ($candidate -gt 0) {
+            $ownerPid = $candidate
+            break
+          }
+        }
+      }
+    } catch {
+      $ownerPid = $null
+    }
+  }
+
+  return $ownerPid
+}
+
+function Resolve-PortConflict {
+  param(
+    [int]$TargetPort
+  )
+
+  $ownerPid = Get-PortOwnerProcessId -TargetPort $TargetPort
+  if (!$ownerPid) {
+    Write-Host "[IIMS] Port $TargetPort is free." -ForegroundColor Green
+    return
+  }
+
+  $procName = "unknown"
+  try {
+    $proc = Get-Process -Id $ownerPid -ErrorAction Stop
+    $procName = $proc.ProcessName
+  } catch {
+    $procName = "unknown"
+  }
+
+  Write-Host "[IIMS] Port $TargetPort is currently used by PID $ownerPid ($procName)." -ForegroundColor Yellow
+  try {
+    Stop-Process -Id $ownerPid -Force -ErrorAction Stop
+    Start-Sleep -Milliseconds 600
+    Write-Host "[IIMS] Stopped PID $ownerPid to free port $TargetPort." -ForegroundColor Green
+  } catch {
+    Write-Host "[IIMS] Could not stop PID $ownerPid automatically. Close the process and rerun script." -ForegroundColor Red
+    throw
+  }
+}
+
 $projectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 Set-Location $projectRoot
 
@@ -145,6 +214,8 @@ if ($mysqlCmd) {
   Write-Host "[IIMS] mysql client not found in PATH. Skipping SQL import." -ForegroundColor DarkYellow
   Write-Host "       If DB is empty, import sql/schema.sql and sql/seed.sql manually." -ForegroundColor DarkYellow
 }
+
+Resolve-PortConflict -TargetPort ([int]$Port)
 
 Write-Host "\n[IIMS] Setup complete. Starting dev server..." -ForegroundColor Green
 npm run dev
