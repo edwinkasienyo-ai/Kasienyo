@@ -5518,6 +5518,14 @@ app.get("/security", (_, res) => {
   res.redirect(302, "/security.html");
 });
 
+app.get("/support-compliance", (_, res) => {
+  res.redirect(302, "/support-compliance.html");
+});
+
+app.get("/support-compliance.html", (_, res) => {
+  res.sendFile(path.join(process.cwd(), "public", "support-compliance.html"));
+});
+
 app.get("/compliance", (_, res) => {
   res.redirect(302, "/compliance.html");
 });
