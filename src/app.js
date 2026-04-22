@@ -47,6 +47,13 @@ const { buildSearchWhere } = require("./utils/sql");
 const app = express();
 
 const frontendOrigin = process.env.FRONTEND_ORIGIN || "http://localhost:5000";
+const DEV_FALLBACK_JWT_SECRET = "iims-dev-insecure-secret-change-in-production";
+const configuredJwtSecret = String(process.env.JWT_SECRET || "").trim();
+const JWT_SECRET =
+  configuredJwtSecret ||
+  (String(process.env.NODE_ENV || "").toLowerCase() !== "production"
+    ? DEV_FALLBACK_JWT_SECRET
+    : "");
 app.use(
   cors({
     origin: frontendOrigin,
@@ -192,7 +199,12 @@ function asyncHandler(handler) {
 }
 
 function issueToken(payload) {
-  return jwt.sign(payload, process.env.JWT_SECRET, {
+  if (!JWT_SECRET) {
+    throw new Error(
+      "JWT configuration error: JWT_SECRET is missing. Set JWT_SECRET in your environment."
+    );
+  }
+  return jwt.sign(payload, JWT_SECRET, {
     expiresIn: process.env.JWT_EXPIRES_IN || "1d"
   });
 }

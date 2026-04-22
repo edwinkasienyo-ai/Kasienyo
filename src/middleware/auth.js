@@ -3,6 +3,17 @@ const dayjs = require("dayjs");
 const { query } = require("../config/db");
 const { ROLES } = require("../config/constants");
 
+function resolveJwtSecret() {
+  const explicitSecret = String(process.env.JWT_SECRET || "").trim();
+  if (explicitSecret) {
+    return explicitSecret;
+  }
+  if (process.env.NODE_ENV !== "production") {
+    return "iims-dev-insecure-secret-change-in-production";
+  }
+  return "";
+}
+
 function auth(req, res, next) {
   const authHeader = req.headers.authorization || "";
   const queryToken = String(req.query?.token || "").trim();
@@ -16,7 +27,13 @@ function auth(req, res, next) {
   }
 
   try {
-    const payload = jwt.verify(token, process.env.JWT_SECRET);
+    const jwtSecret = resolveJwtSecret();
+    if (!jwtSecret) {
+      return res.status(500).json({
+        error: "Server authentication secret is missing. Set JWT_SECRET in environment configuration."
+      });
+    }
+    const payload = jwt.verify(token, jwtSecret);
     req.user = payload;
 
     if (!payload?.id || payload?.role === ROLES.SYSTEM_DEVELOPER) {

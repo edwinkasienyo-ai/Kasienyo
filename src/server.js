@@ -5,6 +5,29 @@ const { hashPassword } = require("./utils/password");
 const { ROLES } = require("./config/constants");
 
 const PORT = Number(process.env.PORT || 5002);
+const JWT_SECRET_MIN_LENGTH = 16;
+
+function ensureJwtSecretConfig() {
+  const jwtSecret = String(process.env.JWT_SECRET || "").trim();
+  const nodeEnv = String(process.env.NODE_ENV || "").toLowerCase();
+  if (!jwtSecret) {
+    if (nodeEnv === "production") {
+      throw new Error(
+        "JWT_SECRET is missing. Add JWT_SECRET in your .env file before starting the server."
+      );
+    }
+    // eslint-disable-next-line no-console
+    console.warn(
+      "JWT_SECRET missing; using development fallback secret. Set JWT_SECRET in .env for persistent sessions."
+    );
+    return;
+  }
+  if (jwtSecret.length < JWT_SECRET_MIN_LENGTH) {
+    throw new Error(
+      `JWT_SECRET must be at least ${JWT_SECRET_MIN_LENGTH} characters for secure token signing.`
+    );
+  }
+}
 
 async function ensureDefaultInstitutionAndAdmin() {
   const institutionName = "Default Institution";
@@ -348,6 +371,7 @@ async function ensureUserPasswordPolicyColumns() {
 }
 
 async function start() {
+  ensureJwtSecretConfig();
   await query("SELECT 1");
   await ensureUserPasswordPolicyColumns();
   const defaultInstitutionId = await ensureDefaultInstitutionAndAdmin();
