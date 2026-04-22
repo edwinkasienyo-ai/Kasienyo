@@ -6,6 +6,7 @@
   "scripts": {
     "start": "node src/server.js",
     "dev": "nodemon src/server.js",
+    "go": "npm install && npm run dev",
     "hash": "node scripts/hash.js",
     "check": "node --check src/server.js && node --check src/app.js"
   },
