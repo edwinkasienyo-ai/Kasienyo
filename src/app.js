@@ -808,6 +808,12 @@ function evaluatePasswordRotation(user = {}) {
 
 const MODULE_KEYS = {
   ADMISSION: "admission",
+  REGISTRATION: "register-center",
+  ACCESS_CONTROL: "access-control",
+  SECURITY_AUDIT: "security-audit",
+  INSTITUTIONS_USERS_REGISTRY: "institutions-users-registry",
+  RECYCLE_BIN: "recycle-bin",
+  CBC_CURRICULUM_EDITOR: "cbc-curriculum-editor",
   MANAGEMENT_TEACHERS: "management-teachers",
   MANAGEMENT_NON_TEACHING: "management-non-teaching",
   MANAGEMENT_TEACHER_RESOURCES: "management-teacher-resources",
@@ -842,6 +848,7 @@ const DEFAULT_MODULE_ACCESS_BY_ROLE = {
   [ROLES.TSC]: [MODULE_KEYS.DASHBOARD],
   [ROLES.TEACHER]: [
     MODULE_KEYS.ADMISSION,
+    MODULE_KEYS.CBC_CURRICULUM_EDITOR,
     MODULE_KEYS.MANAGEMENT_TEACHER_RESOURCES,
     MODULE_KEYS.ATTENDANCE,
     MODULE_KEYS.ACADEMIC_EXAMS,
@@ -906,6 +913,47 @@ function enforceModuleAccess(moduleKey) {
     }
     return next();
   });
+}
+
+function canManageAcrossInstitutions(user) {
+  return normalizeRole(user?.role) === ROLES.SYSTEM_DEVELOPER;
+}
+
+async function archiveRecycleBinItem({
+  institutionId,
+  entityName,
+  entityId = null,
+  payload = {},
+  deletedByUserId = null
+}) {
+  await query(
+    `INSERT INTO recycle_bin_items
+      (institution_id, entity_name, entity_id, archived_payload_json, deleted_by_user_id, status)
+     VALUES (?, ?, ?, ?, ?, 'TRASHED')`,
+    [
+      institutionId,
+      cleanValue(entityName),
+      Number(entityId) || null,
+      JSON.stringify(payload || {}),
+      Number(deletedByUserId) || null
+    ]
+  );
+}
+
+function isSafeTableIdentifier(name) {
+  return /^[a-z_][a-z0-9_]*$/i.test(cleanValue(name));
+}
+
+async function getTableColumns(tableName) {
+  if (!isSafeTableIdentifier(tableName)) return [];
+  const rows = await query(
+    `SELECT COLUMN_NAME
+     FROM INFORMATION_SCHEMA.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = ?`,
+    [tableName]
+  );
+  return rows.map((row) => row.COLUMN_NAME);
 }
 
 function getScopedFilter(config, user) {
@@ -1551,6 +1599,21 @@ app.post("/api/auth/login", authLoginRateLimit, asyncHandler(async (req, res) =>
 
   if (!account) {
     const failureState = await recordFailedLoginAttempt(securityUser || {});
+    await auditLog(
+      {
+        institution_id: securityUser?.institution_id || null,
+        id: securityUser?.id || null,
+        role: securityUser?.role || "PUBLIC"
+      },
+      "LOGIN_FAILED",
+      "auth",
+      securityUser?.id || null,
+      {
+        username: cleanValue(username),
+        remaining_attempts: failureState?.remainingAttempts ?? null,
+        locked_until: failureState?.lockedUntil || null
+      }
+    );
     await delayWithRandomJitter();
     return res.status(failureState?.lockedUntil ? 423 : 401).json({
       error: failureState?.lockedUntil
@@ -1615,6 +1678,16 @@ app.post("/api/auth/verify-otp", otpVerifyRateLimit, asyncHandler(async (req, re
 
   if (!sessions.length) {
     const failure = await recordOtpFailure(username);
+    await auditLog(
+      { institution_id: null, id: null, role: "PUBLIC" },
+      "OTP_VERIFY_FAILED",
+      "otp_sessions",
+      null,
+      {
+        username: cleanValue(username),
+        remaining_attempts: failure?.remainingAttempts ?? null
+      }
+    );
     return res.status(401).json({
       error: "Invalid or expired OTP.",
       remaining_attempts: failure?.remainingAttempts ?? null
@@ -1642,6 +1715,17 @@ app.post("/api/auth/verify-otp", otpVerifyRateLimit, asyncHandler(async (req, re
   }
   if (!session || !payload) {
     const failure = await recordOtpFailure(username);
+    await auditLog(
+      { institution_id: null, id: null, role: "PUBLIC" },
+      "OTP_VERIFY_FAILED",
+      "otp_sessions",
+      null,
+      {
+        username: cleanValue(username),
+        reason: "MALFORMED_OR_INVALID_STORED_SESSION",
+        remaining_attempts: failure?.remainingAttempts ?? null
+      }
+    );
     return res.status(401).json({
       error: "Invalid or expired OTP. Please request a fresh OTP and try again.",
       remaining_attempts: failure?.remainingAttempts ?? null
@@ -3233,6 +3317,13 @@ app.delete(
     if (requesterRole !== ROLES.SYSTEM_DEVELOPER && normalizeRole(targetUser.role) === ROLES.SYSTEM_DEVELOPER) {
       return res.status(403).json({ error: "Only the System Developer can delete this account." });
     }
+    await archiveRecycleBinItem({
+      institutionId: targetUser.institution_id,
+      entityName: "users",
+      entityId: targetUser.id,
+      payload: targetUser,
+      deletedByUserId: req.user.id
+    });
     await query("DELETE FROM users WHERE id = ?", [userId]);
     await auditLog(req.user, "DELETE_USER", "users", userId, {
       username: targetUser.username,
@@ -3433,6 +3524,419 @@ app.post(
     });
 
     res.json({ message: "Module access override saved.", user_id: userId, module_key: moduleKey, can_access: canAccess });
+  })
+);
+
+app.get(
+  "/api/system/module-access/overrides",
+  auth,
+  enforceModuleAccess(MODULE_KEYS.ACCESS_CONTROL),
+  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
+  asyncHandler(async (req, res) => {
+    const userId = Number(req.query?.user_id || 0);
+    if (!userId) {
+      return res.status(400).json({ error: "user_id query parameter is required." });
+    }
+    const users = await query(
+      `SELECT id, institution_id, full_name, username, role
+       FROM users
+       WHERE id = ?
+       LIMIT 1`,
+      [userId]
+    );
+    if (!users.length) {
+      return res.status(404).json({ error: "Target user not found." });
+    }
+    const targetUser = users[0];
+    if (!canManageAcrossInstitutions(req.user) && targetUser.institution_id !== req.user.institution_id) {
+      return res.status(403).json({ error: "Cannot view module overrides for users outside your institution." });
+    }
+    const overrides = await query(
+      `SELECT id, institution_id, user_id, module_key, can_access, created_by_user_id, created_at
+       FROM user_module_access_overrides
+       WHERE user_id = ?
+       ORDER BY id DESC`,
+      [userId]
+    );
+    res.json({ user: targetUser, overrides });
+  })
+);
+
+app.get(
+  "/api/system/audit-logs",
+  auth,
+  enforceModuleAccess(MODULE_KEYS.SECURITY_AUDIT),
+  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
+  asyncHandler(async (req, res) => {
+    const limit = Math.min(Math.max(Number(req.query?.limit || 200), 1), 1000);
+    const institutionScope = canManageAcrossInstitutions(req.user)
+      ? Number(req.query?.institution_id || 0)
+      : req.user.institution_id;
+    const whereClause = institutionScope ? "WHERE institution_id = ?" : "";
+    const params = institutionScope ? [institutionScope] : [];
+    const logs = await query(
+      `SELECT id, institution_id, actor_user_id, actor_role, action, entity_name, entity_id, details_json, created_at
+       FROM activity_logs
+       ${whereClause}
+       ORDER BY id DESC
+       LIMIT ?`,
+      [...params, limit]
+    );
+    const [failedLoginsRow] = await query(
+      `SELECT COUNT(*) total
+       FROM activity_logs
+       ${whereClause ? `${whereClause} AND` : "WHERE"} action IN ('LOGIN_FAILED', 'ACCOUNT_LOCKED')
+       AND created_at >= DATE_SUB(NOW(), INTERVAL 1 DAY)`,
+      params
+    );
+    const [otpFailuresRow] = await query(
+      `SELECT COUNT(*) total
+       FROM activity_logs
+       ${whereClause ? `${whereClause} AND` : "WHERE"} action IN ('OTP_VERIFY_FAILED', 'OTP_EXHAUSTED')
+       AND created_at >= DATE_SUB(NOW(), INTERVAL 1 DAY)`,
+      params
+    );
+    res.json({
+      logs,
+      metrics: {
+        failed_login_events_24h: Number(failedLoginsRow?.total || 0),
+        otp_fail_events_24h: Number(otpFailuresRow?.total || 0)
+      }
+    });
+  })
+);
+
+app.get(
+  "/api/system/registry",
+  auth,
+  enforceModuleAccess(MODULE_KEYS.INSTITUTIONS_USERS_REGISTRY),
+  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
+  asyncHandler(async (req, res) => {
+    const institutions = canManageAcrossInstitutions(req.user)
+      ? await query(
+        `SELECT id, institution_name, institution_code, email, phone, county, created_at
+         FROM institutions
+         ORDER BY id DESC`
+      )
+      : await query(
+        `SELECT id, institution_name, institution_code, email, phone, county, created_at
+         FROM institutions
+         WHERE id = ?
+         ORDER BY id DESC`,
+        [req.user.institution_id]
+      );
+    const users = canManageAcrossInstitutions(req.user)
+      ? await query(
+        `SELECT id, institution_id, full_name, username, role, email, phone, is_active, created_at
+         FROM users
+         ORDER BY id DESC`
+      )
+      : await query(
+        `SELECT id, institution_id, full_name, username, role, email, phone, is_active, created_at
+         FROM users
+         WHERE institution_id = ?
+         ORDER BY id DESC`,
+        [req.user.institution_id]
+      );
+    res.json({ institutions, users });
+  })
+);
+
+app.get(
+  "/api/system/recycle-bin",
+  auth,
+  enforceModuleAccess(MODULE_KEYS.RECYCLE_BIN),
+  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
+  asyncHandler(async (req, res) => {
+    const limit = Math.min(Math.max(Number(req.query?.limit || 200), 1), 1000);
+    const statusFilter = cleanValue(req.query?.status).toUpperCase();
+    const institutionScope = canManageAcrossInstitutions(req.user)
+      ? Number(req.query?.institution_id || 0)
+      : req.user.institution_id;
+    let sql = `SELECT id, institution_id, entity_name, entity_id, archived_payload_json, deleted_by_user_id, deleted_at,
+                      restored_at, restored_by_user_id, permanently_deleted_at, permanently_deleted_by_user_id, status
+               FROM recycle_bin_items
+               WHERE 1=1`;
+    const params = [];
+    if (institutionScope) {
+      sql += " AND institution_id = ?";
+      params.push(institutionScope);
+    }
+    if (statusFilter) {
+      sql += " AND status = ?";
+      params.push(statusFilter);
+    }
+    sql += " ORDER BY id DESC LIMIT ?";
+    params.push(limit);
+    const items = await query(sql, params);
+    res.json({ items });
+  })
+);
+
+app.post(
+  "/api/system/recycle-bin/:id/restore",
+  auth,
+  enforceModuleAccess(MODULE_KEYS.RECYCLE_BIN),
+  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
+  enforcePermission(PERMISSIONS.UPDATE),
+  asyncHandler(async (req, res) => {
+    const recycleId = Number(req.params.id);
+    if (!recycleId) return res.status(400).json({ error: "Valid recycle bin item id is required." });
+    const rows = await query(
+      `SELECT *
+       FROM recycle_bin_items
+       WHERE id = ?
+       LIMIT 1`,
+      [recycleId]
+    );
+    if (!rows.length) {
+      return res.status(404).json({ error: "Recycle bin item not found." });
+    }
+    const item = rows[0];
+    if (!canManageAcrossInstitutions(req.user) && item.institution_id !== req.user.institution_id) {
+      return res.status(403).json({ error: "You can only restore items from your institution." });
+    }
+    if (cleanValue(item.status).toUpperCase() !== "TRASHED") {
+      return res.status(409).json({ error: "Only trashed items can be restored." });
+    }
+    const entityName = cleanValue(item.entity_name);
+    if (!isSafeTableIdentifier(entityName)) {
+      return res.status(400).json({ error: "Stored entity cannot be restored safely." });
+    }
+    const columns = await getTableColumns(entityName);
+    if (!columns.length) {
+      return res.status(404).json({ error: "Target table no longer exists; cannot restore item." });
+    }
+    const payload = parseStoredJson(item.archived_payload_json);
+    if (!payload || typeof payload !== "object") {
+      return res.status(400).json({ error: "Archived payload is invalid and cannot be restored." });
+    }
+    const insertPayload = columns.reduce((acc, column) => {
+      if (Object.prototype.hasOwnProperty.call(payload, column)) {
+        acc[column] = payload[column];
+      }
+      return acc;
+    }, {});
+    if (!Object.keys(insertPayload).length) {
+      return res.status(400).json({ error: "No matching columns found for restoration." });
+    }
+    const restoredRecordId = Number(insertPayload.id || item.entity_id || 0);
+    if (restoredRecordId) {
+      const existing = await query(`SELECT id FROM ${entityName} WHERE id = ? LIMIT 1`, [restoredRecordId]);
+      if (existing.length) {
+        return res.status(409).json({ error: "A record with this ID already exists. Cannot restore." });
+      }
+    }
+    const insertColumns = Object.keys(insertPayload);
+    const placeholders = insertColumns.map(() => "?").join(", ");
+    await query(
+      `INSERT INTO ${entityName} (${insertColumns.join(", ")})
+       VALUES (${placeholders})`,
+      insertColumns.map((column) => insertPayload[column])
+    );
+    await query(
+      `UPDATE recycle_bin_items
+       SET status = 'RESTORED',
+           restored_at = NOW(),
+           restored_by_user_id = ?
+       WHERE id = ?`,
+      [req.user.id, recycleId]
+    );
+    await auditLog(req.user, "RESTORE_RECYCLE_BIN_ITEM", "recycle_bin_items", recycleId, {
+      entity_name: entityName,
+      entity_id: item.entity_id
+    });
+    res.json({
+      message: "Recycle bin item restored successfully.",
+      recycle_bin_id: recycleId,
+      entity_name: entityName,
+      restored_record_id: restoredRecordId || null
+    });
+  })
+);
+
+app.delete(
+  "/api/system/recycle-bin/:id",
+  auth,
+  enforceModuleAccess(MODULE_KEYS.RECYCLE_BIN),
+  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
+  enforcePermission(PERMISSIONS.DELETE),
+  asyncHandler(async (req, res) => {
+    const recycleId = Number(req.params.id);
+    if (!recycleId) return res.status(400).json({ error: "Valid recycle bin item id is required." });
+    const rows = await query(
+      `SELECT id, institution_id, status, entity_name, entity_id
+       FROM recycle_bin_items
+       WHERE id = ?
+       LIMIT 1`,
+      [recycleId]
+    );
+    if (!rows.length) {
+      return res.status(404).json({ error: "Recycle bin item not found." });
+    }
+    const item = rows[0];
+    if (!canManageAcrossInstitutions(req.user) && item.institution_id !== req.user.institution_id) {
+      return res.status(403).json({ error: "You can only purge items from your institution." });
+    }
+    await query(
+      `UPDATE recycle_bin_items
+       SET status = 'DELETED',
+           permanently_deleted_at = NOW(),
+           permanently_deleted_by_user_id = ?
+       WHERE id = ?`,
+      [req.user.id, recycleId]
+    );
+    await auditLog(req.user, "PURGE_RECYCLE_BIN_ITEM", "recycle_bin_items", recycleId, {
+      entity_name: item.entity_name,
+      entity_id: item.entity_id
+    });
+    res.json({ message: "Recycle bin item permanently marked as deleted.", recycle_bin_id: recycleId });
+  })
+);
+
+app.get(
+  "/api/cbc/curriculum",
+  auth,
+  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER]),
+  enforcePermission(PERMISSIONS.VIEW),
+  asyncHandler(async (req, res) => {
+    const rows = await getPaginatedRows({
+      table: "cbc_curriculum_entries",
+      institutionId: req.user.institution_id,
+      searchFields: ["grade", "learning_area", "strand", "sub_strand", "term", "year"],
+      q: req.query.q || "",
+      limit: req.query.limit || 200,
+      offset: req.query.offset || 0
+    });
+    res.json(rows);
+  })
+);
+
+app.get(
+  "/api/cbc/curriculum/:id(\\d+)",
+  auth,
+  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER]),
+  enforcePermission(PERMISSIONS.VIEW),
+  asyncHandler(async (req, res) => {
+    const rows = await query(
+      `SELECT *
+       FROM cbc_curriculum_entries
+       WHERE id = ? AND institution_id = ?
+       LIMIT 1`,
+      [req.params.id, req.user.institution_id]
+    );
+    if (!rows.length) return res.status(404).json({ error: "Curriculum entry not found." });
+    res.json(rows[0]);
+  })
+);
+
+app.post(
+  "/api/cbc/curriculum",
+  auth,
+  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER]),
+  enforcePermission(PERMISSIONS.CREATE),
+  asyncHandler(async (req, res) => {
+    const data = pickFields(req.body, [
+      "grade",
+      "learning_area",
+      "strand",
+      "sub_strand",
+      "specific_learning_outcomes",
+      "key_inquiry_questions",
+      "suggested_assessment_rubric",
+      "learning_experiences",
+      "resources_reference",
+      "term",
+      "year",
+      "notes"
+    ]);
+    if (!cleanValue(data.grade) || !cleanValue(data.learning_area) || !cleanValue(data.strand)) {
+      return res.status(400).json({ error: "grade, learning_area and strand are required." });
+    }
+    data.institution_id = req.user.institution_id;
+    data.created_by_user_id = req.user.id;
+    const columns = Object.keys(data);
+    const placeholders = columns.map(() => "?").join(", ");
+    const result = await query(
+      `INSERT INTO cbc_curriculum_entries (${columns.join(", ")})
+       VALUES (${placeholders})`,
+      columns.map((column) => data[column])
+    );
+    await auditLog(req.user, "CREATE_CBC_CURRICULUM_ENTRY", "cbc_curriculum_entries", result.insertId, data);
+    res.status(201).json({ id: result.insertId, message: "CBC curriculum entry created." });
+  })
+);
+
+app.put(
+  "/api/cbc/curriculum/:id(\\d+)",
+  auth,
+  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER]),
+  enforcePermission(PERMISSIONS.UPDATE),
+  asyncHandler(async (req, res) => {
+    const entryId = Number(req.params.id);
+    if (!entryId) return res.status(400).json({ error: "Valid curriculum entry id is required." });
+    const data = pickFields(req.body, [
+      "grade",
+      "learning_area",
+      "strand",
+      "sub_strand",
+      "specific_learning_outcomes",
+      "key_inquiry_questions",
+      "suggested_assessment_rubric",
+      "learning_experiences",
+      "resources_reference",
+      "term",
+      "year",
+      "notes"
+    ]);
+    const columns = Object.keys(data);
+    if (!columns.length) {
+      return res.status(400).json({ error: "No valid curriculum fields provided." });
+    }
+    await query(
+      `UPDATE cbc_curriculum_entries
+       SET ${columns.map((column) => `${column} = ?`).join(", ")}, updated_at = NOW()
+       WHERE id = ? AND institution_id = ?`,
+      [...columns.map((column) => data[column]), entryId, req.user.institution_id]
+    );
+    await auditLog(req.user, "UPDATE_CBC_CURRICULUM_ENTRY", "cbc_curriculum_entries", entryId, data);
+    res.json({ message: "CBC curriculum entry updated." });
+  })
+);
+
+app.delete(
+  "/api/cbc/curriculum/:id(\\d+)",
+  auth,
+  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER]),
+  enforcePermission(PERMISSIONS.DELETE),
+  asyncHandler(async (req, res) => {
+    const entryId = Number(req.params.id);
+    if (!entryId) return res.status(400).json({ error: "Valid curriculum entry id is required." });
+    const rows = await query(
+      `SELECT *
+       FROM cbc_curriculum_entries
+       WHERE id = ? AND institution_id = ?
+       LIMIT 1`,
+      [entryId, req.user.institution_id]
+    );
+    if (!rows.length) {
+      return res.status(404).json({ error: "Curriculum entry not found." });
+    }
+    const target = rows[0];
+    await archiveRecycleBinItem({
+      institutionId: req.user.institution_id,
+      entityName: "cbc_curriculum_entries",
+      entityId: target.id,
+      payload: target,
+      deletedByUserId: req.user.id
+    });
+    await query(
+      `DELETE FROM cbc_curriculum_entries
+       WHERE id = ? AND institution_id = ?`,
+      [entryId, req.user.institution_id]
+    );
+    await auditLog(req.user, "DELETE_CBC_CURRICULUM_ENTRY", "cbc_curriculum_entries", entryId);
+    res.json({ message: "CBC curriculum entry moved to recycle bin." });
   })
 );
 
@@ -4105,6 +4609,24 @@ moduleConfigs.forEach((config) => {
     enforcePermission(PERMISSIONS.DELETE),
     asyncHandler(async (req, res) => {
       const scopedFilter = getScopedFilter(config, req.user);
+      const existingRows = await query(
+        `SELECT *
+         FROM ${config.table}
+         WHERE id = ? AND institution_id = ?${scopedFilter.where}
+         LIMIT 1`,
+        [req.params.id, req.user.institution_id, ...scopedFilter.params]
+      );
+      if (!existingRows.length) {
+        return res.status(404).json({ error: "Record not found." });
+      }
+      const targetRecord = existingRows[0];
+      await archiveRecycleBinItem({
+        institutionId: req.user.institution_id,
+        entityName: config.table,
+        entityId: targetRecord.id || req.params.id,
+        payload: targetRecord,
+        deletedByUserId: req.user.id
+      });
       await query(
         `DELETE FROM ${config.table}
          WHERE id = ? AND institution_id = ?${scopedFilter.where}`,

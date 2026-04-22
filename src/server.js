@@ -245,6 +245,63 @@ async function ensureUserPasswordPolicyColumns() {
     );
   }
 
+  const recycleBinRows = await query(
+    `SELECT COUNT(*) total
+     FROM INFORMATION_SCHEMA.TABLES
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = 'recycle_bin_items'`
+  );
+  if (!Number(recycleBinRows[0]?.total || 0)) {
+    await query(
+      `CREATE TABLE recycle_bin_items (
+        id BIGINT PRIMARY KEY AUTO_INCREMENT,
+        institution_id BIGINT NOT NULL,
+        entity_name VARCHAR(120) NOT NULL,
+        entity_id BIGINT NULL,
+        archived_payload_json JSON NULL,
+        deleted_by_user_id BIGINT NULL,
+        deleted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        restored_at DATETIME NULL,
+        restored_by_user_id BIGINT NULL,
+        permanently_deleted_at DATETIME NULL,
+        permanently_deleted_by_user_id BIGINT NULL,
+        status VARCHAR(30) NOT NULL DEFAULT 'TRASHED',
+        INDEX idx_recycle_bin_lookup (institution_id, entity_name, status, deleted_at)
+      )`
+    );
+  }
+
+  const cbcCurriculumRows = await query(
+    `SELECT COUNT(*) total
+     FROM INFORMATION_SCHEMA.TABLES
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = 'cbc_curriculum_entries'`
+  );
+  if (!Number(cbcCurriculumRows[0]?.total || 0)) {
+    await query(
+      `CREATE TABLE cbc_curriculum_entries (
+        id BIGINT PRIMARY KEY AUTO_INCREMENT,
+        institution_id BIGINT NOT NULL,
+        grade VARCHAR(60) NOT NULL,
+        learning_area VARCHAR(180) NOT NULL,
+        strand VARCHAR(180) NOT NULL,
+        sub_strand VARCHAR(180) NULL,
+        specific_learning_outcomes TEXT NULL,
+        key_inquiry_questions TEXT NULL,
+        suggested_assessment_rubric TEXT NULL,
+        learning_experiences TEXT NULL,
+        resources_reference TEXT NULL,
+        term VARCHAR(60) NULL,
+        year INT NULL,
+        notes TEXT NULL,
+        created_by_user_id BIGINT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        INDEX idx_cbc_curriculum_inst_lookup (institution_id, grade, learning_area, term, year)
+      )`
+    );
+  }
+
   const communicationChatRoomsRows = await query(
     `SELECT COUNT(*) total
      FROM INFORMATION_SCHEMA.TABLES

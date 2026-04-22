@@ -43,7 +43,13 @@ const MODULE_KEY_BY_ID = {
   "welfare-members": "welfare-members",
   "welfare-contributions": "welfare-contributions",
   "welfare-loans": "welfare-loans",
-  laws: "laws"
+  laws: "laws",
+  "system-register": "register-center",
+  "system-access-control": "access-control",
+  "system-audit": "security-audit",
+  "system-registry": "institutions-users-registry",
+  "system-recycle-bin": "recycle-bin",
+  "system-cbc-editor": "cbc-curriculum-editor"
 };
 
 const MODULE_DESCRIPTIONS = {
@@ -69,8 +75,482 @@ const MODULE_DESCRIPTIONS = {
   "welfare-members": "Register and manage welfare membership profiles.",
   "welfare-contributions": "Track periodic welfare member contributions.",
   "welfare-loans": "Administer welfare loan requests, approvals, and repayment status.",
-  laws: "Store and retrieve institutional policies and legal documents."
+  laws: "Store and retrieve institutional policies and legal documents.",
+  "system-register": "Access public institution and user registration workflows from one place.",
+  "system-access-control": "Assign module rights and review role-based access permissions.",
+  "system-audit": "Review security and login audit trails for accountability.",
+  "system-registry": "Browse institutions and user registry details in one place.",
+  "system-recycle-bin": "Restore or permanently purge archived deleted records.",
+  "system-cbc-editor": "Create and maintain CBC curriculum structures and metadata."
 };
+
+function isSystemAdminRole() {
+  const role = String(portalContext?.role || "");
+  return ["SYSTEM_DEVELOPER", "ADMIN", "HEAD_OF_INSTITUTION"].includes(role);
+}
+
+async function renderSystemRegistration() {
+  setActiveSidebarButton("system-register");
+  document.getElementById("moduleTitle").textContent = "Register (Institution/User)";
+  try {
+    const institutions = await request("/api/public/institutions");
+    const institutionRows = (institutions || []).slice(0, 80);
+    document.getElementById("cards").innerHTML = `
+      <div class="card stats-card metric-emphasis">
+        <h4>Registration Center</h4>
+        <p>${formatNumber(institutionRows.length)} institution record(s)</p>
+      </div>
+      <div class="card stats-card">
+        <h4>Actions</h4>
+        <p>Institution + User onboarding</p>
+      </div>
+      <div class="card stats-card">
+        <h4>Scope</h4>
+        <p>Public registration workflows</p>
+      </div>
+    `;
+    document.getElementById("formArea").innerHTML = `
+      <div class="module-header-card">
+        <h3>Registration and Onboarding</h3>
+        <p>Use these workflows to register institutions, create users, and generate agreement outputs.</p>
+      </div>
+      <div class="actions-row">
+        <button id="openIndexPortalButton">Open Login/Registration Portal</button>
+        <button id="refreshInstitutionRegistryButton">Refresh Registry</button>
+      </div>
+      ${buildDashboardTable(
+        ["Institution", "Code", "County", "Email", "Phone", "Created"],
+        institutionRows.map((row) => [
+          row.institution_name || "-",
+          row.institution_code || "-",
+          row.county || "-",
+          row.email || "-",
+          row.phone || "-",
+          formatDateTime(row.created_at)
+        ])
+      )}
+    `;
+    resetDataTable("Registration center loaded.");
+    document.getElementById("openIndexPortalButton")?.addEventListener("click", () => {
+      window.open("/", "_blank");
+    });
+    document.getElementById("refreshInstitutionRegistryButton")?.addEventListener("click", renderSystemRegistration);
+  } catch (error) {
+    alert(error.message);
+  }
+}
+
+async function renderModuleRights() {
+  setActiveSidebarButton("system-access-control");
+  document.getElementById("moduleTitle").textContent = "Access Control (Module Rights)";
+  if (!isSystemAdminRole()) {
+    alert("Only System Developer, Admin, or Head of Institution can manage module rights.");
+    return loadDashboard();
+  }
+  try {
+    const [users, metaData] = await Promise.all([request("/api/users"), request("/api/meta")]);
+    const moduleKeys = Object.values(metaData?.moduleKeys || {});
+    const defaultMap = metaData?.defaultModuleAccessByRole || {};
+    const rows = (users || []).slice(0, 120);
+    document.getElementById("cards").innerHTML = `
+      <div class="card stats-card metric-emphasis">
+        <h4>Module Access Management</h4>
+        <p>${formatNumber(rows.length)} user(s) available</p>
+      </div>
+      <div class="card stats-card">
+        <h4>Available Modules</h4>
+        <p>${formatNumber(moduleKeys.length)}</p>
+      </div>
+      <div class="card stats-card">
+        <h4>Control</h4>
+        <p>Per-user module overrides</p>
+      </div>
+    `;
+    document.getElementById("formArea").innerHTML = `
+      <div class="module-header-card">
+        <h3>Module Rights Overrides</h3>
+        <p>Select a user and override specific module access rights.</p>
+      </div>
+      <div class="form-grid">
+        <label>User</label>
+        <select id="moduleAccessUserSelect">
+          <option value="">Select user...</option>
+          ${rows
+            .map(
+              (user) =>
+                `<option value="${user.id}" data-role="${escapeHtml(user.role || "")}" data-inst="${escapeHtml(
+                  String(user.institution_id || "")
+                )}">${escapeHtml(user.full_name || user.username || `User ${user.id}`)} (${escapeHtml(
+                  user.username || "-"
+                )}) • ${escapeHtml(user.role || "-")} • Inst ${escapeHtml(String(user.institution_id || "-"))}</option>`
+            )
+            .join("")}
+        </select>
+        <label>Module</label>
+        <select id="moduleAccessModuleSelect">
+          <option value="">Select module...</option>
+          ${moduleKeys.map((item) => `<option value="${escapeHtml(item)}">${escapeHtml(item)}</option>`).join("")}
+        </select>
+        <label>Can Access</label>
+        <select id="moduleAccessStateSelect">
+          <option value="true">Allow</option>
+          <option value="false">Deny</option>
+        </select>
+      </div>
+      <div class="actions-row">
+        <button id="saveModuleAccessButton">Save Override</button>
+        <button id="showRoleDefaultsButton">Show Role Defaults</button>
+      </div>
+      <div id="moduleAccessInfo" class="small-note"></div>
+    `;
+    resetDataTable("Use controls above to manage module overrides.");
+    document.getElementById("saveModuleAccessButton")?.addEventListener("click", async () => {
+      const userId = Number(document.getElementById("moduleAccessUserSelect")?.value || 0);
+      const moduleKey = String(document.getElementById("moduleAccessModuleSelect")?.value || "");
+      const canAccess = String(document.getElementById("moduleAccessStateSelect")?.value || "true") === "true";
+      if (!userId || !moduleKey) {
+        alert("Select user and module first.");
+        return;
+      }
+      try {
+        const response = await request("/api/users/module-access", {
+          method: "POST",
+          body: JSON.stringify({
+            user_id: userId,
+            module_key: moduleKey,
+            can_access: canAccess
+          })
+        });
+        alert(response.message || "Module access override saved.");
+      } catch (error) {
+        alert(error.message);
+      }
+    });
+    document.getElementById("showRoleDefaultsButton")?.addEventListener("click", () => {
+      const selected = document.getElementById("moduleAccessUserSelect");
+      const selectedRole = selected?.selectedOptions?.[0]?.dataset?.role || "";
+      const defaults = Array.isArray(defaultMap[selectedRole]) ? defaultMap[selectedRole] : [];
+      const info = document.getElementById("moduleAccessInfo");
+      if (info) {
+        info.textContent = selectedRole
+          ? `Default modules for ${selectedRole}: ${defaults.join(", ") || "None"}`
+          : "Select a user to view role defaults.";
+      }
+    });
+  } catch (error) {
+    alert(error.message);
+  }
+}
+
+async function renderSecurityAudit() {
+  setActiveSidebarButton("system-audit");
+  document.getElementById("moduleTitle").textContent = "Security and Logging Audit";
+  if (!isSystemAdminRole()) {
+    alert("Only System Developer, Admin, or Head of Institution can view audit logs.");
+    return loadDashboard();
+  }
+  try {
+    const logs = await request("/api/system/audit-logs?limit=200");
+    const rows = Array.isArray(logs?.logs) ? logs.logs : [];
+    document.getElementById("cards").innerHTML = `
+      <div class="card stats-card metric-emphasis">
+        <h4>Audit Events</h4>
+        <p>${formatNumber(rows.length)}</p>
+      </div>
+      <div class="card stats-card">
+        <h4>Failed Logins (24h)</h4>
+        <p>${formatNumber(logs?.metrics?.failed_login_events_24h || 0)}</p>
+      </div>
+      <div class="card stats-card">
+        <h4>OTP Failures (24h)</h4>
+        <p>${formatNumber(logs?.metrics?.otp_fail_events_24h || 0)}</p>
+      </div>
+    `;
+    document.getElementById("formArea").innerHTML = `
+      <div class="module-header-card">
+        <h3>Security & Logging Audit</h3>
+        <p>Track login outcomes, OTP validation, and account mutation events.</p>
+      </div>
+      <div class="dashboard-metrics">
+        <p><strong>Failed login events (24h):</strong> ${formatNumber(logs?.metrics?.failed_login_events_24h || 0)}</p>
+        <p><strong>OTP failure events (24h):</strong> ${formatNumber(logs?.metrics?.otp_fail_events_24h || 0)}</p>
+      </div>
+    `;
+    const tableRows = rows.map((row) => [
+      formatDateTime(row.created_at),
+      row.actor_role || "-",
+      row.action || "-",
+      row.entity_name || "-",
+      row.entity_id || "-",
+      typeof row.details_json === "object" ? JSON.stringify(row.details_json) : row.details_json || "-"
+    ]);
+    const head = document.getElementById("tableHead");
+    const body = document.getElementById("tableBody");
+    if (head && body) {
+      head.innerHTML = `<tr><th>When</th><th>Actor Role</th><th>Action</th><th>Entity</th><th>Entity ID</th><th>Details</th></tr>`;
+      body.innerHTML = tableRows
+        .map((row) => `<tr>${row.map((value) => `<td>${escapeHtml(value)}</td>`).join("")}</tr>`)
+        .join("");
+      if (!tableRows.length) {
+        resetDataTable("No audit log entries found.");
+      }
+    }
+  } catch (error) {
+    alert(error.message);
+  }
+}
+
+async function renderInstitutionsRegistry() {
+  setActiveSidebarButton("system-registry");
+  document.getElementById("moduleTitle").textContent = "Institutions & Users Registry";
+  if (!isSystemAdminRole()) {
+    alert("Only System Developer, Admin, or Head of Institution can open this registry.");
+    return loadDashboard();
+  }
+  try {
+    const [institutions, users] = await Promise.all([request("/api/public/institutions"), request("/api/users")]);
+    const institutionRows = Array.isArray(institutions) ? institutions : [];
+    const userRows = Array.isArray(users) ? users : [];
+    document.getElementById("cards").innerHTML = `
+      <div class="card stats-card metric-emphasis">
+        <h4>Institutions</h4>
+        <p>${formatNumber(institutionRows.length)}</p>
+      </div>
+      <div class="card stats-card">
+        <h4>Users</h4>
+        <p>${formatNumber(userRows.length)}</p>
+      </div>
+      <div class="card stats-card">
+        <h4>Registry Scope</h4>
+        <p>${escapeHtml(portalContext?.role || "-")}</p>
+      </div>
+    `;
+    document.getElementById("formArea").innerHTML = `
+      <div class="module-header-card">
+        <h3>Institutions Registry</h3>
+        <p>Review institutions and user accounts available in your scope.</p>
+      </div>
+      ${buildDashboardTable(
+        ["Institution", "Code", "County", "Email", "Phone"],
+        institutionRows.slice(0, 100).map((item) => [
+          item.institution_name || "-",
+          item.institution_code || "-",
+          item.county || "-",
+          item.email || "-",
+          item.phone || "-"
+        ])
+      )}
+    `;
+    const head = document.getElementById("tableHead");
+    const body = document.getElementById("tableBody");
+    if (head && body) {
+      head.innerHTML = "<tr><th>User</th><th>Username</th><th>Role</th><th>Institution ID</th><th>Status</th><th>Created</th></tr>";
+      body.innerHTML = userRows
+        .slice(0, 300)
+        .map(
+          (row) => `<tr>
+            <td>${escapeHtml(row.full_name || "-")}</td>
+            <td>${escapeHtml(row.username || "-")}</td>
+            <td>${escapeHtml(row.role || "-")}</td>
+            <td>${escapeHtml(String(row.institution_id || "-"))}</td>
+            <td>${Number(row.is_active) === 1 ? "Active" : "Inactive"}</td>
+            <td>${escapeHtml(formatDateTime(row.created_at))}</td>
+          </tr>`
+        )
+        .join("");
+      if (!userRows.length) {
+        resetDataTable("No user records found.");
+      }
+    }
+  } catch (error) {
+    alert(error.message);
+  }
+}
+
+async function renderRecycleBin() {
+  setActiveSidebarButton("system-recycle-bin");
+  document.getElementById("moduleTitle").textContent = "Recycle Bin";
+  if (!isSystemAdminRole()) {
+    alert("Only System Developer, Admin, or Head of Institution can manage recycle bin.");
+    return loadDashboard();
+  }
+  try {
+    const recycleData = await request("/api/system/recycle-bin?status=TRASHED&limit=200");
+    const rows = Array.isArray(recycleData?.items) ? recycleData.items : [];
+    document.getElementById("cards").innerHTML = `
+      <div class="card stats-card metric-emphasis">
+        <h4>Trashed Items</h4>
+        <p>${formatNumber(rows.length)}</p>
+      </div>
+      <div class="card stats-card">
+        <h4>Restore</h4>
+        <p>Bring deleted records back</p>
+      </div>
+      <div class="card stats-card">
+        <h4>Purge</h4>
+        <p>Permanent cleanup control</p>
+      </div>
+    `;
+    document.getElementById("formArea").innerHTML = `
+      <div class="module-header-card">
+        <h3>Recycle Bin Management</h3>
+        <p>Restore records by recycle item ID or purge permanently.</p>
+      </div>
+      <div class="actions-row">
+        <button id="restoreRecycleItemButton">Restore Item</button>
+        <button id="purgeRecycleItemButton" class="danger">Purge Item</button>
+        <button id="refreshRecycleBinButton">Refresh</button>
+      </div>
+    `;
+    const head = document.getElementById("tableHead");
+    const body = document.getElementById("tableBody");
+    if (head && body) {
+      head.innerHTML = "<tr><th>Recycle ID</th><th>Entity</th><th>Entity ID</th><th>Deleted At</th><th>Deleted By</th><th>Status</th></tr>";
+      body.innerHTML = rows
+        .map(
+          (row) => `<tr>
+            <td>${escapeHtml(String(row.id || "-"))}</td>
+            <td>${escapeHtml(row.entity_name || "-")}</td>
+            <td>${escapeHtml(String(row.entity_id || "-"))}</td>
+            <td>${escapeHtml(formatDateTime(row.deleted_at))}</td>
+            <td>${escapeHtml(String(row.deleted_by_user_id || "-"))}</td>
+            <td>${escapeHtml(row.status || "-")}</td>
+          </tr>`
+        )
+        .join("");
+      if (!rows.length) {
+        resetDataTable("Recycle bin is empty.");
+      }
+    }
+    document.getElementById("restoreRecycleItemButton")?.addEventListener("click", async () => {
+      const recycleId = Number(prompt("Enter recycle item ID to restore:"));
+      if (!recycleId) return;
+      try {
+        const result = await request(`/api/system/recycle-bin/${recycleId}/restore`, { method: "POST" });
+        alert(result.message || "Item restored.");
+        await renderRecycleBin();
+      } catch (error) {
+        alert(error.message);
+      }
+    });
+    document.getElementById("purgeRecycleItemButton")?.addEventListener("click", async () => {
+      const recycleId = Number(prompt("Enter recycle item ID to purge permanently:"));
+      if (!recycleId) return;
+      const ok = window.confirm("Purge permanently? This action cannot be undone.");
+      if (!ok) return;
+      try {
+        const result = await request(`/api/system/recycle-bin/${recycleId}`, { method: "DELETE" });
+        alert(result.message || "Item purged permanently.");
+        await renderRecycleBin();
+      } catch (error) {
+        alert(error.message);
+      }
+    });
+    document.getElementById("refreshRecycleBinButton")?.addEventListener("click", renderRecycleBin);
+  } catch (error) {
+    alert(error.message);
+  }
+}
+
+async function renderCbcCurriculumEditor() {
+  setActiveSidebarButton("system-cbc-editor");
+  document.getElementById("moduleTitle").textContent = "CBC Curriculum Editor";
+  if (!isSystemAdminRole()) {
+    alert("Only System Developer, Admin, or Head of Institution can manage CBC curriculum editor.");
+    return loadDashboard();
+  }
+  currentModule = "system-cbc-editor";
+  try {
+    const rows = await request("/api/cbc/curriculum");
+    const list = Array.isArray(rows) ? rows : [];
+    document.getElementById("cards").innerHTML = `
+      <div class="card stats-card metric-emphasis">
+        <h4>CBC Entries</h4>
+        <p>${formatNumber(list.length)}</p>
+      </div>
+      <div class="card stats-card">
+        <h4>Editor</h4>
+        <p>Create and revise strands/sub-strands</p>
+      </div>
+      <div class="card stats-card">
+        <h4>Curriculum Coverage</h4>
+        <p>Grade-level structured records</p>
+      </div>
+    `;
+    document.getElementById("formArea").innerHTML = `
+      <div class="module-header-card">
+        <h3>CBC Curriculum Editor</h3>
+        <p>Create and maintain CBC curriculum entries with learning outcomes and assessments.</p>
+      </div>
+      <div class="form-grid">
+        <label>Grade</label><input id="cbcGrade" placeholder="e.g. Grade 7" />
+        <label>Learning Area</label><input id="cbcLearningArea" placeholder="e.g. Integrated Science" />
+        <label>Strand</label><input id="cbcStrand" placeholder="e.g. Matter and Energy" />
+        <label>Sub-Strand</label><input id="cbcSubStrand" placeholder="e.g. States of Matter" />
+        <label>Learning Outcomes</label><textarea id="cbcLearningOutcomes" rows="3"></textarea>
+        <label>Assessment Rubric</label><textarea id="cbcAssessmentRubric" rows="3"></textarea>
+        <label>Term</label><input id="cbcTerm" placeholder="Term One" />
+        <label>Year</label><input id="cbcYear" type="number" placeholder="2026" />
+      </div>
+      <div class="actions-row">
+        <button id="saveCbcEntryButton">Save Curriculum Entry</button>
+        <button id="refreshCbcEditorButton">Refresh</button>
+      </div>
+    `;
+    const head = document.getElementById("tableHead");
+    const body = document.getElementById("tableBody");
+    if (head && body) {
+      head.innerHTML = "<tr><th>ID</th><th>Grade</th><th>Learning Area</th><th>Strand</th><th>Sub-Strand</th><th>Term</th><th>Year</th><th>Created</th></tr>";
+      body.innerHTML = list
+        .slice(0, 300)
+        .map(
+          (row) => `<tr>
+            <td>${escapeHtml(String(row.id || "-"))}</td>
+            <td>${escapeHtml(row.grade || "-")}</td>
+            <td>${escapeHtml(row.learning_area || "-")}</td>
+            <td>${escapeHtml(row.strand || "-")}</td>
+            <td>${escapeHtml(row.sub_strand || "-")}</td>
+            <td>${escapeHtml(row.term || "-")}</td>
+            <td>${escapeHtml(String(row.year || "-"))}</td>
+            <td>${escapeHtml(formatDateTime(row.created_at))}</td>
+          </tr>`
+        )
+        .join("");
+      if (!list.length) {
+        resetDataTable("No CBC curriculum entries available yet.");
+      }
+    }
+    document.getElementById("saveCbcEntryButton")?.addEventListener("click", async () => {
+      const payload = {
+        grade: document.getElementById("cbcGrade")?.value || "",
+        learning_area: document.getElementById("cbcLearningArea")?.value || "",
+        strand: document.getElementById("cbcStrand")?.value || "",
+        sub_strand: document.getElementById("cbcSubStrand")?.value || "",
+        specific_learning_outcomes: document.getElementById("cbcLearningOutcomes")?.value || "",
+        suggested_assessment_rubric: document.getElementById("cbcAssessmentRubric")?.value || "",
+        term: document.getElementById("cbcTerm")?.value || "",
+        year: Number(document.getElementById("cbcYear")?.value || 0) || null
+      };
+      if (!payload.grade || !payload.learning_area || !payload.strand) {
+        alert("Grade, learning area, and strand are required.");
+        return;
+      }
+      try {
+        await request("/api/cbc/curriculum", {
+          method: "POST",
+          body: JSON.stringify(payload)
+        });
+        alert("CBC curriculum entry saved.");
+        await renderCbcCurriculumEditor();
+      } catch (error) {
+        alert(error.message);
+      }
+    });
+    document.getElementById("refreshCbcEditorButton")?.addEventListener("click", renderCbcCurriculumEditor);
+  } catch (error) {
+    alert(error.message);
+  }
+}
 
 const moduleConfigs = {
   admission: {
@@ -1441,6 +1921,12 @@ function bindSidebar() {
       currentModule = button.dataset.module;
       currentEditId = null;
       if (currentModule === "dashboard") return loadDashboard();
+      if (currentModule === "system-register") return renderSystemRegistration();
+      if (currentModule === "system-access-control") return renderModuleRights();
+      if (currentModule === "system-audit") return renderSecurityAudit();
+      if (currentModule === "system-registry") return renderInstitutionsRegistry();
+      if (currentModule === "system-recycle-bin") return renderRecycleBin();
+      if (currentModule === "system-cbc-editor") return renderCbcCurriculumEditor();
       if (currentModule === "parents-results") return loadParentOrBomResults();
       if (currentModule === "learner-materials") return loadLearnerMaterials();
       if (currentModule === "communication-messages") return renderCrudModule(currentModule);
@@ -1505,6 +1991,30 @@ function bindQuickActionCards() {
         await loadDashboard();
         return;
       }
+      if (targetModule === "system-register") {
+        await renderSystemRegistration();
+        return;
+      }
+      if (targetModule === "system-access-control") {
+        await renderModuleRights();
+        return;
+      }
+      if (targetModule === "system-audit") {
+        await renderSecurityAudit();
+        return;
+      }
+      if (targetModule === "system-registry") {
+        await renderInstitutionsRegistry();
+        return;
+      }
+      if (targetModule === "system-recycle-bin") {
+        await renderRecycleBin();
+        return;
+      }
+      if (targetModule === "system-cbc-editor") {
+        await renderCbcCurriculumEditor();
+        return;
+      }
       if (targetModule === "parents-results") {
         await loadParentOrBomResults();
         return;
@@ -1544,4 +2054,26 @@ async function init() {
 window.editRow = editRow;
 window.deleteRow = deleteRow;
 window.dispatchCommunicationMessage = dispatchCommunicationMessage;
+window.restoreCbcEntry = async (entryId) => {
+  if (!entryId) return;
+  try {
+    const result = await request(`/api/system/recycle-bin/${entryId}/restore`, { method: "POST" });
+    alert(result.message || "CBC entry restored.");
+    await renderRecycleBin();
+  } catch (error) {
+    alert(error.message);
+  }
+};
+window.deleteCbcEntryPermanently = async (entryId) => {
+  if (!entryId) return;
+  const ok = window.confirm("Permanently delete this recycled entry?");
+  if (!ok) return;
+  try {
+    const result = await request(`/api/system/recycle-bin/${entryId}`, { method: "DELETE" });
+    alert(result.message || "CBC entry permanently removed.");
+    await renderRecycleBin();
+  } catch (error) {
+    alert(error.message);
+  }
+};
 init();
