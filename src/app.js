@@ -2,6 +2,7 @@ const express = require("express");
 const path = require("path");
 const fs = require("fs");
 const cors = require("cors");
+const compression = require("compression");
 const helmet = require("helmet");
 const cookieParser = require("cookie-parser");
 const jwt = require("jsonwebtoken");
@@ -64,6 +65,7 @@ app.use(
   })
 );
 app.use(helmet());
+app.use(compression());
 app.use(express.json({ limit: "20mb" }));
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());

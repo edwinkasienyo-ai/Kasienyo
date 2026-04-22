@@ -9,6 +9,12 @@
   "theme_color": "#0f3860",
   "icons": [
     {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    },
+    {
       "src": "/uploads/index-hero.jpg",
       "sizes": "512x512",
       "type": "image/jpeg",

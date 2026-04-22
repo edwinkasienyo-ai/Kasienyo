@@ -1,0 +1,6 @@
+Contact: mailto:mwendeguenterpriseltd@gmail.com
+Contact: tel:+254725757767
+Expires: 2027-12-31T23:59:59Z
+Preferred-Languages: en
+Policy: https://imis.mwendeguenterprise.co.ke/privacy.html
+Acknowledgments: https://imis.mwendeguenterprise.co.ke/support.html
