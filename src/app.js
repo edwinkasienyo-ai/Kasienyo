@@ -5487,31 +5487,11 @@ app.get("/", (_, res) => {
 });
 
 app.get("/privacy", (_, res) => {
-  res.status(200).type("html").send(`<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>IMIS Privacy Policy</title>
-<style>body{font-family:Segoe UI,Arial,sans-serif;max-width:860px;margin:40px auto;padding:0 16px;line-height:1.6;color:#1d3042}h1{margin-bottom:8px}a{color:#155286}</style>
-</head><body>
-<h1>IMIS PRIVACY POLICY</h1>
-<p>IMIS processes education data to deliver secure, role-based institutional services. Data handling follows applicable education regulations and institutional governance controls.</p>
-<p>Core controls include authentication, role-based access, audit logging, and limited-use processing for education administration.</p>
-<p>For data requests, contact: <strong>mwendeguenterpriseltd@gmail.com</strong>.</p>
-<p><a href="/">Back to login</a></p>
-</body></html>`);
+  res.redirect(302, "/privacy.html");
 });
 
 app.get("/terms", (_, res) => {
-  res.status(200).type("html").send(`<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>IMIS Terms of Service</title>
-<style>body{font-family:Segoe UI,Arial,sans-serif;max-width:860px;margin:40px auto;padding:0 16px;line-height:1.6;color:#1d3042}h1{margin-bottom:8px}a{color:#155286}</style>
-</head><body>
-<h1>IMIS TERMS OF SERVICE</h1>
-<p>IMIS is provided for authorized basic education administration and reporting workflows.</p>
-<p>Users must protect credentials, comply with role permissions, and use the platform only for legitimate institutional duties.</p>
-<p>Unauthorized access, misuse, or tampering is prohibited and subject to applicable law and institutional policy.</p>
-<p><a href="/">Back to login</a></p>
-</body></html>`);
+  res.redirect(302, "/terms.html");
 });
 
 app.use((err, req, res, next) => {
