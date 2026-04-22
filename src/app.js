@@ -45,7 +45,7 @@ const { generateOtpCode, buildOtpExpiry, sendOtp } = require("./services/otpServ
 const { buildSearchWhere } = require("./utils/sql");
 
 /** Bump when shipping UI/API changes so schools can confirm they run the right copy. */
-const IIMS_BUILD_STAMP = process.env.IIMS_BUILD_STAMP || "20260422-ui7";
+const IIMS_BUILD_STAMP = process.env.IIMS_BUILD_STAMP || "20260422-ui8";
 
 const app = express();
 

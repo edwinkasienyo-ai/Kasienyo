@@ -1,6 +1,6 @@
 IIMS static file check — if you can read this in the browser, Express is serving THIS project folder.
 
-Expected release stamp: 20260422-ui7 (override with IIMS_BUILD_STAMP in .env).
+Expected release stamp: 20260422-ui7 (override with IIMS_BUILD_STAMP in .env). Sidebar: System Admin scrolls under Dashboard, above Admission.
 
 JSON: GET /api/build-info
 Typo alias: GET /api/building-info

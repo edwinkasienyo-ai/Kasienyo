@@ -1,7 +1,7 @@
 require("dotenv").config();
 const app = require("./app");
 
-const IIMS_BUILD_STAMP = process.env.IIMS_BUILD_STAMP || "20260422-ui7";
+const IIMS_BUILD_STAMP = process.env.IIMS_BUILD_STAMP || "20260422-ui8";
 const { query } = require("./config/db");
 const { hashPassword } = require("./utils/password");
 const { ROLES } = require("./config/constants");

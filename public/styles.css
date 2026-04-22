@@ -480,13 +480,24 @@ button:hover {
   flex: 0 0 280px;
   width: 280px;
   height: 100vh;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
   background: linear-gradient(180deg, #0c2f52 0%, #0f3860 45%, #114067 100%);
   color: #fff;
   padding: 18px;
-  overflow-y: auto;
-  overflow-x: hidden;
+  overflow: hidden;
   border-right: 1px solid rgba(255, 255, 255, 0.1);
   box-shadow: 10px 0 24px rgba(9, 38, 67, 0.2);
+}
+
+.sidebar-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-right: 4px;
+  margin-right: -4px;
 }
 
 .sidebar-header {
@@ -548,7 +559,8 @@ button:hover {
   border-color: rgba(255, 255, 255, 0.28);
 }
 
-.sidebar button.danger {
+.sidebar #logoutButton.danger {
+  flex-shrink: 0;
   margin-top: 12px;
   background: rgba(210, 60, 60, 0.9);
   border: 1px solid rgba(255, 205, 205, 0.35);
@@ -1282,25 +1294,19 @@ tbody tr:hover {
   .sidebar {
     width: 100%;
     height: auto;
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 8px;
-    align-items: start;
+    max-height: none;
+    display: flex;
+    flex-direction: column;
     overflow: visible;
+  }
+
+  .sidebar-scroll {
+    overflow: visible;
+    max-height: none;
   }
 
   .main-content {
     height: auto;
     overflow: visible;
-  }
-
-  .sidebar h2,
-  .sidebar .portal-label,
-  .sidebar .sidebar-brand {
-    grid-column: 1 / -1;
-  }
-
-  .sidebar .nav-group-label {
-    grid-column: 1 / -1;
   }
 }
