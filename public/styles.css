@@ -76,7 +76,9 @@ select:disabled {
 .login-left {
   background: linear-gradient(140deg, #0f3860, #1d6aa6);
   color: #fff;
-  padding: 56px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 .login-left h1 {
@@ -93,9 +95,9 @@ select:disabled {
 
 .hero-panel {
   position: relative;
-  border-radius: 14px;
+  border-radius: 0;
   overflow: hidden;
-  border: 1px solid rgba(255, 255, 255, 0.25);
+  border: none;
   min-height: 310px;
 }
 
@@ -112,33 +114,15 @@ select:disabled {
 
 .hero-image {
   width: 100%;
-  height: 310px;
+  height: 360px;
   object-fit: cover;
   display: block;
   position: relative;
   z-index: 1;
 }
 
-.hero-caption {
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  padding: 14px 16px;
-  background: linear-gradient(180deg, rgba(8, 22, 37, 0) 0%, rgba(8, 22, 37, 0.86) 100%);
-  z-index: 2;
-}
-
-.hero-caption h1 {
-  margin: 0 0 4px;
-  color: #ffffff;
-  font-size: 28px;
-}
-
-.hero-caption h2 {
-  margin: 0;
-  color: #dcefff;
-  font-size: 18px;
+.left-copy-wrap {
+  padding: 14px 16px 16px;
 }
 
 .info-strip {
@@ -150,6 +134,39 @@ select:disabled {
   color: #eef6ff;
   line-height: 1.55;
   font-size: 14px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.01em;
+}
+
+.info-strip-a {
+  background: linear-gradient(90deg, rgba(12, 45, 77, 0.95), rgba(13, 72, 125, 0.9));
+  color: #ffd76d;
+}
+
+.info-strip-b {
+  background: linear-gradient(90deg, rgba(20, 80, 45, 0.9), rgba(31, 128, 74, 0.85));
+  color: #d9ffe3;
+}
+
+.info-strip-c {
+  background: linear-gradient(90deg, rgba(79, 35, 7, 0.9), rgba(148, 67, 10, 0.84));
+  color: #ffe7c7;
+}
+
+.info-strip-d {
+  background: linear-gradient(90deg, rgba(60, 19, 88, 0.9), rgba(109, 48, 158, 0.85));
+  color: #f0d9ff;
+}
+
+.info-strip-e {
+  background: linear-gradient(90deg, rgba(7, 53, 68, 0.9), rgba(15, 103, 132, 0.84));
+  color: #d7f5ff;
+}
+
+.info-strip-f {
+  background: linear-gradient(90deg, rgba(75, 18, 38, 0.9), rgba(132, 33, 68, 0.84));
+  color: #ffdce7;
 }
 
 .contact-strip {
@@ -167,6 +184,7 @@ select:disabled {
   font-weight: 700;
   color: #083255;
   background: linear-gradient(90deg, #79cbff, #9ee4ff);
+  text-transform: uppercase;
 }
 
 .credit-strip {
@@ -175,6 +193,7 @@ select:disabled {
   color: #e0f1ff;
   font-size: 12px;
   font-weight: 700;
+  text-transform: uppercase;
 }
 
 .login-left p,
@@ -1257,6 +1276,18 @@ tbody tr:hover {
 @media (max-width: 1080px) {
   .login-page {
     grid-template-columns: 1fr;
+  }
+
+  .login-left {
+    padding: 0;
+  }
+
+  .hero-image {
+    height: 250px;
+  }
+
+  .left-copy-wrap {
+    padding: 12px;
   }
 
   .hero-caption h1 {

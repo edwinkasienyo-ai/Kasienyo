@@ -35,7 +35,7 @@ async function loadBuildStampLogin() {
     }
     const data = response.ok ? await response.json() : null;
     const stamp = data?.build_stamp || "unknown";
-    el.textContent = `Release: ${stamp} · UI v9 — if this line is missing or still says v7/v8, press Ctrl+Shift+R or clear cache. Folder must match Git branch cursor/iims-full-system-2a2b.`;
+    el.textContent = `Release: ${stamp} · UI v10 — if this line is missing or still shows an older UI version, press Ctrl+Shift+R or clear cache.`;
   } catch (_) {
     el.textContent =
       "Could not load release info. Ensure Node is running from your updated project (e.g. BASIC EDUCATION) and try again.";
@@ -44,14 +44,21 @@ async function loadBuildStampLogin() {
 
 async function loadPublicHeroImage() {
   const heroImageEl = document.querySelector(".hero-image");
-  const heroPanelEl = document.querySelector(".hero-panel");
-  if (!heroImageEl || !heroPanelEl) return;
+  if (!heroImageEl) return;
   const fallbackUrl = heroImageEl.getAttribute("src");
   try {
     const data = await request("/api/public/branding/hero-image");
+    const staticPriorityUrl = "/assets/imis-hero.jpg";
     const resolvedUrl = data?.hero_image_url || fallbackUrl;
-    heroImageEl.src = resolvedUrl;
-    heroPanelEl.style.setProperty("--hero-image-url", `url("${resolvedUrl}")`);
+    const resolvedIsDefaultUpload =
+      typeof resolvedUrl === "string" && resolvedUrl.includes("/uploads/index-hero.");
+    const finalUrl = resolvedIsDefaultUpload ? staticPriorityUrl : resolvedUrl;
+    const preferredFinalUrl = finalUrl || staticPriorityUrl || fallbackUrl;
+    heroImageEl.onerror = function onHeroLoadError() {
+      this.onerror = null;
+      this.src = fallbackUrl;
+    };
+    heroImageEl.src = preferredFinalUrl;
   } catch (_) {
     heroImageEl.src = fallbackUrl;
   }
