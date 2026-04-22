@@ -76,7 +76,7 @@ const MODULE_DESCRIPTIONS = {
   "welfare-contributions": "Track periodic welfare member contributions.",
   "welfare-loans": "Administer welfare loan requests, approvals, and repayment status.",
   laws: "Store and retrieve institutional policies and legal documents.",
-  "system-register": "Access public institution and user registration workflows from one place.",
+  "system-register": "Register institutions and users inside the system after sign-in (role-scoped).",
   "system-access-control": "Assign module rights and review role-based access permissions.",
   "system-audit": "Review security and login audit trails for accountability.",
   "system-registry": "Browse institutions and user registry details in one place.",
@@ -487,7 +487,9 @@ async function renderInstitutionsRegistry() {
     return loadDashboard();
   }
   try {
-    const [institutions, users] = await Promise.all([request("/api/public/institutions"), request("/api/users")]);
+    const registry = await request("/api/system/registry");
+    const institutions = Array.isArray(registry?.institutions) ? registry.institutions : [];
+    const users = Array.isArray(registry?.users) ? registry.users : [];
     const institutionRows = Array.isArray(institutions) ? institutions : [];
     const userRows = Array.isArray(users) ? users : [];
     document.getElementById("cards").innerHTML = `

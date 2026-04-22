@@ -37,9 +37,6 @@ function setAuthNotice(message, type = "info") {
   el.className = `small-note auth-notice ${type}`;
 }
 
-let registrationMeta = null;
-let lastRegisteredInstitution = null;
-
 function normalizeRoleValue(role) {
   const normalized = String(role || "").trim().toUpperCase().replaceAll(/[\s-]+/g, "_");
   if (normalized === "NON_TEACHING" || normalized === "NONTEACHING" || normalized === "NON_TEACHING_STAFF") {
@@ -124,59 +121,6 @@ function updateLoginFieldState() {
   }
 }
 
-async function loadRegistrationMeta() {
-  try {
-    registrationMeta = await request("/api/public/registration/meta");
-  } catch (error) {
-    setAuthNotice(`Registration metadata unavailable: ${error.message}`, "error");
-    return;
-  }
-
-  const countySelect = document.getElementById("registerInstitutionCounty");
-  if (countySelect) {
-    countySelect.innerHTML = '<option value="">Select county</option>' + (registrationMeta.counties || [])
-      .map((county) => `<option value="${county.name}">${county.name}</option>`)
-      .join("");
-  }
-
-  const categorySelect = document.getElementById("registerInstitutionCategory");
-  if (categorySelect) {
-    categorySelect.innerHTML = '<option value="">Select category</option>' + (registrationMeta.categories || [])
-      .map((category) => `<option value="${category.label}">${category.label}</option>`)
-      .join("");
-  }
-
-  const postalSelect = document.getElementById("registerInstitutionPostalCode");
-  if (postalSelect) {
-    postalSelect.innerHTML = '<option value="">Select postal code</option>' + (registrationMeta.postalCodes || [])
-      .map((entry) => `<option value="${entry.postal_code}">${entry.postal_code} - ${entry.town}</option>`)
-      .join("");
-  }
-}
-
-function bindInstitutionAutoFields() {
-  const countySelect = document.getElementById("registerInstitutionCounty");
-  const postalSelect = document.getElementById("registerInstitutionPostalCode");
-  const countyCodeInput = document.getElementById("registerInstitutionCountyCode");
-  const townInput = document.getElementById("registerInstitutionTown");
-
-  if (countySelect && countyCodeInput) {
-    countySelect.addEventListener("change", () => {
-      const selected = (registrationMeta?.counties || []).find((county) => county.name === countySelect.value);
-      countyCodeInput.value = selected?.code || "";
-    });
-  }
-
-  if (postalSelect && townInput) {
-    postalSelect.addEventListener("change", () => {
-      const selected = (registrationMeta?.postalCodes || []).find(
-        (entry) => String(entry.postal_code) === String(postalSelect.value)
-      );
-      townInput.value = selected?.town || "";
-    });
-  }
-}
-
 async function login() {
   const selectedPortalRole = normalizeRoleValue(
     document.getElementById("loginPortalRole")?.value ||
@@ -252,14 +196,6 @@ async function verifyOtp() {
   }
 }
 
-async function registerInstitution() {
-  setAuthNotice("Institution registration is available only after login in the dashboard.", "error");
-}
-
-async function registerUser() {
-  setAuthNotice("User registration is available only after login in the dashboard.", "error");
-}
-
 async function recoverUsername() {
   const institution_code = document.getElementById("forgotUsernameInstitutionCode").value.trim();
   const email = document.getElementById("forgotUsernameEmail").value.trim();
@@ -316,14 +252,6 @@ async function resetPassword() {
   }
 }
 
-function previewAgreement() {
-  setAuthNotice("Agreement preview is available in the in-system registration center.", "error");
-}
-
-async function sendAgreementNow() {
-  setAuthNotice("Agreement dispatch is available in the in-system registration center.", "error");
-}
-
 document.getElementById("loginButton").addEventListener("click", login);
 document.getElementById("verifyButton").addEventListener("click", verifyOtp);
 document.getElementById("forgotUsernameButton")?.addEventListener("click", recoverUsername);
@@ -363,7 +291,5 @@ function initializeAuthPanels() {
 document.getElementById("loginPortalRole")?.addEventListener("change", updateLoginFieldState);
 initializeAuthPanels();
 bindAuthSectionLinks();
-loadRegistrationMeta();
-bindInstitutionAutoFields();
 loadPublicHeroImage();
 updateLoginFieldState();

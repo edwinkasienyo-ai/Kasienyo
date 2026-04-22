@@ -981,6 +981,32 @@ function canManageAcrossInstitutions(user) {
   return normalizeRole(user?.role) === ROLES.SYSTEM_DEVELOPER;
 }
 
+async function loadInstitutionAgreementContext(institutionId) {
+  const rows = await query(
+    `SELECT i.*, u.username AS admin_username
+     FROM institutions i
+     LEFT JOIN users u ON u.institution_id = i.id AND u.role IN (?, ?)
+     WHERE i.id = ?
+     ORDER BY u.id ASC
+     LIMIT 1`,
+    [ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, institutionId]
+  );
+  return rows.length ? rows[0] : null;
+}
+
+function assertInstitutionAgreementAccess(req, institutionRow) {
+  if (!institutionRow) {
+    return { error: "Institution not found.", status: 404 };
+  }
+  if (canManageAcrossInstitutions(req.user)) {
+    return null;
+  }
+  if (Number(institutionRow.id) !== Number(req.user.institution_id)) {
+    return { error: "You are not allowed to access this institution's agreement.", status: 403 };
+  }
+  return null;
+}
+
 async function archiveRecycleBinItem({
   institutionId,
   entityName,
@@ -1063,10 +1089,9 @@ function buildAgreementLines({ institution, adminUser }) {
 }
 
 app.get("/api/public/registration/meta", (_, res) => {
-  res.json({
-    counties: COUNTIES,
-    categories: INSTITUTION_CATEGORIES,
-    postalCodes: KENYA_POSTAL_CODES
+  return res.status(403).json({
+    error:
+      "Registration metadata is not available on the public login page. Sign in and open Register (Institution/User) in the dashboard."
   });
 });
 
@@ -2109,63 +2134,15 @@ app.get("/api/public/institutions", asyncHandler(async (_, res) => {
   });
 }));
 
-app.get("/api/public/institutions/:id/agreement.pdf", asyncHandler(async (req, res) => {
-  const rows = await query(
-    `SELECT i.*, u.username AS admin_username
-     FROM institutions i
-     LEFT JOIN users u ON u.institution_id = i.id AND u.role IN (?, ?)
-     WHERE i.id = ?
-     ORDER BY u.id ASC
-     LIMIT 1`,
-    [ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, req.params.id]
-  );
-  if (!rows.length) {
-    return res.status(404).json({ error: "Institution not found." });
-  }
-  const institution = rows[0];
-  const lines = buildAgreementLines({
-    institution,
-    adminUser: { username: institution.admin_username || "-" }
+app.get("/api/public/institutions/:id/agreement.pdf", asyncHandler(async (_, res) => {
+  return res.status(403).json({
+    error: "Agreement documents require authentication. Sign in and use the registration center or institution tools."
   });
-  sendSimplePdf(
-    res,
-    `institution-agreement-${institution.institution_code || institution.id}`,
-    lines
-  );
 }));
 
-app.post("/api/public/institutions/:id/agreement/send", publicWriteRateLimit, enforcePublicSecurity, asyncHandler(async (req, res) => {
-  const institutionId = Number(req.params.id);
-  if (!institutionId) {
-    return res.status(400).json({ error: "Valid institution id is required." });
-  }
-  const rows = await query(
-    `SELECT i.*, u.username AS admin_username
-     FROM institutions i
-     LEFT JOIN users u ON u.institution_id = i.id AND u.role IN (?, ?)
-     WHERE i.id = ?
-     ORDER BY u.id ASC
-     LIMIT 1`,
-    [ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, institutionId]
-  );
-  if (!rows.length) {
-    return res.status(404).json({ error: "Institution not found." });
-  }
-  const institution = rows[0];
-  const lines = buildAgreementLines({
-    institution,
-    adminUser: { username: institution.admin_username || "-" }
-  });
-  const dispatch = await dispatchCredentialNotice({
-    email: institution.email,
-    phone: null,
-    subject: "IMIS Service Agreement Letter",
-    message: lines.join("\n")
-  });
-  res.json({
-    message: "Agreement dispatch completed.",
-    institution_id: institution.id,
-    credential_dispatch: dispatch
+app.post("/api/public/institutions/:id/agreement/send", publicWriteRateLimit, enforcePublicSecurity, asyncHandler(async (_, res) => {
+  return res.status(403).json({
+    error: "Sending agreements requires authentication. Sign in and use the registration center."
   });
 }));
 
@@ -2683,9 +2660,75 @@ app.post(
       category_code: categoryRecord.code,
       postal_code: postalDetails?.postal_code || postalCodeInput || null,
       town: normalizedTown,
-      agreement_pdf_url: `/api/public/institutions/${institutionId}/agreement.pdf`,
+      agreement_pdf_url: `/api/institutions/${institutionId}/agreement.pdf`,
       credential_dispatch: credentialDispatch,
       agreement_email_dispatch: agreementEmailDispatch
+    });
+  })
+);
+
+app.get(
+  "/api/institutions/:id/agreement.pdf",
+  auth,
+  enforceModuleAccess(MODULE_KEYS.REGISTRATION),
+  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
+  asyncHandler(async (req, res) => {
+    const institutionId = Number(req.params.id);
+    if (!institutionId) {
+      return res.status(400).json({ error: "Valid institution id is required." });
+    }
+    const institution = await loadInstitutionAgreementContext(institutionId);
+    const accessError = assertInstitutionAgreementAccess(req, institution);
+    if (accessError) {
+      return res.status(accessError.status).json({ error: accessError.error });
+    }
+    const lines = buildAgreementLines({
+      institution,
+      adminUser: { username: institution.admin_username || "-" }
+    });
+    sendSimplePdf(
+      res,
+      `institution-agreement-${institution.institution_code || institution.id}`,
+      lines
+    );
+  })
+);
+
+app.post(
+  "/api/institutions/:id/agreement/send",
+  auth,
+  accountMutationRateLimit,
+  accountMutationCooldown,
+  enforceModuleAccess(MODULE_KEYS.REGISTRATION),
+  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
+  asyncHandler(async (req, res) => {
+    const institutionId = Number(req.params.id);
+    if (!institutionId) {
+      return res.status(400).json({ error: "Valid institution id is required." });
+    }
+    const institution = await loadInstitutionAgreementContext(institutionId);
+    const accessError = assertInstitutionAgreementAccess(req, institution);
+    if (accessError) {
+      return res.status(accessError.status).json({ error: accessError.error });
+    }
+    const lines = buildAgreementLines({
+      institution,
+      adminUser: { username: institution.admin_username || "-" }
+    });
+    const dispatch = await dispatchCredentialNotice({
+      email: institution.email,
+      phone: null,
+      subject: "IMIS Service Agreement Letter",
+      message: lines.join("\n")
+    });
+    await auditLog(req.user, "AGREEMENT_DISPATCH", "institutions", institution.id, {
+      institution_code: institution.institution_code,
+      credential_dispatch: dispatch
+    });
+    res.json({
+      message: "Agreement dispatch completed.",
+      institution_id: institution.id,
+      credential_dispatch: dispatch
     });
   })
 );
