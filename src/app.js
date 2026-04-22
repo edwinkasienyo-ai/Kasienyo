@@ -2176,15 +2176,29 @@ app.post("/api/public/forgot-password", publicWriteRateLimit, enforcePublicSecur
   const username = cleanValue(req.body?.username);
   const email = cleanOptionalValue(req.body?.email);
   const phone = cleanOptionalValue(req.body?.phone);
+  const contactMethod = cleanOptionalValue(req.body?.contact_method);
+  const requestedOtpChannel = cleanOptionalValue(req.body?.otp_channel);
   const otp = cleanOptionalValue(req.body?.otp);
   const newPassword = cleanOptionalValue(req.body?.new_password);
   const mode = otp && newPassword ? "verify" : "request";
 
+  if (!institutionCode) {
+    return res.status(400).json({ error: "institution_code is required." });
+  }
   if (!username) {
     return res.status(400).json({ error: "username is required." });
   }
-  if (!email && !phone) {
-    return res.status(400).json({ error: "Provide email or phone to verify identity." });
+  if (!contactMethod || !["email", "phone"].includes(contactMethod)) {
+    return res.status(400).json({ error: "contact_method must be either 'email' or 'phone'." });
+  }
+  if (contactMethod === "email" && !email) {
+    return res.status(400).json({ error: "Email is required when contact method is email." });
+  }
+  if (contactMethod === "phone" && !phone) {
+    return res.status(400).json({ error: "Mobile number is required when contact method is phone." });
+  }
+  if (mode === "request" && (!requestedOtpChannel || !["sms", "email"].includes(requestedOtpChannel))) {
+    return res.status(400).json({ error: "otp_channel must be either 'sms' or 'email'." });
   }
   if (mode === "verify") {
     const weakNewPasswordError = requireStrongPassword(newPassword, "new_password");
@@ -2212,10 +2226,10 @@ app.post("/api/public/forgot-password", publicWriteRateLimit, enforcePublicSecur
   }
 
   const user = rows[0];
-  if (email && cleanValue(user.email) !== cleanValue(email)) {
+  if (contactMethod === "email" && cleanValue(user.email) !== cleanValue(email)) {
     return res.status(401).json({ error: "Email does not match our records." });
   }
-  if (phone && cleanValue(user.phone) !== cleanValue(phone)) {
+  if (contactMethod === "phone" && cleanValue(user.phone) !== cleanValue(phone)) {
     return res.status(401).json({ error: "Phone does not match our records." });
   }
 
@@ -2229,21 +2243,31 @@ app.post("/api/public/forgot-password", publicWriteRateLimit, enforcePublicSecur
       });
     }
 
-    const destination = cleanValue(phone) || cleanValue(email);
-    const channel = cleanValue(phone) ? "sms" : "email";
+    const contactDestination = contactMethod === "phone" ? cleanValue(phone) : cleanValue(email);
+    const channel = requestedOtpChannel;
+    if (!contactDestination) {
+      return res.status(400).json({ error: "Selected contact destination is missing." });
+    }
+    if (channel === "sms" && contactMethod !== "phone") {
+      return res.status(400).json({ error: "SMS delivery requires mobile number contact method." });
+    }
+    if (channel === "email" && contactMethod !== "email") {
+      return res.status(400).json({ error: "Email delivery requires email contact method." });
+    }
     const payload = {
       username,
       institution_id: user.institution_id,
       recovery_type: "PASSWORD_RESET",
       email: cleanValue(email) || null,
-      phone: cleanValue(phone) || null
+      phone: cleanValue(phone) || null,
+      contact_method: contactMethod
     };
     const otpSession = await createOtpSession({
       identity,
       role: "PUBLIC_PASSWORD_RESET",
       institutionId: user.institution_id,
       payload,
-      destination,
+      destination: contactDestination,
       channel
     });
     await auditLog(

@@ -139,16 +139,34 @@
               <p class="recovery-step-title">Step 1 — Request OTP</p>
               <div class="auth-grid">
                 <div>
-                  <label>Username</label>
+                  <label>Institution Code *</label>
+                  <input id="forgotPasswordInstitutionCode" placeholder="Institution Code" />
+                </div>
+                <div>
+                  <label>Username *</label>
                   <input id="forgotPasswordUsername" placeholder="Username" />
                 </div>
                 <div>
-                  <label>Email (optional)</label>
+                  <label>Contact Method *</label>
+                  <select id="forgotPasswordContactMethod">
+                    <option value="email">Use Email</option>
+                    <option value="phone">Use Mobile Number</option>
+                  </select>
+                </div>
+                <div>
+                  <label>Email</label>
                   <input id="forgotPasswordEmail" placeholder="Email" />
                 </div>
                 <div>
-                  <label>Mobile Number (optional)</label>
+                  <label>Mobile Number</label>
                   <input id="forgotPasswordPhone" placeholder="Mobile Number" />
+                </div>
+                <div>
+                  <label>Receive OTP Via *</label>
+                  <select id="forgotPasswordOtpChannel">
+                    <option value="email">Email</option>
+                    <option value="sms">SMS</option>
+                  </select>
                 </div>
               </div>
               <div class="auth-actions-row">

@@ -230,37 +230,82 @@ async function recoverUsername() {
   );
 }
 
+function collectForgotPasswordInputs() {
+  const institution_code = document.getElementById("forgotPasswordInstitutionCode")?.value.trim();
+  const username = document.getElementById("forgotPasswordUsername")?.value.trim();
+  const contact_method = document.getElementById("forgotPasswordContactMethod")?.value || "email";
+  const otp_channel = document.getElementById("forgotPasswordOtpChannel")?.value || "email";
+  const email = document.getElementById("forgotPasswordEmail")?.value.trim();
+  const phone = document.getElementById("forgotPasswordPhone")?.value.trim();
+  const otp = document.getElementById("forgotPasswordOtp")?.value.trim();
+  const new_password = document.getElementById("forgotPasswordNewPassword")?.value;
+  return { institution_code, username, contact_method, otp_channel, email, phone, otp, new_password };
+}
+
+async function requestForgotPasswordOtp() {
+  const { institution_code, username, contact_method, otp_channel, email, phone } = collectForgotPasswordInputs();
+  if (!institution_code) {
+    setAuthNotice("Institution code is required.", "error");
+    return;
+  }
+  if (!username) {
+    setAuthNotice("Username is required.", "error");
+    return;
+  }
+  if (contact_method === "email" && !email) {
+    setAuthNotice("Email is required when contact method is Email.", "error");
+    return;
+  }
+  if (contact_method === "phone" && !phone) {
+    setAuthNotice("Mobile number is required when contact method is Mobile.", "error");
+    return;
+  }
+  if (otp_channel === "email" && !email) {
+    setAuthNotice("Provide email to receive OTP by email.", "error");
+    return;
+  }
+  if (otp_channel === "sms" && !phone) {
+    setAuthNotice("Provide mobile number to receive OTP by SMS.", "error");
+    return;
+  }
+
+  try {
+    const data = await request("/api/public/forgot-password", {
+      method: "POST",
+      body: JSON.stringify({
+        institution_code,
+        username,
+        contact_method,
+        otp_channel,
+        email,
+        phone
+      })
+    });
+    setAuthNotice(data.message || "OTP sent for password reset.", "success");
+  } catch (error) {
+    setAuthNotice(error.message, "error");
+  }
+}
+
 async function resetPassword() {
-  const username = document.getElementById("forgotPasswordUsername").value.trim();
-  const email = document.getElementById("forgotPasswordEmail").value.trim();
-  const phone = document.getElementById("forgotPasswordPhone").value.trim();
-  const otp = document.getElementById("forgotPasswordOtp").value.trim();
-  const new_password = document.getElementById("forgotPasswordNewPassword").value;
-  if (!username || (!email && !phone)) {
-    setAuthNotice("Username and email or mobile are required.", "error");
+  const { institution_code, username, contact_method, otp_channel, email, phone, otp, new_password } =
+    collectForgotPasswordInputs();
+  if (!institution_code || !username) {
+    setAuthNotice("Institution code and username are required.", "error");
+    return;
+  }
+  if (!otp || !new_password) {
+    setAuthNotice("Enter OTP code and new password to complete reset.", "error");
     return;
   }
   try {
-    if (!otp) {
-      const data = await request("/api/public/password-reset/request-otp", {
-        method: "POST",
-        body: JSON.stringify({
-          username,
-          email,
-          phone
-        })
-      });
-      setAuthNotice(data.message || "OTP sent for password reset.", "success");
-      return;
-    }
-    if (!new_password) {
-      setAuthNotice("Enter new password after OTP is received.", "error");
-      return;
-    }
-    const data = await request("/api/public/password-reset/verify-otp", {
+    const data = await request("/api/public/forgot-password", {
       method: "POST",
       body: JSON.stringify({
+        institution_code,
         username,
+        contact_method,
+        otp_channel,
         email,
         phone,
         otp,
@@ -276,6 +321,7 @@ async function resetPassword() {
 document.getElementById("loginButton").addEventListener("click", login);
 document.getElementById("verifyButton").addEventListener("click", verifyOtp);
 document.getElementById("forgotUsernameButton")?.addEventListener("click", recoverUsername);
+document.getElementById("forgotPasswordSendOtpButton")?.addEventListener("click", requestForgotPasswordOtp);
 document.getElementById("forgotPasswordButton")?.addEventListener("click", resetPassword);
 
 function bindAuthSectionLinks() {
