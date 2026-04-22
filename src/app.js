@@ -5505,17 +5505,29 @@ app.get("/terms-of-service", (_, res) => {
 app.get("/about", (_, res) => {
   res.redirect(302, "/about.html");
 });
+app.get("/about.html", (_, res) => {
+  res.sendFile(path.join(process.cwd(), "public", "about.html"));
+});
 
 app.get("/contact", (_, res) => {
   res.redirect(302, "/contact.html");
+});
+app.get("/contact.html", (_, res) => {
+  res.sendFile(path.join(process.cwd(), "public", "contact.html"));
 });
 
 app.get("/accessibility", (_, res) => {
   res.redirect(302, "/accessibility.html");
 });
+app.get("/accessibility.html", (_, res) => {
+  res.sendFile(path.join(process.cwd(), "public", "accessibility.html"));
+});
 
 app.get("/status", (_, res) => {
   res.redirect(302, "/status.html");
+});
+app.get("/status.html", (_, res) => {
+  res.sendFile(path.join(process.cwd(), "public", "status.html"));
 });
 
 app.get("/cookies", (_, res) => {
@@ -5524,9 +5536,15 @@ app.get("/cookies", (_, res) => {
 app.get("/cookie-notice", (_, res) => {
   res.redirect(302, "/cookies.html");
 });
+app.get("/cookies.html", (_, res) => {
+  res.sendFile(path.join(process.cwd(), "public", "cookies.html"));
+});
 
 app.get("/security", (_, res) => {
   res.redirect(302, "/security.html");
+});
+app.get("/security.html", (_, res) => {
+  res.sendFile(path.join(process.cwd(), "public", "security.html"));
 });
 
 app.get("/support-compliance", (_, res) => {
@@ -5540,9 +5558,21 @@ app.get("/support-compliance.html", (_, res) => {
 app.get("/compliance", (_, res) => {
   res.redirect(302, "/compliance.html");
 });
+app.get("/compliance.html", (_, res) => {
+  res.sendFile(path.join(process.cwd(), "public", "compliance.html"));
+});
 
 app.get("/support", (_, res) => {
   res.redirect(302, "/support.html");
+});
+app.get("/support.html", (_, res) => {
+  res.sendFile(path.join(process.cwd(), "public", "support.html"));
+});
+app.get("/privacy.html", (_, res) => {
+  res.sendFile(path.join(process.cwd(), "public", "privacy.html"));
+});
+app.get("/terms.html", (_, res) => {
+  res.sendFile(path.join(process.cwd(), "public", "terms.html"));
 });
 app.get("/opensearch.xml", (_, res) => {
   res.sendFile(path.join(process.cwd(), "public", "opensearch.xml"));
