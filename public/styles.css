@@ -79,6 +79,8 @@ select:disabled {
   padding: 0;
   display: flex;
   flex-direction: column;
+  min-height: 100vh;
+  justify-content: flex-start;
 }
 
 .login-left h1 {
@@ -98,7 +100,7 @@ select:disabled {
   border-radius: 0;
   overflow: hidden;
   border: none;
-  min-height: 310px;
+  min-height: 250px;
 }
 
 .hero-panel::before {
@@ -114,7 +116,7 @@ select:disabled {
 
 .hero-image {
   width: 100%;
-  height: 360px;
+  height: 255px;
   object-fit: cover;
   display: block;
   position: relative;
@@ -122,21 +124,21 @@ select:disabled {
 }
 
 .left-copy-wrap {
-  padding: 14px 16px 16px;
+  padding: 8px 12px 10px;
 }
 
 .info-strip {
-  margin-top: 10px;
-  padding: 10px 12px;
-  border-radius: 12px;
+  margin-top: 6px;
+  padding: 7px 9px;
+  border-radius: 10px;
   border: 1px solid rgba(255, 255, 255, 0.25);
   background: linear-gradient(90deg, rgba(7, 40, 69, 0.84), rgba(17, 76, 122, 0.78));
   color: #eef6ff;
-  line-height: 1.55;
-  font-size: 14px;
+  line-height: 1.34;
+  font-size: 11px;
   font-weight: 800;
   text-transform: uppercase;
-  letter-spacing: 0.01em;
+  letter-spacing: 0.006em;
 }
 
 .info-strip-a {
@@ -170,17 +172,17 @@ select:disabled {
 }
 
 .contact-strip {
-  margin-top: 12px;
+  margin-top: 8px;
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 8px;
+  gap: 6px;
 }
 
 .contact-strip span {
   text-align: center;
   border-radius: 999px;
-  padding: 8px 10px;
-  font-size: 13px;
+  padding: 6px 8px;
+  font-size: 11px;
   font-weight: 700;
   color: #083255;
   background: linear-gradient(90deg, #79cbff, #9ee4ff);
@@ -188,10 +190,10 @@ select:disabled {
 }
 
 .credit-strip {
-  margin-top: 10px;
+  margin-top: 7px;
   text-align: center;
   color: #e0f1ff;
-  font-size: 12px;
+  font-size: 10px;
   font-weight: 700;
   text-transform: uppercase;
 }
