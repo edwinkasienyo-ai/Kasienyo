@@ -134,31 +134,43 @@
 
         <section id="forgotPasswordPanel" class="auth-panel">
           <h4>Forgot Password</h4>
-          <div class="auth-grid">
-            <div>
-              <label>Username</label>
-              <input id="forgotPasswordUsername" placeholder="Username" />
+          <div class="recovery-flow-grid">
+            <div class="recovery-step-card">
+              <p class="recovery-step-title">Step 1 — Request OTP</p>
+              <div class="auth-grid">
+                <div>
+                  <label>Username</label>
+                  <input id="forgotPasswordUsername" placeholder="Username" />
+                </div>
+                <div>
+                  <label>Email (optional)</label>
+                  <input id="forgotPasswordEmail" placeholder="Email" />
+                </div>
+                <div>
+                  <label>Mobile Number (optional)</label>
+                  <input id="forgotPasswordPhone" placeholder="Mobile Number" />
+                </div>
+              </div>
+              <div class="auth-actions-row">
+                <button id="forgotPasswordSendOtpButton" type="button">Send OTP</button>
+              </div>
             </div>
-            <div>
-              <label>Email (optional)</label>
-              <input id="forgotPasswordEmail" placeholder="Email" />
+            <div class="recovery-step-card">
+              <p class="recovery-step-title">Step 2 — Verify OTP &amp; Reset Password</p>
+              <div class="auth-grid">
+                <div>
+                  <label>OTP Code</label>
+                  <input id="forgotPasswordOtp" placeholder="Enter OTP received via email/phone" />
+                </div>
+                <div>
+                  <label>New Password</label>
+                  <input id="forgotPasswordNewPassword" type="password" placeholder="New Password" />
+                </div>
+              </div>
+              <div class="auth-actions-row">
+                <button id="forgotPasswordButton" type="button">Verify OTP &amp; Reset Password</button>
+              </div>
             </div>
-            <div>
-              <label>Mobile Number (optional)</label>
-              <input id="forgotPasswordPhone" placeholder="Mobile Number" />
-            </div>
-            <div>
-              <label>OTP Code</label>
-              <input id="forgotPasswordOtp" placeholder="Enter OTP received via email/phone" />
-            </div>
-            <div>
-              <label>New Password</label>
-              <input id="forgotPasswordNewPassword" type="password" placeholder="New Password" />
-            </div>
-          </div>
-          <div class="auth-actions-row">
-            <button id="forgotPasswordSendOtpButton" type="button">Send OTP</button>
-            <button id="forgotPasswordButton" type="button">Verify OTP &amp; Reset Password</button>
           </div>
         </section>
 

@@ -556,6 +556,44 @@ button:hover {
   width: auto;
 }
 
+.forgot-password-flow {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 10px;
+}
+
+.forgot-password-step {
+  border: 1px solid #dce6f3;
+  border-radius: 10px;
+  background: linear-gradient(180deg, #ffffff 0%, #f6fbff 100%);
+  padding: 10px;
+}
+
+.forgot-password-step h5 {
+  margin: 0 0 8px;
+  color: #1f4f7f;
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.forgot-password-step .auth-grid {
+  gap: 8px;
+}
+
+.forgot-password-step button {
+  margin-top: 8px;
+}
+
+.forgot-password-step--verify button {
+  background: linear-gradient(135deg, #1f8b5a, #17754b);
+  box-shadow: 0 8px 18px rgba(23, 117, 75, 0.22);
+}
+
+.forgot-password-step--verify button:hover {
+  box-shadow: 0 12px 22px rgba(23, 117, 75, 0.28);
+}
+
 .auth-quick-links {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
