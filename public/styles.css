@@ -44,6 +44,63 @@ select:disabled {
   border-radius: var(--radius-sm, 10px);
 }
 
+.dashboard-welcome-pill {
+  margin: 0 0 8px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  border: 1px solid #cfe2f7;
+  background: linear-gradient(135deg, #edf6ff, #f5fbff);
+  color: #114066;
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+}
+
+.dashboard-filters-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 8px;
+  margin: 8px 0 12px;
+}
+
+.dashboard-filters-row label {
+  margin-top: 0;
+  font-size: 11px;
+  color: #45627f;
+}
+
+.dashboard-filters-row select {
+  margin-top: 4px;
+}
+
+.metric-totalTransferred {
+  border-top: 4px solid #7b5ce1;
+}
+
+.metric-financeCapitation {
+  border-top: 4px solid #10a0b0;
+}
+
+.metric-financeFeePaid {
+  border-top: 4px solid #1d8f3f;
+}
+
+.metric-financeGrantOther {
+  border-top: 4px solid #d08817;
+}
+
+.metric-financeAvailableBalance {
+  border-top: 4px solid #1e74c7;
+}
+
+.metric-financeOutstandingBalance {
+  border-top: 4px solid #cf4444;
+}
+
+.metric-financeLiabilities {
+  border-top: 4px solid #6f4f1f;
+}
+
 :root {
   --primary-900: #0f3860;
   --primary-800: #155286;

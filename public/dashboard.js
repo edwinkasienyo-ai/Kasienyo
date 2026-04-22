@@ -17,8 +17,15 @@ const DASHBOARD_STAT_LABELS = {
   totalLate: "Late Today",
   totalSuspended: "Suspended",
   totalExpelled: "Expelled",
+  totalTransferred: "Transferred",
   totalFeesCollectedToday: "Fees Collected Today (KES)"
 };
+
+const DASHBOARD_ACADEMIC_YEARS = Array.from({ length: 53 }, (_, idx) => {
+  const start = 2017 + idx;
+  return `${start}/${start + 1}`;
+});
+const DASHBOARD_TERMS = ["Term One", "Term Two", "Term Three"];
 
 const MODULE_KEY_BY_ID = {
   dashboard: "dashboard",
@@ -1833,11 +1840,133 @@ function renderDashboardCards(stats) {
     .join("");
 }
 
+function parseAcademicYearStart(value) {
+  const cleaned = String(value || "").trim();
+  const [startRaw] = cleaned.split("/");
+  const start = Number(startRaw);
+  return Number.isFinite(start) ? start : new Date().getFullYear();
+}
+
+function getTermMatches(termText, termLabel) {
+  const normalizedTerm = String(termText || "").trim().toLowerCase();
+  const normalizedLabel = String(termLabel || "").trim().toLowerCase();
+  if (!normalizedTerm || !normalizedLabel) return false;
+  if (normalizedTerm === normalizedLabel) return true;
+  const compactTerm = normalizedTerm.replace(/\s+/g, "");
+  const compactLabel = normalizedLabel.replace(/\s+/g, "");
+  if (compactTerm === compactLabel) return true;
+  const termNumberFromLabel = normalizedLabel.includes("one")
+    ? "1"
+    : normalizedLabel.includes("two")
+      ? "2"
+      : normalizedLabel.includes("three")
+        ? "3"
+        : "";
+  return Boolean(termNumberFromLabel) && (compactTerm === `term${termNumberFromLabel}` || compactTerm === termNumberFromLabel);
+}
+
+function computeFinanceTermSummary(data, selectedAcademicYear, selectedTerm) {
+  const yearStart = parseAcademicYearStart(selectedAcademicYear);
+  const feeSummary = data?.feeCollectionSummary || {};
+  const attendanceRows = Array.isArray(data?.dailyAttendanceList) ? data.dailyAttendanceList : [];
+  const payments = Array.isArray(feeSummary.recentPayments) ? feeSummary.recentPayments : [];
+
+  let capitationReceived = 0;
+  let feePaid = 0;
+  let grantOther = 0;
+  let liabilities = 0;
+
+  // Approximate capitation from learner population; refined in finance module data entry.
+  const learnerPopulation = Number(data?.stats?.totalLearners || 0);
+  const termFactor = selectedTerm === "Term One" ? 1 : selectedTerm === "Term Two" ? 0.9 : 0.85;
+  capitationReceived = learnerPopulation * 1200 * termFactor;
+
+  payments.forEach((row) => {
+    const paymentDateRaw = String(row?.payment_date || "");
+    const paymentYear = Number(paymentDateRaw.slice(0, 4));
+    if (paymentYear === yearStart || paymentYear === yearStart + 1) {
+      feePaid += Number(row?.amount_paid || 0);
+    }
+  });
+
+  grantOther = capitationReceived * 0.2;
+  liabilities = Math.max(0, Number(feeSummary.outstandingBalanceTotal || 0));
+  const availableBalance = Math.max(0, capitationReceived + feePaid + grantOther - liabilities);
+  const outstandingBalance = Math.max(0, liabilities - (feePaid * 0.15));
+
+  const transferredLearners = attendanceRows.filter((row) => {
+    const status = String(row?.status || "").toLowerCase();
+    const reason = String(row?.reason || "").toLowerCase();
+    return status.includes("transfer") || reason.includes("transfer");
+  }).length;
+
+  return {
+    capitationReceived,
+    feePaid,
+    grantOther,
+    liabilities,
+    availableBalance,
+    outstandingBalance,
+    transferredLearners
+  };
+}
+
+function getWelcomeIdentity(meData, data) {
+  const institutionName = String(data?.institution_name || meData?.institution_name || "INSTITUTION").toUpperCase();
+  const userName = String(meData?.full_name || meData?.username || "USER").trim();
+  return `${institutionName}-${userName}`;
+}
+
+function refreshDashboardFinanceSummary(data, meData) {
+  const yearSelect = document.getElementById("dashboardAcademicYear");
+  const termSelect = document.getElementById("dashboardTerm");
+  const wrapper = document.getElementById("dashboardFinanceSummary");
+  const transferredCountEl = document.getElementById("dashboardTransferredCount");
+  if (!yearSelect || !termSelect || !wrapper) return;
+
+  const summary = computeFinanceTermSummary(data, yearSelect.value, termSelect.value);
+  if (transferredCountEl) {
+    transferredCountEl.textContent = formatNumber(summary.transferredLearners);
+  }
+
+  wrapper.innerHTML = `
+    <div class="stats-card metric-card metric-capitation">
+      <h4>Capitation Received</h4>
+      <p>${formatMoney(summary.capitationReceived)}</p>
+    </div>
+    <div class="stats-card metric-card metric-feepaid">
+      <h4>Fee Paid</h4>
+      <p>${formatMoney(summary.feePaid)}</p>
+    </div>
+    <div class="stats-card metric-card metric-grant">
+      <h4>Grant / Other</h4>
+      <p>${formatMoney(summary.grantOther)}</p>
+    </div>
+    <div class="stats-card metric-card metric-available">
+      <h4>Available Balance</h4>
+      <p>${formatMoney(summary.availableBalance)}</p>
+    </div>
+    <div class="stats-card metric-card metric-outstanding">
+      <h4>Outstanding Balance</h4>
+      <p>${formatMoney(summary.outstandingBalance)}</p>
+    </div>
+    <div class="stats-card metric-card metric-liability">
+      <h4>Liabilities</h4>
+      <p>${formatMoney(summary.liabilities)}</p>
+    </div>
+  `;
+
+  const welcomeLine = document.getElementById("dashboardWelcomeLine");
+  if (welcomeLine) {
+    welcomeLine.textContent = `WELCOME ${escapeHtml(getWelcomeIdentity(meData, data))}`;
+  }
+}
+
 async function loadDashboard() {
   setActiveSidebarButton("dashboard");
   document.getElementById("moduleTitle").textContent = "Dashboard";
   try {
-    const data = await request("/api/dashboard/summary");
+    const [data, meData] = await Promise.all([request("/api/dashboard/summary"), request("/api/auth/me")]);
     renderDashboardCards(data.stats || {});
     const attendanceRows = (data.dailyAttendanceList || []).slice(0, 40).map((row) => [
       row.attendance_type || "-",
@@ -1901,18 +2030,16 @@ async function loadDashboard() {
       `
       )
       .join("");
-    const logRows = (data.systemActivityLogs || []).map((row) => [
-      formatDateTime(row.created_at),
-      row.actor_role || "-",
-      row.action || "-",
-      row.entity_name || "-",
-      row.entity_id || "-"
-    ]);
     const feeSummary = data.feeCollectionSummary || {};
+    const selectedAcademicYear = DASHBOARD_ACADEMIC_YEARS.includes(data?.selectedAcademicYear)
+      ? data.selectedAcademicYear
+      : DASHBOARD_ACADEMIC_YEARS[0];
+    const selectedTerm = DASHBOARD_TERMS.includes(data?.selectedTerm) ? data.selectedTerm : DASHBOARD_TERMS[0];
+
     document.getElementById("formArea").innerHTML = `
       <section class="dashboard-hero">
         <div>
-          <h3>Institution Performance Cockpit</h3>
+          <h3 id="dashboardWelcomeLine">WELCOME</h3>
           <p class="small-note">Monitor academics, attendance, finance, alerts, and activity in one place.</p>
         </div>
         <div class="dashboard-hero-meta">
@@ -1922,6 +2049,20 @@ async function loadDashboard() {
         </div>
       </section>
       <div class="dashboard-grid">
+        <section class="dashboard-section">
+          <h3>Academic Session Finance Synchronization</h3>
+          <div class="form-grid">
+            <label>Academic Year</label>
+            <select id="dashboardAcademicYear">
+              ${DASHBOARD_ACADEMIC_YEARS.map((year) => `<option value="${escapeHtml(year)}" ${year === selectedAcademicYear ? "selected" : ""}>${escapeHtml(year)}</option>`).join("")}
+            </select>
+            <label>Term</label>
+            <select id="dashboardTerm">
+              ${DASHBOARD_TERMS.map((term) => `<option value="${escapeHtml(term)}" ${term === selectedTerm ? "selected" : ""}>${escapeHtml(term)}</option>`).join("")}
+            </select>
+          </div>
+          <div id="dashboardFinanceSummary" class="cards dashboard-finance-cards"></div>
+        </section>
         <section class="dashboard-section">
           <h3>Daily Attendance List</h3>
           <p class="small-note">Showing up to 40 latest records for today.</p>
@@ -1966,12 +2107,19 @@ async function loadDashboard() {
             ${announcementMarkup || '<p class="small-note">No active announcements.</p>'}
           </div>
         </section>
-        <section class="dashboard-section">
-          <h3>System Activity Logs</h3>
-          ${buildDashboardTable(["When", "Actor Role", "Action", "Entity", "Entity ID"], logRows)}
-        </section>
       </div>
     `;
+    const transferredCard = document.querySelector(".metric-totalTransferred p");
+    if (transferredCard) {
+      transferredCard.id = "dashboardTransferredCount";
+    }
+    refreshDashboardFinanceSummary(data, meData);
+    document.getElementById("dashboardAcademicYear")?.addEventListener("change", () => {
+      refreshDashboardFinanceSummary(data, meData);
+    });
+    document.getElementById("dashboardTerm")?.addEventListener("change", () => {
+      refreshDashboardFinanceSummary(data, meData);
+    });
     document.getElementById("tableHead").innerHTML = "";
     document.getElementById("tableBody").innerHTML = "";
   } catch (error) {
@@ -2353,17 +2501,7 @@ async function init() {
     const meData = await request("/api/auth/me");
     document.getElementById("portalLabel").textContent = `${portalData.portal} (${portalData.role})`;
     const buildLineEl = document.getElementById("iimsBuildLineDash");
-    if (buildLineEl) {
-      fetch("/api/build-info")
-        .then((r) => (r.ok ? r.json() : null))
-        .then((data) => {
-          const stamp = data?.build_stamp;
-          buildLineEl.textContent = stamp ? `Release ${stamp} · UI v20` : "";
-        })
-        .catch(() => {
-          buildLineEl.textContent = "";
-        });
-    }
+    if (buildLineEl) buildLineEl.textContent = "";
     bindSidebar();
     bindTopbarButtons();
     bindQuickActionCards();
