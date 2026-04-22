@@ -321,20 +321,24 @@ select:disabled {
 
 .auth-card-header {
   margin-bottom: 4px;
+  text-align: center;
 }
 
 .hero-title {
   margin: 0;
-  display: inline-block;
-  font-size: 11px;
-  font-weight: 800;
-  letter-spacing: 0.08em;
+  display: inline-flex;
+  justify-content: center;
+  align-items: center;
+  font-size: 15px;
+  font-weight: 900;
+  letter-spacing: 0.12em;
   text-transform: uppercase;
-  color: var(--primary-800);
+  color: #fffbe7;
   border-radius: 999px;
-  background: #e9f4ff;
-  border: 1px solid #c9ddf6;
-  padding: 4px 10px;
+  background: linear-gradient(135deg, #a86c00, #d79f0f 45%, #f0c743 100%);
+  border: 1px solid rgba(255, 234, 158, 0.92);
+  box-shadow: 0 8px 16px rgba(130, 86, 0, 0.24);
+  padding: 6px 18px;
 }
 
 .animated-panel {
