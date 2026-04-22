@@ -2477,6 +2477,13 @@ app.get(
          LIMIT 1`,
         [req.user.institution_id]
       );
+    const registrationMeta = canRegisterInstitution(req.user)
+      ? {
+          counties: COUNTIES,
+          categories: INSTITUTION_CATEGORIES,
+          postalCodes: KENYA_POSTAL_CODES
+        }
+      : null;
     res.json({
       requester_role: normalizeRole(req.user.role),
       can_manage_all_institutions: canSeeAllInstitutions,
@@ -2485,6 +2492,7 @@ app.get(
       can_register_institution: canRegisterInstitution(req.user),
       can_register_users: canRegisterInstitutionUsers(req.user),
       can_register_privileged_users: canRegisterPrivilegedUsers(req.user),
+      registration_meta: registrationMeta,
       institutions
     });
   })

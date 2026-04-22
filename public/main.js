@@ -8,9 +8,19 @@ async function request(path, options = {}) {
     },
     ...options
   });
-  const data = await response.json();
+  const rawText = await response.text();
+  let data = null;
+  try {
+    data = rawText ? JSON.parse(rawText) : null;
+  } catch (_) {
+    data = null;
+  }
   if (!response.ok) {
-    throw new Error(data.error || "Request failed");
+    const message =
+      (data && typeof data === "object" && data.error) ||
+      (rawText && rawText.length < 400 ? rawText.trim() : "") ||
+      `Request failed (${response.status})`;
+    throw new Error(message);
   }
   return data;
 }

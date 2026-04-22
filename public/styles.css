@@ -9,6 +9,13 @@ body {
   color: #1f2d3d;
 }
 
+input.readonly-field,
+select:disabled {
+  background: #eef2f7;
+  color: #48617a;
+  cursor: not-allowed;
+}
+
 :root {
   --primary-900: #0f3860;
   --primary-800: #155286;

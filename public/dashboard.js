@@ -102,6 +102,7 @@ async function renderSystemRegistration() {
     const roleOptions = Array.isArray(options?.assignable_roles) ? options.assignable_roles : [];
     const canRegisterInstitution = Boolean(options?.can_register_institution);
     const canManageAllInstitutions = Boolean(options?.can_manage_all_institutions);
+    const registrationMeta = options?.registration_meta || null;
     const defaultInstitutionId = Number(options?.institution_scope_id || 0) || Number(portalContext?.institution_id || 0) || 0;
     const defaultInstitution = institutionRows.find((item) => Number(item.id) === defaultInstitutionId) || institutionRows[0] || null;
     const defaultInstitutionCode = defaultInstitution?.institution_code || "";
@@ -135,11 +136,37 @@ async function renderSystemRegistration() {
           <label>Institution Name</label>
           <input id="sysInstitutionName" placeholder="Institution name" />
           <label>County</label>
-          <input id="sysInstitutionCounty" placeholder="County" />
+          ${
+            registrationMeta?.counties?.length
+              ? `<select id="sysInstitutionCounty">
+            <option value="">Select county</option>
+            ${registrationMeta.counties
+              .map(
+                (c) =>
+                  `<option value="${escapeHtml(c.name)}">${escapeHtml(c.name)} (${escapeHtml(c.code)})</option>`
+              )
+              .join("")}
+          </select>`
+              : `<input id="sysInstitutionCounty" placeholder="County (exact name)" />`
+          }
           <label>County Code</label>
-          <input id="sysInstitutionCountyCode" placeholder="Auto/Manual county code e.g. 001" />
+          <input id="sysInstitutionCountyCode" placeholder="e.g. 001" ${
+            registrationMeta?.counties?.length ? 'readonly class="readonly-field"' : ""
+          } />
           <label>Category</label>
-          <input id="sysInstitutionCategory" placeholder="Institution category label/code" />
+          ${
+            registrationMeta?.categories?.length
+              ? `<select id="sysInstitutionCategory">
+            <option value="">Select category</option>
+            ${registrationMeta.categories
+              .map(
+                (c) =>
+                  `<option value="${escapeHtml(c.label)}">${escapeHtml(c.label)} (${escapeHtml(c.code)})</option>`
+              )
+              .join("")}
+          </select>`
+              : `<input id="sysInstitutionCategory" placeholder="Category (e.g. Primary)" />`
+          }
           <label>Sub County</label>
           <input id="sysInstitutionSubCounty" placeholder="Sub county (optional)" />
           <label>Location</label>
@@ -147,9 +174,23 @@ async function renderSystemRegistration() {
           <label>Village/Town</label>
           <input id="sysInstitutionVillage" placeholder="Village or town (optional)" />
           <label>Postal Code</label>
-          <input id="sysInstitutionPostalCode" placeholder="Postal code (optional)" />
-          <label>Town</label>
-          <input id="sysInstitutionTown" placeholder="Town (optional)" />
+          ${
+            registrationMeta?.postalCodes?.length
+              ? `<select id="sysInstitutionPostalCode">
+            <option value="">Optional — select postal code</option>
+            ${registrationMeta.postalCodes
+              .map(
+                (p) =>
+                  `<option value="${escapeHtml(String(p.postal_code))}">${escapeHtml(
+                    String(p.postal_code)
+                  )} — ${escapeHtml(p.town)}</option>`
+              )
+              .join("")}
+          </select>`
+              : `<input id="sysInstitutionPostalCode" placeholder="Postal code (optional)" />`
+          }
+          <label>Town (post office)</label>
+          <input id="sysInstitutionTown" placeholder="Town (optional, or pick postal code above)" />
           <label>Institution Email</label>
           <input id="sysInstitutionEmail" placeholder="Email (optional)" />
           <label>Institution Phone</label>
@@ -251,6 +292,26 @@ async function renderSystemRegistration() {
       }
       institutionSelect.addEventListener("change", refreshInstitutionCodePreview);
       refreshInstitutionCodePreview();
+    }
+
+    const countySelectEl = document.getElementById("sysInstitutionCounty");
+    const countyCodeEl = document.getElementById("sysInstitutionCountyCode");
+    const postalSelectEl = document.getElementById("sysInstitutionPostalCode");
+    const townEl = document.getElementById("sysInstitutionTown");
+    if (countySelectEl && countyCodeEl && registrationMeta?.counties?.length && countySelectEl.tagName === "SELECT") {
+      const syncCountyCode = () => {
+        const selected = registrationMeta.counties.find((c) => c.name === countySelectEl.value);
+        countyCodeEl.value = selected?.code || "";
+      };
+      countySelectEl.addEventListener("change", syncCountyCode);
+      syncCountyCode();
+    }
+    if (postalSelectEl && townEl && registrationMeta?.postalCodes?.length && postalSelectEl.tagName === "SELECT") {
+      postalSelectEl.addEventListener("change", () => {
+        const code = postalSelectEl.value;
+        const selected = registrationMeta.postalCodes.find((p) => String(p.postal_code) === String(code));
+        if (selected) townEl.value = selected.town || "";
+      });
     }
 
     document.getElementById("sysRegisterInstitutionButton")?.addEventListener("click", async () => {
@@ -1079,9 +1140,19 @@ async function request(path, options = {}) {
     return null;
   }
 
-  const data = await response.json();
+  const rawText = await response.text();
+  let data = null;
+  try {
+    data = rawText ? JSON.parse(rawText) : null;
+  } catch (_) {
+    data = null;
+  }
   if (!response.ok) {
-    throw new Error(data.error || "Request failed");
+    const message =
+      (data && typeof data === "object" && data.error) ||
+      (rawText && rawText.length < 400 ? rawText.trim() : "") ||
+      `Request failed (${response.status})`;
+    throw new Error(message);
   }
   return data;
 }
