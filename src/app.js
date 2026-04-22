@@ -5526,6 +5526,20 @@ app.get("/support", (_, res) => {
   res.redirect(302, "/support.html");
 });
 
+app.use((req, res, next) => {
+  if (String(req.path || "").startsWith("/api/")) {
+    return res.status(404).json({ error: "API endpoint not found." });
+  }
+  return next();
+});
+
+app.use((req, res, next) => {
+  if (req.method !== "GET") {
+    return next();
+  }
+  return res.status(404).sendFile(path.join(process.cwd(), "public", "404.html"));
+});
+
 app.use((err, req, res, next) => {
   if (res.headersSent) {
     return next(err);
