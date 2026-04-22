@@ -2904,6 +2904,17 @@ app.get(
       "SELECT COUNT(*) totalExpelled FROM learners WHERE institution_id = ? AND conduct_status = 'Expelled'",
       [institutionId]
     );
+    const [learnersTransferred] = await query(
+      `SELECT COUNT(*) totalTransferred
+       FROM learners
+       WHERE institution_id = ?
+         AND (
+           conduct_status = 'Transferred'
+           OR transfer_status = 'Transferred'
+           OR transfer_status = 'Approved'
+         )`,
+      [institutionId]
+    );
     const [feesToday] = await query(
       `SELECT COALESCE(SUM(amount_paid), 0) totalFees, COUNT(*) totalPayments
        FROM finance_fee_payments
