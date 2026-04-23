@@ -1944,21 +1944,21 @@ function getWelcomeIdentity(meData, data) {
   const userName = String(meData?.full_name || meData?.username || "Default System Administrator").trim();
   const role = String(meData?.role || portalContext?.role || "").trim().toUpperCase();
   const roleLabels = {
-    SYSTEM_DEVELOPER: "Default System Administrator",
+    SYSTEM_DEVELOPER: "SYSTEM DEVELOPER",
     ADMIN: "HoI/Administrator",
-    HEAD_OF_INSTITUTION: "D/HoI",
+    HEAD_OF_INSTITUTION: "Head of Institution",
     TEACHER: "Teacher",
     NON_TEACHING_STAFF: "Support Staff",
     BOM: "BoM Member",
     PARENT: "Parent/Guardian",
-    SUPPLIER: "Supplier/Contractor",
+    SUPPLIER: "Supplier",
     MOD: "MoE",
     TSC: "TSC",
     LEARNER: "Learner"
   };
-  const roleLabel = roleLabels[role] || toLabel(role || "User");
+  const roleLabel = String(roleLabels[role] || toLabel(role || "User")).toUpperCase();
   if (role === "SYSTEM_DEVELOPER") {
-    return "TO SYSTEM DEVELOPER'S SITE, code is 0001,  name MWENDEGU ENTERPRISE LIMITED-SYSTEM DEVELOPER";
+    return "MWENDEGU ENTERPRISE LIMITED-254001-Mr.EDWIN ONYANGO-SYSTEM DEVELOPER";
   }
   return `TO ${institutionName}${institutionCode ? `-${institutionCode}` : ""}-${userName}-${roleLabel}`;
 }
