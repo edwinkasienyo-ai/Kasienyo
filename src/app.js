@@ -1969,7 +1969,7 @@ app.get("/api/auth/me", auth, asyncHandler(async (req, res) => {
   }
 
   const rows = await query(
-    `SELECT u.id, u.role, u.institution_id, u.full_name, u.username, u.password_last_changed_at, u.password_expires_at, u.must_change_password,
+    `SELECT u.id, u.role, u.institution_id, u.full_name, u.username, u.email, u.phone, u.password_last_changed_at, u.password_expires_at, u.must_change_password,
             i.institution_name, i.institution_code
      FROM users u
      INNER JOIN institutions i ON i.id = u.institution_id
@@ -2868,6 +2868,17 @@ app.get(
       "SELECT COUNT(*) totalLearners FROM learners WHERE institution_id = ?",
       [institutionId]
     );
+    const [activeLearners] = await query(
+      `SELECT COUNT(*) totalActiveLearners
+       FROM learners
+       WHERE institution_id = ?
+         AND (
+           status IS NULL
+           OR TRIM(status) = ''
+           OR LOWER(status) IN ('active', 'in session', 'continuing')
+         )`,
+      [institutionId]
+    );
     const [present] = await query(
       `SELECT COUNT(*) totalPresent
        FROM attendance_records
@@ -2904,6 +2915,28 @@ app.get(
       "SELECT COUNT(*) totalExpelled FROM learners WHERE institution_id = ? AND conduct_status = 'Expelled'",
       [institutionId]
     );
+    const [dropOutLearners] = await query(
+      `SELECT COUNT(*) totalDropOut
+       FROM learners
+       WHERE institution_id = ?
+         AND (
+           LOWER(COALESCE(status, '')) LIKE '%drop%'
+           OR LOWER(COALESCE(conduct_status, '')) LIKE '%drop%'
+           OR LOWER(COALESCE(reason_for_leaving, '')) LIKE '%drop%'
+         )`,
+      [institutionId]
+    );
+    const [completedLearners] = await query(
+      `SELECT COUNT(*) totalCompletion
+       FROM learners
+       WHERE institution_id = ?
+         AND (
+           LOWER(COALESCE(status, '')) LIKE '%complet%'
+           OR LOWER(COALESCE(conduct_status, '')) LIKE '%complet%'
+           OR LOWER(COALESCE(reason_for_leaving, '')) LIKE '%complet%'
+         )`,
+      [institutionId]
+    );
     const [learnersTransferred] = await query(
       `SELECT COUNT(*) totalTransferred
        FROM learners
@@ -2918,6 +2951,75 @@ app.get(
       `SELECT COALESCE(SUM(amount_paid), 0) totalFees, COUNT(*) totalPayments
        FROM finance_fee_payments
        WHERE institution_id = ? AND DATE(payment_date) = CURDATE()`,
+      [institutionId]
+    );
+    const [teachersTotal] = await query(
+      "SELECT COUNT(*) totalTeachers FROM teacher_profiles WHERE institution_id = ?",
+      [institutionId]
+    );
+    const [teachersPresent] = await query(
+      `SELECT COUNT(*) totalTeachersPresent
+       FROM attendance_records
+       WHERE institution_id = ?
+         AND attendance_type = 'Teacher'
+         AND status = 'Present'
+         AND DATE(attendance_date) = CURDATE()`,
+      [institutionId]
+    );
+    const [teachersOfficialLeave] = await query(
+      `SELECT COUNT(*) totalTeachersOfficialLeave
+       FROM teacher_profiles
+       WHERE institution_id = ?
+         AND LOWER(COALESCE(leave_status, '')) LIKE '%official leave%'`,
+      [institutionId]
+    );
+    const [teachersAbsentWithApology] = await query(
+      `SELECT COUNT(*) totalTeachersAbsentWithApology
+       FROM teacher_profiles
+       WHERE institution_id = ?
+         AND LOWER(COALESCE(accountability_status, '')) LIKE '%absent with apology%'`,
+      [institutionId]
+    );
+    const [teachersAbsentWithoutApology] = await query(
+      `SELECT COUNT(*) totalTeachersAbsentWithoutApology
+       FROM teacher_profiles
+       WHERE institution_id = ?
+         AND LOWER(COALESCE(accountability_status, '')) LIKE '%absent without apology%'`,
+      [institutionId]
+    );
+    const [teachersDeserter] = await query(
+      `SELECT COUNT(*) totalTeachersDeserter
+       FROM teacher_profiles
+       WHERE institution_id = ?
+         AND LOWER(COALESCE(employment_status, '')) LIKE '%deserter%'`,
+      [institutionId]
+    );
+    const [teachersSuspended] = await query(
+      `SELECT COUNT(*) totalTeachersSuspended
+       FROM teacher_profiles
+       WHERE institution_id = ?
+         AND LOWER(COALESCE(employment_status, '')) LIKE '%suspend%'`,
+      [institutionId]
+    );
+    const [teachersInterdicted] = await query(
+      `SELECT COUNT(*) totalTeachersInterdicted
+       FROM teacher_profiles
+       WHERE institution_id = ?
+         AND LOWER(COALESCE(employment_status, '')) LIKE '%interdict%'`,
+      [institutionId]
+    );
+    const [teachersTransferred] = await query(
+      `SELECT COUNT(*) totalTeachersTransferred
+       FROM teacher_profiles
+       WHERE institution_id = ?
+         AND LOWER(COALESCE(employment_status, '')) LIKE '%transfer%'`,
+      [institutionId]
+    );
+    const [teachersRetired] = await query(
+      `SELECT COUNT(*) totalTeachersRetired
+       FROM teacher_profiles
+       WHERE institution_id = ?
+         AND LOWER(COALESCE(employment_status, '')) LIKE '%retire%'`,
       [institutionId]
     );
     const [feesMonth] = await query(
@@ -3089,6 +3191,7 @@ app.get(
       generated_at: dayjs().format("YYYY-MM-DD HH:mm:ss"),
       stats: {
         totalLearners: toNumber(population.totalLearners),
+        totalActiveLearners: toNumber(activeLearners.totalActiveLearners),
         totalPresent: toNumber(present.totalPresent),
         totalAbsent: toNumber(absent.totalAbsent),
         totalBoys: toNumber(boys.totalBoys),
@@ -3096,7 +3199,19 @@ app.get(
         totalLate: toNumber(late.totalLate),
         totalSuspended: toNumber(suspension.totalSuspended),
         totalExpelled: toNumber(expelled.totalExpelled),
+        totalDropOut: toNumber(dropOutLearners.totalDropOut),
         totalTransferred: toNumber(learnersTransferred.totalTransferred),
+        totalCompletion: toNumber(completedLearners.totalCompletion),
+        totalTeachers: toNumber(teachersTotal.totalTeachers),
+        totalTeachersPresent: toNumber(teachersPresent.totalTeachersPresent),
+        totalTeachersOfficialLeave: toNumber(teachersOfficialLeave.totalTeachersOfficialLeave),
+        totalTeachersAbsentWithApology: toNumber(teachersAbsentWithApology.totalTeachersAbsentWithApology),
+        totalTeachersAbsentWithoutApology: toNumber(teachersAbsentWithoutApology.totalTeachersAbsentWithoutApology),
+        totalTeachersDeserter: toNumber(teachersDeserter.totalTeachersDeserter),
+        totalTeachersSuspended: toNumber(teachersSuspended.totalTeachersSuspended),
+        totalTeachersInterdicted: toNumber(teachersInterdicted.totalTeachersInterdicted),
+        totalTeachersTransferred: toNumber(teachersTransferred.totalTeachersTransferred),
+        totalTeachersRetired: toNumber(teachersRetired.totalTeachersRetired),
         totalFeesCollectedToday: toMoney(feesToday.totalFees)
       },
       attendanceBreakdown,
@@ -4509,13 +4624,16 @@ const moduleConfigs = [
     route: "/api/management/teachers",
     table: "teacher_profiles",
     moduleKey: MODULE_KEYS.MANAGEMENT_TEACHERS,
-    searchFields: ["full_name", "id_number", "tsc_number", "phone_number"],
+    searchFields: ["full_name", "id_number", "tsc_number", "phone_number", "employment_status", "leave_status", "accountability_status"],
     allowedRoles: [ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION],
     fields: [
       "full_name",
       "tsc_number",
       "id_number",
       "phone_number",
+      "employment_status",
+      "leave_status",
+      "accountability_status",
       "category",
       "major_subject",
       "other_subject",

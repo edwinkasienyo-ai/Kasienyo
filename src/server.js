@@ -608,6 +608,50 @@ async function ensureUserPasswordPolicyColumns() {
   if (!Number(feePaymentsLiabilitiesRows[0]?.total || 0)) {
     await query("ALTER TABLE finance_fee_payments ADD COLUMN liabilities DECIMAL(12,2) NULL");
   }
+
+  const learnersReasonLeavingRows = await query(
+    `SELECT COUNT(*) total
+     FROM INFORMATION_SCHEMA.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = 'learners'
+       AND COLUMN_NAME = 'reason_for_leaving'`
+  );
+  if (!Number(learnersReasonLeavingRows[0]?.total || 0)) {
+    await query("ALTER TABLE learners ADD COLUMN reason_for_leaving VARCHAR(120) NULL");
+  }
+
+  const teacherEmploymentStatusRows = await query(
+    `SELECT COUNT(*) total
+     FROM INFORMATION_SCHEMA.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = 'teacher_profiles'
+       AND COLUMN_NAME = 'employment_status'`
+  );
+  if (!Number(teacherEmploymentStatusRows[0]?.total || 0)) {
+    await query("ALTER TABLE teacher_profiles ADD COLUMN employment_status VARCHAR(60) NOT NULL DEFAULT 'Active'");
+  }
+
+  const teacherLeaveStatusRows = await query(
+    `SELECT COUNT(*) total
+     FROM INFORMATION_SCHEMA.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = 'teacher_profiles'
+       AND COLUMN_NAME = 'leave_status'`
+  );
+  if (!Number(teacherLeaveStatusRows[0]?.total || 0)) {
+    await query("ALTER TABLE teacher_profiles ADD COLUMN leave_status VARCHAR(60) NULL");
+  }
+
+  const teacherAccountabilityStatusRows = await query(
+    `SELECT COUNT(*) total
+     FROM INFORMATION_SCHEMA.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = 'teacher_profiles'
+       AND COLUMN_NAME = 'accountability_status'`
+  );
+  if (!Number(teacherAccountabilityStatusRows[0]?.total || 0)) {
+    await query("ALTER TABLE teacher_profiles ADD COLUMN accountability_status VARCHAR(60) NULL");
+  }
 }
 
 async function start() {
