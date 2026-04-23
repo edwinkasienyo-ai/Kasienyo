@@ -61,10 +61,11 @@ CREATE TABLE IF NOT EXISTS user_module_access_overrides (
   institution_id BIGINT NOT NULL,
   user_id BIGINT NOT NULL,
   module_key VARCHAR(120) NOT NULL,
+  permission_key VARCHAR(60) NOT NULL DEFAULT 'ACCESS',
   can_access TINYINT(1) NOT NULL DEFAULT 1,
   created_by_user_id BIGINT NULL,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  INDEX idx_user_module_override_lookup (user_id, module_key, created_at),
+  INDEX idx_user_module_override_lookup (user_id, module_key, permission_key, created_at),
   CONSTRAINT fk_user_module_overrides_institution FOREIGN KEY (institution_id) REFERENCES institutions(id),
   CONSTRAINT fk_user_module_overrides_user FOREIGN KEY (user_id) REFERENCES users(id)
 );

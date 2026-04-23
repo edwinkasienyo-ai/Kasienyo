@@ -339,6 +339,22 @@ async function ensureUserPasswordPolicyColumns() {
     );
   }
 
+  const modulePermissionRows = await query(
+    `SELECT COUNT(*) total
+     FROM INFORMATION_SCHEMA.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = 'user_module_access_overrides'
+       AND COLUMN_NAME = 'permission_key'`
+  );
+  if (!Number(modulePermissionRows[0]?.total || 0)) {
+    await query("ALTER TABLE user_module_access_overrides ADD COLUMN permission_key VARCHAR(60) NULL AFTER module_key");
+    await query(
+      `UPDATE user_module_access_overrides
+       SET permission_key = 'ACCESS'
+       WHERE permission_key IS NULL`
+    );
+  }
+
   const recycleBinRows = await query(
     `SELECT COUNT(*) total
      FROM INFORMATION_SCHEMA.TABLES

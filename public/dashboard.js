@@ -587,11 +587,12 @@ async function renderModuleRights() {
       </div>
     `;
     document.getElementById("formArea").innerHTML = `
-      <div class="module-header-card">
+      <div class="module-header-card register-ultra-compact">
         <h3>Module Rights Overrides</h3>
-        <p>Select a user and override specific module access rights.</p>
+        <p>Select a user, module, and action right. Access defaults to denied for non-System-Developer users until approved.</p>
       </div>
-      <div class="form-grid">
+      <div class="section-card registration-compact-card register-ultra-compact module-rights-compact">
+      <div class="form-grid registration-compact-grid">
         <label>User</label>
         <select id="moduleAccessUserSelect">
           <option value="">Select user...</option>
@@ -616,10 +617,20 @@ async function renderModuleRights() {
           <option value="true">Allow</option>
           <option value="false">Deny</option>
         </select>
+        <label>Action Right</label>
+        <select id="moduleAccessActionSelect">
+          <option value="ACCESS">Access</option>
+          <option value="VIEW">View</option>
+          <option value="CREATE">Create</option>
+          <option value="UPDATE">Modify</option>
+          <option value="DELETE">Delete</option>
+          <option value="APPROVE">Approve</option>
+        </select>
       </div>
-      <div class="actions-row">
+      <div class="actions-row registration-compact-actions">
         <button id="saveModuleAccessButton">Save Override</button>
         <button id="showRoleDefaultsButton">Show Role Defaults</button>
+      </div>
       </div>
       <div id="moduleAccessInfo" class="small-note"></div>
     `;
@@ -628,6 +639,7 @@ async function renderModuleRights() {
       const userId = Number(document.getElementById("moduleAccessUserSelect")?.value || 0);
       const moduleKey = String(document.getElementById("moduleAccessModuleSelect")?.value || "");
       const canAccess = String(document.getElementById("moduleAccessStateSelect")?.value || "true") === "true";
+      const actionKey = String(document.getElementById("moduleAccessActionSelect")?.value || "ACCESS");
       if (!userId || !moduleKey) {
         alert("Select user and module first.");
         return;
@@ -638,7 +650,8 @@ async function renderModuleRights() {
           body: JSON.stringify({
             user_id: userId,
             module_key: moduleKey,
-            can_access: canAccess
+            can_access: canAccess,
+            action_key: actionKey
           })
         });
         alert(response.message || "Module access override saved.");
