@@ -612,6 +612,8 @@ async function renderModuleRights() {
         <button id="moduleRightsDeselectAll">Deselect All</button>
         <button id="moduleRightsSelectAllAccess">Select All Access</button>
         <button id="moduleRightsDeselectAllAccess">Deselect All Access</button>
+        <button id="saveModuleAccessButton">Save Rights Matrix</button>
+        <button id="showRoleDefaultsButton">Show Role Defaults</button>
       </div>
       <div class="module-rights-matrix-wrap">
         <table class="module-rights-matrix-table" id="moduleRightsMatrixTable">
@@ -644,10 +646,6 @@ async function renderModuleRights() {
               .join("")}
           </tbody>
         </table>
-      </div>
-      <div class="actions-row registration-compact-actions module-rights-bottom-actions">
-        <button id="saveModuleAccessButton">Save Rights Matrix</button>
-        <button id="showRoleDefaultsButton">Show Role Defaults</button>
       </div>
       <div id="moduleAccessInfo" class="small-note"></div>
       </div>
