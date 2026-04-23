@@ -1268,6 +1268,15 @@ tbody tr:hover {
   margin: 4px 0 0;
 }
 
+.registration-tools-card textarea {
+  min-height: 140px;
+  font-family: inherit;
+}
+
+.danger-button {
+  background: linear-gradient(140deg, #991b1b, #ef4444);
+}
+
 .table-hint {
   margin: 0 0 8px;
   color: var(--text-700);
