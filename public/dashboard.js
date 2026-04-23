@@ -1941,9 +1941,26 @@ function getWelcomeIdentity(meData, data) {
   const institutionCode = String(
     data?.institution_code || meData?.institution_code || meData?.institution_id || ""
   ).trim();
-  const userName = String(meData?.full_name || meData?.username || "USER").trim();
-  const codePart = institutionCode ? ` (${institutionCode})` : "";
-  return `${institutionName}${codePart}-${userName}`;
+  const userName = String(meData?.full_name || meData?.username || "Default System Administrator").trim();
+  const role = String(meData?.role || portalContext?.role || "").trim().toUpperCase();
+  const roleLabels = {
+    SYSTEM_DEVELOPER: "Default System Administrator",
+    ADMIN: "HoI/Administrator",
+    HEAD_OF_INSTITUTION: "D/HoI",
+    TEACHER: "Teacher",
+    NON_TEACHING_STAFF: "Support Staff",
+    BOM: "BoM Member",
+    PARENT: "Parent/Guardian",
+    SUPPLIER: "Supplier/Contractor",
+    MOD: "MoE",
+    TSC: "TSC",
+    LEARNER: "Learner"
+  };
+  const roleLabel = roleLabels[role] || toLabel(role || "User");
+  if (role === "SYSTEM_DEVELOPER") {
+    return `TO DEFAULT INSTITUTION${institutionCode ? `-${institutionCode}` : ""}-DEFAULT SYSTEM ADMINISTRATOR`;
+  }
+  return `TO ${institutionName}${institutionCode ? `-${institutionCode}` : ""}-${userName}-${roleLabel}`;
 }
 
 function refreshDashboardFinanceSummary(data, meData) {
