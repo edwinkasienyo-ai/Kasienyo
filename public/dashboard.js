@@ -8,40 +8,17 @@ let currentModule = "dashboard";
 let currentEditId = null;
 let allowedModules = [];
 let portalContext = null;
-let dashboardRefreshTimer = null;
 const DASHBOARD_STAT_LABELS = {
   totalLearners: "Total Learners Population",
-  totalActiveLearners: "Total Active Learners",
   totalPresent: "Present Today",
-  totalLateToday: "Total Late Today",
-  totalAbsentToday: "Total Absent Today",
   totalAbsent: "Absent Today",
-  totalFemale: "Total Female",
-  totalMale: "Total Male",
-  totalDropOut: "Total Drop Out",
-  totalCompletion: "Total Completion",
-  totalTeachers: "Total Number of Teachers",
-  totalTeachersPresent: "Teachers Present",
-  totalTeachersOfficialLeave: "On Official Leave",
-  totalTeachersAbsentWithApology: "Absent With Apology",
-  totalTeachersAbsentWithoutApology: "Absent Without Apology",
-  totalTeachersDeserter: "Deserter",
-  totalTeachersSuspended: "Teacher Suspended",
-  totalTeachersInterdicted: "Interdicted",
-  totalTeachersTransferred: "Teacher Transferred",
-  totalTeachersRetired: "Retired",
+  totalBoys: "Total Boys",
+  totalGirls: "Total Girls",
   totalLate: "Late Today",
   totalSuspended: "Suspended",
   totalExpelled: "Expelled",
-  totalTransferred: "Transferred",
   totalFeesCollectedToday: "Fees Collected Today (KES)"
 };
-
-const DASHBOARD_ACADEMIC_YEARS = Array.from({ length: 53 }, (_, idx) => {
-  const start = 2017 + idx;
-  return `${start}/${start + 1}`;
-});
-const DASHBOARD_TERMS = ["Term One", "Term Two", "Term Three"];
 
 const MODULE_KEY_BY_ID = {
   dashboard: "dashboard",
@@ -104,7 +81,7 @@ const MODULE_DESCRIPTIONS = {
   "system-audit": "Review security and login audit trails for accountability.",
   "system-registry": "Browse institutions and user registry details in one place.",
   "system-recycle-bin": "Restore or permanently purge archived deleted records.",
-  "system-cbc-editor": "Manage CBC/CBE curriculum design, learning materials, textbook uploads, and AI-generated simplified notes."
+  "system-cbc-editor": "Create and maintain CBC curriculum structures and metadata."
 };
 
 function isSystemAdminRole() {
@@ -145,17 +122,17 @@ async function renderSystemRegistration() {
       </div>
     `;
     document.getElementById("formArea").innerHTML = `
-      <div class="module-header-card registration-compact-header">
+      <div class="module-header-card">
         <h3>Registration and Onboarding Center</h3>
         <p>All registration is done inside the system. HoI/Admin are restricted to their institution and cannot create System Developer, MoE, or TSC users.</p>
       </div>
       ${canRegisterInstitution ? `
-      <div class="section-card registration-compact-card">
+      <div class="section-card">
         <div class="section-card-header">
           <h3>Register Institution (System Developer only)</h3>
           <p class="small-note">Creates institution and HoI/Administrator account in one secure flow.</p>
         </div>
-        <div class="form-grid registration-compact-grid">
+        <div class="form-grid">
           <label>Institution Name</label>
           <input id="sysInstitutionName" placeholder="Institution name" />
           <label>County</label>
@@ -172,8 +149,10 @@ async function renderSystemRegistration() {
           </select>`
               : `<input id="sysInstitutionCounty" placeholder="County (exact name)" />`
           }
-          <label>Institution Code</label>
-          <input id="sysInstitutionCodePreview" placeholder="Auto-generated after county and category" readonly class="readonly-field" />
+          <label>County Code</label>
+          <input id="sysInstitutionCountyCode" placeholder="e.g. 001" ${
+            registrationMeta?.counties?.length ? 'readonly class="readonly-field"' : ""
+          } />
           <label>Category</label>
           ${
             registrationMeta?.categories?.length
@@ -194,8 +173,6 @@ async function renderSystemRegistration() {
           <input id="sysInstitutionLocation" placeholder="Location (optional)" />
           <label>Village/Town</label>
           <input id="sysInstitutionVillage" placeholder="Village or town (optional)" />
-          <label>Postal Address</label>
-          <input id="sysInstitutionPostalAddress" placeholder="Postal address (optional)" />
           <label>Postal Code</label>
           ${
             registrationMeta?.postalCodes?.length
@@ -227,58 +204,30 @@ async function renderSystemRegistration() {
             <option value="ADMIN">HoI/Administrator</option>
             <option value="HEAD_OF_INSTITUTION">D/HoI</option>
           </select>
+          <label>Admin Password</label>
+          <input id="sysInstitutionAdminPassword" type="text" placeholder="Admin password (unless auto-generated)" />
+          <label>Auto-generate password</label>
+          <select id="sysInstitutionAutoPassword">
+            <option value="true">Yes</option>
+            <option value="false">No</option>
+          </select>
           <label>Email agreement</label>
           <select id="sysInstitutionSendAgreement">
             <option value="false">No</option>
             <option value="true">Yes</option>
           </select>
         </div>
-        <div class="actions-row registration-compact-actions">
+        <div class="actions-row">
           <button id="sysRegisterInstitutionButton">Register Institution</button>
         </div>
       </div>
       ` : ""}
-      <div class="section-card registration-tools-card registration-compact-card">
-        <div class="section-card-header">
-          <h3>Agreement Letter Sample & Generation</h3>
-          <p class="small-note">Upload or edit agreement templates, then generate, print, download, save, or email for the selected institution.</p>
-        </div>
-        <div class="form-grid registration-compact-grid">
-          <label>Institution for Agreement</label>
-          <select id="sysAgreementInstitutionId">
-            ${institutionRows
-              .map(
-                (item) =>
-                  `<option value="${item.id}" ${Number(item.id) === Number(defaultInstitution?.id || 0) ? "selected" : ""}>${escapeHtml(
-                    item.institution_name || "Institution"
-                  )} (${escapeHtml(item.institution_code || "-")})</option>`
-              )
-              .join("")}
-          </select>
-          <label>Template Text (supports placeholders like {{INSTITUTION_NAME}}, {{INSTITUTION_CODE}})</label>
-          <textarea id="sysAgreementTemplateText" rows="4" placeholder="Agreement body..."></textarea>
-          <label>Template File URL (optional, from upload)</label>
-          <input id="sysAgreementTemplateFileUrl" placeholder="/uploads/your-template.docx" />
-          <label>Upload Sample File</label>
-          <input id="sysAgreementTemplateUpload" type="file" />
-        </div>
-        <div class="actions-row registration-compact-actions agreement-inline-actions">
-          <button id="sysAgreementUploadButton">Upload</button>
-          <button id="sysAgreementSaveButton">Save</button>
-          <button id="sysAgreementEditButton">Reload</button>
-          <button id="sysAgreementDeleteButton" class="danger-button">Delete</button>
-          <button id="sysAgreementDownloadButton">PDF</button>
-          <button id="sysAgreementPrintButton">Print</button>
-          <button id="sysAgreementEmailButton">Email</button>
-          <button id="sysAgreementOpenButton">Open PDF</button>
-        </div>
-      </div>
-      <div class="section-card registration-compact-card">
+      <div class="section-card">
         <div class="section-card-header">
           <h3>Register User (Inside Institution Scope)</h3>
           <p class="small-note">System Developer can target any institution; HoI/Admin are locked to their own institution.</p>
         </div>
-        <div class="form-grid registration-compact-grid">
+        <div class="form-grid">
           <label>Institution</label>
           <select id="sysUserInstitutionId">
             ${institutionRows
@@ -304,10 +253,15 @@ async function renderSystemRegistration() {
           <input id="sysUserEmail" placeholder="Email (optional)" />
           <label>Phone</label>
           <input id="sysUserPhone" placeholder="Phone (optional)" />
-          <label>Password Policy</label>
-          <input id="sysUserPasswordPolicy" value="Auto-generated and sent via SMS/email" readonly class="readonly-field" />
+          <label>Password</label>
+          <input id="sysUserPassword" type="text" placeholder="Password" />
+          <label>Auto-generate password</label>
+          <select id="sysUserAutoPassword">
+            <option value="false">No</option>
+            <option value="true">Yes</option>
+          </select>
         </div>
-        <div class="actions-row registration-compact-actions">
+        <div class="actions-row">
           <button id="sysRegisterUserButton">Register User</button>
           <button id="refreshInstitutionRegistryButton">Refresh Registry</button>
         </div>
@@ -341,31 +295,16 @@ async function renderSystemRegistration() {
     }
 
     const countySelectEl = document.getElementById("sysInstitutionCounty");
-    const categorySelectEl = document.getElementById("sysInstitutionCategory");
-    const institutionCodePreviewEl = document.getElementById("sysInstitutionCodePreview");
+    const countyCodeEl = document.getElementById("sysInstitutionCountyCode");
     const postalSelectEl = document.getElementById("sysInstitutionPostalCode");
     const townEl = document.getElementById("sysInstitutionTown");
-    if (countySelectEl && categorySelectEl && institutionCodePreviewEl) {
-      const syncInstitutionCodePreview = async () => {
-        const county = String(countySelectEl.value || "").trim();
-        const category = String(categorySelectEl.value || "").trim();
-        if (!county || !category) {
-          institutionCodePreviewEl.value = "";
-          return;
-        }
-        try {
-          const preview = await request("/api/institutions/preview-code", {
-            method: "POST",
-            body: JSON.stringify({ county, category })
-          });
-          institutionCodePreviewEl.value = preview?.institution_code || "";
-        } catch (_) {
-          institutionCodePreviewEl.value = "";
-        }
+    if (countySelectEl && countyCodeEl && registrationMeta?.counties?.length && countySelectEl.tagName === "SELECT") {
+      const syncCountyCode = () => {
+        const selected = registrationMeta.counties.find((c) => c.name === countySelectEl.value);
+        countyCodeEl.value = selected?.code || "";
       };
-      countySelectEl.addEventListener("change", syncInstitutionCodePreview);
-      categorySelectEl.addEventListener("change", syncInstitutionCodePreview);
-      syncInstitutionCodePreview();
+      countySelectEl.addEventListener("change", syncCountyCode);
+      syncCountyCode();
     }
     if (postalSelectEl && townEl && registrationMeta?.postalCodes?.length && postalSelectEl.tagName === "SELECT") {
       postalSelectEl.addEventListener("change", () => {
@@ -380,20 +319,20 @@ async function renderSystemRegistration() {
         const payload = {
           institution_name: String(document.getElementById("sysInstitutionName")?.value || "").trim(),
           county: String(document.getElementById("sysInstitutionCounty")?.value || "").trim(),
-          county_code: String(institutionCodePreviewEl?.value || "").trim().split("/")[0] || "",
+          county_code: String(document.getElementById("sysInstitutionCountyCode")?.value || "").trim(),
           category: String(document.getElementById("sysInstitutionCategory")?.value || "").trim(),
           sub_county: String(document.getElementById("sysInstitutionSubCounty")?.value || "").trim(),
           location: String(document.getElementById("sysInstitutionLocation")?.value || "").trim(),
           village: String(document.getElementById("sysInstitutionVillage")?.value || "").trim(),
-          postal_address: String(document.getElementById("sysInstitutionPostalAddress")?.value || "").trim(),
           postal_code: String(document.getElementById("sysInstitutionPostalCode")?.value || "").trim(),
           town: String(document.getElementById("sysInstitutionTown")?.value || "").trim(),
           email: String(document.getElementById("sysInstitutionEmail")?.value || "").trim(),
           phone: String(document.getElementById("sysInstitutionPhone")?.value || "").trim(),
           admin_full_name: String(document.getElementById("sysInstitutionAdminName")?.value || "").trim(),
           admin_username: String(document.getElementById("sysInstitutionAdminUsername")?.value || "").trim(),
+          admin_password: String(document.getElementById("sysInstitutionAdminPassword")?.value || ""),
           portal_role: String(document.getElementById("sysInstitutionAdminRole")?.value || "ADMIN"),
-          auto_generate_password: true,
+          auto_generate_password: String(document.getElementById("sysInstitutionAutoPassword")?.value || "true") === "true",
           send_agreement_email: String(document.getElementById("sysInstitutionSendAgreement")?.value || "false") === "true"
         };
         const result = await request("/api/institutions", {
@@ -420,134 +359,17 @@ async function renderSystemRegistration() {
           email: String(document.getElementById("sysUserEmail")?.value || "").trim(),
           phone: String(document.getElementById("sysUserPhone")?.value || "").trim()
         };
+        const autoGenerate = String(document.getElementById("sysUserAutoPassword")?.value || "false") === "true";
+        if (autoGenerate) {
+          payload.password = `Aa1!${Math.random().toString(36).slice(-9)}#`;
+        } else {
+          payload.password = String(document.getElementById("sysUserPassword")?.value || "");
+        }
         const result = await request("/api/users", {
           method: "POST",
           body: JSON.stringify(payload)
         });
-        const generatedNotice = result.generated_password
-          ? `\nGenerated Password: ${result.generated_password}`
-          : "";
-        alert((result.message || "User registered successfully.") + generatedNotice);
-      } catch (error) {
-        alert(error.message);
-      }
-    });
-    const agreementInstitutionEl = document.getElementById("sysAgreementInstitutionId");
-    const agreementTemplateTextEl = document.getElementById("sysAgreementTemplateText");
-    const agreementTemplateFileUrlEl = document.getElementById("sysAgreementTemplateFileUrl");
-    const loadAgreementTemplate = async () => {
-      const institutionId = Number(agreementInstitutionEl?.value || 0);
-      if (!institutionId) return;
-      const data = await request(`/api/institutions/${institutionId}/agreement-template`);
-      if (agreementTemplateTextEl) agreementTemplateTextEl.value = data?.agreement_template_text || "";
-      if (agreementTemplateFileUrlEl) agreementTemplateFileUrlEl.value = data?.agreement_template_file_url || "";
-    };
-    agreementInstitutionEl?.addEventListener("change", loadAgreementTemplate);
-    await loadAgreementTemplate();
-
-    document.getElementById("sysAgreementUploadButton")?.addEventListener("click", async () => {
-      try {
-        const fileInput = document.getElementById("sysAgreementTemplateUpload");
-        const file = fileInput?.files?.[0];
-        if (!file) {
-          alert("Choose a file to upload first.");
-          return;
-        }
-        const formData = new FormData();
-        formData.append("file", file);
-        const response = await fetch("/api/uploads", {
-          method: "POST",
-          headers: { Authorization: `Bearer ${token}` },
-          body: formData
-        });
-        const json = await response.json();
-        if (!response.ok) {
-          throw new Error(json?.error || "Upload failed.");
-        }
-        if (agreementTemplateFileUrlEl) agreementTemplateFileUrlEl.value = json.filePath || "";
-        alert("Agreement sample uploaded.");
-      } catch (error) {
-        alert(error.message);
-      }
-    });
-    document.getElementById("sysAgreementSaveButton")?.addEventListener("click", async () => {
-      try {
-        const institutionId = Number(agreementInstitutionEl?.value || 0);
-        if (!institutionId) {
-          alert("Select institution first.");
-          return;
-        }
-        await request(`/api/institutions/${institutionId}/agreement-template`, {
-          method: "PUT",
-          body: JSON.stringify({
-            agreement_template_text: String(agreementTemplateTextEl?.value || ""),
-            agreement_template_file_url: String(agreementTemplateFileUrlEl?.value || "")
-          })
-        });
-        alert("Agreement template saved.");
-      } catch (error) {
-        alert(error.message);
-      }
-    });
-    document.getElementById("sysAgreementEditButton")?.addEventListener("click", async () => {
-      try {
-        await loadAgreementTemplate();
-        alert("Agreement template reloaded.");
-      } catch (error) {
-        alert(error.message);
-      }
-    });
-    document.getElementById("sysAgreementDeleteButton")?.addEventListener("click", async () => {
-      try {
-        const institutionId = Number(agreementInstitutionEl?.value || 0);
-        if (!institutionId) {
-          alert("Select institution first.");
-          return;
-        }
-        if (!confirm("Delete agreement template for this institution?")) return;
-        await request(`/api/institutions/${institutionId}/agreement-template`, { method: "DELETE" });
-        if (agreementTemplateTextEl) agreementTemplateTextEl.value = "";
-        if (agreementTemplateFileUrlEl) agreementTemplateFileUrlEl.value = "";
-        alert("Agreement template deleted.");
-      } catch (error) {
-        alert(error.message);
-      }
-    });
-    document.getElementById("sysAgreementDownloadButton")?.addEventListener("click", () => {
-      const institutionId = Number(agreementInstitutionEl?.value || 0);
-      if (!institutionId) {
-        alert("Select institution first.");
-        return;
-      }
-      window.open(`/api/institutions/${institutionId}/agreement.pdf`, "_blank", "noopener");
-    });
-    document.getElementById("sysAgreementOpenButton")?.addEventListener("click", () => {
-      const institutionId = Number(agreementInstitutionEl?.value || 0);
-      if (!institutionId) {
-        alert("Select institution first.");
-        return;
-      }
-      window.open(`/api/institutions/${institutionId}/agreement.pdf`, "_blank", "noopener");
-    });
-    document.getElementById("sysAgreementPrintButton")?.addEventListener("click", () => {
-      const institutionId = Number(agreementInstitutionEl?.value || 0);
-      if (!institutionId) {
-        alert("Select institution first.");
-        return;
-      }
-      const url = `/api/institutions/${institutionId}/agreement.pdf`;
-      const popup = window.open(url, "_blank");
-      setTimeout(() => popup?.print(), 700);
-    });
-    document.getElementById("sysAgreementEmailButton")?.addEventListener("click", async () => {
-      try {
-        const institutionId = Number(agreementInstitutionEl?.value || 0);
-        if (!institutionId) {
-          alert("Select institution first.");
-          return;
-        }
-        const result = await request(`/api/institutions/${institutionId}/agreement/send`, { method: "POST" });
-        alert(result.message || "Agreement emailed.");
+        alert(result.message || "User registered successfully.");
       } catch (error) {
         alert(error.message);
       }
@@ -584,14 +406,12 @@ async function renderModuleRights() {
         <p>Per-user module overrides</p>
       </div>
     `;
-    const actionKeys = ["ACCESS", "VIEW", "CREATE", "UPDATE", "DELETE"];
     document.getElementById("formArea").innerHTML = `
-      <div class="module-header-card register-ultra-compact">
+      <div class="module-header-card">
         <h3>Module Rights Overrides</h3>
-        <p>Pick user then configure module/action rights. Use select all and deselect all for faster approval.</p>
+        <p>Select a user and override specific module access rights.</p>
       </div>
-      <div class="section-card registration-compact-card register-ultra-compact module-rights-compact">
-      <div class="form-grid registration-compact-grid module-rights-grid">
+      <div class="form-grid">
         <label>User</label>
         <select id="moduleAccessUserSelect">
           <option value="">Select user...</option>
@@ -606,106 +426,42 @@ async function renderModuleRights() {
             )
             .join("")}
         </select>
+        <label>Module</label>
+        <select id="moduleAccessModuleSelect">
+          <option value="">Select module...</option>
+          ${moduleKeys.map((item) => `<option value="${escapeHtml(item)}">${escapeHtml(item)}</option>`).join("")}
+        </select>
+        <label>Can Access</label>
+        <select id="moduleAccessStateSelect">
+          <option value="true">Allow</option>
+          <option value="false">Deny</option>
+        </select>
       </div>
-      <div class="actions-row registration-compact-actions module-rights-mass-actions">
-        <button id="moduleRightsSelectAll">Select All</button>
-        <button id="moduleRightsDeselectAll">Deselect All</button>
-        <button id="moduleRightsSelectAllAccess">Select All Access</button>
-        <button id="moduleRightsDeselectAllAccess">Deselect All Access</button>
-        <button id="saveModuleAccessButton">Save Rights Matrix</button>
+      <div class="actions-row">
+        <button id="saveModuleAccessButton">Save Override</button>
         <button id="showRoleDefaultsButton">Show Role Defaults</button>
       </div>
-      <div class="module-rights-matrix-wrap">
-        <table class="module-rights-matrix-table" id="moduleRightsMatrixTable">
-          <thead>
-            <tr>
-              <th>Module</th>
-              <th>Access</th>
-              <th>View</th>
-              <th>Create</th>
-              <th>Modify</th>
-              <th>Delete</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${moduleKeys
-              .map(
-                (moduleKey) => `<tr data-module="${escapeHtml(moduleKey)}">
-                  <td class="module-rights-module-name">${escapeHtml(toLabel(moduleKey))}</td>
-                  ${actionKeys
-                    .map(
-                      (actionKey) => `<td>
-                        <label class="module-rights-cell-check">
-                          <input type="checkbox" data-module="${escapeHtml(moduleKey)}" data-action="${escapeHtml(actionKey)}" />
-                        </label>
-                      </td>`
-                    )
-                    .join("")}
-                </tr>`
-              )
-              .join("")}
-          </tbody>
-        </table>
-      </div>
       <div id="moduleAccessInfo" class="small-note"></div>
-      </div>
     `;
-    resetDataTable("");
-    const moduleRightsChecks = () => Array.from(document.querySelectorAll("#moduleRightsMatrixTable input[type='checkbox']"));
-    const setAllChecks = (checked, onlyAction = null) => {
-      moduleRightsChecks().forEach((input) => {
-        if (!onlyAction || input.dataset.action === onlyAction) {
-          input.checked = checked;
-        }
-      });
-    };
-    document.getElementById("moduleRightsSelectAll")?.addEventListener("click", () => setAllChecks(true));
-    document.getElementById("moduleRightsDeselectAll")?.addEventListener("click", () => setAllChecks(false));
-    document.getElementById("moduleRightsSelectAllAccess")?.addEventListener("click", () => setAllChecks(true, "ACCESS"));
-    document.getElementById("moduleRightsDeselectAllAccess")?.addEventListener("click", () => setAllChecks(false, "ACCESS"));
-    const applyOverridesToMatrix = async () => {
-      const userId = Number(document.getElementById("moduleAccessUserSelect")?.value || 0);
-      if (!userId) {
-        setAllChecks(false);
-        return;
-      }
-      try {
-        const response = await request(`/api/system/module-access/overrides?user_id=${encodeURIComponent(String(userId))}`);
-        setAllChecks(false);
-        const latestByKey = new Map();
-        (Array.isArray(response?.overrides) ? response.overrides : []).forEach((row) => {
-          const key = `${row.module_key}::${row.permission_key || "ACCESS"}`;
-          if (!latestByKey.has(key)) latestByKey.set(key, Number(row.can_access) === 1);
-        });
-        moduleRightsChecks().forEach((input) => {
-          const key = `${input.dataset.module}::${input.dataset.action}`;
-          input.checked = Boolean(latestByKey.get(key));
-        });
-      } catch (_) {
-        setAllChecks(false);
-      }
-    };
-    document.getElementById("moduleAccessUserSelect")?.addEventListener("change", applyOverridesToMatrix);
+    resetDataTable("Use controls above to manage module overrides.");
     document.getElementById("saveModuleAccessButton")?.addEventListener("click", async () => {
       const userId = Number(document.getElementById("moduleAccessUserSelect")?.value || 0);
-      if (!userId) {
-        alert("Select user first.");
+      const moduleKey = String(document.getElementById("moduleAccessModuleSelect")?.value || "");
+      const canAccess = String(document.getElementById("moduleAccessStateSelect")?.value || "true") === "true";
+      if (!userId || !moduleKey) {
+        alert("Select user and module first.");
         return;
       }
       try {
-        const overridesPayload = moduleRightsChecks().map((input) => ({
-          module_key: String(input.dataset.module || ""),
-          action_key: String(input.dataset.action || "ACCESS"),
-          can_access: Boolean(input.checked)
-        }));
-        const response = await request("/api/users/module-access/bulk", {
+        const response = await request("/api/users/module-access", {
           method: "POST",
           body: JSON.stringify({
             user_id: userId,
-            entries: overridesPayload
+            module_key: moduleKey,
+            can_access: canAccess
           })
         });
-        alert(response.message || "Module rights matrix saved.");
+        alert(response.message || "Module access override saved.");
       } catch (error) {
         alert(error.message);
       }
@@ -721,7 +477,6 @@ async function renderModuleRights() {
           : "Select a user to view role defaults.";
       }
     });
-    await applyOverridesToMatrix();
   } catch (error) {
     alert(error.message);
   }
@@ -812,22 +567,10 @@ async function renderInstitutionsRegistry() {
         <p>${escapeHtml(portalContext?.role || "-")}</p>
       </div>
     `;
-    const canDeleteAny = String(portalContext?.role || "") === "SYSTEM_DEVELOPER";
-    const isSystemDeveloper = String(portalContext?.role || "") === "SYSTEM_DEVELOPER";
     document.getElementById("formArea").innerHTML = `
       <div class="module-header-card">
         <h3>Institutions Registry</h3>
         <p>Review institutions and user accounts available in your scope.</p>
-      </div>
-      <div class="actions-row registration-compact-actions">
-        <button id="registryViewInstitutionButton">View Institution</button>
-        <button id="registryEditInstitutionButton">Edit Institution</button>
-        <button id="registrySaveInstitutionButton">Save Institution</button>
-        <button id="registryPrintInstitutionButton">Print Institution</button>
-        <button id="registryDownloadInstitutionButton">Download Institution</button>
-        <button id="registryDeactivateInstitutionButton">Deactivate Institution</button>
-        <button id="registrySuspendInstitutionButton">Suspend Institution</button>
-        <button id="registryDeleteInstitutionButton" ${canDeleteAny ? "" : "disabled"}>Delete Institution</button>
       </div>
       ${buildDashboardTable(
         ["Institution", "Code", "County", "Email", "Phone"],
@@ -843,7 +586,7 @@ async function renderInstitutionsRegistry() {
     const head = document.getElementById("tableHead");
     const body = document.getElementById("tableBody");
     if (head && body) {
-      head.innerHTML = "<tr><th>User</th><th>Username</th><th>Role</th><th>Institution ID</th><th>Status</th><th>Suspended</th><th>Created</th></tr>";
+      head.innerHTML = "<tr><th>User</th><th>Username</th><th>Role</th><th>Institution ID</th><th>Status</th><th>Created</th></tr>";
       body.innerHTML = userRows
         .slice(0, 300)
         .map(
@@ -853,7 +596,6 @@ async function renderInstitutionsRegistry() {
             <td>${escapeHtml(row.role || "-")}</td>
             <td>${escapeHtml(String(row.institution_id || "-"))}</td>
             <td>${Number(row.is_active) === 1 ? "Active" : "Inactive"}</td>
-            <td>${Number(row.is_suspended) === 1 ? "Suspended" : "No"}</td>
             <td>${escapeHtml(formatDateTime(row.created_at))}</td>
           </tr>`
         )
@@ -862,277 +604,6 @@ async function renderInstitutionsRegistry() {
         resetDataTable("No user records found.");
       }
     }
-    const pickInstitutionId = () => Number(prompt("Enter Institution ID:") || 0);
-    const pickUserId = () => Number(prompt("Enter User ID:") || 0);
-    document.getElementById("registryViewInstitutionButton")?.addEventListener("click", () => {
-      const id = pickInstitutionId();
-      if (!id) return;
-      const item = institutionRows.find((row) => Number(row.id) === id);
-      if (!item) return alert("Institution not found.");
-      alert(JSON.stringify(item, null, 2));
-    });
-    document.getElementById("registryEditInstitutionButton")?.addEventListener("click", async () => {
-      const id = pickInstitutionId();
-      if (!id) return;
-      const institution_name = prompt("New institution name (leave blank to keep):", "");
-      const email = prompt("New email (leave blank to keep):", "");
-      const phone = prompt("New phone (leave blank to keep):", "");
-      try {
-        const result = await request(`/api/system/registry/institutions/${id}`, {
-          method: "PATCH",
-          body: JSON.stringify({ institution_name, email, phone })
-        });
-        alert(result.message || "Institution updated.");
-        await renderInstitutionsRegistry();
-      } catch (error) {
-        alert(error.message);
-      }
-    });
-    document.getElementById("registrySaveInstitutionButton")?.addEventListener("click", async () => {
-      const id = pickInstitutionId();
-      if (!id) return;
-      try {
-        const result = await request(`/api/system/registry/institutions/${id}/view`);
-        alert(`Institution loaded:\n${JSON.stringify(result.institution || {}, null, 2)}`);
-      } catch (error) {
-        alert(error.message);
-      }
-    });
-    document.getElementById("registryPrintInstitutionButton")?.addEventListener("click", () => window.print());
-    document.getElementById("registryDownloadInstitutionButton")?.addEventListener("click", () => {
-      const blob = new Blob([JSON.stringify(institutionRows, null, 2)], { type: "application/json" });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = "institutions-registry.json";
-      a.click();
-      URL.revokeObjectURL(url);
-    });
-    document.getElementById("registryDeactivateInstitutionButton")?.addEventListener("click", async () => {
-      const id = pickInstitutionId();
-      if (!id) return;
-      const reason = prompt("Reason for deactivation:");
-      if (!reason) return;
-      try {
-        const result = await request(`/api/system/registry/institutions/${id}/status`, {
-          method: "PATCH",
-          body: JSON.stringify({ is_active: false, is_suspended: false, reason })
-        });
-        alert(result.message || "Institution deactivated.");
-        await renderInstitutionsRegistry();
-      } catch (error) {
-        alert(error.message);
-      }
-    });
-    document.getElementById("registrySuspendInstitutionButton")?.addEventListener("click", async () => {
-      const id = pickInstitutionId();
-      if (!id) return;
-      const reason = prompt("Reason for suspension:");
-      if (!reason) return;
-      try {
-        const result = await request(`/api/system/registry/institutions/${id}/status`, {
-          method: "PATCH",
-          body: JSON.stringify({ is_suspended: true, reason })
-        });
-        alert(result.message || "Institution suspended.");
-        await renderInstitutionsRegistry();
-      } catch (error) {
-        alert(error.message);
-      }
-    });
-    document.getElementById("registrySuspendInstitutionButton")?.insertAdjacentHTML(
-      "afterend",
-      `<button id="registryUnsuspendInstitutionButton">Unsuspend Institution</button>`
-    );
-    document.getElementById("registryDeactivateInstitutionButton")?.insertAdjacentHTML(
-      "afterend",
-      `<button id="registryActivateInstitutionButton">Activate Institution</button>`
-    );
-    document.getElementById("registryUnsuspendInstitutionButton")?.addEventListener("click", async () => {
-      const id = pickInstitutionId();
-      if (!id) return;
-      try {
-        const result = await request(`/api/system/registry/institutions/${id}/status`, {
-          method: "PATCH",
-          body: JSON.stringify({ is_suspended: false, reason: "Unsuspended by administrator" })
-        });
-        alert(result.message || "Institution unsuspended.");
-        await renderInstitutionsRegistry();
-      } catch (error) {
-        alert(error.message);
-      }
-    });
-    document.getElementById("registryActivateInstitutionButton")?.addEventListener("click", async () => {
-      const id = pickInstitutionId();
-      if (!id) return;
-      try {
-        const result = await request(`/api/system/registry/institutions/${id}/status`, {
-          method: "PATCH",
-          body: JSON.stringify({ is_active: true, is_suspended: false, reason: "Activated by administrator" })
-        });
-        alert(result.message || "Institution activated.");
-        await renderInstitutionsRegistry();
-      } catch (error) {
-        alert(error.message);
-      }
-    });
-    document.getElementById("registryDeleteInstitutionButton")?.addEventListener("click", async () => {
-      if (!canDeleteAny) return;
-      const id = pickInstitutionId();
-      if (!id) return;
-      const ok = confirm("Are you sure you want to delete this institution to recycle bin?");
-      if (!ok) return;
-      try {
-        const result = await request(`/api/system/registry/institutions/${id}`, { method: "DELETE" });
-        alert(result.message || "Institution moved to recycle bin.");
-        await renderInstitutionsRegistry();
-      } catch (error) {
-        alert(error.message);
-      }
-    });
-    document.getElementById("cards").insertAdjacentHTML(
-      "beforeend",
-      `<div class="card stats-card"><h4>User Actions</h4><p>Use buttons below table</p></div>`
-    );
-    document.getElementById("formArea").insertAdjacentHTML(
-      "beforeend",
-      `<div class="actions-row registration-compact-actions">
-        <button id="registryViewUserButton">View User</button>
-        <button id="registryEditUserButton">Edit User</button>
-        <button id="registrySaveUserButton">Save User</button>
-        <button id="registryPrintUserButton">Print User</button>
-        <button id="registryDownloadUserButton">Download User</button>
-        <button id="registryDeactivateUserButton">Deactivate User</button>
-        <button id="registrySuspendUserButton">Suspend User</button>
-        <button id="registryDeleteUserButton" ${canDeleteAny ? "" : "disabled"}>Delete User</button>
-      </div>`
-    );
-    document.getElementById("registryViewUserButton")?.addEventListener("click", () => {
-      const id = pickUserId();
-      if (!id) return;
-      const item = userRows.find((row) => Number(row.id) === id);
-      if (!item) return alert("User not found.");
-      alert(JSON.stringify(item, null, 2));
-    });
-    document.getElementById("registryEditUserButton")?.addEventListener("click", async () => {
-      const id = pickUserId();
-      if (!id) return;
-      const full_name = prompt("New full name (leave blank to keep):", "");
-      const email = prompt("New email (leave blank to keep):", "");
-      const phone = prompt("New phone (leave blank to keep):", "");
-      try {
-        const result = await request(`/api/system/registry/users/${id}`, {
-          method: "PATCH",
-          body: JSON.stringify({ full_name, email, phone })
-        });
-        alert(result.message || "User updated.");
-        await renderInstitutionsRegistry();
-      } catch (error) {
-        alert(error.message);
-      }
-    });
-    document.getElementById("registrySaveUserButton")?.addEventListener("click", async () => {
-      const id = pickUserId();
-      if (!id) return;
-      try {
-        const result = await request(`/api/system/registry/users/${id}/view`);
-        alert(`User loaded:\n${JSON.stringify(result.user || {}, null, 2)}`);
-      } catch (error) {
-        alert(error.message);
-      }
-    });
-    document.getElementById("registryPrintUserButton")?.addEventListener("click", () => window.print());
-    document.getElementById("registryDownloadUserButton")?.addEventListener("click", () => {
-      const blob = new Blob([JSON.stringify(userRows, null, 2)], { type: "application/json" });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = "users-registry.json";
-      a.click();
-      URL.revokeObjectURL(url);
-    });
-    document.getElementById("registryDeactivateUserButton")?.addEventListener("click", async () => {
-      const id = pickUserId();
-      if (!id) return;
-      const reason = prompt("Reason for deactivation:");
-      if (!reason) return;
-      try {
-        const result = await request(`/api/system/registry/users/${id}/status`, {
-          method: "PATCH",
-          body: JSON.stringify({ is_active: false, is_suspended: false, reason })
-        });
-        alert(result.message || "User deactivated.");
-        await renderInstitutionsRegistry();
-      } catch (error) {
-        alert(error.message);
-      }
-    });
-    document.getElementById("registrySuspendUserButton")?.addEventListener("click", async () => {
-      const id = pickUserId();
-      if (!id) return;
-      const reason = prompt("Reason for suspension:");
-      if (!reason) return;
-      try {
-        const result = await request(`/api/system/registry/users/${id}/status`, {
-          method: "PATCH",
-          body: JSON.stringify({ is_suspended: true, reason })
-        });
-        alert(result.message || "User suspended.");
-        await renderInstitutionsRegistry();
-      } catch (error) {
-        alert(error.message);
-      }
-    });
-    document.getElementById("registrySuspendUserButton")?.insertAdjacentHTML(
-      "afterend",
-      `<button id="registryUnsuspendUserButton">Unsuspend User</button>`
-    );
-    document.getElementById("registryDeactivateUserButton")?.insertAdjacentHTML(
-      "afterend",
-      `<button id="registryActivateUserButton">Activate User</button>`
-    );
-    document.getElementById("registryUnsuspendUserButton")?.addEventListener("click", async () => {
-      const id = pickUserId();
-      if (!id) return;
-      try {
-        const result = await request(`/api/system/registry/users/${id}/status`, {
-          method: "PATCH",
-          body: JSON.stringify({ is_suspended: false, reason: "Unsuspended by administrator" })
-        });
-        alert(result.message || "User unsuspended.");
-        await renderInstitutionsRegistry();
-      } catch (error) {
-        alert(error.message);
-      }
-    });
-    document.getElementById("registryActivateUserButton")?.addEventListener("click", async () => {
-      const id = pickUserId();
-      if (!id) return;
-      try {
-        const result = await request(`/api/system/registry/users/${id}/status`, {
-          method: "PATCH",
-          body: JSON.stringify({ is_active: true, is_suspended: false, reason: "Activated by administrator" })
-        });
-        alert(result.message || "User activated.");
-        await renderInstitutionsRegistry();
-      } catch (error) {
-        alert(error.message);
-      }
-    });
-    document.getElementById("registryDeleteUserButton")?.addEventListener("click", async () => {
-      if (!canDeleteAny) return;
-      const id = pickUserId();
-      if (!id) return;
-      const ok = confirm("Are you sure you want to delete this user to recycle bin?");
-      if (!ok) return;
-      try {
-        const result = await request(`/api/system/registry/users/${id}`, { method: "DELETE" });
-        alert(result.message || "User moved to recycle bin.");
-        await renderInstitutionsRegistry();
-      } catch (error) {
-        alert(error.message);
-      }
-    });
   } catch (error) {
     alert(error.message);
   }
@@ -1205,10 +676,6 @@ async function renderRecycleBin() {
       }
     });
     document.getElementById("purgeRecycleItemButton")?.addEventListener("click", async () => {
-      if (!isSystemDeveloper && !["ADMIN", "HEAD_OF_INSTITUTION"].includes(String(portalContext?.role || ""))) {
-        alert("Only System Developer or HoI/Administrator can purge permanently.");
-        return;
-      }
       const recycleId = Number(prompt("Enter recycle item ID to purge permanently:"));
       if (!recycleId) return;
       const ok = window.confirm("Purge permanently? This action cannot be undone.");
@@ -1231,7 +698,7 @@ async function renderCbcCurriculumEditor() {
   setActiveSidebarButton("system-cbc-editor");
   document.getElementById("moduleTitle").textContent = "CBC/CBE Management Module";
   if (!isSystemAdminRole()) {
-    alert("Only System Developer, Admin, Head of Institution, and teachers can manage CBC/CBE module.");
+    alert("Only System Developer, Admin, or Head of Institution can manage CBC curriculum editor.");
     return loadDashboard();
   }
   currentModule = "system-cbc-editor";
@@ -1246,7 +713,7 @@ async function renderCbcCurriculumEditor() {
     const formOptions = Array.isArray(meta?.formOptions) ? meta.formOptions : ["Form 3", "Form 4"];
     const subjectOptions = (Array.isArray(meta?.subjectOptions) ? meta.subjectOptions : [])
       .filter((item) => String(item || "").toUpperCase() !== "ALL");
-    const termOptions = ["Term One", "Term Two", "Term Three"];
+    const termOptions = Array.isArray(meta?.termOptions) ? meta.termOptions : ["Term One", "Term Two", "Term Three"];
     const yearOptions = Array.from({ length: 54 }, (_, index) => 2017 + index);
     document.getElementById("cards").innerHTML = `
       <div class="card stats-card metric-emphasis">
@@ -1283,8 +750,14 @@ async function renderCbcCurriculumEditor() {
           <option value="">Select learning area</option>
           ${subjectOptions.map((item) => `<option value="${escapeHtml(item)}">${escapeHtml(item)}</option>`).join("")}
         </select>
-        <label>Strand</label><input id="cbcStrand" placeholder="AI can suggest strand" />
-        <label>Sub-Strand</label><input id="cbcSubStrand" placeholder="AI can suggest sub-strand" />
+        <label>Strand</label>
+        <select id="cbcStrand">
+          <option value="">Select strand</option>
+        </select>
+        <label>Sub-Strand</label>
+        <select id="cbcSubStrand">
+          <option value="">Select sub-strand</option>
+        </select>
         <label>Learning Outcomes</label><textarea id="cbcLearningOutcomes" rows="3"></textarea>
         <label>Assessment Rubric</label><textarea id="cbcAssessmentRubric" rows="3"></textarea>
         <label>Learning Experiences</label><textarea id="cbcLearningExperiences" rows="3"></textarea>
@@ -1312,41 +785,30 @@ async function renderCbcCurriculumEditor() {
         <button id="amendCbcMaterialButton">Amend Material</button>
         <button id="refreshCbcEditorButton">Refresh</button>
       </div>
-      ${buildDashboardTable(
-        ["ID", "Grade", "Form", "Learning Area", "Strand", "Sub-Strand", "Term", "Year", "Created"],
-        list.slice(0, 300).map((row) => [
-          row.id,
-          row.grade || "-",
-          row.form_name || "-",
-          row.learning_area || "-",
-          row.strand || "-",
-          row.sub_strand || "-",
-          row.term || "-",
-          row.year || "-",
-          formatDateTime(row.created_at)
-        ])
-      )}
-      ${buildDashboardTable(
-        ["Material ID", "Type", "Title", "Grade", "Form", "Term", "Strand", "Sub-Strand", "File", "Created"],
-        materialRows.slice(0, 300).map((row) => [
-          row.id,
-          row.resource_type || "-",
-          row.title || "-",
-          row.grade || "-",
-          row.form_name || "-",
-          row.term || "-",
-          row.strand || "-",
-          row.sub_strand || "-",
-          row.file_path || "-",
-          formatDateTime(row.created_at)
-        ])
-      )}
     `;
     const head = document.getElementById("tableHead");
     const body = document.getElementById("tableBody");
     if (head && body) {
-      head.innerHTML = "";
-      body.innerHTML = "";
+      head.innerHTML = "<tr><th>ID</th><th>Grade</th><th>Form</th><th>Learning Area</th><th>Strand</th><th>Sub-Strand</th><th>Term</th><th>Year</th><th>Created</th></tr>";
+      body.innerHTML = list
+        .slice(0, 300)
+        .map(
+          (row) => `<tr>
+            <td>${escapeHtml(String(row.id || "-"))}</td>
+            <td>${escapeHtml(row.grade || "-")}</td>
+            <td>${escapeHtml(row.form_name || "-")}</td>
+            <td>${escapeHtml(row.learning_area || "-")}</td>
+            <td>${escapeHtml(row.strand || "-")}</td>
+            <td>${escapeHtml(row.sub_strand || "-")}</td>
+            <td>${escapeHtml(row.term || "-")}</td>
+            <td>${escapeHtml(String(row.year || "-"))}</td>
+            <td>${escapeHtml(formatDateTime(row.created_at))}</td>
+          </tr>`
+        )
+        .join("");
+      if (!list.length) {
+        resetDataTable("No CBC curriculum entries available yet.");
+      }
     }
     document.getElementById("saveCbcEntryButton")?.addEventListener("click", async () => {
       const payload = {
@@ -1363,8 +825,8 @@ async function renderCbcCurriculumEditor() {
         term: document.getElementById("cbcTerm")?.value || "",
         year: Number(document.getElementById("cbcYear")?.value || 0) || null
       };
-      if (!payload.grade || !payload.learning_area || !payload.strand) {
-        alert("Grade, learning area, and strand are required.");
+      if ((!payload.grade && !payload.form_name) || !payload.learning_area || !payload.strand) {
+        alert("Choose grade or form, plus learning area and strand.");
         return;
       }
       try {
@@ -1378,41 +840,83 @@ async function renderCbcCurriculumEditor() {
         alert(error.message);
       }
     });
-    document.getElementById("generateCbcStructureButton")?.addEventListener("click", async () => {
+    const gradeEl = document.getElementById("cbcGrade");
+    const formEl = document.getElementById("cbcFormName");
+    const learningAreaEl = document.getElementById("cbcLearningArea");
+    const strandEl = document.getElementById("cbcStrand");
+    const subStrandEl = document.getElementById("cbcSubStrand");
+    let strandMap = {};
+
+    function setSelectOptions(selectEl, options, placeholder) {
+      if (!selectEl) return;
+      selectEl.innerHTML = `<option value="">${escapeHtml(placeholder)}</option>${options
+        .map((item) => `<option value="${escapeHtml(item)}">${escapeHtml(item)}</option>`)
+        .join("")}`;
+    }
+
+    async function refreshStructureFromAi() {
       const payload = {
-        grade: document.getElementById("cbcGrade")?.value || "",
-        learning_area: document.getElementById("cbcLearningArea")?.value || ""
+        grade: gradeEl?.value || "",
+        form_name: formEl?.value || "",
+        learning_area: learningAreaEl?.value || ""
       };
-      if (!payload.grade || !payload.learning_area) {
-        alert("Select grade and learning area first.");
+      if ((!payload.grade && !payload.form_name) || !payload.learning_area) {
         return;
       }
+      const result = await request("/api/cbc/curriculum/ai-suggest-structure", {
+        method: "POST",
+        body: JSON.stringify(payload)
+      });
+      strandMap = result.sub_strand_options_by_strand || {};
+      const strands = Array.isArray(result.strand_options) ? result.strand_options : [];
+      setSelectOptions(strandEl, strands, "Select strand");
+      if (result.strand) {
+        strandEl.value = result.strand;
+      }
+      const subOptions = Array.isArray(strandMap[strandEl.value]) ? strandMap[strandEl.value] : [];
+      setSelectOptions(subStrandEl, subOptions, "Select sub-strand");
+      if (result.sub_strand) {
+        subStrandEl.value = result.sub_strand;
+      }
+      if (!document.getElementById("cbcLearningOutcomes").value) {
+        document.getElementById("cbcLearningOutcomes").value = result.learning_outcomes || "";
+      }
+      if (!document.getElementById("cbcAssessmentRubric").value) {
+        document.getElementById("cbcAssessmentRubric").value = result.assessment_rubric || "";
+      }
+      if (!document.getElementById("cbcResourcesReference").value) {
+        document.getElementById("cbcResourcesReference").value = (result.textbook_references || []).join("\n");
+      }
+      if (!document.getElementById("cbcNotes").value) {
+        document.getElementById("cbcNotes").value = result.generated_notes || "";
+      }
+    }
+
+    gradeEl?.addEventListener("change", refreshStructureFromAi);
+    formEl?.addEventListener("change", refreshStructureFromAi);
+    learningAreaEl?.addEventListener("change", refreshStructureFromAi);
+    strandEl?.addEventListener("change", () => {
+      const subOptions = Array.isArray(strandMap[strandEl.value]) ? strandMap[strandEl.value] : [];
+      setSelectOptions(subStrandEl, subOptions, "Select sub-strand");
+    });
+
+    document.getElementById("generateCbcStructureButton")?.addEventListener("click", async () => {
       try {
-        const result = await request("/api/cbc/curriculum/ai-suggest-structure", {
-          method: "POST",
-          body: JSON.stringify(payload)
-        });
-        document.getElementById("cbcStrand").value = result.strand || "";
-        document.getElementById("cbcSubStrand").value = result.sub_strand || "";
-        if (!document.getElementById("cbcLearningOutcomes").value) {
-          document.getElementById("cbcLearningOutcomes").value = result.learning_outcomes || "";
-        }
-        if (!document.getElementById("cbcAssessmentRubric").value) {
-          document.getElementById("cbcAssessmentRubric").value = result.assessment_rubric || "";
-        }
+        await refreshStructureFromAi();
       } catch (error) {
         alert(error.message);
       }
     });
     document.getElementById("generateCbcNotesButton")?.addEventListener("click", async () => {
       const payload = {
-        grade: document.getElementById("cbcGrade")?.value || "",
-        learning_area: document.getElementById("cbcLearningArea")?.value || "",
-        strand: document.getElementById("cbcStrand")?.value || "",
-        sub_strand: document.getElementById("cbcSubStrand")?.value || ""
+        grade: gradeEl?.value || "",
+        form_name: formEl?.value || "",
+        learning_area: learningAreaEl?.value || "",
+        strand: strandEl?.value || "",
+        sub_strand: subStrandEl?.value || ""
       };
-      if (!payload.grade || !payload.learning_area || !payload.strand) {
-        alert("Grade, learning area and strand are required for AI notes.");
+      if ((!payload.grade && !payload.form_name) || !payload.learning_area || !payload.strand) {
+        alert("Choose grade or form, plus learning area and strand.");
         return;
       }
       try {
@@ -1421,13 +925,19 @@ async function renderCbcCurriculumEditor() {
           body: JSON.stringify(payload)
         });
         document.getElementById("cbcNotes").value = result.generated_notes || "";
+        if (Array.isArray(result.textbook_references) && result.textbook_references.length) {
+          document.getElementById("cbcResourcesReference").value = result.textbook_references.join("\n");
+        }
       } catch (error) {
         alert(error.message);
       }
     });
     document.getElementById("printCbcNotesButton")?.addEventListener("click", () => {
       const notes = document.getElementById("cbcNotes")?.value || "";
-      if (!notes.trim()) return alert("No notes to print.");
+      if (!notes.trim()) {
+        alert("No notes to print.");
+        return;
+      }
       const popup = window.open("", "_blank");
       popup.document.write(`<pre>${escapeHtml(notes)}</pre>`);
       popup.document.close();
@@ -1435,7 +945,10 @@ async function renderCbcCurriculumEditor() {
     });
     document.getElementById("downloadCbcNotesButton")?.addEventListener("click", () => {
       const notes = document.getElementById("cbcNotes")?.value || "";
-      if (!notes.trim()) return alert("No notes to download.");
+      if (!notes.trim()) {
+        alert("No notes to download.");
+        return;
+      }
       const blob = new Blob([notes], { type: "text/plain;charset=utf-8" });
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
@@ -1446,14 +959,17 @@ async function renderCbcCurriculumEditor() {
     });
     document.getElementById("uploadCbcMaterialButton")?.addEventListener("click", async () => {
       const file = document.getElementById("cbcMaterialFile")?.files?.[0];
-      if (!file) return alert("Select a material file first.");
+      if (!file) {
+        alert("Select a material file first.");
+        return;
+      }
       const formData = new FormData();
       formData.append("file", file);
-      formData.append("grade", document.getElementById("cbcGrade")?.value || "");
-      formData.append("form_name", document.getElementById("cbcFormName")?.value || "");
-      formData.append("learning_area", document.getElementById("cbcLearningArea")?.value || "");
-      formData.append("strand", document.getElementById("cbcStrand")?.value || "");
-      formData.append("sub_strand", document.getElementById("cbcSubStrand")?.value || "");
+      formData.append("grade", gradeEl?.value || "");
+      formData.append("form_name", formEl?.value || "");
+      formData.append("learning_area", learningAreaEl?.value || "");
+      formData.append("strand", strandEl?.value || "");
+      formData.append("sub_strand", subStrandEl?.value || "");
       formData.append("term", document.getElementById("cbcTerm")?.value || "");
       formData.append("year", document.getElementById("cbcYear")?.value || "");
       formData.append("title", file.name);
@@ -1489,20 +1005,6 @@ async function renderCbcCurriculumEditor() {
       }
     });
     document.getElementById("refreshCbcEditorButton")?.addEventListener("click", renderCbcCurriculumEditor);
-    document.getElementById("downloadCbcNotesButton")?.addEventListener("click", () => {
-      const notes = String(document.getElementById("cbcGeneratedNotes")?.value || "").trim();
-      if (!notes) {
-        alert("Generate or type notes first.");
-        return;
-      }
-      const blob = new Blob([notes], { type: "text/plain;charset=utf-8" });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = "cbc-cbe-simplified-notes.txt";
-      a.click();
-      URL.revokeObjectURL(url);
-    });
   } catch (error) {
     alert(error.message);
   }
@@ -2262,21 +1764,6 @@ async function loadModuleData(config) {
   }
 }
 
-function clearDashboardAutoRefresh() {
-  if (dashboardRefreshTimer) {
-    clearInterval(dashboardRefreshTimer);
-    dashboardRefreshTimer = null;
-  }
-}
-
-function ensureDashboardAutoRefresh() {
-  clearDashboardAutoRefresh();
-  dashboardRefreshTimer = setInterval(async () => {
-    if (currentModule !== "dashboard" || document.visibilityState !== "visible") return;
-    await loadDashboard();
-  }, 2000);
-}
-
 async function dispatchCommunicationMessage(id) {
   if (!id) return;
   try {
@@ -2549,8 +2036,8 @@ function renderCrudModule(moduleKey) {
   loadModuleData(config);
 }
 
-function renderDashboardCards(stats, dashboardSignals = {}) {
-  const metricCards = Object.entries(stats)
+function renderDashboardCards(stats) {
+  document.getElementById("cards").innerHTML = Object.entries(stats)
     .map(
       ([key, value]) => `
       <div class="card stats-card metric-card metric-${escapeHtml(key)}">
@@ -2560,161 +2047,14 @@ function renderDashboardCards(stats, dashboardSignals = {}) {
     `
     )
     .join("");
-  document.getElementById("cards").innerHTML = metricCards;
-}
-
-function parseAcademicYearStart(value) {
-  const cleaned = String(value || "").trim();
-  const [startRaw] = cleaned.split("/");
-  const start = Number(startRaw);
-  return Number.isFinite(start) ? start : new Date().getFullYear();
-}
-
-function getTermMatches(termText, termLabel) {
-  const normalizedTerm = String(termText || "").trim().toLowerCase();
-  const normalizedLabel = String(termLabel || "").trim().toLowerCase();
-  if (!normalizedTerm || !normalizedLabel) return false;
-  if (normalizedTerm === normalizedLabel) return true;
-  const compactTerm = normalizedTerm.replace(/\s+/g, "");
-  const compactLabel = normalizedLabel.replace(/\s+/g, "");
-  if (compactTerm === compactLabel) return true;
-  const termNumberFromLabel = normalizedLabel.includes("one")
-    ? "1"
-    : normalizedLabel.includes("two")
-      ? "2"
-      : normalizedLabel.includes("three")
-        ? "3"
-        : "";
-  return Boolean(termNumberFromLabel) && (compactTerm === `term${termNumberFromLabel}` || compactTerm === termNumberFromLabel);
-}
-
-function computeFinanceTermSummary(data, selectedAcademicYear, selectedTerm) {
-  const yearStart = parseAcademicYearStart(selectedAcademicYear);
-  const feeSummary = data?.feeCollectionSummary || {};
-  const attendanceRows = Array.isArray(data?.dailyAttendanceList) ? data.dailyAttendanceList : [];
-  const payments = Array.isArray(feeSummary.recentPayments) ? feeSummary.recentPayments : [];
-
-  let capitationReceived = 0;
-  let feePaid = 0;
-  let grantOther = 0;
-  let liabilities = 0;
-
-  // Approximate capitation from learner population; refined in finance module data entry.
-  const learnerPopulation = Number(data?.stats?.totalLearners || 0);
-  const termFactor = selectedTerm === "Term One" ? 1 : selectedTerm === "Term Two" ? 0.9 : 0.85;
-  capitationReceived = learnerPopulation * 1200 * termFactor;
-
-  payments.forEach((row) => {
-    const paymentDateRaw = String(row?.payment_date || "");
-    const paymentYear = Number(paymentDateRaw.slice(0, 4));
-    if (paymentYear === yearStart || paymentYear === yearStart + 1) {
-      feePaid += Number(row?.amount_paid || 0);
-    }
-  });
-
-  grantOther = capitationReceived * 0.2;
-  liabilities = Math.max(0, Number(feeSummary.outstandingBalanceTotal || 0));
-  const availableBalance = Math.max(0, capitationReceived + feePaid + grantOther - liabilities);
-  const outstandingBalance = Math.max(0, liabilities - (feePaid * 0.15));
-
-  const transferredLearners = attendanceRows.filter((row) => {
-    const status = String(row?.status || "").toLowerCase();
-    const reason = String(row?.reason || "").toLowerCase();
-    return status.includes("transfer") || reason.includes("transfer");
-  }).length;
-
-  return {
-    capitationReceived,
-    feePaid,
-    grantOther,
-    liabilities,
-    availableBalance,
-    outstandingBalance,
-    transferredLearners
-  };
-}
-
-function getWelcomeIdentity(meData, data) {
-  const institutionName = String(data?.institution_name || meData?.institution_name || "INSTITUTION").toUpperCase();
-  const institutionCode = String(
-    data?.institution_code || meData?.institution_code || meData?.institution_id || ""
-  ).trim();
-  const userName = String(meData?.full_name || meData?.username || "Default System Administrator").trim();
-  const role = String(meData?.role || portalContext?.role || "").trim().toUpperCase();
-  const roleLabels = {
-    SYSTEM_DEVELOPER: "SYSTEM DEVELOPER",
-    ADMIN: "HoI/Administrator",
-    HEAD_OF_INSTITUTION: "Head of Institution",
-    TEACHER: "Teacher",
-    NON_TEACHING_STAFF: "Support Staff",
-    BOM: "BoM Member",
-    PARENT: "Parent/Guardian",
-    SUPPLIER: "Supplier",
-    MOD: "MoE",
-    TSC: "TSC",
-    LEARNER: "Learner"
-  };
-  const roleLabel = String(roleLabels[role] || toLabel(role || "User")).toUpperCase();
-  if (role === "SYSTEM_DEVELOPER") {
-    return "MWENDEGU ENTERPRISE LIMITED-254001-Mr.EDWIN ONYANGO-SYSTEM DEVELOPER";
-  }
-  return `TO ${institutionName}${institutionCode ? `-${institutionCode}` : ""}-${userName}-${roleLabel}`;
-}
-
-function refreshDashboardFinanceSummary(data, meData) {
-  const yearSelect = document.getElementById("dashboardAcademicYear");
-  const termSelect = document.getElementById("dashboardTerm");
-  const wrapper = document.getElementById("dashboardFinanceSummary");
-  const transferredCountEl = document.getElementById("dashboardTransferredCount");
-  if (!yearSelect || !termSelect || !wrapper) return;
-
-  const summary = computeFinanceTermSummary(data, yearSelect.value, termSelect.value);
-  if (transferredCountEl) {
-    transferredCountEl.textContent = formatNumber(summary.transferredLearners);
-  }
-
-  wrapper.innerHTML = `
-    <div class="stats-card metric-card metric-capitation">
-      <h4>Capitation Received</h4>
-      <p>${formatMoney(summary.capitationReceived)}</p>
-    </div>
-    <div class="stats-card metric-card metric-feepaid">
-      <h4>Fee Paid</h4>
-      <p>${formatMoney(summary.feePaid)}</p>
-    </div>
-    <div class="stats-card metric-card metric-grant">
-      <h4>Grant / Other</h4>
-      <p>${formatMoney(summary.grantOther)}</p>
-    </div>
-    <div class="stats-card metric-card metric-available">
-      <h4>Available Balance</h4>
-      <p>${formatMoney(summary.availableBalance)}</p>
-    </div>
-    <div class="stats-card metric-card metric-outstanding">
-      <h4>Outstanding Balance</h4>
-      <p>${formatMoney(summary.outstandingBalance)}</p>
-    </div>
-    <div class="stats-card metric-card metric-liability">
-      <h4>Liabilities</h4>
-      <p>${formatMoney(summary.liabilities)}</p>
-    </div>
-  `;
-
-  const welcomeLine = document.getElementById("dashboardWelcomeLine");
-  if (welcomeLine) {
-    welcomeLine.textContent = `WELCOME ${escapeHtml(getWelcomeIdentity(meData, data))}`;
-  }
 }
 
 async function loadDashboard() {
   setActiveSidebarButton("dashboard");
   document.getElementById("moduleTitle").textContent = "Dashboard";
   try {
-    const [data, meData] = await Promise.all([request("/api/dashboard/summary"), request("/api/auth/me")]);
-    renderDashboardCards(data.stats || {}, {
-      alertsCount: Array.isArray(data.alerts) ? data.alerts.length : 0,
-      announcementsCount: Array.isArray(data.announcements) ? data.announcements.length : 0
-    });
+    const data = await request("/api/dashboard/summary");
+    renderDashboardCards(data.stats || {});
     const attendanceRows = (data.dailyAttendanceList || []).slice(0, 40).map((row) => [
       row.attendance_type || "-",
       row.person_name || "-",
@@ -2777,61 +2117,27 @@ async function loadDashboard() {
       `
       )
       .join("");
+    const logRows = (data.systemActivityLogs || []).map((row) => [
+      formatDateTime(row.created_at),
+      row.actor_role || "-",
+      row.action || "-",
+      row.entity_name || "-",
+      row.entity_id || "-"
+    ]);
     const feeSummary = data.feeCollectionSummary || {};
-    const selectedAcademicYear = DASHBOARD_ACADEMIC_YEARS.includes(data?.selectedAcademicYear)
-      ? data.selectedAcademicYear
-      : DASHBOARD_ACADEMIC_YEARS[0];
-    const selectedTerm = DASHBOARD_TERMS.includes(data?.selectedTerm) ? data.selectedTerm : DASHBOARD_TERMS[0];
-
-    const welcomeMetaMarkup = `
-      <div>
-        <h3 id="dashboardWelcomeLine">WELCOME</h3>
-        <p class="small-note">Monitor academics, attendance, finance, alerts, and activity in one place.</p>
-      </div>
-      <div class="dashboard-hero-meta">
-        <span class="tag">Portal: ${escapeHtml(portalContext?.portal || "-")}</span>
-        <span class="tag">Role: ${escapeHtml(portalContext?.role || "-")}</span>
-        <span class="tag">Generated: ${escapeHtml(formatDateTime(data.generated_at))}</span>
-      </div>
-    `;
-    const topBannerEl = document.getElementById("dashboardWelcomeTop");
-    if (topBannerEl) {
-      topBannerEl.innerHTML = welcomeMetaMarkup;
-    }
-
-    const topAlertsEl = document.getElementById("dashboardTopArea");
-    if (topAlertsEl) {
-      topAlertsEl.innerHTML = `
-        <section class="dashboard-section dashboard-alerts-priority">
-          <h3>Alerts & Announcements</h3>
-          <h4>System Alerts</h4>
-          <div class="dashboard-alerts">
-            ${alertsMarkup || '<p class="small-note">No alerts for today.</p>'}
-          </div>
-          <h4>Active Announcements</h4>
-          <div class="dashboard-announcements">
-            ${announcementMarkup || '<p class="small-note">No active announcements.</p>'}
-          </div>
-        </section>
-      `;
-    }
-
     document.getElementById("formArea").innerHTML = `
+      <section class="dashboard-hero">
+        <div>
+          <h3>Institution Performance Cockpit</h3>
+          <p class="small-note">Monitor academics, attendance, finance, alerts, and activity in one place.</p>
+        </div>
+        <div class="dashboard-hero-meta">
+          <span class="tag">Portal: ${escapeHtml(portalContext?.portal || "-")}</span>
+          <span class="tag">Role: ${escapeHtml(portalContext?.role || "-")}</span>
+          <span class="tag">Generated: ${escapeHtml(formatDateTime(data.generated_at))}</span>
+        </div>
+      </section>
       <div class="dashboard-grid">
-        <section class="dashboard-section">
-          <h3>Academic Session Finance Synchronization</h3>
-          <div class="form-grid">
-            <label>Academic Year</label>
-            <select id="dashboardAcademicYear">
-              ${DASHBOARD_ACADEMIC_YEARS.map((year) => `<option value="${escapeHtml(year)}" ${year === selectedAcademicYear ? "selected" : ""}>${escapeHtml(year)}</option>`).join("")}
-            </select>
-            <label>Term</label>
-            <select id="dashboardTerm">
-              ${DASHBOARD_TERMS.map((term) => `<option value="${escapeHtml(term)}" ${term === selectedTerm ? "selected" : ""}>${escapeHtml(term)}</option>`).join("")}
-            </select>
-          </div>
-          <div id="dashboardFinanceSummary" class="cards dashboard-finance-cards"></div>
-        </section>
         <section class="dashboard-section">
           <h3>Daily Attendance List</h3>
           <p class="small-note">Showing up to 40 latest records for today.</p>
@@ -2865,19 +2171,23 @@ async function loadDashboard() {
           <h4>Learners with Outstanding Balances</h4>
           ${buildDashboardTable(["Learner", "Adm No", "Grade", "Stream", "Balance"], outstandingRows)}
         </section>
+        <section class="dashboard-section">
+          <h3>Alerts & Announcements</h3>
+          <h4>System Alerts</h4>
+          <div class="dashboard-alerts">
+            ${alertsMarkup || '<p class="small-note">No alerts for today.</p>'}
+          </div>
+          <h4>Active Announcements</h4>
+          <div class="dashboard-announcements">
+            ${announcementMarkup || '<p class="small-note">No active announcements.</p>'}
+          </div>
+        </section>
+        <section class="dashboard-section">
+          <h3>System Activity Logs</h3>
+          ${buildDashboardTable(["When", "Actor Role", "Action", "Entity", "Entity ID"], logRows)}
+        </section>
       </div>
     `;
-    const transferredCard = document.querySelector(".metric-totalTransferred p");
-    if (transferredCard) {
-      transferredCard.id = "dashboardTransferredCount";
-    }
-    refreshDashboardFinanceSummary(data, meData);
-    document.getElementById("dashboardAcademicYear")?.addEventListener("change", () => {
-      refreshDashboardFinanceSummary(data, meData);
-    });
-    document.getElementById("dashboardTerm")?.addEventListener("change", () => {
-      refreshDashboardFinanceSummary(data, meData);
-    });
     document.getElementById("tableHead").innerHTML = "";
     document.getElementById("tableBody").innerHTML = "";
   } catch (error) {
@@ -3072,153 +2382,21 @@ async function globalSearch() {
   }
 }
 
-async function openProfileCenter() {
-  setActiveSidebarButton(null);
-  document.getElementById("moduleTitle").textContent = "Profile";
+async function changeCredentials() {
+  const currentPassword = prompt("Enter current password:");
+  if (!currentPassword) return;
+  const newUsername = prompt("Enter new username (optional):") || null;
+  const newPassword = prompt("Enter new password (optional):") || null;
   try {
-    const meData = await request("/api/auth/me");
-    const role = String(meData?.role || "");
-    const otpOptional = ["SYSTEM_DEVELOPER", "ADMIN"].includes(role);
-    const displayName = meData?.full_name || meData?.username || "User";
-    const initials = String(displayName)
-      .split(/\s+/)
-      .filter(Boolean)
-      .map((part) => part[0])
-      .join("")
-      .slice(0, 2)
-      .toUpperCase() || "U";
-    document.getElementById("cards").innerHTML = `
-      <div class="card stats-card metric-emphasis">
-        <h4>Profile Center</h4>
-        <p>${escapeHtml(displayName)}</p>
-      </div>
-      <div class="card stats-card">
-        <h4>Role</h4>
-        <p>${escapeHtml(role || "-")}</p>
-      </div>
-      <div class="card stats-card">
-        <h4>Institution</h4>
-        <p>${escapeHtml(meData?.institution_name || "-")}</p>
-      </div>
-    `;
-    document.getElementById("formArea").innerHTML = `
-      <div class="profile-center-grid">
-        <section class="profile-card">
-          <div class="profile-avatar">${escapeHtml(initials)}</div>
-          <h3>${escapeHtml(displayName)}</h3>
-          <p><strong>Username:</strong> ${escapeHtml(meData?.username || "-")}</p>
-          <p><strong>Email:</strong> ${escapeHtml(meData?.email || "-")}</p>
-          <p><strong>Phone:</strong> ${escapeHtml(meData?.phone || "-")}</p>
-          <p><strong>Institution:</strong> ${escapeHtml(meData?.institution_name || "-")}</p>
-          <p><strong>Role:</strong> ${escapeHtml(role || "-")}</p>
-        </section>
-        <section class="profile-edit-card">
-          <h3>Update Profile Contacts & Password</h3>
-          <p class="small-note">
-            ${otpOptional
-    ? "As System Developer/HoI Administrator, you can update profile without OTP."
-    : "OTP verification is required for updating email, phone, or password."}
-          </p>
-          <div class="form-grid">
-            <label>Current Password *</label>
-            <input id="profileCurrentPassword" type="password" placeholder="Current password" />
-            <label>New Email (optional)</label>
-            <input id="profileNewEmail" type="email" placeholder="new-email@example.com" />
-            <label>New Phone (optional)</label>
-            <input id="profileNewPhone" placeholder="+2547..." />
-            <label>New Password (optional)</label>
-            <input id="profileNewPassword" type="password" placeholder="New password" />
-            <label>Confirm New Password</label>
-            <input id="profileConfirmPassword" type="password" placeholder="Confirm new password" />
-            <label>OTP Channel</label>
-            <select id="profileOtpChannel">
-              <option value="sms_email">SMS & Email</option>
-              <option value="email">Email</option>
-              <option value="sms">SMS</option>
-              <option value="console">Console</option>
-            </select>
-            <label>OTP Code ${otpOptional ? "(optional)" : "*"}</label>
-            <input id="profileOtpCode" placeholder="Enter OTP code" />
-          </div>
-          <div class="actions-row">
-            <button id="profileSendOtpButton">Send OTP</button>
-            <button id="profileSaveButton">Save Profile Changes</button>
-          </div>
-          <p id="profileActionNotice" class="small-note"></p>
-        </section>
-      </div>
-    `;
-    document.getElementById("tableHead").innerHTML = "";
-    document.getElementById("tableBody").innerHTML = "";
-
-    document.getElementById("profileSendOtpButton")?.addEventListener("click", async () => {
-      const currentPassword = String(document.getElementById("profileCurrentPassword")?.value || "");
-      const otpChannel = String(document.getElementById("profileOtpChannel")?.value || "sms_email");
-      const newEmail = String(document.getElementById("profileNewEmail")?.value || "").trim();
-      const newPhone = String(document.getElementById("profileNewPhone")?.value || "").trim();
-      const newPassword = String(document.getElementById("profileNewPassword")?.value || "");
-      const confirmPassword = String(document.getElementById("profileConfirmPassword")?.value || "");
-      const notice = document.getElementById("profileActionNotice");
-      if (!currentPassword) {
-        if (notice) notice.textContent = "Current password is required.";
-        return;
-      }
-      if (newPassword && newPassword !== confirmPassword) {
-        if (notice) notice.textContent = "New password and confirm password must match.";
-        return;
-      }
-      try {
-        const result = await request("/api/profile/change-credentials", {
-          method: "POST",
-          body: JSON.stringify({
-            mode: "request_otp",
-            current_password: currentPassword,
-            new_email: newEmail || null,
-            new_phone: newPhone || null,
-            new_password: newPassword || null,
-            otp_channel: otpChannel
-          })
-        });
-        if (notice) notice.textContent = result?.message || "OTP sent.";
-      } catch (error) {
-        if (notice) notice.textContent = error.message;
-      }
+    await request("/api/profile/change-credentials", {
+      method: "POST",
+      body: JSON.stringify({
+        current_password: currentPassword,
+        new_username: newUsername,
+        new_password: newPassword
+      })
     });
-
-    document.getElementById("profileSaveButton")?.addEventListener("click", async () => {
-      const currentPassword = String(document.getElementById("profileCurrentPassword")?.value || "");
-      const otpCode = String(document.getElementById("profileOtpCode")?.value || "").trim();
-      const newEmail = String(document.getElementById("profileNewEmail")?.value || "").trim();
-      const newPhone = String(document.getElementById("profileNewPhone")?.value || "").trim();
-      const newPassword = String(document.getElementById("profileNewPassword")?.value || "");
-      const confirmPassword = String(document.getElementById("profileConfirmPassword")?.value || "");
-      const notice = document.getElementById("profileActionNotice");
-      if (!currentPassword) {
-        if (notice) notice.textContent = "Current password is required.";
-        return;
-      }
-      if (newPassword && newPassword !== confirmPassword) {
-        if (notice) notice.textContent = "New password and confirm password must match.";
-        return;
-      }
-      try {
-        const result = await request("/api/profile/change-credentials", {
-          method: "POST",
-          body: JSON.stringify({
-            mode: "apply_changes",
-            current_password: currentPassword,
-            otp_code: otpCode || null,
-            new_email: newEmail || null,
-            new_phone: newPhone || null,
-            new_password: newPassword || null
-          })
-        });
-        if (notice) notice.textContent = result?.message || "Profile updated successfully.";
-        alert("Profile updated successfully.");
-      } catch (error) {
-        if (notice) notice.textContent = error.message;
-      }
-    });
+    alert("Credentials updated successfully.");
   } catch (error) {
     alert(error.message);
   }
@@ -3296,7 +2474,7 @@ function bindTopbarButtons() {
   });
   document
     .getElementById("changeCredentialsButton")
-    .addEventListener("click", openProfileCenter);
+    .addEventListener("click", changeCredentials);
   const heroButton = document.getElementById("updateHeroImageButton");
   const heroInput = document.getElementById("heroImageInput");
   const canManageHeroImage = ["SYSTEM_DEVELOPER", "ADMIN", "HEAD_OF_INSTITUTION"].includes(
@@ -3391,7 +2569,17 @@ async function init() {
     const meData = await request("/api/auth/me");
     document.getElementById("portalLabel").textContent = `${portalData.portal} (${portalData.role})`;
     const buildLineEl = document.getElementById("iimsBuildLineDash");
-    if (buildLineEl) buildLineEl.textContent = "";
+    if (buildLineEl) {
+      fetch("/api/build-info")
+        .then((r) => (r.ok ? r.json() : null))
+        .then((data) => {
+          const stamp = data?.build_stamp;
+          buildLineEl.textContent = stamp ? `Release ${stamp} · UI v20` : "";
+        })
+        .catch(() => {
+          buildLineEl.textContent = "";
+        });
+    }
     bindSidebar();
     bindTopbarButtons();
     bindQuickActionCards();

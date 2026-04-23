@@ -98,6 +98,7 @@ CREATE TABLE IF NOT EXISTS cbc_curriculum_entries (
   id BIGINT PRIMARY KEY AUTO_INCREMENT,
   institution_id BIGINT NOT NULL,
   grade VARCHAR(60) NOT NULL,
+  form_name VARCHAR(60) NULL,
   learning_area VARCHAR(180) NOT NULL,
   strand VARCHAR(180) NOT NULL,
   sub_strand VARCHAR(180) NULL,

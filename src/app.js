@@ -44,6 +44,7 @@ const { hashPassword, verifyPassword } = require("./utils/password");
 const { sendSimplePdf, sendSimpleExcel } = require("./services/exportService");
 const { generateOtpCode, buildOtpExpiry, sendOtp } = require("./services/otpService");
 const { buildSearchWhere } = require("./utils/sql");
+const { buildCbcSuggestion, makeNotes } = require("./config/cbcLibrary");
 
 /** Bump when shipping UI/API changes so schools can confirm they run the right copy. */
 const IIMS_BUILD_STAMP = process.env.IIMS_BUILD_STAMP || "20260422-ui9";
@@ -4917,6 +4918,7 @@ app.post(
   asyncHandler(async (req, res) => {
     const data = pickFields(req.body, [
       "grade",
+      "form_name",
       "learning_area",
       "strand",
       "sub_strand",
@@ -4929,8 +4931,8 @@ app.post(
       "year",
       "notes"
     ]);
-    if (!cleanValue(data.grade) || !cleanValue(data.learning_area) || !cleanValue(data.strand)) {
-      return res.status(400).json({ error: "grade, learning_area and strand are required." });
+    if ((!cleanValue(data.grade) && !cleanValue(data.form_name)) || !cleanValue(data.learning_area) || !cleanValue(data.strand)) {
+      return res.status(400).json({ error: "grade or form_name, learning_area and strand are required." });
     }
     data.institution_id = req.user.institution_id;
     data.created_by_user_id = req.user.id;
@@ -4956,6 +4958,7 @@ app.put(
     if (!entryId) return res.status(400).json({ error: "Valid curriculum entry id is required." });
     const data = pickFields(req.body, [
       "grade",
+      "form_name",
       "learning_area",
       "strand",
       "sub_strand",
@@ -5016,6 +5019,159 @@ app.delete(
     );
     await auditLog(req.user, "DELETE_CBC_CURRICULUM_ENTRY", "cbc_curriculum_entries", entryId);
     res.json({ message: "CBC curriculum entry moved to recycle bin." });
+  })
+);
+
+app.post(
+  "/api/cbc/curriculum/ai-suggest-structure",
+  auth,
+  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER]),
+  enforcePermission(PERMISSIONS.CREATE),
+  asyncHandler(async (req, res) => {
+    const grade = cleanValue(req.body?.grade);
+    const formName = cleanValue(req.body?.form_name);
+    const learningArea = cleanValue(req.body?.learning_area);
+    if ((!grade && !formName) || !learningArea) {
+      return res.status(400).json({ error: "grade or form_name and learning_area are required." });
+    }
+    const suggestion = buildCbcSuggestion({ grade, formName, learningArea });
+    await auditLog(req.user, "GENERATE_CBC_AI_STRUCTURE", "cbc_curriculum_entries", null, {
+      grade: grade || null,
+      form_name: formName || null,
+      learning_area: learningArea
+    });
+    res.json(suggestion);
+  })
+);
+
+app.post(
+  "/api/cbc/curriculum/ai-generate-notes",
+  auth,
+  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER]),
+  enforcePermission(PERMISSIONS.CREATE),
+  asyncHandler(async (req, res) => {
+    const grade = cleanValue(req.body?.grade);
+    const formName = cleanValue(req.body?.form_name);
+    const learningArea = cleanValue(req.body?.learning_area);
+    const strand = cleanValue(req.body?.strand);
+    const subStrand = cleanValue(req.body?.sub_strand);
+    if ((!grade && !formName) || !learningArea || !strand) {
+      return res.status(400).json({ error: "grade or form_name, learning_area and strand are required." });
+    }
+    const fallbackStructure = buildCbcSuggestion({ grade, formName, learningArea });
+    const resolvedSubStrand = subStrand || fallbackStructure.sub_strand;
+    const generated = makeNotes({
+      grade,
+      formName,
+      learningArea,
+      strand,
+      subStrand: resolvedSubStrand
+    });
+    await auditLog(req.user, "GENERATE_CBC_AI_NOTES", "cbc_curriculum_entries", null, {
+      grade: grade || null,
+      form_name: formName || null,
+      learning_area: learningArea,
+      strand,
+      sub_strand: resolvedSubStrand
+    });
+    res.json({
+      message: "AI simplified notes generated successfully.",
+      generated_notes: generated,
+      textbook_references: fallbackStructure.textbook_references
+    });
+  })
+);
+
+app.get(
+  "/api/cbc/curriculum/materials",
+  auth,
+  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER]),
+  enforcePermission(PERMISSIONS.VIEW),
+  asyncHandler(async (req, res) => {
+    const rows = await query(
+      `SELECT id, resource_type, title, description, grade, stream AS form_name, term, strand, sub_strand, file_path, created_at
+       FROM teacher_resources
+       WHERE institution_id = ?
+       ORDER BY id DESC
+       LIMIT 300`,
+      [req.user.institution_id]
+    );
+    res.json(rows);
+  })
+);
+
+app.post(
+  "/api/cbc/curriculum/materials/upload",
+  auth,
+  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER]),
+  enforcePermission(PERMISSIONS.CREATE),
+  upload.single("file"),
+  asyncHandler(async (req, res) => {
+    const payload = pickFields(req.body, [
+      "resource_type",
+      "title",
+      "description",
+      "grade",
+      "form_name",
+      "term",
+      "strand",
+      "sub_strand"
+    ]);
+    if (!cleanValue(payload.title)) {
+      payload.title = req.file?.originalname || "CBC/CBE Material";
+    }
+    const result = await query(
+      `INSERT INTO teacher_resources
+       (institution_id, teacher_profile_id, resource_type, title, description, grade, stream, term, strand, sub_strand, file_path, auto_generated, created_by_user_id)
+       VALUES (?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)`,
+      [
+        req.user.institution_id,
+        cleanValue(payload.resource_type) || "CBC_CBE_MATERIAL_UPLOAD",
+        cleanValue(payload.title),
+        cleanOptionalValue(payload.description),
+        cleanOptionalValue(payload.grade),
+        cleanOptionalValue(payload.form_name),
+        cleanOptionalValue(payload.term),
+        cleanOptionalValue(payload.strand),
+        cleanOptionalValue(payload.sub_strand),
+        req.file ? `/uploads/${req.file.filename}` : null,
+        req.user.id
+      ]
+    );
+    await auditLog(req.user, "UPLOAD_CBC_CBE_MATERIAL", "teacher_resources", result.insertId, {
+      title: cleanValue(payload.title),
+      grade: cleanOptionalValue(payload.grade),
+      form_name: cleanOptionalValue(payload.form_name),
+      learning_area: cleanOptionalValue(req.body?.learning_area)
+    });
+    res.status(201).json({
+      id: result.insertId,
+      message: "Material uploaded successfully."
+    });
+  })
+);
+
+app.patch(
+  "/api/cbc/curriculum/materials/:id(\\d+)",
+  auth,
+  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER]),
+  enforcePermission(PERMISSIONS.UPDATE),
+  asyncHandler(async (req, res) => {
+    const materialId = Number(req.params.id);
+    if (!materialId) return res.status(400).json({ error: "Valid material id is required." });
+    const data = pickFields(req.body, ["title", "description"]);
+    const columns = Object.keys(data).filter((key) => cleanValue(data[key]) || data[key] === "");
+    if (!columns.length) {
+      return res.status(400).json({ error: "No editable fields provided." });
+    }
+    await query(
+      `UPDATE teacher_resources
+       SET ${columns.map((column) => `${column} = ?`).join(", ")}, updated_at = NOW()
+       WHERE id = ? AND institution_id = ?`,
+      [...columns.map((column) => cleanOptionalValue(data[column])), materialId, req.user.institution_id]
+    );
+    await auditLog(req.user, "UPDATE_CBC_CBE_MATERIAL", "teacher_resources", materialId, data);
+    res.json({ message: "Material updated." });
   })
 );
 
