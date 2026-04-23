@@ -781,6 +781,7 @@ async function renderCbcCurriculumEditor() {
         <button id="generateCbcNotesButton">Generate AI Notes</button>
         <button id="bulkGenerateCbcLibraryButton">Generate Full CBC Library</button>
         <button id="downloadCbcMappingTemplateButton">Download Mapping CSV Template</button>
+        <button id="downloadCbcWordTemplateButton">Download Word Template</button>
         <button id="importCbcMappingButton">Import Strand/Sub-Strand CSV</button>
         <button id="editCbcMappingButton">Edit Strand/Sub-Strand Mapping</button>
         <input id="cbcMappingFile" type="file" accept=".csv,text/csv" style="display:none;" />
@@ -789,6 +790,23 @@ async function renderCbcCurriculumEditor() {
         <button id="uploadCbcMaterialButton">Upload Material</button>
         <button id="amendCbcMaterialButton">Amend Material</button>
         <button id="refreshCbcEditorButton">Refresh</button>
+      </div>
+      <div class="module-header-card">
+        <h4>Manual Strand/Sub-Strand + Notes Entry</h4>
+        <p>Add your official mapping and notes manually, then save for AI and bulk generation.</p>
+      </div>
+      <div class="form-grid">
+        <label>Manual Learning Area</label>
+        <input id="manualCbcLearningArea" placeholder="e.g. Mathematics" />
+        <label>Manual Strand</label>
+        <input id="manualCbcStrand" placeholder="e.g. Numbers" />
+        <label>Manual Sub-Strand</label>
+        <input id="manualCbcSubStrand" placeholder="e.g. Fractions and Decimals" />
+        <label>Manual Notes</label>
+        <textarea id="manualCbcMappingNotes" rows="4" placeholder="Paste notes for this sub-strand"></textarea>
+      </div>
+      <div class="actions-row">
+        <button id="saveManualCbcMappingButton">Save Manual Mapping + Notes</button>
       </div>
     `;
     const head = document.getElementById("tableHead");
@@ -971,6 +989,12 @@ async function renderCbcCurriculumEditor() {
     document.getElementById("importCbcMappingButton")?.addEventListener("click", () => {
       document.getElementById("cbcMappingFile")?.click();
     });
+    document.getElementById("downloadCbcMappingTemplateButton")?.addEventListener("click", () => {
+      window.open("/api/cbc/curriculum/structure-mappings/template", "_blank");
+    });
+    document.getElementById("downloadCbcWordTemplateButton")?.addEventListener("click", () => {
+      window.open("/api/cbc/curriculum/structure-mappings/template-doc", "_blank");
+    });
     document.getElementById("cbcMappingFile")?.addEventListener("change", async (event) => {
       const file = event?.target?.files?.[0];
       if (!file) return;
@@ -1008,6 +1032,7 @@ async function renderCbcCurriculumEditor() {
       const subStrand = prompt("Enter corrected sub-strand:", subStrandEl?.value || "");
       if (!subStrand) return;
       const sourceLabel = prompt("Source label (e.g. KICD-Approved):", "Manual Correction");
+      const mappingNotes = prompt("Optional notes for this sub-strand:", document.getElementById("cbcNotes")?.value || "");
       try {
         const result = await request("/api/cbc/curriculum/structure-mappings", {
           method: "POST",
@@ -1017,10 +1042,43 @@ async function renderCbcCurriculumEditor() {
             sub_strand: subStrand,
             grade: grade || null,
             form_name: formName || null,
-            source_label: sourceLabel
+            source_label: sourceLabel,
+            notes: mappingNotes || null
           })
         });
         alert(result.message || "Structure mapping saved.");
+        await refreshStructureFromAi();
+      } catch (error) {
+        alert(error.message);
+      }
+    });
+    document.getElementById("saveManualCbcMappingButton")?.addEventListener("click", async () => {
+      const learningArea = String(
+        document.getElementById("manualCbcLearningArea")?.value || learningAreaEl?.value || ""
+      ).trim();
+      const strand = String(document.getElementById("manualCbcStrand")?.value || strandEl?.value || "").trim();
+      const subStrand = String(
+        document.getElementById("manualCbcSubStrand")?.value || subStrandEl?.value || ""
+      ).trim();
+      const notes = String(document.getElementById("manualCbcMappingNotes")?.value || "").trim();
+      if (!learningArea || !strand || !subStrand) {
+        alert("Learning area, strand and sub-strand are required.");
+        return;
+      }
+      try {
+        const result = await request("/api/cbc/curriculum/structure-mappings", {
+          method: "POST",
+          body: JSON.stringify({
+            learning_area: learningArea,
+            strand,
+            sub_strand: subStrand,
+            notes: notes || null,
+            grade: gradeEl?.value || null,
+            form_name: formEl?.value || null,
+            source_label: "Manual Entry"
+          })
+        });
+        alert(result.message || "Manual mapping saved.");
         await refreshStructureFromAi();
       } catch (error) {
         alert(error.message);

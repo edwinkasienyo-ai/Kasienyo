@@ -123,6 +123,7 @@ CREATE TABLE IF NOT EXISTS cbc_structure_mappings (
   learning_area VARCHAR(180) NOT NULL,
   strand VARCHAR(180) NOT NULL,
   sub_strand VARCHAR(180) NOT NULL,
+  notes TEXT NULL,
   grade VARCHAR(60) NULL,
   form_name VARCHAR(60) NULL,
   source_label VARCHAR(120) NULL,

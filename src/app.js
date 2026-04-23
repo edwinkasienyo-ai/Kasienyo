@@ -5304,9 +5304,10 @@ function parseCbcMappingCsv(csvText = "") {
       learning_area: parts[0] || "",
       strand: parts[1] || "",
       sub_strand: parts[2] || "",
-      grade: parts[3] || "",
-      form_name: parts[4] || "",
-      source_label: parts[5] || "CSV Import"
+      notes: parts[3] || "",
+      grade: parts[4] || "",
+      form_name: parts[5] || "",
+      source_label: parts[6] || "CSV Import"
     });
   }
   return rows.filter((row) => row.learning_area && row.strand && row.sub_strand);
@@ -5319,13 +5320,50 @@ app.get(
   enforcePermission(PERMISSIONS.VIEW),
   asyncHandler(async (_, res) => {
     const csv = [
-      "learning_area,strand,sub_strand,grade,form_name,source_label",
-      "English,Reading,Comprehension Skills,Grade 4,,KICD",
-      "Mathematics,Numbers,Fractions and Decimals,Grade 6,,KICD"
+      "learning_area,strand,sub_strand,notes,grade,form_name,source_label",
+      "English,Reading,Comprehension Skills,Learners identify main ideas and answer comprehension questions.,Grade 4,,KICD",
+      "Mathematics,Numbers,Fractions and Decimals,Learners represent fractions and decimals and solve daily-life examples.,Grade 6,,KICD"
     ].join("\n");
     res.setHeader("Content-Type", "text/csv; charset=utf-8");
     res.setHeader("Content-Disposition", "attachment; filename=\"cbc-structure-mappings-template.csv\"");
     res.send(csv);
+  })
+);
+
+app.get(
+  "/api/cbc/curriculum/structure-mappings/template-doc",
+  auth,
+  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER]),
+  enforcePermission(PERMISSIONS.VIEW),
+  asyncHandler(async (_, res) => {
+    const docText = [
+      "CBC/CBE STRAND-SUB-STRAND-NOTES TEMPLATE",
+      "",
+      "Instructions:",
+      "1. Fill one entry block per sub-strand.",
+      "2. Save this file as .docx or .txt, then copy entries into CSV template if needed.",
+      "",
+      "Entry Block:",
+      "Learning Area: ____________________________",
+      "Strand: __________________________________",
+      "Sub-Strand: ______________________________",
+      "Notes: ___________________________________",
+      "Grade (optional): ________________________",
+      "Form (optional): _________________________",
+      "Source Label: ____________________________",
+      "",
+      "Example:",
+      "Learning Area: Mathematics",
+      "Strand: Numbers",
+      "Sub-Strand: Fractions and Decimals",
+      "Notes: Learners identify numerator/denominator and solve real-life fraction tasks.",
+      "Grade (optional): Grade 6",
+      "Form (optional):",
+      "Source Label: KICD"
+    ].join("\r\n");
+    res.setHeader("Content-Type", "application/msword; charset=utf-8");
+    res.setHeader("Content-Disposition", "attachment; filename=\"cbc-structure-mappings-template.doc\"");
+    res.send(docText);
   })
 );
 
@@ -5348,13 +5386,14 @@ app.post(
     for (const row of rows) {
       await query(
         `INSERT INTO cbc_structure_mappings
-          (institution_id, learning_area, strand, sub_strand, grade, form_name, source_label, created_by_user_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+          (institution_id, learning_area, strand, sub_strand, notes, grade, form_name, source_label, created_by_user_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           req.user.institution_id,
           cleanValue(row.learning_area),
           cleanValue(row.strand),
           cleanValue(row.sub_strand),
+          cleanOptionalValue(row.notes),
           cleanOptionalValue(row.grade),
           cleanOptionalValue(row.form_name),
           cleanOptionalValue(row.source_label) || "CSV Import",
@@ -5377,6 +5416,7 @@ app.post(
     const learningArea = cleanValue(req.body?.learning_area);
     const strand = cleanValue(req.body?.strand);
     const subStrand = cleanValue(req.body?.sub_strand);
+    const notes = cleanOptionalValue(req.body?.notes);
     const grade = cleanOptionalValue(req.body?.grade);
     const formName = cleanOptionalValue(req.body?.form_name);
     const sourceLabel = cleanOptionalValue(req.body?.source_label) || "Manual Correction";
@@ -5385,14 +5425,15 @@ app.post(
     }
     const result = await query(
       `INSERT INTO cbc_structure_mappings
-        (institution_id, learning_area, strand, sub_strand, grade, form_name, source_label, created_by_user_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      [req.user.institution_id, learningArea, strand, subStrand, grade, formName, sourceLabel, req.user.id]
+        (institution_id, learning_area, strand, sub_strand, notes, grade, form_name, source_label, created_by_user_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [req.user.institution_id, learningArea, strand, subStrand, notes, grade, formName, sourceLabel, req.user.id]
     );
     await auditLog(req.user, "SAVE_CBC_STRUCTURE_MAPPING", "cbc_structure_mappings", result.insertId, {
       learning_area: learningArea,
       strand,
       sub_strand: subStrand,
+      notes,
       grade,
       form_name: formName,
       source_label: sourceLabel
@@ -5425,7 +5466,7 @@ app.get(
       params.push(formName);
     }
     const rows = await query(
-      `SELECT id, learning_area, strand, sub_strand, grade, form_name, source_label, created_at, updated_at
+      `SELECT id, learning_area, strand, sub_strand, notes, grade, form_name, source_label, created_at, updated_at
        FROM cbc_structure_mappings
        WHERE ${whereParts.join(" AND ")}
        ORDER BY learning_area, strand, sub_strand
@@ -5446,7 +5487,7 @@ app.patch(
     if (!mappingId) {
       return res.status(400).json({ error: "Valid mapping id is required." });
     }
-    const data = pickFields(req.body || {}, ["strand", "sub_strand", "source_label", "grade", "form_name"]);
+    const data = pickFields(req.body || {}, ["strand", "sub_strand", "notes", "source_label", "grade", "form_name"]);
     const columns = Object.keys(data).filter((key) => cleanValue(data[key]) || data[key] === "");
     if (!columns.length) {
       return res.status(400).json({ error: "No mapping fields provided." });

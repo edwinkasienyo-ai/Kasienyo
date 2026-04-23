@@ -504,6 +504,7 @@ async function ensureUserPasswordPolicyColumns() {
         learning_area VARCHAR(180) NOT NULL,
         strand VARCHAR(180) NOT NULL,
         sub_strand VARCHAR(180) NOT NULL,
+        notes TEXT NULL,
         grade VARCHAR(60) NULL,
         form_name VARCHAR(60) NULL,
         source_label VARCHAR(120) NULL,
@@ -513,6 +514,16 @@ async function ensureUserPasswordPolicyColumns() {
         INDEX idx_cbc_mapping_lookup (institution_id, learning_area, grade, form_name, strand)
       )`
     );
+  }
+  const cbcStructureNotesRows = await query(
+    `SELECT COUNT(*) total
+     FROM INFORMATION_SCHEMA.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = 'cbc_structure_mappings'
+       AND COLUMN_NAME = 'notes'`
+  );
+  if (!Number(cbcStructureNotesRows[0]?.total || 0)) {
+    await query("ALTER TABLE cbc_structure_mappings ADD COLUMN notes TEXT NULL AFTER sub_strand");
   }
   const cbcCurriculumColumns = await query(
     `SELECT COLUMN_NAME
