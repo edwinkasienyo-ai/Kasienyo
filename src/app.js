@@ -5044,6 +5044,53 @@ app.post(
   })
 );
 
+// Backward-compatible aliases for older frontend route names.
+app.post(
+  "/api/cbc/curriculum/ai-suggest-strands",
+  auth,
+  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER]),
+  enforcePermission(PERMISSIONS.CREATE),
+  asyncHandler(async (req, res) => {
+    const grade = cleanValue(req.body?.grade);
+    const formName = cleanValue(req.body?.form_name);
+    const learningArea = cleanValue(req.body?.learning_area);
+    if ((!grade && !formName) || !learningArea) {
+      return res.status(400).json({ error: "grade or form_name and learning_area are required." });
+    }
+    const suggestion = buildCbcSuggestion({ grade, formName, learningArea });
+    await auditLog(req.user, "GENERATE_CBC_AI_STRUCTURE", "cbc_curriculum_entries", null, {
+      grade: grade || null,
+      form_name: formName || null,
+      learning_area: learningArea,
+      endpoint_alias: "ai-suggest-strands"
+    });
+    res.json(suggestion);
+  })
+);
+
+app.post(
+  "/api/cbc/curriculum/ai-suggest-substrands",
+  auth,
+  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER]),
+  enforcePermission(PERMISSIONS.CREATE),
+  asyncHandler(async (req, res) => {
+    const grade = cleanValue(req.body?.grade);
+    const formName = cleanValue(req.body?.form_name);
+    const learningArea = cleanValue(req.body?.learning_area);
+    if ((!grade && !formName) || !learningArea) {
+      return res.status(400).json({ error: "grade or form_name and learning_area are required." });
+    }
+    const suggestion = buildCbcSuggestion({ grade, formName, learningArea });
+    await auditLog(req.user, "GENERATE_CBC_AI_STRUCTURE", "cbc_curriculum_entries", null, {
+      grade: grade || null,
+      form_name: formName || null,
+      learning_area: learningArea,
+      endpoint_alias: "ai-suggest-substrands"
+    });
+    res.json(suggestion);
+  })
+);
+
 app.post(
   "/api/cbc/curriculum/ai-generate-notes",
   auth,
