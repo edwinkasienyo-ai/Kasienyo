@@ -2019,6 +2019,66 @@ tbody tr:hover {
   border-radius: 7px;
 }
 
+.module-rights-matrix-tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin: 6px 0 4px;
+}
+
+.module-rights-matrix-tools button {
+  width: auto;
+  min-height: 27px;
+  padding: 4px 8px;
+  font-size: 10px;
+  border-radius: 7px;
+}
+
+.module-rights-matrix {
+  margin-top: 6px;
+  border: 1px solid #d6e4f2;
+  border-radius: 8px;
+  background: #ffffff;
+  overflow: auto;
+  max-height: 380px;
+}
+
+.module-rights-matrix table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 10px;
+}
+
+.module-rights-matrix th,
+.module-rights-matrix td {
+  border: 1px solid #e4edf7;
+  padding: 4px 5px;
+  text-align: center;
+  vertical-align: middle;
+}
+
+.module-rights-matrix th {
+  background: #edf5ff;
+  color: #1f4f7f;
+  font-weight: 700;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+.module-rights-matrix .module-name-col {
+  text-align: left;
+  min-width: 180px;
+  font-weight: 600;
+  color: #224e78;
+}
+
+.module-rights-matrix input[type="checkbox"] {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+}
+
 .danger-button {
   background: linear-gradient(140deg, #991b1b, #ef4444);
 }

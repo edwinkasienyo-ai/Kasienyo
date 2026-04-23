@@ -914,8 +914,8 @@ const MODULE_KEYS = {
 
 const DEFAULT_MODULE_ACCESS_BY_ROLE = {
   [ROLES.SYSTEM_DEVELOPER]: Object.values(MODULE_KEYS),
-  [ROLES.ADMIN]: Object.values(MODULE_KEYS),
-  [ROLES.HEAD_OF_INSTITUTION]: Object.values(MODULE_KEYS),
+  [ROLES.ADMIN]: [],
+  [ROLES.HEAD_OF_INSTITUTION]: [],
   [ROLES.MOD]: [],
   [ROLES.TSC]: [],
   [ROLES.TEACHER]: [],
@@ -941,6 +941,7 @@ async function hasModuleAccess(user, moduleKey) {
     `SELECT can_access
      FROM user_module_access_overrides
      WHERE user_id = ? AND module_key = ?
+       AND (permission_key = 'ACCESS' OR permission_key IS NULL OR permission_key = '')
      ORDER BY id DESC
      LIMIT 1`,
     [user.id, moduleKey]
@@ -4024,18 +4025,76 @@ app.post(
       return res.status(403).json({ error: "Cannot change module access for users outside your institution." });
     }
 
+    const actionKey = cleanValue(req.body?.action_key).toUpperCase() || "ACCESS";
     await query(
-      `INSERT INTO user_module_access_overrides (institution_id, user_id, module_key, can_access, created_by_user_id)
-       VALUES (?, ?, ?, ?, ?)`,
-      [targetUser.institution_id, userId, moduleKey, Number(canAccess), req.user.id]
+      `INSERT INTO user_module_access_overrides (institution_id, user_id, module_key, permission_key, can_access, created_by_user_id)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [targetUser.institution_id, userId, moduleKey, actionKey, Number(canAccess), req.user.id]
     );
 
     await auditLog(req.user, "MODULE_ACCESS_OVERRIDE", "user_module_access_overrides", userId, {
       module_key: moduleKey,
+      action_key: actionKey,
       can_access: canAccess
     });
 
-    res.json({ message: "Module access override saved.", user_id: userId, module_key: moduleKey, can_access: canAccess });
+    res.json({
+      message: "Module access override saved.",
+      user_id: userId,
+      module_key: moduleKey,
+      action_key: actionKey,
+      can_access: canAccess
+    });
+  })
+);
+
+app.post(
+  "/api/users/module-access/bulk",
+  auth,
+  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
+  asyncHandler(async (req, res) => {
+    const userId = Number(req.body?.user_id);
+    const entries = Array.isArray(req.body?.entries) ? req.body.entries : [];
+    if (!userId || !entries.length) {
+      return res.status(400).json({ error: "user_id and entries are required." });
+    }
+    const users = await query(
+      `SELECT id, institution_id, role
+       FROM users
+       WHERE id = ?
+       LIMIT 1`,
+      [userId]
+    );
+    if (!users.length) {
+      return res.status(404).json({ error: "Target user not found." });
+    }
+    const targetUser = users[0];
+    if (req.user.role !== ROLES.SYSTEM_DEVELOPER && targetUser.institution_id !== req.user.institution_id) {
+      return res.status(403).json({ error: "Cannot change module access for users outside your institution." });
+    }
+    const normalizedEntries = entries
+      .map((item) => ({
+        module_key: cleanValue(item?.module_key),
+        permission_key: cleanValue(item?.action_key || item?.permission_key || "ACCESS").toUpperCase(),
+        can_access: parseTruthy(item?.can_access)
+      }))
+      .filter((item) => item.module_key);
+    if (!normalizedEntries.length) {
+      return res.status(400).json({ error: "No valid module access entries provided." });
+    }
+    for (const entry of normalizedEntries) {
+      // eslint-disable-next-line no-await-in-loop
+      await query(
+        `INSERT INTO user_module_access_overrides
+          (institution_id, user_id, module_key, permission_key, can_access, created_by_user_id)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        [targetUser.institution_id, userId, entry.module_key, entry.permission_key, Number(entry.can_access), req.user.id]
+      );
+    }
+    await auditLog(req.user, "MODULE_ACCESS_BULK_OVERRIDE", "user_module_access_overrides", userId, {
+      entries: normalizedEntries.length
+    });
+    res.json({ message: "Module access matrix saved successfully.", user_id: userId, entries: normalizedEntries.length });
   })
 );
 
@@ -4064,7 +4123,7 @@ app.get(
       return res.status(403).json({ error: "Cannot view module overrides for users outside your institution." });
     }
     const overrides = await query(
-      `SELECT id, institution_id, user_id, module_key, can_access, created_by_user_id, created_at
+      `SELECT id, institution_id, user_id, module_key, permission_key, can_access, created_by_user_id, created_at
        FROM user_module_access_overrides
        WHERE user_id = ?
        ORDER BY id DESC`,

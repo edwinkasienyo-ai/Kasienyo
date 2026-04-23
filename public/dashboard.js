@@ -586,13 +586,14 @@ async function renderModuleRights() {
         <p>Per-user module overrides</p>
       </div>
     `;
+    const actionKeys = ["ACCESS", "VIEW", "CREATE", "UPDATE", "DELETE"];
     document.getElementById("formArea").innerHTML = `
       <div class="module-header-card register-ultra-compact">
         <h3>Module Rights Overrides</h3>
-        <p>Select a user, module, and action right. Access defaults to denied for non-System-Developer users until approved.</p>
+        <p>Pick user then configure module/action rights. Use select all and deselect all for faster approval.</p>
       </div>
       <div class="section-card registration-compact-card register-ultra-compact module-rights-compact">
-      <div class="form-grid registration-compact-grid">
+      <div class="form-grid registration-compact-grid module-rights-grid">
         <label>User</label>
         <select id="moduleAccessUserSelect">
           <option value="">Select user...</option>
@@ -607,54 +608,108 @@ async function renderModuleRights() {
             )
             .join("")}
         </select>
-        <label>Module</label>
-        <select id="moduleAccessModuleSelect">
-          <option value="">Select module...</option>
-          ${moduleKeys.map((item) => `<option value="${escapeHtml(item)}">${escapeHtml(item)}</option>`).join("")}
-        </select>
-        <label>Can Access</label>
-        <select id="moduleAccessStateSelect">
-          <option value="true">Allow</option>
-          <option value="false">Deny</option>
-        </select>
-        <label>Action Right</label>
-        <select id="moduleAccessActionSelect">
-          <option value="ACCESS">Access</option>
-          <option value="VIEW">View</option>
-          <option value="CREATE">Create</option>
-          <option value="UPDATE">Modify</option>
-          <option value="DELETE">Delete</option>
-          <option value="APPROVE">Approve</option>
-        </select>
+      </div>
+      <div class="actions-row registration-compact-actions module-rights-mass-actions">
+        <button id="moduleRightsSelectAll">Select All</button>
+        <button id="moduleRightsDeselectAll">Deselect All</button>
+        <button id="moduleRightsSelectAllAccess">Select All Access</button>
+        <button id="moduleRightsDeselectAllAccess">Deselect All Access</button>
+      </div>
+      <div class="module-rights-matrix-wrap">
+        <table class="module-rights-matrix-table" id="moduleRightsMatrixTable">
+          <thead>
+            <tr>
+              <th>Module</th>
+              <th>Access</th>
+              <th>View</th>
+              <th>Create</th>
+              <th>Modify</th>
+              <th>Delete</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${moduleKeys
+              .map(
+                (moduleKey) => `<tr data-module="${escapeHtml(moduleKey)}">
+                  <td class="module-rights-module-name">${escapeHtml(toLabel(moduleKey))}</td>
+                  ${actionKeys
+                    .map(
+                      (actionKey) => `<td>
+                        <label class="module-rights-cell-check">
+                          <input type="checkbox" data-module="${escapeHtml(moduleKey)}" data-action="${escapeHtml(actionKey)}" />
+                        </label>
+                      </td>`
+                    )
+                    .join("")}
+                </tr>`
+              )
+              .join("")}
+          </tbody>
+        </table>
       </div>
       <div class="actions-row registration-compact-actions">
-        <button id="saveModuleAccessButton">Save Override</button>
+        <button id="saveModuleAccessButton">Save Rights Matrix</button>
         <button id="showRoleDefaultsButton">Show Role Defaults</button>
       </div>
       </div>
       <div id="moduleAccessInfo" class="small-note"></div>
     `;
     resetDataTable("Use controls above to manage module overrides.");
-    document.getElementById("saveModuleAccessButton")?.addEventListener("click", async () => {
+    const moduleRightsChecks = () => Array.from(document.querySelectorAll("#moduleRightsMatrixTable input[type='checkbox']"));
+    const setAllChecks = (checked, onlyAction = null) => {
+      moduleRightsChecks().forEach((input) => {
+        if (!onlyAction || input.dataset.action === onlyAction) {
+          input.checked = checked;
+        }
+      });
+    };
+    document.getElementById("moduleRightsSelectAll")?.addEventListener("click", () => setAllChecks(true));
+    document.getElementById("moduleRightsDeselectAll")?.addEventListener("click", () => setAllChecks(false));
+    document.getElementById("moduleRightsSelectAllAccess")?.addEventListener("click", () => setAllChecks(true, "ACCESS"));
+    document.getElementById("moduleRightsDeselectAllAccess")?.addEventListener("click", () => setAllChecks(false, "ACCESS"));
+    const applyOverridesToMatrix = async () => {
       const userId = Number(document.getElementById("moduleAccessUserSelect")?.value || 0);
-      const moduleKey = String(document.getElementById("moduleAccessModuleSelect")?.value || "");
-      const canAccess = String(document.getElementById("moduleAccessStateSelect")?.value || "true") === "true";
-      const actionKey = String(document.getElementById("moduleAccessActionSelect")?.value || "ACCESS");
-      if (!userId || !moduleKey) {
-        alert("Select user and module first.");
+      if (!userId) {
+        setAllChecks(false);
         return;
       }
       try {
-        const response = await request("/api/users/module-access", {
+        const response = await request(`/api/system/module-access/overrides?user_id=${encodeURIComponent(String(userId))}`);
+        setAllChecks(false);
+        const latestByKey = new Map();
+        (Array.isArray(response?.overrides) ? response.overrides : []).forEach((row) => {
+          const key = `${row.module_key}::${row.permission_key || "ACCESS"}`;
+          if (!latestByKey.has(key)) latestByKey.set(key, Number(row.can_access) === 1);
+        });
+        moduleRightsChecks().forEach((input) => {
+          const key = `${input.dataset.module}::${input.dataset.action}`;
+          input.checked = Boolean(latestByKey.get(key));
+        });
+      } catch (_) {
+        setAllChecks(false);
+      }
+    };
+    document.getElementById("moduleAccessUserSelect")?.addEventListener("change", applyOverridesToMatrix);
+    document.getElementById("saveModuleAccessButton")?.addEventListener("click", async () => {
+      const userId = Number(document.getElementById("moduleAccessUserSelect")?.value || 0);
+      if (!userId) {
+        alert("Select user first.");
+        return;
+      }
+      try {
+        const overridesPayload = moduleRightsChecks().map((input) => ({
+          module_key: String(input.dataset.module || ""),
+          action_key: String(input.dataset.action || "ACCESS"),
+          can_access: Boolean(input.checked)
+        }));
+        const response = await request("/api/users/module-access/bulk", {
           method: "POST",
           body: JSON.stringify({
             user_id: userId,
-            module_key: moduleKey,
-            can_access: canAccess,
-            action_key: actionKey
+            overrides: overridesPayload
           })
         });
-        alert(response.message || "Module access override saved.");
+        alert(response.message || "Module rights matrix saved.");
       } catch (error) {
         alert(error.message);
       }
@@ -670,6 +725,7 @@ async function renderModuleRights() {
           : "Select a user to view role defaults.";
       }
     });
+    await applyOverridesToMatrix();
   } catch (error) {
     alert(error.message);
   }
