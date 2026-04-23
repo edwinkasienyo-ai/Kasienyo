@@ -779,6 +779,7 @@ async function renderCbcCurriculumEditor() {
         <button id="saveCbcEntryButton">Save Curriculum Entry</button>
         <button id="generateCbcStructureButton">AI Strand/Sub-Strand Assist</button>
         <button id="generateCbcNotesButton">Generate AI Notes</button>
+        <button id="bulkGenerateCbcLibraryButton">Generate Full CBC Library</button>
         <button id="printCbcNotesButton">Print Notes</button>
         <button id="downloadCbcNotesButton">Download Notes</button>
         <button id="uploadCbcMaterialButton">Upload Material</button>
@@ -928,6 +929,34 @@ async function renderCbcCurriculumEditor() {
         if (Array.isArray(result.textbook_references) && result.textbook_references.length) {
           document.getElementById("cbcResourcesReference").value = result.textbook_references.join("\n");
         }
+      } catch (error) {
+        alert(error.message);
+      }
+    });
+    document.getElementById("bulkGenerateCbcLibraryButton")?.addEventListener("click", async () => {
+      const payload = {
+        grade: gradeEl?.value || "",
+        form_name: formEl?.value || "",
+        term: document.getElementById("cbcTerm")?.value || "",
+        year: Number(document.getElementById("cbcYear")?.value || 0) || null
+      };
+      if (!payload.grade && !payload.form_name) {
+        alert("Select either grade or form before bulk generation.");
+        return;
+      }
+      const proceed = window.confirm(
+        "This will generate strands, sub-strands, and notes for all learning areas. Continue?"
+      );
+      if (!proceed) return;
+      try {
+        const result = await request("/api/cbc/curriculum/bulk-generate", {
+          method: "POST",
+          body: JSON.stringify(payload)
+        });
+        alert(
+          `Bulk generation complete. Created ${result.created_entries || 0} entries and ${result.created_materials || 0} materials.`
+        );
+        await renderCbcCurriculumEditor();
       } catch (error) {
         alert(error.message);
       }
