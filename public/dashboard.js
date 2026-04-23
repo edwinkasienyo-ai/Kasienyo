@@ -2066,6 +2066,17 @@ async function loadDashboard() {
       </section>
       <div class="dashboard-grid">
         <section class="dashboard-section">
+          <h3>Alerts & Announcements</h3>
+          <h4>System Alerts</h4>
+          <div class="dashboard-alerts">
+            ${alertsMarkup || '<p class="small-note">No alerts for today.</p>'}
+          </div>
+          <h4>Active Announcements</h4>
+          <div class="dashboard-announcements">
+            ${announcementMarkup || '<p class="small-note">No active announcements.</p>'}
+          </div>
+        </section>
+        <section class="dashboard-section">
           <h3>Academic Session Finance Synchronization</h3>
           <div class="form-grid">
             <label>Academic Year</label>
@@ -2111,17 +2122,6 @@ async function loadDashboard() {
           )}
           <h4>Learners with Outstanding Balances</h4>
           ${buildDashboardTable(["Learner", "Adm No", "Grade", "Stream", "Balance"], outstandingRows)}
-        </section>
-        <section class="dashboard-section">
-          <h3>Alerts & Announcements</h3>
-          <h4>System Alerts</h4>
-          <div class="dashboard-alerts">
-            ${alertsMarkup || '<p class="small-note">No alerts for today.</p>'}
-          </div>
-          <h4>Active Announcements</h4>
-          <div class="dashboard-announcements">
-            ${announcementMarkup || '<p class="small-note">No active announcements.</p>'}
-          </div>
         </section>
       </div>
     `;
