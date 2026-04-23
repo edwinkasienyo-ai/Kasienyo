@@ -650,7 +650,7 @@ async function renderModuleRights() {
       <div id="moduleAccessInfo" class="small-note"></div>
       </div>
     `;
-    resetDataTable("Use controls above to manage module overrides.");
+    resetDataTable("");
     const moduleRightsChecks = () => Array.from(document.querySelectorAll("#moduleRightsMatrixTable input[type='checkbox']"));
     const setAllChecks = (checked, onlyAction = null) => {
       moduleRightsChecks().forEach((input) => {
