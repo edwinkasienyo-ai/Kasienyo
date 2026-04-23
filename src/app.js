@@ -4285,6 +4285,176 @@ app.post(
   })
 );
 
+app.get("/api/profile", auth, asyncHandler(async (req, res) => {
+  const rows = await query(
+    `SELECT u.id, u.institution_id, u.role, u.full_name, u.username, u.email, u.phone, u.created_at,
+            i.institution_name
+     FROM users u
+     LEFT JOIN institutions i ON i.id = u.institution_id
+     WHERE u.id = ? AND u.institution_id = ?
+     LIMIT 1`,
+    [req.user.id, req.user.institution_id]
+  );
+  if (!rows.length) {
+    return res.status(404).json({ error: "Profile not found." });
+  }
+  const profile = rows[0];
+  res.json({
+    id: profile.id,
+    institution_id: profile.institution_id,
+    institution_name: profile.institution_name || null,
+    role: profile.role,
+    full_name: profile.full_name,
+    username: profile.username,
+    email: profile.email,
+    phone: profile.phone,
+    created_at: profile.created_at
+  });
+}));
+
+app.post(
+  "/api/profile/request-update-otp",
+  auth,
+  accountMutationRateLimit,
+  accountMutationCooldown,
+  asyncHandler(async (req, res) => {
+    const requesterRole = normalizeRole(req.user.role);
+    if ([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN].includes(requesterRole)) {
+      return res.json({
+        message: "OTP is optional for your role. Proceed with profile update directly.",
+        otp_required: false
+      });
+    }
+    const updateType = cleanValue(req.body?.update_type || "profile_update");
+    const requestedChannel = cleanValue(req.body?.otp_channel || "email").toLowerCase();
+    const meRows = await query(
+      `SELECT id, institution_id, username, email, phone
+       FROM users
+       WHERE id = ? AND institution_id = ?
+       LIMIT 1`,
+      [req.user.id, req.user.institution_id]
+    );
+    if (!meRows.length) {
+      return res.status(404).json({ error: "Profile user not found." });
+    }
+    const me = meRows[0];
+    const channel = isOtpChannelConfigured(requestedChannel) ? requestedChannel : "console";
+    const destination = channel === "sms" ? cleanValue(me.phone) : cleanValue(me.email);
+    if (!destination) {
+      return res.status(400).json({
+        error: channel === "sms"
+          ? "No phone number found for SMS OTP."
+          : "No email address found for email OTP."
+      });
+    }
+    const identity = `profile-update:${me.username}`;
+    const otpSession = await createOtpSession({
+      identity,
+      role: "PROFILE_UPDATE",
+      institutionId: me.institution_id,
+      payload: { user_id: me.id, update_type: updateType },
+      destination,
+      channel
+    });
+    await auditLog(req.user, "PROFILE_UPDATE_OTP_REQUESTED", "otp_sessions", null, {
+      update_type: updateType,
+      otp_channel: channel,
+      otp_expires_at: otpSession.expiresAt
+    });
+    res.json({
+      message: `OTP sent via ${channel}.`,
+      otp_required: true,
+      otp_channel_used: channel
+    });
+  })
+);
+
+app.post(
+  "/api/profile/update",
+  auth,
+  accountMutationRateLimit,
+  accountMutationCooldown,
+  asyncHandler(async (req, res) => {
+    const requesterRole = normalizeRole(req.user.role);
+    const email = cleanOptionalValue(req.body?.email);
+    const phone = cleanOptionalValue(req.body?.phone);
+    const newPassword = cleanOptionalValue(req.body?.new_password);
+    const otpCode = cleanOptionalValue(req.body?.otp_code);
+    const requireOtp = ![ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN].includes(requesterRole);
+
+    const users = await query(
+      `SELECT id, institution_id, username, password_hash, email, phone
+       FROM users
+       WHERE id = ? AND institution_id = ?
+       LIMIT 1`,
+      [req.user.id, req.user.institution_id]
+    );
+    if (!users.length) {
+      return res.status(404).json({ error: "Profile not found." });
+    }
+    const user = users[0];
+
+    if (requireOtp) {
+      if (!otpCode) {
+        return res.status(400).json({ error: "OTP code is required for this profile update." });
+      }
+      const otpRows = await query(
+        `SELECT id
+         FROM otp_sessions
+         WHERE identity_value = ?
+           AND role_name = 'PROFILE_UPDATE'
+           AND otp_code = ?
+           AND is_used = 0
+           AND expires_at > NOW()
+         ORDER BY id DESC
+         LIMIT 1`,
+        [`profile-update:${user.username}`, otpCode]
+      );
+      if (!otpRows.length) {
+        return res.status(401).json({ error: "Invalid or expired OTP code." });
+      }
+      await query("UPDATE otp_sessions SET is_used = 1 WHERE id = ?", [otpRows[0].id]);
+    }
+
+    const updates = [];
+    const params = [];
+    if (email !== null) {
+      updates.push("email = ?");
+      params.push(email);
+    }
+    if (phone !== null) {
+      updates.push("phone = ?");
+      params.push(phone);
+    }
+    if (newPassword) {
+      const weakPasswordError = requireStrongPassword(newPassword, "new_password");
+      if (weakPasswordError) {
+        return res.status(400).json({ error: weakPasswordError });
+      }
+      updates.push("password_hash = ?");
+      params.push(await hashPassword(newPassword));
+      updates.push("password_last_changed_at = NOW()");
+      updates.push("password_expires_at = DATE_ADD(NOW(), INTERVAL ? DAY)");
+      params.push(PASSWORD_ROTATION_DAYS);
+      updates.push("must_change_password = 0");
+      updates.push("failed_login_attempts = 0");
+      updates.push("locked_until = NULL");
+      updates.push("last_failed_login_at = NULL");
+    }
+    if (!updates.length) {
+      return res.status(400).json({ error: "No profile changes supplied." });
+    }
+    await query(`UPDATE users SET ${updates.join(", ")} WHERE id = ?`, [...params, user.id]);
+    await auditLog(req.user, "PROFILE_UPDATED", "users", user.id, {
+      email_updated: email !== null,
+      phone_updated: phone !== null,
+      password_updated: Boolean(newPassword),
+      otp_used: requireOtp
+    });
+    res.json({ message: "Profile updated successfully." });
+  })
+);
+
 const moduleConfigs = [
   {
     route: "/api/admission/learners",

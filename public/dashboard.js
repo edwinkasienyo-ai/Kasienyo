@@ -2347,21 +2347,153 @@ async function globalSearch() {
   }
 }
 
-async function changeCredentials() {
-  const currentPassword = prompt("Enter current password:");
-  if (!currentPassword) return;
-  const newUsername = prompt("Enter new username (optional):") || null;
-  const newPassword = prompt("Enter new password (optional):") || null;
+async function openProfileCenter() {
+  setActiveSidebarButton(null);
+  document.getElementById("moduleTitle").textContent = "Profile";
   try {
-    await request("/api/profile/change-credentials", {
-      method: "POST",
-      body: JSON.stringify({
-        current_password: currentPassword,
-        new_username: newUsername,
-        new_password: newPassword
-      })
+    const meData = await request("/api/auth/me");
+    const role = String(meData?.role || "");
+    const otpOptional = ["SYSTEM_DEVELOPER", "ADMIN"].includes(role);
+    const displayName = meData?.full_name || meData?.username || "User";
+    const initials = String(displayName)
+      .split(/\s+/)
+      .filter(Boolean)
+      .map((part) => part[0])
+      .join("")
+      .slice(0, 2)
+      .toUpperCase() || "U";
+    document.getElementById("cards").innerHTML = `
+      <div class="card stats-card metric-emphasis">
+        <h4>Profile Center</h4>
+        <p>${escapeHtml(displayName)}</p>
+      </div>
+      <div class="card stats-card">
+        <h4>Role</h4>
+        <p>${escapeHtml(role || "-")}</p>
+      </div>
+      <div class="card stats-card">
+        <h4>Institution</h4>
+        <p>${escapeHtml(meData?.institution_name || "-")}</p>
+      </div>
+    `;
+    document.getElementById("formArea").innerHTML = `
+      <div class="profile-center-grid">
+        <section class="profile-card">
+          <div class="profile-avatar">${escapeHtml(initials)}</div>
+          <h3>${escapeHtml(displayName)}</h3>
+          <p><strong>Username:</strong> ${escapeHtml(meData?.username || "-")}</p>
+          <p><strong>Email:</strong> ${escapeHtml(meData?.email || "-")}</p>
+          <p><strong>Phone:</strong> ${escapeHtml(meData?.phone || "-")}</p>
+          <p><strong>Institution:</strong> ${escapeHtml(meData?.institution_name || "-")}</p>
+          <p><strong>Role:</strong> ${escapeHtml(role || "-")}</p>
+        </section>
+        <section class="profile-edit-card">
+          <h3>Update Profile Contacts & Password</h3>
+          <p class="small-note">
+            ${otpOptional
+    ? "As System Developer/HoI Administrator, you can update profile without OTP."
+    : "OTP verification is required for updating email, phone, or password."}
+          </p>
+          <div class="form-grid">
+            <label>Current Password *</label>
+            <input id="profileCurrentPassword" type="password" placeholder="Current password" />
+            <label>New Email (optional)</label>
+            <input id="profileNewEmail" type="email" placeholder="new-email@example.com" />
+            <label>New Phone (optional)</label>
+            <input id="profileNewPhone" placeholder="+2547..." />
+            <label>New Password (optional)</label>
+            <input id="profileNewPassword" type="password" placeholder="New password" />
+            <label>Confirm New Password</label>
+            <input id="profileConfirmPassword" type="password" placeholder="Confirm new password" />
+            <label>OTP Channel</label>
+            <select id="profileOtpChannel">
+              <option value="sms_email">SMS & Email</option>
+              <option value="email">Email</option>
+              <option value="sms">SMS</option>
+              <option value="console">Console</option>
+            </select>
+            <label>OTP Code ${otpOptional ? "(optional)" : "*"}</label>
+            <input id="profileOtpCode" placeholder="Enter OTP code" />
+          </div>
+          <div class="actions-row">
+            <button id="profileSendOtpButton">Send OTP</button>
+            <button id="profileSaveButton">Save Profile Changes</button>
+          </div>
+          <p id="profileActionNotice" class="small-note"></p>
+        </section>
+      </div>
+    `;
+    document.getElementById("tableHead").innerHTML = "";
+    document.getElementById("tableBody").innerHTML = "";
+
+    document.getElementById("profileSendOtpButton")?.addEventListener("click", async () => {
+      const currentPassword = String(document.getElementById("profileCurrentPassword")?.value || "");
+      const otpChannel = String(document.getElementById("profileOtpChannel")?.value || "sms_email");
+      const newEmail = String(document.getElementById("profileNewEmail")?.value || "").trim();
+      const newPhone = String(document.getElementById("profileNewPhone")?.value || "").trim();
+      const newPassword = String(document.getElementById("profileNewPassword")?.value || "");
+      const confirmPassword = String(document.getElementById("profileConfirmPassword")?.value || "");
+      const notice = document.getElementById("profileActionNotice");
+      if (!currentPassword) {
+        if (notice) notice.textContent = "Current password is required.";
+        return;
+      }
+      if (newPassword && newPassword !== confirmPassword) {
+        if (notice) notice.textContent = "New password and confirm password must match.";
+        return;
+      }
+      try {
+        const result = await request("/api/profile/change-credentials", {
+          method: "POST",
+          body: JSON.stringify({
+            mode: "request_otp",
+            current_password: currentPassword,
+            new_email: newEmail || null,
+            new_phone: newPhone || null,
+            new_password: newPassword || null,
+            otp_channel: otpChannel
+          })
+        });
+        if (notice) notice.textContent = result?.message || "OTP sent.";
+      } catch (error) {
+        if (notice) notice.textContent = error.message;
+      }
     });
-    alert("Credentials updated successfully.");
+
+    document.getElementById("profileSaveButton")?.addEventListener("click", async () => {
+      const currentPassword = String(document.getElementById("profileCurrentPassword")?.value || "");
+      const otpCode = String(document.getElementById("profileOtpCode")?.value || "").trim();
+      const newEmail = String(document.getElementById("profileNewEmail")?.value || "").trim();
+      const newPhone = String(document.getElementById("profileNewPhone")?.value || "").trim();
+      const newPassword = String(document.getElementById("profileNewPassword")?.value || "");
+      const confirmPassword = String(document.getElementById("profileConfirmPassword")?.value || "");
+      const notice = document.getElementById("profileActionNotice");
+      if (!currentPassword) {
+        if (notice) notice.textContent = "Current password is required.";
+        return;
+      }
+      if (newPassword && newPassword !== confirmPassword) {
+        if (notice) notice.textContent = "New password and confirm password must match.";
+        return;
+      }
+      try {
+        const result = await request("/api/profile/change-credentials", {
+          method: "POST",
+          body: JSON.stringify({
+            mode: "apply_changes",
+            current_password: currentPassword,
+            otp_code: otpCode || null,
+            new_email: newEmail || null,
+            new_phone: newPhone || null,
+            new_password: newPassword || null
+          })
+        });
+        if (notice) notice.textContent = result?.message || "Profile updated successfully.";
+        alert("Profile updated successfully.");
+      } catch (error) {
+        if (notice) notice.textContent = error.message;
+      }
+    });
   } catch (error) {
     alert(error.message);
   }
@@ -2439,7 +2571,7 @@ function bindTopbarButtons() {
   });
   document
     .getElementById("changeCredentialsButton")
-    .addEventListener("click", changeCredentials);
+    .addEventListener("click", openProfileCenter);
   const heroButton = document.getElementById("updateHeroImageButton");
   const heroInput = document.getElementById("heroImageInput");
   const canManageHeroImage = ["SYSTEM_DEVELOPER", "ADMIN", "HEAD_OF_INSTITUTION"].includes(
