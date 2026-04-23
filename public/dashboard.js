@@ -1958,7 +1958,7 @@ function getWelcomeIdentity(meData, data) {
   };
   const roleLabel = roleLabels[role] || toLabel(role || "User");
   if (role === "SYSTEM_DEVELOPER") {
-    return `TO DEFAULT INSTITUTION${institutionCode ? `-${institutionCode}` : ""}-DEFAULT SYSTEM ADMINISTRATOR`;
+    return "TO SYSTEM DEVELOPER'S SITE, code is 0001,  name MWENDEGU ENTERPRISE LIMITED-SYSTEM DEVELOPER";
   }
   return `TO ${institutionName}${institutionCode ? `-${institutionCode}` : ""}-${userName}-${roleLabel}`;
 }
