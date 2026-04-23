@@ -856,11 +856,9 @@ button:hover {
 }
 
 .dashboard-fixed-header {
-  position: sticky;
-  top: 0;
-  z-index: 12;
-  background: var(--surface-50, #f3f7fb);
-  padding-bottom: 4px;
+  position: static;
+  background: transparent;
+  padding-bottom: 0;
 }
 
 .main-scroll-area {
@@ -884,6 +882,39 @@ button:hover {
   color: #f2c94c;
   font-size: 15px;
   line-height: 1.15;
+}
+
+#dashboardWelcomeTop {
+  position: sticky;
+  top: 0;
+  z-index: 14;
+  margin-bottom: 6px;
+  padding: 9px 11px;
+}
+
+#dashboardWelcomeLine {
+  color: #f2c94c;
+  font-weight: 800;
+  font-size: clamp(12px, 1.35vw, 16px);
+  line-height: 1.12;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+#dashboardWelcomeTop .small-note {
+  font-size: 9px;
+  line-height: 1.15;
+}
+
+#dashboardWelcomeTop .dashboard-hero-meta {
+  margin-top: 4px;
+  gap: 4px;
+}
+
+#dashboardWelcomeTop .dashboard-hero-meta .tag {
+  font-size: 9px;
+  padding: 2px 6px;
 }
 
 .dashboard-welcome-banner .small-note {
@@ -1157,12 +1188,12 @@ button:hover {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 18px;
+  margin-bottom: 6px;
   background: var(--surface-0);
   border: 1px solid var(--line-200);
   box-shadow: var(--shadow-sm);
   border-radius: var(--radius-md);
-  padding: 14px 16px;
+  padding: 6px 8px;
 }
 
 .topbar-right {
@@ -1178,6 +1209,8 @@ button:hover {
 
 .topbar-left h1 {
   margin: 0;
+  font-size: 13px;
+  line-height: 1.1;
 }
 
 #passwordExpiryNotice {
@@ -1197,12 +1230,20 @@ button:hover {
 }
 
 .topbar-right input {
-  min-width: 330px;
+  min-width: 220px;
+  font-size: 11px;
+  padding: 5px 7px;
 }
 
 .topbar-actions {
   display: flex;
-  gap: 8px;
+  gap: 5px;
+}
+
+.topbar-right button {
+  min-height: 29px;
+  padding: 5px 8px;
+  font-size: 11px;
 }
 
 .dashboard-toolbar {
