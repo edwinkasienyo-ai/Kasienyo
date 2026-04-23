@@ -373,6 +373,28 @@ async function ensureUserPasswordPolicyColumns() {
     await query("ALTER TABLE users ADD COLUMN status_reason TEXT NULL");
   }
 
+  const institutionSuspendedReasonRows = await query(
+    `SELECT COUNT(*) total
+     FROM INFORMATION_SCHEMA.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = 'institutions'
+       AND COLUMN_NAME = 'suspended_reason'`
+  );
+  if (!Number(institutionSuspendedReasonRows[0]?.total || 0)) {
+    await query("ALTER TABLE institutions ADD COLUMN suspended_reason TEXT NULL");
+  }
+
+  const userSuspendedReasonRows = await query(
+    `SELECT COUNT(*) total
+     FROM INFORMATION_SCHEMA.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = 'users'
+       AND COLUMN_NAME = 'suspended_reason'`
+  );
+  if (!Number(userSuspendedReasonRows[0]?.total || 0)) {
+    await query("ALTER TABLE users ADD COLUMN suspended_reason TEXT NULL");
+  }
+
   const moduleAccessRows = await query(
     `SELECT COUNT(*) total
      FROM INFORMATION_SCHEMA.TABLES
