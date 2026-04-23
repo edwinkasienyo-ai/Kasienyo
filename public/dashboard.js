@@ -1859,14 +1859,6 @@ function renderCrudModule(moduleKey) {
 }
 
 function renderDashboardCards(stats, dashboardSignals = {}) {
-  const alertsCount = Number(dashboardSignals.alertsCount || 0);
-  const announcementsCount = Number(dashboardSignals.announcementsCount || 0);
-  const alertCards = `
-    <div class="card stats-card metric-card metric-alertsAnnouncements">
-      <h4>Alerts & Announcements</h4>
-      <p>${formatNumber(alertsCount)} alert(s) • ${formatNumber(announcementsCount)} announcement(s)</p>
-    </div>
-  `;
   const metricCards = Object.entries(stats)
     .map(
       ([key, value]) => `
@@ -1877,7 +1869,7 @@ function renderDashboardCards(stats, dashboardSignals = {}) {
     `
     )
     .join("");
-  document.getElementById("cards").innerHTML = `${alertCards}${metricCards}`;
+  document.getElementById("cards").innerHTML = metricCards;
 }
 
 function parseAcademicYearStart(value) {

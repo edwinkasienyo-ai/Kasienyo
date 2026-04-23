@@ -1201,16 +1201,16 @@ button:hover {
 
 .cards {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-  gap: 8px;
-  margin-bottom: 10px;
+  grid-template-columns: repeat(auto-fit, minmax(128px, 1fr));
+  gap: 6px;
+  margin-bottom: 8px;
 }
 
 .stats-card {
-  padding: 10px 10px;
+  padding: 7px 8px;
   border: 1px solid var(--line-200);
   background: linear-gradient(160deg, #ffffff 0%, #f4f9ff 100%);
-  border-radius: var(--radius-md);
+  border-radius: 10px;
   box-shadow: var(--shadow-sm);
   position: relative;
   overflow: hidden;
@@ -1227,14 +1227,14 @@ button:hover {
 }
 
 .stats-card h4 {
-  margin: 0 0 10px;
-  font-size: 12px;
+  margin: 0 0 5px;
+  font-size: 10px;
   color: #4c6076;
 }
 
 .stats-card p {
   margin: 0;
-  font-size: 18px;
+  font-size: 14px;
   font-weight: 700;
   color: var(--primary-800);
 }
@@ -1275,6 +1275,16 @@ button:hover {
 
 .metric-card {
   border-top: 3px solid var(--accent-500);
+  min-height: 74px;
+}
+
+.metric-alertsAnnouncements {
+  grid-column: 1 / -1;
+  min-height: 64px;
+}
+
+.metric-alertsAnnouncements p {
+  font-size: 12px;
 }
 
 .metric-totalLearners {
