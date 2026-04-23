@@ -2103,12 +2103,12 @@ async function loadDashboard() {
         <span class="tag">Generated: ${escapeHtml(formatDateTime(data.generated_at))}</span>
       </div>
     `;
-    const topBannerEl = document.getElementById("dashboardWelcomeBanner");
+    const topBannerEl = document.getElementById("dashboardWelcomeTop");
     if (topBannerEl) {
       topBannerEl.innerHTML = welcomeMetaMarkup;
     }
 
-    const topAlertsEl = document.getElementById("dashboardTopAlerts");
+    const topAlertsEl = document.getElementById("dashboardTopArea");
     if (topAlertsEl) {
       topAlertsEl.innerHTML = `
         <section class="dashboard-section dashboard-alerts-priority">

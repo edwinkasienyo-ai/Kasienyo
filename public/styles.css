@@ -885,6 +885,14 @@ button:hover {
   color: #eef7ff;
 }
 
+#dashboardTopArea {
+  margin-bottom: 8px;
+}
+
+#dashboardTopArea .dashboard-section {
+  margin-bottom: 0;
+}
+
 .alerts-top-slot {
   margin-bottom: 8px;
 }
