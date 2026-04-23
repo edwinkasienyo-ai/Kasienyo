@@ -2118,9 +2118,9 @@ tbody tr:hover {
 }
 
 .module-rights-bottom-actions {
-  justify-content: flex-end;
-  margin-top: 8px;
-  margin-bottom: 2px;
+  justify-content: flex-start;
+  margin-top: 10px;
+  margin-bottom: 0;
 }
 
 .module-rights-matrix-wrap {
