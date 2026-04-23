@@ -285,6 +285,7 @@ async function ensureUserPasswordPolicyColumns() {
         id BIGINT PRIMARY KEY AUTO_INCREMENT,
         institution_id BIGINT NOT NULL,
         grade VARCHAR(60) NOT NULL,
+        form_name VARCHAR(60) NULL,
         learning_area VARCHAR(180) NOT NULL,
         strand VARCHAR(180) NOT NULL,
         sub_strand VARCHAR(180) NULL,
@@ -302,6 +303,16 @@ async function ensureUserPasswordPolicyColumns() {
         INDEX idx_cbc_curriculum_inst_lookup (institution_id, grade, learning_area, term, year)
       )`
     );
+  }
+  const cbcCurriculumColumns = await query(
+    `SELECT COLUMN_NAME
+     FROM INFORMATION_SCHEMA.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = 'cbc_curriculum_entries'`
+  );
+  const cbcColumnSet = new Set((cbcCurriculumColumns || []).map((row) => String(row?.COLUMN_NAME || "").toLowerCase()));
+  if (!cbcColumnSet.has("form_name")) {
+    await query("ALTER TABLE cbc_curriculum_entries ADD COLUMN form_name VARCHAR(60) NULL AFTER grade");
   }
 
   const communicationChatRoomsRows = await query(
