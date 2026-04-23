@@ -850,9 +850,16 @@ button:hover {
   flex: 1;
   min-width: 0;
   height: 100vh;
-  padding: 20px;
+  padding: 12px 14px;
+  overflow-y: hidden;
+  overflow-x: hidden;
+}
+
+.main-scroll-area {
+  height: calc(100vh - 176px);
   overflow-y: auto;
   overflow-x: hidden;
+  padding-right: 2px;
 }
 
 .dashboard-welcome-banner {
@@ -866,13 +873,17 @@ button:hover {
 }
 
 .dashboard-welcome-banner h3 {
-  margin: 0 0 6px;
-  color: #fff;
+  margin: 0 0 3px;
+  color: #f2c94c;
+  font-size: 15px;
+  line-height: 1.15;
 }
 
 .dashboard-welcome-banner .small-note {
   margin: 0;
-  color: #eaf5ff;
+  color: #f6e2a1;
+  font-size: 10px;
+  line-height: 1.2;
 }
 
 .dashboard-welcome-banner .dashboard-hero-meta {
@@ -886,11 +897,28 @@ button:hover {
 }
 
 #dashboardTopArea {
-  margin-bottom: 8px;
+  margin-bottom: 6px;
 }
 
 #dashboardTopArea .dashboard-section {
   margin-bottom: 0;
+}
+
+.dashboard-alerts-priority h3 {
+  margin: 0 0 5px;
+  font-size: 13px;
+  color: #e8b53c;
+}
+
+.dashboard-alerts-priority h4 {
+  margin: 5px 0 4px;
+  font-size: 11px;
+}
+
+.dashboard-alerts-priority .small-note,
+.dashboard-alerts-priority p {
+  font-size: 10px;
+  line-height: 1.2;
 }
 
 .alerts-top-slot {

@@ -76,34 +76,36 @@
       </aside>
 
       <main class="main-content">
-        <section id="dashboardWelcomeTop" class="dashboard-hero dashboard-welcome-top">
-          <div>
-            <h3 id="dashboardWelcomeLine">WELCOME</h3>
-            <p class="small-note">Monitor academics, attendance, finance, alerts, and activity in one place.</p>
-          </div>
-          <div id="dashboardWelcomeMeta" class="dashboard-hero-meta"></div>
-        </section>
+        <div id="dashboardFixedHeader" class="dashboard-fixed-header">
+          <section id="dashboardWelcomeTop" class="dashboard-hero dashboard-welcome-top">
+            <div>
+              <h3 id="dashboardWelcomeLine">WELCOME</h3>
+              <p class="small-note">Monitor academics, attendance, finance, alerts, and activity in one place.</p>
+            </div>
+            <div id="dashboardWelcomeMeta" class="dashboard-hero-meta"></div>
+          </section>
 
-        <header class="topbar">
-          <div class="topbar-left">
-            <h1 id="moduleTitle">Dashboard</h1>
-            <p id="passwordExpiryNotice" class="small-note"></p>
-          </div>
-          <div class="topbar-right">
-            <input id="globalSearch" placeholder="Global search by learner/teacher/parent..." />
-            <button id="searchButton">Search</button>
-            <button id="updateHeroImageButton">Update Login Hero Image</button>
-            <button id="changeCredentialsButton">Profile</button>
-            <input
-              id="heroImageInput"
-              type="file"
-              accept="image/jpeg,image/png,image/webp,image/gif,image/avif"
-              hidden
-            />
-          </div>
-        </header>
+          <header class="topbar">
+            <div class="topbar-left">
+              <h1 id="moduleTitle">Dashboard</h1>
+              <p id="passwordExpiryNotice" class="small-note"></p>
+            </div>
+            <div class="topbar-right">
+              <input id="globalSearch" placeholder="Global search by learner/teacher/parent..." />
+              <button id="searchButton">Search</button>
+              <button id="updateHeroImageButton">Update Login Hero Image</button>
+              <button id="changeCredentialsButton">Profile</button>
+              <input
+                id="heroImageInput"
+                type="file"
+                accept="image/jpeg,image/png,image/webp,image/gif,image/avif"
+                hidden
+              />
+            </div>
+          </header>
 
-        <section id="dashboardTopArea"></section>
+          <section id="dashboardTopArea"></section>
+        </div>
         <section id="cards" class="cards"></section>
         <section id="formArea" class="form-area"></section>
         <section class="table-area">
