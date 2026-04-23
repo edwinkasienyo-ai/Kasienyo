@@ -1843,8 +1843,16 @@ function renderCrudModule(moduleKey) {
   loadModuleData(config);
 }
 
-function renderDashboardCards(stats) {
-  document.getElementById("cards").innerHTML = Object.entries(stats)
+function renderDashboardCards(stats, dashboardSignals = {}) {
+  const alertsCount = Number(dashboardSignals.alertsCount || 0);
+  const announcementsCount = Number(dashboardSignals.announcementsCount || 0);
+  const alertCards = `
+    <div class="card stats-card metric-card metric-alertsAnnouncements">
+      <h4>Alerts & Announcements</h4>
+      <p>${formatNumber(alertsCount)} alert(s) • ${formatNumber(announcementsCount)} announcement(s)</p>
+    </div>
+  `;
+  const metricCards = Object.entries(stats)
     .map(
       ([key, value]) => `
       <div class="card stats-card metric-card metric-${escapeHtml(key)}">
@@ -1854,6 +1862,7 @@ function renderDashboardCards(stats) {
     `
     )
     .join("");
+  document.getElementById("cards").innerHTML = `${alertCards}${metricCards}`;
 }
 
 function parseAcademicYearStart(value) {
@@ -1983,7 +1992,10 @@ async function loadDashboard() {
   document.getElementById("moduleTitle").textContent = "Dashboard";
   try {
     const [data, meData] = await Promise.all([request("/api/dashboard/summary"), request("/api/auth/me")]);
-    renderDashboardCards(data.stats || {});
+    renderDashboardCards(data.stats || {}, {
+      alertsCount: Array.isArray(data.alerts) ? data.alerts.length : 0,
+      announcementsCount: Array.isArray(data.announcements) ? data.announcements.length : 0
+    });
     const attendanceRows = (data.dailyAttendanceList || []).slice(0, 40).map((row) => [
       row.attendance_type || "-",
       row.person_name || "-",
