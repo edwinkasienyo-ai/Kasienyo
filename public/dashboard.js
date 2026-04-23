@@ -145,17 +145,17 @@ async function renderSystemRegistration() {
       </div>
     `;
     document.getElementById("formArea").innerHTML = `
-      <div class="module-header-card">
+      <div class="module-header-card registration-compact-header">
         <h3>Registration and Onboarding Center</h3>
         <p>All registration is done inside the system. HoI/Admin are restricted to their institution and cannot create System Developer, MoE, or TSC users.</p>
       </div>
       ${canRegisterInstitution ? `
-      <div class="section-card">
+      <div class="section-card registration-compact-card">
         <div class="section-card-header">
           <h3>Register Institution (System Developer only)</h3>
           <p class="small-note">Creates institution and HoI/Administrator account in one secure flow.</p>
         </div>
-        <div class="form-grid">
+        <div class="form-grid registration-compact-grid">
           <label>Institution Name</label>
           <input id="sysInstitutionName" placeholder="Institution name" />
           <label>County</label>
@@ -233,17 +233,17 @@ async function renderSystemRegistration() {
             <option value="true">Yes</option>
           </select>
         </div>
-        <div class="actions-row">
+        <div class="actions-row registration-compact-actions">
           <button id="sysRegisterInstitutionButton">Register Institution</button>
         </div>
       </div>
       ` : ""}
-      <div class="section-card registration-tools-card">
+      <div class="section-card registration-tools-card registration-compact-card">
         <div class="section-card-header">
           <h3>Agreement Letter Sample & Generation</h3>
           <p class="small-note">Upload or edit agreement templates, then generate, print, download, save, or email for the selected institution.</p>
         </div>
-        <div class="form-grid">
+        <div class="form-grid registration-compact-grid">
           <label>Institution for Agreement</label>
           <select id="sysAgreementInstitutionId">
             ${institutionRows
@@ -262,25 +262,25 @@ async function renderSystemRegistration() {
           <label>Upload Sample File</label>
           <input id="sysAgreementTemplateUpload" type="file" />
         </div>
-        <div class="actions-row">
+        <div class="actions-row registration-compact-actions">
           <button id="sysAgreementUploadButton">Upload Sample</button>
           <button id="sysAgreementSaveButton">Save</button>
           <button id="sysAgreementEditButton">Edit/Reload</button>
           <button id="sysAgreementDeleteButton" class="danger-button">Delete</button>
         </div>
-        <div class="actions-row">
+        <div class="actions-row registration-compact-actions">
           <button id="sysAgreementDownloadButton">Download PDF</button>
           <button id="sysAgreementPrintButton">Print</button>
           <button id="sysAgreementEmailButton">Email</button>
           <button id="sysAgreementOpenButton">Save / Open PDF</button>
         </div>
       </div>
-      <div class="section-card">
+      <div class="section-card registration-compact-card">
         <div class="section-card-header">
           <h3>Register User (Inside Institution Scope)</h3>
           <p class="small-note">System Developer can target any institution; HoI/Admin are locked to their own institution.</p>
         </div>
-        <div class="form-grid">
+        <div class="form-grid registration-compact-grid">
           <label>Institution</label>
           <select id="sysUserInstitutionId">
             ${institutionRows
@@ -309,7 +309,7 @@ async function renderSystemRegistration() {
           <label>Password Policy</label>
           <input id="sysUserPasswordPolicy" value="Auto-generated and sent via SMS/email" readonly class="readonly-field" />
         </div>
-        <div class="actions-row">
+        <div class="actions-row registration-compact-actions">
           <button id="sysRegisterUserButton">Register User</button>
           <button id="refreshInstitutionRegistryButton">Refresh Registry</button>
         </div>
