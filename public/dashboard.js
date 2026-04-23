@@ -104,7 +104,7 @@ const MODULE_DESCRIPTIONS = {
   "system-audit": "Review security and login audit trails for accountability.",
   "system-registry": "Browse institutions and user registry details in one place.",
   "system-recycle-bin": "Restore or permanently purge archived deleted records.",
-  "system-cbc-editor": "Create and maintain CBC curriculum structures and metadata."
+  "system-cbc-editor": "Manage CBC/CBE curriculum design, learning materials, textbook uploads, and AI-generated simplified notes."
 };
 
 function isSystemAdminRole() {

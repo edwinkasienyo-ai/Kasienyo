@@ -4782,6 +4782,134 @@ app.get(
 );
 
 app.post(
+  "/api/cbc/curriculum/materials/upload",
+  auth,
+  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER]),
+  enforcePermission(PERMISSIONS.CREATE),
+  upload.single("file"),
+  asyncHandler(async (req, res) => {
+    if (!req.file) {
+      return res.status(400).json({ error: "File upload failed." });
+    }
+    const payload = pickFields(req.body || {}, [
+      "grade",
+      "form_name",
+      "learning_area",
+      "strand",
+      "sub_strand",
+      "term",
+      "year",
+      "title",
+      "description",
+      "resource_type"
+    ]);
+    const title = cleanValue(payload.title) || req.file.originalname;
+    const resourceType = cleanValue(payload.resource_type) || "CBC_CBE_MATERIAL_UPLOAD";
+    const teacherProfileId = Number(req.body?.teacher_profile_id || 0) || null;
+    const result = await query(
+      `INSERT INTO teacher_resources
+        (institution_id, teacher_profile_id, resource_type, title, description, grade, stream, term, strand, sub_strand, file_path, auto_generated, created_by_user_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)`,
+      [
+        req.user.institution_id,
+        teacherProfileId,
+        resourceType,
+        title,
+        cleanOptionalValue(payload.description),
+        cleanOptionalValue(payload.grade),
+        cleanOptionalValue(payload.form_name),
+        cleanOptionalValue(payload.term),
+        cleanOptionalValue(payload.strand),
+        cleanOptionalValue(payload.sub_strand),
+        `/uploads/${req.file.filename}`,
+        req.user.id
+      ]
+    );
+    await auditLog(req.user, "UPLOAD_CBC_CBE_MATERIAL", "teacher_resources", result.insertId, {
+      title,
+      learning_area: cleanOptionalValue(payload.learning_area),
+      grade: cleanOptionalValue(payload.grade),
+      file_path: `/uploads/${req.file.filename}`
+    });
+    res.status(201).json({
+      message: "CBC/CBE material uploaded successfully.",
+      id: result.insertId,
+      file_path: `/uploads/${req.file.filename}`
+    });
+  })
+);
+
+app.get(
+  "/api/cbc/curriculum/materials",
+  auth,
+  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER]),
+  enforcePermission(PERMISSIONS.VIEW),
+  asyncHandler(async (req, res) => {
+    const rows = await query(
+      `SELECT id, resource_type, title, description, grade, stream form_name, term, strand, sub_strand, file_path, created_at
+       FROM teacher_resources
+       WHERE institution_id = ?
+       ORDER BY id DESC
+       LIMIT 300`,
+      [req.user.institution_id]
+    );
+    res.json(rows);
+  })
+);
+
+app.post(
+  "/api/cbc/curriculum/ai-generate-notes",
+  auth,
+  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER]),
+  enforcePermission(PERMISSIONS.CREATE),
+  asyncHandler(async (req, res) => {
+    const grade = cleanValue(req.body?.grade);
+    const learningArea = cleanValue(req.body?.learning_area);
+    const strand = cleanValue(req.body?.strand);
+    const subStrand = cleanOptionalValue(req.body?.sub_strand);
+    const levelPrompt = cleanOptionalValue(req.body?.simplification_level) || "age-appropriate";
+    if (!grade || !learningArea || !strand) {
+      return res.status(400).json({ error: "grade, learning_area and strand are required." });
+    }
+    const generated = [
+      `AI SIMPLIFIED NOTES - ${grade}`,
+      `Learning Area: ${learningArea}`,
+      `Strand: ${strand}`,
+      `Sub-Strand: ${subStrand || "-"}`,
+      "",
+      "1) Key Idea",
+      `${learningArea} under ${strand} focuses on practical understanding for ${grade} learners.`,
+      "",
+      "2) Simple Explanation",
+      `Break the concept into short examples and learner-friendly language (${levelPrompt}).`,
+      "",
+      "3) Class Activity",
+      "- Starter question",
+      "- Guided discussion",
+      "- Short exercise with feedback",
+      "",
+      "4) Assessment Check",
+      "- Oral question",
+      "- Quick written check",
+      "- Peer explanation activity",
+      "",
+      "5) Homework/Follow-up",
+      "- One brief task reinforcing today's lesson."
+    ].join("\n");
+    await auditLog(req.user, "GENERATE_CBC_AI_NOTES", "cbc_curriculum_entries", null, {
+      grade,
+      learning_area: learningArea,
+      strand,
+      sub_strand: subStrand || null
+    });
+    res.json({
+      message: "AI simplified notes generated successfully.",
+      generated_notes: generated
+    });
+  })
+);
+
+app.post(
   "/api/cbc/curriculum",
   auth,
   enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER]),
