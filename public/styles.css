@@ -851,15 +851,22 @@ button:hover {
   min-width: 0;
   height: 100vh;
   padding: 12px 14px;
-  overflow-y: hidden;
+  overflow-y: auto;
   overflow-x: hidden;
 }
 
+.dashboard-fixed-header {
+  position: sticky;
+  top: 0;
+  z-index: 12;
+  background: var(--surface-50, #f3f7fb);
+  padding-bottom: 4px;
+}
+
 .main-scroll-area {
-  height: calc(100vh - 176px);
-  overflow-y: auto;
-  overflow-x: hidden;
-  padding-right: 2px;
+  overflow: visible;
+  padding-top: 4px;
+  scrollbar-gutter: stable;
 }
 
 .dashboard-welcome-banner {
