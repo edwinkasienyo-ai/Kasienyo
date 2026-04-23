@@ -1938,8 +1938,12 @@ function computeFinanceTermSummary(data, selectedAcademicYear, selectedTerm) {
 
 function getWelcomeIdentity(meData, data) {
   const institutionName = String(data?.institution_name || meData?.institution_name || "INSTITUTION").toUpperCase();
+  const institutionCode = String(
+    data?.institution_code || meData?.institution_code || meData?.institution_id || ""
+  ).trim();
   const userName = String(meData?.full_name || meData?.username || "USER").trim();
-  return `${institutionName}-${userName}`;
+  const codePart = institutionCode ? ` (${institutionCode})` : "";
+  return `${institutionName}${codePart}-${userName}`;
 }
 
 function refreshDashboardFinanceSummary(data, meData) {

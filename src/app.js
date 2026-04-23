@@ -1970,7 +1970,7 @@ app.get("/api/auth/me", auth, asyncHandler(async (req, res) => {
 
   const rows = await query(
     `SELECT u.id, u.role, u.institution_id, u.full_name, u.username, u.password_last_changed_at, u.password_expires_at, u.must_change_password,
-            i.institution_name
+            i.institution_name, i.institution_code
      FROM users u
      INNER JOIN institutions i ON i.id = u.institution_id
      WHERE u.id = ? AND u.institution_id = ?
