@@ -42,6 +42,10 @@ const SUBJECT_LIBRARY = {
   }
 };
 
+function getAllCbcLearningAreas() {
+  return Object.keys(SUBJECT_LIBRARY);
+}
+
 function normalize(value) {
   return String(value || "").trim();
 }
@@ -122,7 +126,47 @@ function buildCbcSuggestion({ grade, formName, learningArea }) {
   };
 }
 
+function buildBulkCbcEntries({ grade, formName, term, year, learningAreas = [] }) {
+  const selectedAreas = Array.isArray(learningAreas) && learningAreas.length
+    ? learningAreas
+    : getAllCbcLearningAreas();
+  const rows = [];
+  selectedAreas.forEach((learningArea) => {
+    const suggestion = buildCbcSuggestion({ grade, formName, learningArea });
+    const selectedGrade = normalize(grade) || null;
+    const selectedForm = normalize(formName) || null;
+    (suggestion.strand_options || []).forEach((strand) => {
+      const subStrands = suggestion.sub_strand_options_by_strand?.[strand] || [];
+      subStrands.forEach((subStrand) => {
+        rows.push({
+          grade: selectedGrade,
+          form_name: selectedForm,
+          learning_area: learningArea,
+          strand,
+          sub_strand: subStrand,
+          specific_learning_outcomes: `Learners explain and apply ${subStrand} in ${learningArea}.`,
+          suggested_assessment_rubric: suggestion.assessment_rubric,
+          learning_experiences: "Discussion, guided examples, group practice, reflection.",
+          resources_reference: suggestion.textbook_references.join("\n"),
+          term: normalize(term) || null,
+          year: Number(year) || null,
+          notes: makeNotes({
+            grade: selectedGrade || "",
+            formName: selectedForm || "",
+            learningArea,
+            strand,
+            subStrand
+          })
+        });
+      });
+    });
+  });
+  return rows;
+}
+
 module.exports = {
   buildCbcSuggestion,
-  makeNotes
+  makeNotes,
+  getAllCbcLearningAreas,
+  buildBulkCbcEntries
 };

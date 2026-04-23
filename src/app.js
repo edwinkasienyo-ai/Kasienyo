@@ -44,7 +44,7 @@ const { hashPassword, verifyPassword } = require("./utils/password");
 const { sendSimplePdf, sendSimpleExcel } = require("./services/exportService");
 const { generateOtpCode, buildOtpExpiry, sendOtp } = require("./services/otpService");
 const { buildSearchWhere } = require("./utils/sql");
-const { buildCbcSuggestion, makeNotes } = require("./config/cbcLibrary");
+const { buildCbcSuggestion, makeNotes, getAllCbcLearningAreas } = require("./config/cbcLibrary");
 
 /** Bump when shipping UI/API changes so schools can confirm they run the right copy. */
 const IIMS_BUILD_STAMP = process.env.IIMS_BUILD_STAMP || "20260422-ui9";
@@ -5172,6 +5172,100 @@ app.patch(
     );
     await auditLog(req.user, "UPDATE_CBC_CBE_MATERIAL", "teacher_resources", materialId, data);
     res.json({ message: "Material updated." });
+  })
+);
+
+app.post(
+  "/api/cbc/curriculum/bulk-generate",
+  auth,
+  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
+  enforcePermission(PERMISSIONS.CREATE),
+  asyncHandler(async (req, res) => {
+    const grade = cleanValue(req.body?.grade);
+    const formName = cleanValue(req.body?.form_name);
+    const term = cleanOptionalValue(req.body?.term) || "Term One";
+    const year = Number(req.body?.year || 0) || dayjs().year();
+    if (!grade && !formName) {
+      return res.status(400).json({ error: "grade or form_name is required for bulk generation." });
+    }
+
+    const learningAreas = getAllCbcLearningAreas();
+    let entriesCreated = 0;
+    let materialsCreated = 0;
+    for (const learningArea of learningAreas) {
+      const suggestion = buildCbcSuggestion({ grade, formName, learningArea });
+      const strands = Array.isArray(suggestion.strand_options) ? suggestion.strand_options : [];
+      for (const strand of strands) {
+        const subStrands = Array.isArray(suggestion.sub_strand_options_by_strand?.[strand])
+          ? suggestion.sub_strand_options_by_strand[strand]
+          : [];
+        for (const subStrand of subStrands) {
+          const notes = makeNotes({
+            grade,
+            formName,
+            learningArea,
+            strand,
+            subStrand
+          });
+          await query(
+            `INSERT INTO cbc_curriculum_entries
+              (institution_id, grade, form_name, learning_area, strand, sub_strand, specific_learning_outcomes, suggested_assessment_rubric, resources_reference, term, year, notes, created_by_user_id)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+              req.user.institution_id,
+              grade || null,
+              formName || null,
+              learningArea,
+              strand,
+              subStrand,
+              suggestion.learning_outcomes,
+              suggestion.assessment_rubric,
+              (suggestion.textbook_references || []).join("\n"),
+              term,
+              year,
+              notes,
+              req.user.id
+            ]
+          );
+          entriesCreated += 1;
+          await query(
+            `INSERT INTO teacher_resources
+              (institution_id, teacher_profile_id, resource_type, title, description, grade, stream, term, strand, sub_strand, auto_generated, created_by_user_id)
+             VALUES (?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)`,
+            [
+              req.user.institution_id,
+              "CBC_AUTO_GENERATED_NOTES",
+              `${learningArea} - ${strand} - ${subStrand}`,
+              notes,
+              grade || null,
+              formName || null,
+              term,
+              strand,
+              subStrand,
+              req.user.id
+            ]
+          );
+          materialsCreated += 1;
+        }
+      }
+    }
+
+    await auditLog(req.user, "BULK_GENERATE_CBC_LIBRARY", "cbc_curriculum_entries", null, {
+      grade: grade || null,
+      form_name: formName || null,
+      learning_area_count: learningAreas.length,
+      entries_created: entriesCreated,
+      materials_created: materialsCreated,
+      term,
+      year
+    });
+
+    res.status(201).json({
+      message: "CBC/CBE bulk generation completed.",
+      learning_areas_processed: learningAreas.length,
+      entries_created: entriesCreated,
+      materials_created: materialsCreated
+    });
   })
 );
 
