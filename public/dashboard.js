@@ -256,7 +256,7 @@ async function renderSystemRegistration() {
               .join("")}
           </select>
           <label>Template Text (supports placeholders like {{INSTITUTION_NAME}}, {{INSTITUTION_CODE}})</label>
-          <textarea id="sysAgreementTemplateText" rows="6" placeholder="Agreement body..."></textarea>
+          <textarea id="sysAgreementTemplateText" rows="4" placeholder="Agreement body..."></textarea>
           <label>Template File URL (optional, from upload)</label>
           <input id="sysAgreementTemplateFileUrl" placeholder="/uploads/your-template.docx" />
           <label>Upload Sample File</label>
