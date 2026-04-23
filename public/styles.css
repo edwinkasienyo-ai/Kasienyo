@@ -885,6 +885,10 @@ button:hover {
   color: #eef7ff;
 }
 
+.alerts-top-slot {
+  margin-bottom: 8px;
+}
+
 .profile-card {
   border: 1px solid var(--line-200);
   border-radius: var(--radius-lg);

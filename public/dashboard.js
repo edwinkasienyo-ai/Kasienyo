@@ -2108,9 +2108,10 @@ async function loadDashboard() {
       topBannerEl.innerHTML = welcomeMetaMarkup;
     }
 
-    document.getElementById("formArea").innerHTML = `
-      <div class="dashboard-grid">
-        <section class="dashboard-section">
+    const topAlertsEl = document.getElementById("dashboardTopAlerts");
+    if (topAlertsEl) {
+      topAlertsEl.innerHTML = `
+        <section class="dashboard-section dashboard-alerts-priority">
           <h3>Alerts & Announcements</h3>
           <h4>System Alerts</h4>
           <div class="dashboard-alerts">
@@ -2121,6 +2122,11 @@ async function loadDashboard() {
             ${announcementMarkup || '<p class="small-note">No active announcements.</p>'}
           </div>
         </section>
+      `;
+    }
+
+    document.getElementById("formArea").innerHTML = `
+      <div class="dashboard-grid">
         <section class="dashboard-section">
           <h3>Academic Session Finance Synchronization</h3>
           <div class="form-grid">
