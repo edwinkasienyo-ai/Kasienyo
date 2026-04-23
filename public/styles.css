@@ -855,6 +855,36 @@ button:hover {
   overflow-x: hidden;
 }
 
+.dashboard-welcome-banner {
+  margin-bottom: 12px;
+  padding: 14px 16px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--line-200);
+  background: linear-gradient(125deg, #0f3860 0%, #1f6ca7 52%, #27a5f0 100%);
+  color: #f2f9ff;
+  box-shadow: var(--shadow-md);
+}
+
+.dashboard-welcome-banner h3 {
+  margin: 0 0 6px;
+  color: #fff;
+}
+
+.dashboard-welcome-banner .small-note {
+  margin: 0;
+  color: #eaf5ff;
+}
+
+.dashboard-welcome-banner .dashboard-hero-meta {
+  margin-top: 10px;
+}
+
+.dashboard-welcome-banner .dashboard-hero-meta .tag {
+  background: rgba(255, 255, 255, 0.14);
+  border-color: rgba(255, 255, 255, 0.24);
+  color: #eef7ff;
+}
+
 .topbar {
   display: flex;
   justify-content: space-between;

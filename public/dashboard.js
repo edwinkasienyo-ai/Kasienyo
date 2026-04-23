@@ -2064,18 +2064,23 @@ async function loadDashboard() {
       : DASHBOARD_ACADEMIC_YEARS[0];
     const selectedTerm = DASHBOARD_TERMS.includes(data?.selectedTerm) ? data.selectedTerm : DASHBOARD_TERMS[0];
 
+    const welcomeMetaMarkup = `
+      <div>
+        <h3 id="dashboardWelcomeLine">WELCOME</h3>
+        <p class="small-note">Monitor academics, attendance, finance, alerts, and activity in one place.</p>
+      </div>
+      <div class="dashboard-hero-meta">
+        <span class="tag">Portal: ${escapeHtml(portalContext?.portal || "-")}</span>
+        <span class="tag">Role: ${escapeHtml(portalContext?.role || "-")}</span>
+        <span class="tag">Generated: ${escapeHtml(formatDateTime(data.generated_at))}</span>
+      </div>
+    `;
+    const topBannerEl = document.getElementById("dashboardWelcomeBanner");
+    if (topBannerEl) {
+      topBannerEl.innerHTML = welcomeMetaMarkup;
+    }
+
     document.getElementById("formArea").innerHTML = `
-      <section class="dashboard-hero">
-        <div>
-          <h3 id="dashboardWelcomeLine">WELCOME</h3>
-          <p class="small-note">Monitor academics, attendance, finance, alerts, and activity in one place.</p>
-        </div>
-        <div class="dashboard-hero-meta">
-          <span class="tag">Portal: ${escapeHtml(portalContext?.portal || "-")}</span>
-          <span class="tag">Role: ${escapeHtml(portalContext?.role || "-")}</span>
-          <span class="tag">Generated: ${escapeHtml(formatDateTime(data.generated_at))}</span>
-        </div>
-      </section>
       <div class="dashboard-grid">
         <section class="dashboard-section">
           <h3>Alerts & Announcements</h3>
