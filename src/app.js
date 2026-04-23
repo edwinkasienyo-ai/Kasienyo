@@ -2652,6 +2652,10 @@ app.post(
       ? portalRoleRaw
       : ROLES.HEAD_OF_INSTITUTION;
 
+    if (!institutionName) {
+      return res.status(400).json({ error: "institution_name is required." });
+    }
+
     const countyRecord = resolveCounty({ countyCode: countyCodeInput, countyName: countyInput });
     if (!countyRecord) {
       return res.status(400).json({ error: "Select a valid county." });
@@ -2666,11 +2670,6 @@ app.post(
 
     const postalDetails = getPostalDetails(postalCodeInput);
     const normalizedTown = townInput || postalDetails?.town || null;
-    const institutionCode = await nextInstitutionCode({
-      countyCode: countyRecord.code,
-      categoryCode: categoryRecord.code
-    });
-
     const adminPassword = autoGeneratePassword
       ? generateStrongPassword(12)
       : adminPasswordInput;
@@ -2685,30 +2684,41 @@ app.post(
       });
     }
 
-    const existingInstitution = await query(
-      "SELECT id FROM institutions WHERE institution_code = ? LIMIT 1",
-      [institutionCode]
-    );
-    if (existingInstitution.length) {
-      return res.status(409).json({ error: "Institution code already exists." });
+    // Avoid duplicate institution_code under concurrent registrations by retrying on duplicate-key conflict.
+    let institutionCode = "";
+    let institutionInsert = null;
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      institutionCode = await nextInstitutionCode({
+        countyCode: countyRecord.code,
+        categoryCode: categoryRecord.code
+      });
+      try {
+        institutionInsert = await query(
+          `INSERT INTO institutions
+            (institution_name, institution_code, email, phone, county, sub_county, location, village, postal_address)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            institutionName,
+            institutionCode,
+            institutionEmail,
+            institutionPhone,
+            countyRecord.name,
+            subCounty,
+            location,
+            normalizedTown || village,
+            postalAddress
+          ]
+        );
+        break;
+      } catch (error) {
+        if (error?.code !== "ER_DUP_ENTRY" || attempt === 4) {
+          throw error;
+        }
+      }
     }
-
-    const institutionInsert = await query(
-      `INSERT INTO institutions
-        (institution_name, institution_code, email, phone, county, sub_county, location, village, postal_address)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        institutionName,
-        institutionCode,
-        institutionEmail,
-        institutionPhone,
-        countyRecord.name,
-        subCounty,
-        location,
-        normalizedTown || village,
-        postalAddress
-      ]
-    );
+    if (!institutionInsert?.insertId) {
+      return res.status(409).json({ error: "Unable to allocate a unique institution code. Please retry." });
+    }
     const institutionId = institutionInsert.insertId;
     const passwordHash = await hashPassword(adminPassword);
 

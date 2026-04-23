@@ -11,6 +11,8 @@ CREATE TABLE IF NOT EXISTS institutions (
   sub_county VARCHAR(100) NULL,
   location VARCHAR(100) NULL,
   postal_address VARCHAR(255) NULL,
+  agreement_template_text TEXT NULL,
+  agreement_template_file_url VARCHAR(255) NULL,
   village VARCHAR(100) NULL,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
