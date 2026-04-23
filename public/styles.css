@@ -856,9 +856,11 @@ button:hover {
 }
 
 .dashboard-fixed-header {
-  position: static;
-  background: transparent;
-  padding-bottom: 0;
+  position: sticky;
+  top: 0;
+  z-index: 13;
+  background: var(--surface-50, #f3f7fb);
+  padding-bottom: 2px;
 }
 
 .main-scroll-area {
@@ -1188,12 +1190,12 @@ button:hover {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 6px;
+  margin-bottom: 5px;
   background: var(--surface-0);
   border: 1px solid var(--line-200);
   box-shadow: var(--shadow-sm);
   border-radius: var(--radius-md);
-  padding: 6px 8px;
+  padding: 5px 7px;
 }
 
 .topbar-right {
@@ -1209,7 +1211,7 @@ button:hover {
 
 .topbar-left h1 {
   margin: 0;
-  font-size: 13px;
+  font-size: 12px;
   line-height: 1.1;
 }
 
@@ -1230,9 +1232,10 @@ button:hover {
 }
 
 .topbar-right input {
-  min-width: 220px;
-  font-size: 11px;
-  padding: 5px 7px;
+  min-width: 185px;
+  max-width: 210px;
+  font-size: 10px;
+  padding: 4px 6px;
 }
 
 .topbar-actions {
@@ -1241,9 +1244,9 @@ button:hover {
 }
 
 .topbar-right button {
-  min-height: 29px;
-  padding: 5px 8px;
-  font-size: 11px;
+  min-height: 26px;
+  padding: 4px 7px;
+  font-size: 10px;
 }
 
 .dashboard-toolbar {
@@ -1289,16 +1292,16 @@ button:hover {
 
 .cards {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(128px, 1fr));
-  gap: 6px;
-  margin-bottom: 8px;
+  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+  gap: 5px;
+  margin-bottom: 6px;
 }
 
 .stats-card {
-  padding: 7px 8px;
+  padding: 5px 6px;
   border: 1px solid var(--line-200);
   background: linear-gradient(160deg, #ffffff 0%, #f4f9ff 100%);
-  border-radius: 10px;
+  border-radius: 8px;
   box-shadow: var(--shadow-sm);
   position: relative;
   overflow: hidden;
@@ -1315,20 +1318,20 @@ button:hover {
 }
 
 .stats-card h4 {
-  margin: 0 0 5px;
-  font-size: 10px;
+  margin: 0 0 3px;
+  font-size: 9px;
   color: #4c6076;
 }
 
 .stats-card p {
   margin: 0;
-  font-size: 14px;
+  font-size: 12px;
   font-weight: 700;
   color: var(--primary-800);
 }
 
 .metric-emphasis p {
-  font-size: 15px;
+  font-size: 13px;
 }
 
 .metric-totalLearners {
@@ -1414,8 +1417,8 @@ button:hover {
 .form-area {
   background: var(--surface-0);
   border-radius: var(--radius-lg);
-  padding: 14px;
-  margin-bottom: 14px;
+  padding: 10px;
+  margin-bottom: 10px;
   border: 1px solid var(--line-200);
   box-shadow: var(--shadow-sm);
 }
@@ -1718,17 +1721,20 @@ tbody tr:hover {
   border-radius: var(--radius-md);
   background: linear-gradient(140deg, #0f3860, #1f6ca7);
   color: #fff;
-  padding: 14px;
-  margin-bottom: 10px;
+  padding: 9px 10px;
+  margin-bottom: 6px;
 }
 
 .module-header-card h3 {
-  margin: 0 0 4px;
+  margin: 0 0 2px;
+  font-size: 12px;
   color: #fff;
 }
 
 .module-header-card p {
   margin: 0;
+  font-size: 10px;
+  line-height: 1.15;
   color: #e1f0ff;
 }
 
