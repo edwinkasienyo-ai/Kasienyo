@@ -262,17 +262,15 @@ async function renderSystemRegistration() {
           <label>Upload Sample File</label>
           <input id="sysAgreementTemplateUpload" type="file" />
         </div>
-        <div class="actions-row registration-compact-actions">
-          <button id="sysAgreementUploadButton">Upload Sample</button>
+        <div class="actions-row registration-compact-actions agreement-inline-actions">
+          <button id="sysAgreementUploadButton">Upload</button>
           <button id="sysAgreementSaveButton">Save</button>
-          <button id="sysAgreementEditButton">Edit/Reload</button>
+          <button id="sysAgreementEditButton">Reload</button>
           <button id="sysAgreementDeleteButton" class="danger-button">Delete</button>
-        </div>
-        <div class="actions-row registration-compact-actions">
-          <button id="sysAgreementDownloadButton">Download PDF</button>
+          <button id="sysAgreementDownloadButton">PDF</button>
           <button id="sysAgreementPrintButton">Print</button>
           <button id="sysAgreementEmailButton">Email</button>
-          <button id="sysAgreementOpenButton">Save / Open PDF</button>
+          <button id="sysAgreementOpenButton">Open PDF</button>
         </div>
       </div>
       <div class="section-card registration-compact-card">

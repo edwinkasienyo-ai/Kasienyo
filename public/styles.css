@@ -1978,6 +1978,22 @@ tbody tr:hover {
   border-radius: 7px;
 }
 
+.agreement-toolbar-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.agreement-toolbar-row button {
+  width: auto;
+  min-height: 25px;
+  padding: 3px 7px;
+  font-size: 10px;
+  border-radius: 6px;
+}
+
 .danger-button {
   background: linear-gradient(160deg, #c92f37 0%, #9f1f25 100%);
 }
