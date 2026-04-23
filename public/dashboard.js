@@ -647,12 +647,12 @@ async function renderModuleRights() {
           </tbody>
         </table>
       </div>
-      <div class="actions-row registration-compact-actions">
+      </div>
+      <div id="moduleAccessInfo" class="small-note"></div>
+      <div class="actions-row registration-compact-actions module-rights-bottom-actions">
         <button id="saveModuleAccessButton">Save Rights Matrix</button>
         <button id="showRoleDefaultsButton">Show Role Defaults</button>
       </div>
-      </div>
-      <div id="moduleAccessInfo" class="small-note"></div>
     `;
     resetDataTable("Use controls above to manage module overrides.");
     const moduleRightsChecks = () => Array.from(document.querySelectorAll("#moduleRightsMatrixTable input[type='checkbox']"));
@@ -706,7 +706,7 @@ async function renderModuleRights() {
           method: "POST",
           body: JSON.stringify({
             user_id: userId,
-            overrides: overridesPayload
+            entries: overridesPayload
           })
         });
         alert(response.message || "Module rights matrix saved.");

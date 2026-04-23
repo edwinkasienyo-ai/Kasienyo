@@ -2101,6 +2101,12 @@ tbody tr:hover {
   border-radius: 6px;
 }
 
+.module-rights-bottom-actions {
+  justify-content: flex-end;
+  margin-top: 8px;
+  margin-bottom: 2px;
+}
+
 .module-rights-matrix-wrap {
   max-height: 48vh;
 }
