@@ -780,6 +780,10 @@ async function renderCbcCurriculumEditor() {
         <button id="generateCbcStructureButton">AI Strand/Sub-Strand Assist</button>
         <button id="generateCbcNotesButton">Generate AI Notes</button>
         <button id="bulkGenerateCbcLibraryButton">Generate Full CBC Library</button>
+        <button id="downloadCbcMappingTemplateButton">Download Mapping CSV Template</button>
+        <button id="importCbcMappingButton">Import Strand/Sub-Strand CSV</button>
+        <button id="editCbcMappingButton">Edit Strand/Sub-Strand Mapping</button>
+        <input id="cbcMappingFile" type="file" accept=".csv,text/csv" style="display:none;" />
         <button id="printCbcNotesButton">Print Notes</button>
         <button id="downloadCbcNotesButton">Download Notes</button>
         <button id="uploadCbcMaterialButton">Upload Material</button>
@@ -938,7 +942,10 @@ async function renderCbcCurriculumEditor() {
         grade: gradeEl?.value || "",
         form_name: formEl?.value || "",
         term: document.getElementById("cbcTerm")?.value || "",
-        year: Number(document.getElementById("cbcYear")?.value || 0) || null
+        year: Number(document.getElementById("cbcYear")?.value || 0) || null,
+        overwrite_existing: window.confirm(
+          "Overwrite existing notes/resources for matching strand/sub-strand entries?"
+        )
       };
       if (!payload.grade && !payload.form_name) {
         alert("Select either grade or form before bulk generation.");
@@ -957,6 +964,64 @@ async function renderCbcCurriculumEditor() {
           `Bulk generation complete. Created ${result.created_entries || 0} entries and ${result.created_materials || 0} materials.`
         );
         await renderCbcCurriculumEditor();
+      } catch (error) {
+        alert(error.message);
+      }
+    });
+    document.getElementById("importCbcMappingButton")?.addEventListener("click", () => {
+      document.getElementById("cbcMappingFile")?.click();
+    });
+    document.getElementById("cbcMappingFile")?.addEventListener("change", async (event) => {
+      const file = event?.target?.files?.[0];
+      if (!file) return;
+      const formData = new FormData();
+      formData.append("file", file);
+      try {
+        const response = await fetch("/api/cbc/curriculum/structure-mappings/import", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}` },
+          body: formData
+        });
+        const result = await response.json();
+      if (!response.ok) {
+        alert(result.error || "Import failed.");
+        return;
+      }
+      alert(`Mappings imported: ${result.imported || 0}`);
+      await refreshStructureFromAi();
+      } catch (error) {
+        alert(error.message);
+      } finally {
+        event.target.value = "";
+      }
+    });
+    document.getElementById("editCbcMappingButton")?.addEventListener("click", async () => {
+      const learningArea = learningAreaEl?.value || "";
+      if (!learningArea) {
+        alert("Select learning area first.");
+        return;
+      }
+      const grade = gradeEl?.value || "";
+      const formName = formEl?.value || "";
+      const strand = prompt("Enter strand to update:", strandEl?.value || "");
+      if (!strand) return;
+      const subStrand = prompt("Enter corrected sub-strand:", subStrandEl?.value || "");
+      if (!subStrand) return;
+      const sourceLabel = prompt("Source label (e.g. KICD-Approved):", "Manual Correction");
+      try {
+        const result = await request("/api/cbc/curriculum/structure-mappings", {
+          method: "POST",
+          body: JSON.stringify({
+            learning_area: learningArea,
+            strand,
+            sub_strand: subStrand,
+            grade: grade || null,
+            form_name: formName || null,
+            source_label: sourceLabel
+          })
+        });
+        alert(result.message || "Structure mapping saved.");
+        await refreshStructureFromAi();
       } catch (error) {
         alert(error.message);
       }

@@ -489,6 +489,31 @@ async function ensureUserPasswordPolicyColumns() {
       )`
     );
   }
+
+  const cbcStructureMappingRows = await query(
+    `SELECT COUNT(*) total
+     FROM INFORMATION_SCHEMA.TABLES
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = 'cbc_structure_mappings'`
+  );
+  if (!Number(cbcStructureMappingRows[0]?.total || 0)) {
+    await query(
+      `CREATE TABLE cbc_structure_mappings (
+        id BIGINT PRIMARY KEY AUTO_INCREMENT,
+        institution_id BIGINT NOT NULL,
+        learning_area VARCHAR(180) NOT NULL,
+        strand VARCHAR(180) NOT NULL,
+        sub_strand VARCHAR(180) NOT NULL,
+        grade VARCHAR(60) NULL,
+        form_name VARCHAR(60) NULL,
+        source_label VARCHAR(120) NULL,
+        created_by_user_id BIGINT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        INDEX idx_cbc_mapping_lookup (institution_id, learning_area, grade, form_name, strand)
+      )`
+    );
+  }
   const cbcCurriculumColumns = await query(
     `SELECT COLUMN_NAME
      FROM INFORMATION_SCHEMA.COLUMNS

@@ -117,6 +117,22 @@ CREATE TABLE IF NOT EXISTS cbc_curriculum_entries (
   CONSTRAINT fk_cbc_curriculum_institution FOREIGN KEY (institution_id) REFERENCES institutions(id)
 );
 
+CREATE TABLE IF NOT EXISTS cbc_structure_mappings (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  institution_id BIGINT NOT NULL,
+  learning_area VARCHAR(180) NOT NULL,
+  strand VARCHAR(180) NOT NULL,
+  sub_strand VARCHAR(180) NOT NULL,
+  grade VARCHAR(60) NULL,
+  form_name VARCHAR(60) NULL,
+  source_label VARCHAR(120) NULL,
+  created_by_user_id BIGINT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  INDEX idx_cbc_mapping_lookup (institution_id, learning_area, grade, form_name, strand),
+  CONSTRAINT fk_cbc_mapping_institution FOREIGN KEY (institution_id) REFERENCES institutions(id)
+);
+
 CREATE TABLE IF NOT EXISTS otp_sessions (
   id BIGINT PRIMARY KEY AUTO_INCREMENT,
   session_id VARCHAR(80) NOT NULL UNIQUE,

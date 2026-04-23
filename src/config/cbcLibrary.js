@@ -126,6 +126,59 @@ function buildCbcSuggestion({ grade, formName, learningArea }) {
   };
 }
 
+function buildSuggestionFromMappings({ grade, formName, learningArea, mappings = [] }) {
+  const subjectKey = normalize(learningArea);
+  const selectedGrade = normalize(grade);
+  const selectedForm = normalize(formName);
+  const filtered = mappings.filter((row) => {
+    if (normalize(row.learning_area) !== subjectKey) return false;
+    const rowGrade = normalize(row.grade);
+    const rowForm = normalize(row.form_name);
+    if (selectedGrade && rowGrade && rowGrade !== selectedGrade) return false;
+    if (selectedForm && rowForm && rowForm !== selectedForm) return false;
+    return true;
+  });
+  if (!filtered.length) return null;
+
+  const strands = [];
+  const subStrandsByStrand = {};
+  filtered.forEach((row) => {
+    const strand = normalize(row.strand);
+    const subStrand = normalize(row.sub_strand);
+    if (!strand || !subStrand) return;
+    if (!strands.includes(strand)) {
+      strands.push(strand);
+    }
+    if (!Array.isArray(subStrandsByStrand[strand])) {
+      subStrandsByStrand[strand] = [];
+    }
+    if (!subStrandsByStrand[strand].includes(subStrand)) {
+      subStrandsByStrand[strand].push(subStrand);
+    }
+  });
+  if (!strands.length) return null;
+  const selectedStrand = strands[0];
+  const selectedSubStrand = (subStrandsByStrand[selectedStrand] || [])[0] || "";
+  const gradeOrForm = selectedGrade || selectedForm || "General";
+
+  return {
+    strand: selectedStrand,
+    sub_strand: selectedSubStrand,
+    strand_options: strands,
+    sub_strand_options_by_strand: subStrandsByStrand,
+    learning_outcomes: `By the end of the lesson, learners should explain and apply ${selectedSubStrand} in ${subjectKey || "the learning area"}.`,
+    assessment_rubric: "Assess participation, concept understanding, task completion, and reflection quality.",
+    textbook_references: textbookReferences(subjectKey || "General Studies", gradeOrForm),
+    generated_notes: makeNotes({
+      grade: selectedGrade,
+      formName: selectedForm,
+      learningArea: subjectKey || "General Studies",
+      strand: selectedStrand,
+      subStrand: selectedSubStrand
+    })
+  };
+}
+
 function buildBulkCbcEntries({ grade, formName, term, year, learningAreas = [] }) {
   const selectedAreas = Array.isArray(learningAreas) && learningAreas.length
     ? learningAreas
@@ -166,6 +219,7 @@ function buildBulkCbcEntries({ grade, formName, term, year, learningAreas = [] }
 
 module.exports = {
   buildCbcSuggestion,
+  buildSuggestionFromMappings,
   makeNotes,
   getAllCbcLearningAreas,
   buildBulkCbcEntries

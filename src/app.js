@@ -44,7 +44,12 @@ const { hashPassword, verifyPassword } = require("./utils/password");
 const { sendSimplePdf, sendSimpleExcel } = require("./services/exportService");
 const { generateOtpCode, buildOtpExpiry, sendOtp } = require("./services/otpService");
 const { buildSearchWhere } = require("./utils/sql");
-const { buildCbcSuggestion, makeNotes, getAllCbcLearningAreas } = require("./config/cbcLibrary");
+const {
+  buildCbcSuggestion,
+  makeNotes,
+  getAllCbcLearningAreas,
+  buildBulkCbcEntries
+} = require("./config/cbcLibrary");
 
 /** Bump when shipping UI/API changes so schools can confirm they run the right copy. */
 const IIMS_BUILD_STAMP = process.env.IIMS_BUILD_STAMP || "20260422-ui9";
@@ -4783,134 +4788,6 @@ app.get(
 );
 
 app.post(
-  "/api/cbc/curriculum/materials/upload",
-  auth,
-  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER]),
-  enforcePermission(PERMISSIONS.CREATE),
-  upload.single("file"),
-  asyncHandler(async (req, res) => {
-    if (!req.file) {
-      return res.status(400).json({ error: "File upload failed." });
-    }
-    const payload = pickFields(req.body || {}, [
-      "grade",
-      "form_name",
-      "learning_area",
-      "strand",
-      "sub_strand",
-      "term",
-      "year",
-      "title",
-      "description",
-      "resource_type"
-    ]);
-    const title = cleanValue(payload.title) || req.file.originalname;
-    const resourceType = cleanValue(payload.resource_type) || "CBC_CBE_MATERIAL_UPLOAD";
-    const teacherProfileId = Number(req.body?.teacher_profile_id || 0) || null;
-    const result = await query(
-      `INSERT INTO teacher_resources
-        (institution_id, teacher_profile_id, resource_type, title, description, grade, stream, term, strand, sub_strand, file_path, auto_generated, created_by_user_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)`,
-      [
-        req.user.institution_id,
-        teacherProfileId,
-        resourceType,
-        title,
-        cleanOptionalValue(payload.description),
-        cleanOptionalValue(payload.grade),
-        cleanOptionalValue(payload.form_name),
-        cleanOptionalValue(payload.term),
-        cleanOptionalValue(payload.strand),
-        cleanOptionalValue(payload.sub_strand),
-        `/uploads/${req.file.filename}`,
-        req.user.id
-      ]
-    );
-    await auditLog(req.user, "UPLOAD_CBC_CBE_MATERIAL", "teacher_resources", result.insertId, {
-      title,
-      learning_area: cleanOptionalValue(payload.learning_area),
-      grade: cleanOptionalValue(payload.grade),
-      file_path: `/uploads/${req.file.filename}`
-    });
-    res.status(201).json({
-      message: "CBC/CBE material uploaded successfully.",
-      id: result.insertId,
-      file_path: `/uploads/${req.file.filename}`
-    });
-  })
-);
-
-app.get(
-  "/api/cbc/curriculum/materials",
-  auth,
-  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER]),
-  enforcePermission(PERMISSIONS.VIEW),
-  asyncHandler(async (req, res) => {
-    const rows = await query(
-      `SELECT id, resource_type, title, description, grade, stream form_name, term, strand, sub_strand, file_path, created_at
-       FROM teacher_resources
-       WHERE institution_id = ?
-       ORDER BY id DESC
-       LIMIT 300`,
-      [req.user.institution_id]
-    );
-    res.json(rows);
-  })
-);
-
-app.post(
-  "/api/cbc/curriculum/ai-generate-notes",
-  auth,
-  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER]),
-  enforcePermission(PERMISSIONS.CREATE),
-  asyncHandler(async (req, res) => {
-    const grade = cleanValue(req.body?.grade);
-    const learningArea = cleanValue(req.body?.learning_area);
-    const strand = cleanValue(req.body?.strand);
-    const subStrand = cleanOptionalValue(req.body?.sub_strand);
-    const levelPrompt = cleanOptionalValue(req.body?.simplification_level) || "age-appropriate";
-    if (!grade || !learningArea || !strand) {
-      return res.status(400).json({ error: "grade, learning_area and strand are required." });
-    }
-    const generated = [
-      `AI SIMPLIFIED NOTES - ${grade}`,
-      `Learning Area: ${learningArea}`,
-      `Strand: ${strand}`,
-      `Sub-Strand: ${subStrand || "-"}`,
-      "",
-      "1) Key Idea",
-      `${learningArea} under ${strand} focuses on practical understanding for ${grade} learners.`,
-      "",
-      "2) Simple Explanation",
-      `Break the concept into short examples and learner-friendly language (${levelPrompt}).`,
-      "",
-      "3) Class Activity",
-      "- Starter question",
-      "- Guided discussion",
-      "- Short exercise with feedback",
-      "",
-      "4) Assessment Check",
-      "- Oral question",
-      "- Quick written check",
-      "- Peer explanation activity",
-      "",
-      "5) Homework/Follow-up",
-      "- One brief task reinforcing today's lesson."
-    ].join("\n");
-    await auditLog(req.user, "GENERATE_CBC_AI_NOTES", "cbc_curriculum_entries", null, {
-      grade,
-      learning_area: learningArea,
-      strand,
-      sub_strand: subStrand || null
-    });
-    res.json({
-      message: "AI simplified notes generated successfully.",
-      generated_notes: generated
-    });
-  })
-);
-
-app.post(
   "/api/cbc/curriculum",
   auth,
   enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER]),
@@ -5034,7 +4911,17 @@ app.post(
     if ((!grade && !formName) || !learningArea) {
       return res.status(400).json({ error: "grade or form_name and learning_area are required." });
     }
-    const suggestion = buildCbcSuggestion({ grade, formName, learningArea });
+    const mappingRows = await query(
+      `SELECT strand, sub_strand
+       FROM cbc_structure_mappings
+       WHERE institution_id = ?
+         AND learning_area = ?
+         AND ((? IS NULL AND grade IS NULL) OR grade = ? OR grade IS NULL OR grade = '')
+         AND ((? IS NULL AND form_name IS NULL) OR form_name = ? OR form_name IS NULL OR form_name = '')
+       ORDER BY strand, sub_strand`,
+      [req.user.institution_id, learningArea, grade || null, grade || null, formName || null, formName || null]
+    );
+    const suggestion = buildCbcSuggestion({ grade, formName, learningArea, mappingRows });
     await auditLog(req.user, "GENERATE_CBC_AI_STRUCTURE", "cbc_curriculum_entries", null, {
       grade: grade || null,
       form_name: formName || null,
@@ -5057,7 +4944,17 @@ app.post(
     if ((!grade && !formName) || !learningArea) {
       return res.status(400).json({ error: "grade or form_name and learning_area are required." });
     }
-    const suggestion = buildCbcSuggestion({ grade, formName, learningArea });
+    const mappingRows = await query(
+      `SELECT strand, sub_strand
+       FROM cbc_structure_mappings
+       WHERE institution_id = ?
+         AND learning_area = ?
+         AND ((? IS NULL AND grade IS NULL) OR grade = ? OR grade IS NULL OR grade = '')
+         AND ((? IS NULL AND form_name IS NULL) OR form_name = ? OR form_name IS NULL OR form_name = '')
+       ORDER BY strand, sub_strand`,
+      [req.user.institution_id, learningArea, grade || null, grade || null, formName || null, formName || null]
+    );
+    const suggestion = buildCbcSuggestion({ grade, formName, learningArea, mappingRows });
     await auditLog(req.user, "GENERATE_CBC_AI_STRUCTURE", "cbc_curriculum_entries", null, {
       grade: grade || null,
       form_name: formName || null,
@@ -5080,7 +4977,17 @@ app.post(
     if ((!grade && !formName) || !learningArea) {
       return res.status(400).json({ error: "grade or form_name and learning_area are required." });
     }
-    const suggestion = buildCbcSuggestion({ grade, formName, learningArea });
+    const mappingRows = await query(
+      `SELECT strand, sub_strand
+       FROM cbc_structure_mappings
+       WHERE institution_id = ?
+         AND learning_area = ?
+         AND ((? IS NULL AND grade IS NULL) OR grade = ? OR grade IS NULL OR grade = '')
+         AND ((? IS NULL AND form_name IS NULL) OR form_name = ? OR form_name IS NULL OR form_name = '')
+       ORDER BY strand, sub_strand`,
+      [req.user.institution_id, learningArea, grade || null, grade || null, formName || null, formName || null]
+    );
+    const suggestion = buildCbcSuggestion({ grade, formName, learningArea, mappingRows });
     await auditLog(req.user, "GENERATE_CBC_AI_STRUCTURE", "cbc_curriculum_entries", null, {
       grade: grade || null,
       form_name: formName || null,
@@ -5105,7 +5012,17 @@ app.post(
     if ((!grade && !formName) || !learningArea || !strand) {
       return res.status(400).json({ error: "grade or form_name, learning_area and strand are required." });
     }
-    const fallbackStructure = buildCbcSuggestion({ grade, formName, learningArea });
+    const mappingRows = await query(
+      `SELECT strand, sub_strand
+       FROM cbc_structure_mappings
+       WHERE institution_id = ?
+         AND learning_area = ?
+         AND ((? IS NULL AND grade IS NULL) OR grade = ? OR grade IS NULL OR grade = '')
+         AND ((? IS NULL AND form_name IS NULL) OR form_name = ? OR form_name IS NULL OR form_name = '')
+       ORDER BY strand, sub_strand`,
+      [req.user.institution_id, learningArea, grade || null, grade || null, formName || null, formName || null]
+    );
+    const fallbackStructure = buildCbcSuggestion({ grade, formName, learningArea, mappingRows });
     const resolvedSubStrand = subStrand || fallbackStructure.sub_strand;
     const generated = makeNotes({
       grade,
@@ -5232,6 +5149,7 @@ app.post(
     const formName = cleanValue(req.body?.form_name);
     const term = cleanOptionalValue(req.body?.term) || "Term One";
     const year = Number(req.body?.year || 0) || dayjs().year();
+    const overwriteExisting = parseTruthy(req.body?.overwrite_existing);
     if (!grade && !formName) {
       return res.status(400).json({ error: "grade or form_name is required for bulk generation." });
     }
@@ -5240,13 +5158,44 @@ app.post(
     let entriesCreated = 0;
     let materialsCreated = 0;
     for (const learningArea of learningAreas) {
-      const suggestion = buildCbcSuggestion({ grade, formName, learningArea });
+      const mappingRows = await query(
+        `SELECT strand, sub_strand
+         FROM cbc_structure_mappings
+         WHERE institution_id = ?
+           AND learning_area = ?
+           AND ((? IS NULL AND grade IS NULL) OR grade = ? OR grade IS NULL OR grade = '')
+           AND ((? IS NULL AND form_name IS NULL) OR form_name = ? OR form_name IS NULL OR form_name = '')
+         ORDER BY strand, sub_strand`,
+        [req.user.institution_id, learningArea, grade || null, grade || null, formName || null, formName || null]
+      );
+      const suggestion = buildCbcSuggestion({ grade, formName, learningArea, mappingRows });
       const strands = Array.isArray(suggestion.strand_options) ? suggestion.strand_options : [];
       for (const strand of strands) {
         const subStrands = Array.isArray(suggestion.sub_strand_options_by_strand?.[strand])
           ? suggestion.sub_strand_options_by_strand[strand]
           : [];
         for (const subStrand of subStrands) {
+          const existingEntries = await query(
+            `SELECT id
+             FROM cbc_curriculum_entries
+             WHERE institution_id = ?
+               AND learning_area = ?
+               AND strand = ?
+               AND sub_strand = ?
+               AND ((? IS NULL AND grade IS NULL) OR grade = ?)
+               AND ((? IS NULL AND form_name IS NULL) OR form_name = ?)
+             LIMIT 1`,
+            [
+              req.user.institution_id,
+              learningArea,
+              strand,
+              subStrand,
+              grade || null,
+              grade || null,
+              formName || null,
+              formName || null
+            ]
+          );
           const notes = makeNotes({
             grade,
             formName,
@@ -5254,27 +5203,51 @@ app.post(
             strand,
             subStrand
           });
-          await query(
-            `INSERT INTO cbc_curriculum_entries
-              (institution_id, grade, form_name, learning_area, strand, sub_strand, specific_learning_outcomes, suggested_assessment_rubric, resources_reference, term, year, notes, created_by_user_id)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            [
-              req.user.institution_id,
-              grade || null,
-              formName || null,
-              learningArea,
-              strand,
-              subStrand,
-              suggestion.learning_outcomes,
-              suggestion.assessment_rubric,
-              (suggestion.textbook_references || []).join("\n"),
-              term,
-              year,
-              notes,
-              req.user.id
-            ]
-          );
-          entriesCreated += 1;
+          if (existingEntries.length && overwriteExisting) {
+            await query(
+              `UPDATE cbc_curriculum_entries
+               SET specific_learning_outcomes = ?,
+                   suggested_assessment_rubric = ?,
+                   resources_reference = ?,
+                   term = ?,
+                   year = ?,
+                   notes = ?,
+                   updated_at = NOW()
+               WHERE id = ? AND institution_id = ?`,
+              [
+                suggestion.learning_outcomes,
+                suggestion.assessment_rubric,
+                (suggestion.textbook_references || []).join("\n"),
+                term,
+                year,
+                notes,
+                existingEntries[0].id,
+                req.user.institution_id
+              ]
+            );
+          } else if (!existingEntries.length) {
+            await query(
+              `INSERT INTO cbc_curriculum_entries
+                (institution_id, grade, form_name, learning_area, strand, sub_strand, specific_learning_outcomes, suggested_assessment_rubric, resources_reference, term, year, notes, created_by_user_id)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+              [
+                req.user.institution_id,
+                grade || null,
+                formName || null,
+                learningArea,
+                strand,
+                subStrand,
+                suggestion.learning_outcomes,
+                suggestion.assessment_rubric,
+                (suggestion.textbook_references || []).join("\n"),
+                term,
+                year,
+                notes,
+                req.user.id
+              ]
+            );
+            entriesCreated += 1;
+          }
           await query(
             `INSERT INTO teacher_resources
               (institution_id, teacher_profile_id, resource_type, title, description, grade, stream, term, strand, sub_strand, auto_generated, created_by_user_id)
@@ -5313,6 +5286,179 @@ app.post(
       entries_created: entriesCreated,
       materials_created: materialsCreated
     });
+  })
+);
+
+function parseCbcMappingCsv(csvText = "") {
+  const lines = String(csvText || "")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (!lines.length) return [];
+  const rows = [];
+  for (let index = 1; index < lines.length; index += 1) {
+    const line = lines[index];
+    const parts = line.split(",").map((part) => part.trim());
+    if (parts.length < 3) continue;
+    rows.push({
+      learning_area: parts[0] || "",
+      strand: parts[1] || "",
+      sub_strand: parts[2] || "",
+      grade: parts[3] || "",
+      form_name: parts[4] || "",
+      source_label: parts[5] || "CSV Import"
+    });
+  }
+  return rows.filter((row) => row.learning_area && row.strand && row.sub_strand);
+}
+
+app.get(
+  "/api/cbc/curriculum/structure-mappings/template",
+  auth,
+  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER]),
+  enforcePermission(PERMISSIONS.VIEW),
+  asyncHandler(async (_, res) => {
+    const csv = [
+      "learning_area,strand,sub_strand,grade,form_name,source_label",
+      "English,Reading,Comprehension Skills,Grade 4,,KICD",
+      "Mathematics,Numbers,Fractions and Decimals,Grade 6,,KICD"
+    ].join("\n");
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", "attachment; filename=\"cbc-structure-mappings-template.csv\"");
+    res.send(csv);
+  })
+);
+
+app.post(
+  "/api/cbc/curriculum/structure-mappings/import",
+  auth,
+  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
+  enforcePermission(PERMISSIONS.CREATE),
+  upload.single("file"),
+  asyncHandler(async (req, res) => {
+    if (!req.file) {
+      return res.status(400).json({ error: "CSV file is required." });
+    }
+    const csvText = fs.readFileSync(req.file.path, "utf8");
+    const rows = parseCbcMappingCsv(csvText);
+    if (!rows.length) {
+      return res.status(400).json({ error: "No valid mapping rows found in CSV." });
+    }
+    let imported = 0;
+    for (const row of rows) {
+      await query(
+        `INSERT INTO cbc_structure_mappings
+          (institution_id, learning_area, strand, sub_strand, grade, form_name, source_label, created_by_user_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          req.user.institution_id,
+          cleanValue(row.learning_area),
+          cleanValue(row.strand),
+          cleanValue(row.sub_strand),
+          cleanOptionalValue(row.grade),
+          cleanOptionalValue(row.form_name),
+          cleanOptionalValue(row.source_label) || "CSV Import",
+          req.user.id
+        ]
+      );
+      imported += 1;
+    }
+    await auditLog(req.user, "IMPORT_CBC_STRUCTURE_MAPPINGS", "cbc_structure_mappings", null, { imported });
+    res.status(201).json({ message: "Structure mappings imported.", imported });
+  })
+);
+
+app.post(
+  "/api/cbc/curriculum/structure-mappings",
+  auth,
+  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
+  enforcePermission(PERMISSIONS.CREATE),
+  asyncHandler(async (req, res) => {
+    const learningArea = cleanValue(req.body?.learning_area);
+    const strand = cleanValue(req.body?.strand);
+    const subStrand = cleanValue(req.body?.sub_strand);
+    const grade = cleanOptionalValue(req.body?.grade);
+    const formName = cleanOptionalValue(req.body?.form_name);
+    const sourceLabel = cleanOptionalValue(req.body?.source_label) || "Manual Correction";
+    if (!learningArea || !strand || !subStrand) {
+      return res.status(400).json({ error: "learning_area, strand and sub_strand are required." });
+    }
+    const result = await query(
+      `INSERT INTO cbc_structure_mappings
+        (institution_id, learning_area, strand, sub_strand, grade, form_name, source_label, created_by_user_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [req.user.institution_id, learningArea, strand, subStrand, grade, formName, sourceLabel, req.user.id]
+    );
+    await auditLog(req.user, "SAVE_CBC_STRUCTURE_MAPPING", "cbc_structure_mappings", result.insertId, {
+      learning_area: learningArea,
+      strand,
+      sub_strand: subStrand,
+      grade,
+      form_name: formName,
+      source_label: sourceLabel
+    });
+    res.status(201).json({ id: result.insertId, message: "Structure mapping saved." });
+  })
+);
+
+app.get(
+  "/api/cbc/curriculum/structure-mappings",
+  auth,
+  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER]),
+  enforcePermission(PERMISSIONS.VIEW),
+  asyncHandler(async (req, res) => {
+    const learningArea = cleanOptionalValue(req.query?.learning_area);
+    const grade = cleanOptionalValue(req.query?.grade);
+    const formName = cleanOptionalValue(req.query?.form_name);
+    const whereParts = ["institution_id = ?"];
+    const params = [req.user.institution_id];
+    if (learningArea) {
+      whereParts.push("learning_area = ?");
+      params.push(learningArea);
+    }
+    if (grade) {
+      whereParts.push("(grade = ? OR grade IS NULL OR grade = '')");
+      params.push(grade);
+    }
+    if (formName) {
+      whereParts.push("(form_name = ? OR form_name IS NULL OR form_name = '')");
+      params.push(formName);
+    }
+    const rows = await query(
+      `SELECT id, learning_area, strand, sub_strand, grade, form_name, source_label, created_at, updated_at
+       FROM cbc_structure_mappings
+       WHERE ${whereParts.join(" AND ")}
+       ORDER BY learning_area, strand, sub_strand
+       LIMIT 1000`,
+      params
+    );
+    res.json(rows);
+  })
+);
+
+app.patch(
+  "/api/cbc/curriculum/structure-mappings/:id(\\d+)",
+  auth,
+  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
+  enforcePermission(PERMISSIONS.UPDATE),
+  asyncHandler(async (req, res) => {
+    const mappingId = Number(req.params.id);
+    if (!mappingId) {
+      return res.status(400).json({ error: "Valid mapping id is required." });
+    }
+    const data = pickFields(req.body || {}, ["strand", "sub_strand", "source_label", "grade", "form_name"]);
+    const columns = Object.keys(data).filter((key) => cleanValue(data[key]) || data[key] === "");
+    if (!columns.length) {
+      return res.status(400).json({ error: "No mapping fields provided." });
+    }
+    await query(
+      `UPDATE cbc_structure_mappings
+       SET ${columns.map((column) => `${column} = ?`).join(", ")}, updated_at = NOW()
+       WHERE id = ? AND institution_id = ?`,
+      [...columns.map((column) => cleanOptionalValue(data[column])), mappingId, req.user.institution_id]
+    );
+    await auditLog(req.user, "UPDATE_CBC_STRUCTURE_MAPPING", "cbc_structure_mappings", mappingId, data);
+    res.json({ message: "Structure mapping updated." });
   })
 );
 
