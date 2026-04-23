@@ -95,8 +95,59 @@ async function ensureDefaultInstitutionAndAdmin() {
 async function ensureSystemDeveloperAccount(defaultInstitutionId) {
   const username = process.env.SYSTEM_DEVELOPER_USERNAME || "952252";
   const password = process.env.SYSTEM_DEVELOPER_PASSWORD || "Sheeza@2015";
+  const systemDeveloperFullName = process.env.SYSTEM_DEVELOPER_FULL_NAME || "Mr.Edwin Onyango";
+  const systemDeveloperEmail = process.env.SYSTEM_DEVELOPER_EMAIL || "mwendeguenterpriseltd@gmail.com";
+  const systemDeveloperPhone = process.env.SYSTEM_DEVELOPER_PHONE || "0725757767";
+  const systemDeveloperInstitutionName =
+    process.env.SYSTEM_DEVELOPER_INSTITUTION_NAME || "MWENDEGU ENTERPRISE LIMITED";
+  const systemDeveloperInstitutionCode =
+    process.env.SYSTEM_DEVELOPER_INSTITUTION_CODE || "254001";
   const maxSystemDevelopers = Number(process.env.SYSTEM_DEVELOPER_MAX_ACCOUNTS || 50);
   const passwordHash = await hashPassword(password);
+  let systemDeveloperInstitutionId = defaultInstitutionId;
+  const institutionRows = await query(
+    `SELECT id
+     FROM institutions
+     WHERE institution_code = ?
+        OR institution_name = ?
+     ORDER BY id ASC
+     LIMIT 1`,
+    [systemDeveloperInstitutionCode, systemDeveloperInstitutionName]
+  );
+  if (institutionRows.length) {
+    systemDeveloperInstitutionId = institutionRows[0].id;
+    await query(
+      `UPDATE institutions
+       SET institution_name = ?,
+           institution_code = ?,
+           email = COALESCE(NULLIF(email, ''), ?),
+           phone = COALESCE(NULLIF(phone, ''), ?)
+       WHERE id = ?`,
+      [
+        systemDeveloperInstitutionName,
+        systemDeveloperInstitutionCode,
+        systemDeveloperEmail,
+        systemDeveloperPhone,
+        systemDeveloperInstitutionId
+      ]
+    );
+  } else {
+    const insertedInstitution = await query(
+      `INSERT INTO institutions (institution_name, institution_code, email, phone, county, sub_county, location, village)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        systemDeveloperInstitutionName,
+        systemDeveloperInstitutionCode,
+        systemDeveloperEmail,
+        systemDeveloperPhone,
+        "N/A",
+        "N/A",
+        "N/A",
+        "N/A"
+      ]
+    );
+    systemDeveloperInstitutionId = insertedInstitution.insertId || defaultInstitutionId;
+  }
   const [{ total: totalSystemDevelopersRaw } = { total: 0 }] = await query(
     "SELECT COUNT(*) AS total FROM users WHERE role = ?",
     [ROLES.SYSTEM_DEVELOPER]
@@ -123,13 +174,13 @@ async function ensureSystemDeveloperAccount(defaultInstitutionId) {
         (institution_id, full_name, username, password_hash, password_last_changed_at, password_expires_at, must_change_password, role, email, phone, is_active)
        VALUES (?, ?, ?, ?, NOW(), NULL, 0, ?, ?, ?, 1)`,
       [
-        defaultInstitutionId,
-        "System Developer",
+        systemDeveloperInstitutionId,
+        systemDeveloperFullName,
         username,
         passwordHash,
         ROLES.SYSTEM_DEVELOPER,
-        "system.developer@iims.local",
-        "+254700000001"
+        systemDeveloperEmail,
+        systemDeveloperPhone
       ]
     );
     // eslint-disable-next-line no-console
@@ -149,12 +200,19 @@ async function ensureSystemDeveloperAccount(defaultInstitutionId) {
          must_change_password = 0
      WHERE username = ?`,
     [
-      defaultInstitutionId,
-      "System Developer",
+      systemDeveloperInstitutionId,
+      systemDeveloperFullName,
       passwordHash,
       ROLES.SYSTEM_DEVELOPER,
       username
     ]
+  );
+  await query(
+    `UPDATE users
+     SET email = ?,
+         phone = ?
+     WHERE username = ?`,
+    [systemDeveloperEmail, systemDeveloperPhone, username]
   );
   // eslint-disable-next-line no-console
   console.log(`System developer account refreshed: ${username}`);
