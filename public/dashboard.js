@@ -1229,80 +1229,137 @@ async function renderRecycleBin() {
 
 async function renderCbcCurriculumEditor() {
   setActiveSidebarButton("system-cbc-editor");
-  document.getElementById("moduleTitle").textContent = "CBC Curriculum Editor";
+  document.getElementById("moduleTitle").textContent = "CBC/CBE Management Module";
   if (!isSystemAdminRole()) {
-    alert("Only System Developer, Admin, or Head of Institution can manage CBC curriculum editor.");
+    alert("Only System Developer, Admin, Head of Institution, and teachers can manage CBC/CBE module.");
     return loadDashboard();
   }
   currentModule = "system-cbc-editor";
   try {
-    const rows = await request("/api/cbc/curriculum");
+    const [rows, materials] = await Promise.all([
+      request("/api/cbc/curriculum"),
+      request("/api/cbc/curriculum/materials")
+    ]);
     const list = Array.isArray(rows) ? rows : [];
+    const materialRows = Array.isArray(materials) ? materials : [];
+    const gradeOptions = Array.isArray(meta?.gradeOptions) ? meta.gradeOptions : [];
+    const formOptions = Array.isArray(meta?.formOptions) ? meta.formOptions : ["Form 3", "Form 4"];
+    const subjectOptions = (Array.isArray(meta?.subjectOptions) ? meta.subjectOptions : [])
+      .filter((item) => String(item || "").toUpperCase() !== "ALL");
+    const termOptions = ["Term One", "Term Two", "Term Three"];
+    const yearOptions = Array.from({ length: 54 }, (_, index) => 2017 + index);
     document.getElementById("cards").innerHTML = `
       <div class="card stats-card metric-emphasis">
-        <h4>CBC Entries</h4>
+        <h4>CBC/CBE Entries</h4>
         <p>${formatNumber(list.length)}</p>
       </div>
       <div class="card stats-card">
-        <h4>Editor</h4>
-        <p>Create and revise strands/sub-strands</p>
+        <h4>Materials Uploaded</h4>
+        <p>${formatNumber(materialRows.length)}</p>
       </div>
       <div class="card stats-card">
-        <h4>Curriculum Coverage</h4>
-        <p>Grade-level structured records</p>
+        <h4>Teacher Content</h4>
+        <p>Design, upload, print, view, download</p>
       </div>
     `;
     document.getElementById("formArea").innerHTML = `
       <div class="module-header-card">
-        <h3>CBC Curriculum Editor</h3>
-        <p>Create and maintain CBC curriculum entries with learning outcomes and assessments.</p>
+        <h3>CBC/CBE Management Module</h3>
+        <p>Manage teacher materials, curriculum design, textbooks, and AI-generated simplified notes that support exam generation.</p>
       </div>
       <div class="form-grid">
-        <label>Grade</label><input id="cbcGrade" placeholder="e.g. Grade 7" />
-        <label>Learning Area</label><input id="cbcLearningArea" placeholder="e.g. Integrated Science" />
-        <label>Strand</label><input id="cbcStrand" placeholder="e.g. Matter and Energy" />
-        <label>Sub-Strand</label><input id="cbcSubStrand" placeholder="e.g. States of Matter" />
+        <label>Grade</label>
+        <select id="cbcGrade">
+          <option value="">Select grade</option>
+          ${gradeOptions.map((item) => `<option value="${escapeHtml(item)}">${escapeHtml(item)}</option>`).join("")}
+        </select>
+        <label>Form</label>
+        <select id="cbcFormName">
+          <option value="">Select form</option>
+          ${formOptions.map((item) => `<option value="${escapeHtml(item)}">${escapeHtml(item)}</option>`).join("")}
+        </select>
+        <label>Learning Area</label>
+        <select id="cbcLearningArea">
+          <option value="">Select learning area</option>
+          ${subjectOptions.map((item) => `<option value="${escapeHtml(item)}">${escapeHtml(item)}</option>`).join("")}
+        </select>
+        <label>Strand</label><input id="cbcStrand" placeholder="AI can suggest strand" />
+        <label>Sub-Strand</label><input id="cbcSubStrand" placeholder="AI can suggest sub-strand" />
         <label>Learning Outcomes</label><textarea id="cbcLearningOutcomes" rows="3"></textarea>
         <label>Assessment Rubric</label><textarea id="cbcAssessmentRubric" rows="3"></textarea>
-        <label>Term</label><input id="cbcTerm" placeholder="Term One" />
-        <label>Year</label><input id="cbcYear" type="number" placeholder="2026" />
+        <label>Learning Experiences</label><textarea id="cbcLearningExperiences" rows="3"></textarea>
+        <label>Textbook/Learning Materials Reference</label><textarea id="cbcResourcesReference" rows="2"></textarea>
+        <label>Term</label>
+        <select id="cbcTerm">
+          <option value="">Select term</option>
+          ${termOptions.map((item) => `<option value="${escapeHtml(item)}">${escapeHtml(item)}</option>`).join("")}
+        </select>
+        <label>Year</label>
+        <select id="cbcYear">
+          <option value="">Select year</option>
+          ${yearOptions.map((year) => `<option value="${year}">${year}</option>`).join("")}
+        </select>
+        <label>AI Simplified Notes</label><textarea id="cbcNotes" rows="6" placeholder="Generate or edit notes here..."></textarea>
+        <label>Upload Teacher/Textbook/Learning Material</label><input id="cbcMaterialFile" type="file" />
       </div>
       <div class="actions-row">
         <button id="saveCbcEntryButton">Save Curriculum Entry</button>
+        <button id="generateCbcStructureButton">AI Strand/Sub-Strand Assist</button>
+        <button id="generateCbcNotesButton">Generate AI Notes</button>
+        <button id="printCbcNotesButton">Print Notes</button>
+        <button id="downloadCbcNotesButton">Download Notes</button>
+        <button id="uploadCbcMaterialButton">Upload Material</button>
+        <button id="amendCbcMaterialButton">Amend Material</button>
         <button id="refreshCbcEditorButton">Refresh</button>
       </div>
+      ${buildDashboardTable(
+        ["ID", "Grade", "Form", "Learning Area", "Strand", "Sub-Strand", "Term", "Year", "Created"],
+        list.slice(0, 300).map((row) => [
+          row.id,
+          row.grade || "-",
+          row.form_name || "-",
+          row.learning_area || "-",
+          row.strand || "-",
+          row.sub_strand || "-",
+          row.term || "-",
+          row.year || "-",
+          formatDateTime(row.created_at)
+        ])
+      )}
+      ${buildDashboardTable(
+        ["Material ID", "Type", "Title", "Grade", "Form", "Term", "Strand", "Sub-Strand", "File", "Created"],
+        materialRows.slice(0, 300).map((row) => [
+          row.id,
+          row.resource_type || "-",
+          row.title || "-",
+          row.grade || "-",
+          row.form_name || "-",
+          row.term || "-",
+          row.strand || "-",
+          row.sub_strand || "-",
+          row.file_path || "-",
+          formatDateTime(row.created_at)
+        ])
+      )}
     `;
     const head = document.getElementById("tableHead");
     const body = document.getElementById("tableBody");
     if (head && body) {
-      head.innerHTML = "<tr><th>ID</th><th>Grade</th><th>Learning Area</th><th>Strand</th><th>Sub-Strand</th><th>Term</th><th>Year</th><th>Created</th></tr>";
-      body.innerHTML = list
-        .slice(0, 300)
-        .map(
-          (row) => `<tr>
-            <td>${escapeHtml(String(row.id || "-"))}</td>
-            <td>${escapeHtml(row.grade || "-")}</td>
-            <td>${escapeHtml(row.learning_area || "-")}</td>
-            <td>${escapeHtml(row.strand || "-")}</td>
-            <td>${escapeHtml(row.sub_strand || "-")}</td>
-            <td>${escapeHtml(row.term || "-")}</td>
-            <td>${escapeHtml(String(row.year || "-"))}</td>
-            <td>${escapeHtml(formatDateTime(row.created_at))}</td>
-          </tr>`
-        )
-        .join("");
-      if (!list.length) {
-        resetDataTable("No CBC curriculum entries available yet.");
-      }
+      head.innerHTML = "";
+      body.innerHTML = "";
     }
     document.getElementById("saveCbcEntryButton")?.addEventListener("click", async () => {
       const payload = {
         grade: document.getElementById("cbcGrade")?.value || "",
+        form_name: document.getElementById("cbcFormName")?.value || "",
         learning_area: document.getElementById("cbcLearningArea")?.value || "",
         strand: document.getElementById("cbcStrand")?.value || "",
         sub_strand: document.getElementById("cbcSubStrand")?.value || "",
         specific_learning_outcomes: document.getElementById("cbcLearningOutcomes")?.value || "",
         suggested_assessment_rubric: document.getElementById("cbcAssessmentRubric")?.value || "",
+        learning_experiences: document.getElementById("cbcLearningExperiences")?.value || "",
+        resources_reference: document.getElementById("cbcResourcesReference")?.value || "",
+        notes: document.getElementById("cbcNotes")?.value || "",
         term: document.getElementById("cbcTerm")?.value || "",
         year: Number(document.getElementById("cbcYear")?.value || 0) || null
       };
@@ -1321,7 +1378,131 @@ async function renderCbcCurriculumEditor() {
         alert(error.message);
       }
     });
+    document.getElementById("generateCbcStructureButton")?.addEventListener("click", async () => {
+      const payload = {
+        grade: document.getElementById("cbcGrade")?.value || "",
+        learning_area: document.getElementById("cbcLearningArea")?.value || ""
+      };
+      if (!payload.grade || !payload.learning_area) {
+        alert("Select grade and learning area first.");
+        return;
+      }
+      try {
+        const result = await request("/api/cbc/curriculum/ai-suggest-structure", {
+          method: "POST",
+          body: JSON.stringify(payload)
+        });
+        document.getElementById("cbcStrand").value = result.strand || "";
+        document.getElementById("cbcSubStrand").value = result.sub_strand || "";
+        if (!document.getElementById("cbcLearningOutcomes").value) {
+          document.getElementById("cbcLearningOutcomes").value = result.learning_outcomes || "";
+        }
+        if (!document.getElementById("cbcAssessmentRubric").value) {
+          document.getElementById("cbcAssessmentRubric").value = result.assessment_rubric || "";
+        }
+      } catch (error) {
+        alert(error.message);
+      }
+    });
+    document.getElementById("generateCbcNotesButton")?.addEventListener("click", async () => {
+      const payload = {
+        grade: document.getElementById("cbcGrade")?.value || "",
+        learning_area: document.getElementById("cbcLearningArea")?.value || "",
+        strand: document.getElementById("cbcStrand")?.value || "",
+        sub_strand: document.getElementById("cbcSubStrand")?.value || ""
+      };
+      if (!payload.grade || !payload.learning_area || !payload.strand) {
+        alert("Grade, learning area and strand are required for AI notes.");
+        return;
+      }
+      try {
+        const result = await request("/api/cbc/curriculum/ai-generate-notes", {
+          method: "POST",
+          body: JSON.stringify(payload)
+        });
+        document.getElementById("cbcNotes").value = result.generated_notes || "";
+      } catch (error) {
+        alert(error.message);
+      }
+    });
+    document.getElementById("printCbcNotesButton")?.addEventListener("click", () => {
+      const notes = document.getElementById("cbcNotes")?.value || "";
+      if (!notes.trim()) return alert("No notes to print.");
+      const popup = window.open("", "_blank");
+      popup.document.write(`<pre>${escapeHtml(notes)}</pre>`);
+      popup.document.close();
+      popup.print();
+    });
+    document.getElementById("downloadCbcNotesButton")?.addEventListener("click", () => {
+      const notes = document.getElementById("cbcNotes")?.value || "";
+      if (!notes.trim()) return alert("No notes to download.");
+      const blob = new Blob([notes], { type: "text/plain;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "cbc-cbe-simplified-notes.txt";
+      a.click();
+      URL.revokeObjectURL(url);
+    });
+    document.getElementById("uploadCbcMaterialButton")?.addEventListener("click", async () => {
+      const file = document.getElementById("cbcMaterialFile")?.files?.[0];
+      if (!file) return alert("Select a material file first.");
+      const formData = new FormData();
+      formData.append("file", file);
+      formData.append("grade", document.getElementById("cbcGrade")?.value || "");
+      formData.append("form_name", document.getElementById("cbcFormName")?.value || "");
+      formData.append("learning_area", document.getElementById("cbcLearningArea")?.value || "");
+      formData.append("strand", document.getElementById("cbcStrand")?.value || "");
+      formData.append("sub_strand", document.getElementById("cbcSubStrand")?.value || "");
+      formData.append("term", document.getElementById("cbcTerm")?.value || "");
+      formData.append("year", document.getElementById("cbcYear")?.value || "");
+      formData.append("title", file.name);
+      formData.append("description", "Uploaded from CBC/CBE Management Module");
+      formData.append("resource_type", "CBC_CBE_MATERIAL_UPLOAD");
+      const response = await fetch("/api/cbc/curriculum/materials/upload", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+        body: formData
+      });
+      const result = await response.json();
+      if (!response.ok) {
+        alert(result.error || "Upload failed.");
+        return;
+      }
+      alert(result.message || "Material uploaded.");
+      await renderCbcCurriculumEditor();
+    });
+    document.getElementById("amendCbcMaterialButton")?.addEventListener("click", async () => {
+      const materialId = Number(prompt("Enter material ID to amend:") || 0);
+      if (!materialId) return;
+      const title = prompt("New title (leave blank to keep):", "");
+      const description = prompt("New description (leave blank to keep):", "");
+      try {
+        const result = await request(`/api/cbc/curriculum/materials/${materialId}`, {
+          method: "PATCH",
+          body: JSON.stringify({ title, description })
+        });
+        alert(result.message || "Material updated.");
+        await renderCbcCurriculumEditor();
+      } catch (error) {
+        alert(error.message);
+      }
+    });
     document.getElementById("refreshCbcEditorButton")?.addEventListener("click", renderCbcCurriculumEditor);
+    document.getElementById("downloadCbcNotesButton")?.addEventListener("click", () => {
+      const notes = String(document.getElementById("cbcGeneratedNotes")?.value || "").trim();
+      if (!notes) {
+        alert("Generate or type notes first.");
+        return;
+      }
+      const blob = new Blob([notes], { type: "text/plain;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "cbc-cbe-simplified-notes.txt";
+      a.click();
+      URL.revokeObjectURL(url);
+    });
   } catch (error) {
     alert(error.message);
   }
