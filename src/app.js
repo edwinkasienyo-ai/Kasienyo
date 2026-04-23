@@ -373,6 +373,7 @@ const AGREEMENT_COMPANY = {
   email: "mwendeguenterpriseltd@gmail.com",
   phone: "+254 725 757 767"
 };
+const RECYCLE_BIN_RETENTION_YEARS = Number(process.env.RECYCLE_BIN_RETENTION_YEARS || 12);
 
 const PASSWORD_ROTATION_DAYS = Number(process.env.PASSWORD_ROTATION_DAYS || 30);
 const PASSWORD_ROTATION_EXEMPT_ROLES = new Set([ROLES.SYSTEM_DEVELOPER]);
@@ -634,7 +635,7 @@ async function resetLoginFailureState(userId) {
 
 async function getActiveUserSecurityState(username) {
   const rows = await query(
-    `SELECT id, role, failed_login_attempts, locked_until
+    `SELECT id, role, institution_id, failed_login_attempts, locked_until, is_suspended, suspended_reason
      FROM users
      WHERE username = ? AND is_active = 1
      ORDER BY id DESC
@@ -642,6 +643,16 @@ async function getActiveUserSecurityState(username) {
     [cleanValue(username)]
   );
   return rows.length ? rows[0] : null;
+}
+
+async function purgeExpiredRecycleBinItems() {
+  await query(
+    `UPDATE recycle_bin_items
+     SET status = 'DELETED',
+         permanently_deleted_at = NOW()
+     WHERE status = 'TRASHED'
+       AND deleted_at <= DATE_SUB(NOW(), INTERVAL 12 YEAR)`
+  );
 }
 
 async function recordOtpFailure(identity) {
@@ -954,6 +965,17 @@ async function hasModuleAccess(user, moduleKey) {
 
 function enforceModuleAccess(moduleKey) {
   return asyncHandler(async (req, res, next) => {
+    if (Number(req.user?.is_suspended) === 1) {
+      return res.status(403).json({
+        error:
+          `You are suspended. Kindly contact the System Developer (${SYSTEM_DEVELOPER_CONTACT_EMAIL}, ${SYSTEM_DEVELOPER_CONTACT_PHONE}).`,
+        suspended: true,
+        system_developer_contact: {
+          email: SYSTEM_DEVELOPER_CONTACT_EMAIL,
+          phone: SYSTEM_DEVELOPER_CONTACT_PHONE
+        }
+      });
+    }
     const allowed = await hasModuleAccess(req.user, moduleKey);
     if (!allowed) {
       return res.status(403).json({
@@ -1013,6 +1035,10 @@ async function archiveRecycleBinItem({
       Number(deletedByUserId) || null
     ]
   );
+}
+
+function canManageInstitutionUser(reqUser, targetInstitutionId) {
+  return canManageAcrossInstitutions(reqUser) || Number(reqUser?.institution_id) === Number(targetInstitutionId || 0);
 }
 
 function isSafeTableIdentifier(name) {
@@ -1487,13 +1513,27 @@ async function createOtpSession({ identity, role, institutionId, payload, destin
 
 async function authenticateByUserTable(username, password) {
   const users = await query(
-    "SELECT * FROM users WHERE username = ? AND is_active = 1 LIMIT 1",
+    "SELECT * FROM users WHERE username = ? LIMIT 1",
     [username]
   );
   if (!users.length) {
     return null;
   }
   const user = users[0];
+  if (Number(user.is_active) !== 1) {
+    return {
+      blocked: true,
+      role: normalizeRole(user.role),
+      error: "This username is deactivated. Contact the System Developer."
+    };
+  }
+  if (Number(user.is_suspended) === 1) {
+    return {
+      blocked: true,
+      role: normalizeRole(user.role),
+      error: `This account is suspended. Contact the System Developer at ${AGREEMENT_COMPANY.email} or ${AGREEMENT_COMPANY.phone}.`
+    };
+  }
   const normalizedRole = normalizeRole(user.role);
   const valid = await verifyPassword(password, user.password_hash);
   if (!valid) {
@@ -1969,6 +2009,7 @@ app.get("/api/auth/me", auth, asyncHandler(async (req, res) => {
 
   const rows = await query(
     `SELECT u.id, u.role, u.institution_id, u.full_name, u.username, u.email, u.phone, u.password_last_changed_at, u.password_expires_at, u.must_change_password,
+            u.is_active, u.is_suspended, u.status_reason, u.suspended_reason,
             i.institution_name, i.institution_code
      FROM users u
      INNER JOIN institutions i ON i.id = u.institution_id
@@ -1980,6 +2021,20 @@ app.get("/api/auth/me", auth, asyncHandler(async (req, res) => {
     return res.status(404).json({ error: "User account not found." });
   }
   const user = rows[0];
+  if (Number(user.is_active) !== 1) {
+    return res.status(403).json({ error: "Your username is deactivated. Contact the System Developer." });
+  }
+  if (Number(user.is_suspended) === 1) {
+    return res.status(403).json({
+      error:
+        `You are suspended kindly contact the system developer (${AGREEMENT_COMPANY.email} / ${AGREEMENT_COMPANY.phone}).`,
+      suspended: true,
+      contact: {
+        email: AGREEMENT_COMPANY.email,
+        phone: AGREEMENT_COMPANY.phone
+      }
+    });
+  }
   const passwordPolicy = evaluatePasswordRotation(user);
   res.json({
     ...user,
@@ -3693,6 +3748,54 @@ app.delete(
 );
 
 app.patch(
+  "/api/institutions/:id/status",
+  auth,
+  accountMutationRateLimit,
+  accountMutationCooldown,
+  enforceModuleAccess(MODULE_KEYS.INSTITUTIONS_USERS_REGISTRY),
+  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
+  asyncHandler(async (req, res) => {
+    const institutionId = Number(req.params.id);
+    const { is_active, is_suspended, status_reason } = req.body || {};
+    if (!institutionId) {
+      return res.status(400).json({ error: "Valid institution id is required." });
+    }
+    const institutions = await query(
+      `SELECT id, institution_name, institution_code
+       FROM institutions
+       WHERE id = ?
+       LIMIT 1`,
+      [institutionId]
+    );
+    if (!institutions.length) {
+      return res.status(404).json({ error: "Institution not found." });
+    }
+    if (!canManageAcrossInstitutions(req.user) && Number(req.user.institution_id) !== institutionId) {
+      return res.status(403).json({ error: "You can only manage institution status within your own institution." });
+    }
+    const normalizedRole = normalizeRole(req.user.role);
+    if (normalizedRole !== ROLES.SYSTEM_DEVELOPER && Number(is_active) === 0) {
+      return res.status(403).json({ error: "Only System Developer can deactivate an institution." });
+    }
+    const nextActive = Number(typeof is_active === "boolean" || typeof is_active === "number" ? is_active : 1) === 1 ? 1 : 0;
+    const nextSuspended = Number(typeof is_suspended === "boolean" || typeof is_suspended === "number" ? is_suspended : 0) === 1 ? 1 : 0;
+    const reason = cleanOptionalValue(status_reason);
+    await query(
+      `UPDATE institutions
+       SET is_active = ?, is_suspended = ?, status_reason = ?, status_updated_at = NOW(), status_updated_by_user_id = ?
+       WHERE id = ?`,
+      [nextActive, nextSuspended, reason, req.user.id, institutionId]
+    );
+    await auditLog(req.user, "CHANGE_INSTITUTION_STATUS", "institutions", institutionId, {
+      is_active: nextActive,
+      is_suspended: nextSuspended,
+      status_reason: reason
+    });
+    res.json({ message: "Institution status updated successfully." });
+  })
+);
+
+app.patch(
   "/api/users/:id/status",
   auth,
   accountMutationRateLimit,
@@ -4226,6 +4329,267 @@ app.get(
         [req.user.institution_id]
       );
     res.json({ institutions, users });
+  })
+);
+
+app.get(
+  "/api/system/registry/institutions/:id/view",
+  auth,
+  enforceModuleAccess(MODULE_KEYS.INSTITUTIONS_USERS_REGISTRY),
+  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
+  asyncHandler(async (req, res) => {
+    const institutionId = Number(req.params.id);
+    if (!institutionId) return res.status(400).json({ error: "Valid institution id is required." });
+    const rows = await query(
+      `SELECT id, institution_name, institution_code, email, phone, county, sub_county, location, village,
+              postal_address, is_active, is_suspended, status_reason, suspended_reason, created_at
+       FROM institutions
+       WHERE id = ?
+       LIMIT 1`,
+      [institutionId]
+    );
+    if (!rows.length) {
+      return res.status(404).json({ error: "Institution not found." });
+    }
+    const institution = rows[0];
+    if (!canManageAcrossInstitutions(req.user) && institution.id !== req.user.institution_id) {
+      return res.status(403).json({ error: "You can only view institutions in your scope." });
+    }
+    res.json({ institution });
+  })
+);
+
+app.patch(
+  "/api/system/registry/institutions/:id",
+  auth,
+  enforceModuleAccess(MODULE_KEYS.INSTITUTIONS_USERS_REGISTRY),
+  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
+  asyncHandler(async (req, res) => {
+    const institutionId = Number(req.params.id);
+    if (!institutionId) return res.status(400).json({ error: "Valid institution id is required." });
+    const rows = await query("SELECT id, institution_name, email, phone FROM institutions WHERE id = ? LIMIT 1", [institutionId]);
+    if (!rows.length) return res.status(404).json({ error: "Institution not found." });
+    if (!canManageAcrossInstitutions(req.user) && institutionId !== req.user.institution_id) {
+      return res.status(403).json({ error: "You can only edit institutions in your scope." });
+    }
+    const institution_name = cleanOptionalValue(req.body?.institution_name);
+    const email = cleanOptionalValue(req.body?.email);
+    const phone = cleanOptionalValue(req.body?.phone);
+    await query(
+      `UPDATE institutions
+       SET institution_name = COALESCE(?, institution_name),
+           email = COALESCE(?, email),
+           phone = COALESCE(?, phone)
+       WHERE id = ?`,
+      [institution_name, email, phone, institutionId]
+    );
+    await auditLog(req.user, "UPDATE_REGISTRY_INSTITUTION", "institutions", institutionId, {
+      institution_name,
+      email,
+      phone
+    });
+    res.json({ message: "Institution saved successfully." });
+  })
+);
+
+app.patch(
+  "/api/system/registry/institutions/:id/status",
+  auth,
+  enforceModuleAccess(MODULE_KEYS.INSTITUTIONS_USERS_REGISTRY),
+  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
+  asyncHandler(async (req, res) => {
+    const institutionId = Number(req.params.id);
+    if (!institutionId) return res.status(400).json({ error: "Valid institution id is required." });
+    const rows = await query("SELECT id FROM institutions WHERE id = ? LIMIT 1", [institutionId]);
+    if (!rows.length) return res.status(404).json({ error: "Institution not found." });
+    if (!canManageAcrossInstitutions(req.user) && institutionId !== req.user.institution_id) {
+      return res.status(403).json({ error: "You can only change status for your institution." });
+    }
+    const isActive = req.body?.is_active;
+    const isSuspended = req.body?.is_suspended;
+    const reason = cleanOptionalValue(req.body?.reason) || null;
+    await query(
+      `UPDATE institutions
+       SET is_active = COALESCE(?, is_active),
+           is_suspended = COALESCE(?, is_suspended),
+           status_reason = CASE WHEN ? IS NOT NULL AND ? = 0 THEN ? ELSE status_reason END,
+           suspended_reason = CASE WHEN ? IS NOT NULL AND ? = 1 THEN ? ELSE suspended_reason END
+       WHERE id = ?`,
+      [
+        isActive === undefined ? null : Number(Boolean(isActive)),
+        isSuspended === undefined ? null : Number(Boolean(isSuspended)),
+        reason,
+        isActive === undefined ? null : Number(Boolean(isActive)),
+        reason,
+        reason,
+        isSuspended === undefined ? null : Number(Boolean(isSuspended)),
+        reason,
+        institutionId
+      ]
+    );
+    await auditLog(req.user, "CHANGE_INSTITUTION_STATUS", "institutions", institutionId, {
+      is_active: isActive,
+      is_suspended: isSuspended,
+      reason
+    });
+    res.json({ message: "Institution status updated." });
+  })
+);
+
+app.delete(
+  "/api/system/registry/institutions/:id",
+  auth,
+  enforceModuleAccess(MODULE_KEYS.INSTITUTIONS_USERS_REGISTRY),
+  enforceRole([ROLES.SYSTEM_DEVELOPER]),
+  asyncHandler(async (req, res) => {
+    const institutionId = Number(req.params.id);
+    if (!institutionId) return res.status(400).json({ error: "Valid institution id is required." });
+    if (institutionId === Number(req.user.institution_id)) {
+      return res.status(400).json({ error: "You cannot delete your own active institution." });
+    }
+    const institutions = await query(
+      `SELECT *
+       FROM institutions
+       WHERE id = ?
+       LIMIT 1`,
+      [institutionId]
+    );
+    if (!institutions.length) return res.status(404).json({ error: "Institution not found." });
+    const institution = institutions[0];
+    const users = await query("SELECT * FROM users WHERE institution_id = ?", [institutionId]);
+    await archiveRecycleBinItem({
+      institutionId,
+      entityName: "institutions",
+      entityId: institutionId,
+      payload: {
+        ...institution,
+        __cascade_users: users
+      },
+      deletedByUserId: req.user.id
+    });
+    await query("DELETE FROM users WHERE institution_id = ?", [institutionId]);
+    await query("DELETE FROM institutions WHERE id = ?", [institutionId]);
+    await auditLog(req.user, "DELETE_INSTITUTION", "institutions", institutionId, {
+      institution_code: institution.institution_code,
+      users_deleted: users.length
+    });
+    res.json({ message: "Institution moved to recycle bin successfully." });
+  })
+);
+
+app.get(
+  "/api/system/registry/users/:id/view",
+  auth,
+  enforceModuleAccess(MODULE_KEYS.INSTITUTIONS_USERS_REGISTRY),
+  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
+  asyncHandler(async (req, res) => {
+    const userId = Number(req.params.id);
+    if (!userId) return res.status(400).json({ error: "Valid user id is required." });
+    const rows = await query(
+      `SELECT id, institution_id, full_name, username, role, email, phone, is_active, is_suspended,
+              status_reason, suspended_reason, created_at
+       FROM users
+       WHERE id = ?
+       LIMIT 1`,
+      [userId]
+    );
+    if (!rows.length) return res.status(404).json({ error: "User not found." });
+    const user = rows[0];
+    if (!canManageAcrossInstitutions(req.user) && user.institution_id !== req.user.institution_id) {
+      return res.status(403).json({ error: "You can only view users in your scope." });
+    }
+    res.json({ user });
+  })
+);
+
+app.patch(
+  "/api/system/registry/users/:id",
+  auth,
+  enforceModuleAccess(MODULE_KEYS.INSTITUTIONS_USERS_REGISTRY),
+  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
+  asyncHandler(async (req, res) => {
+    const userId = Number(req.params.id);
+    if (!userId) return res.status(400).json({ error: "Valid user id is required." });
+    const rows = await query(
+      `SELECT id, institution_id
+       FROM users
+       WHERE id = ?
+       LIMIT 1`,
+      [userId]
+    );
+    if (!rows.length) return res.status(404).json({ error: "User not found." });
+    const target = rows[0];
+    if (!canManageAcrossInstitutions(req.user) && target.institution_id !== req.user.institution_id) {
+      return res.status(403).json({ error: "You can only edit users in your institution." });
+    }
+    const full_name = cleanOptionalValue(req.body?.full_name);
+    const email = cleanOptionalValue(req.body?.email);
+    const phone = cleanOptionalValue(req.body?.phone);
+    await query(
+      `UPDATE users
+       SET full_name = COALESCE(?, full_name),
+           email = COALESCE(?, email),
+           phone = COALESCE(?, phone)
+       WHERE id = ?`,
+      [full_name, email, phone, userId]
+    );
+    await auditLog(req.user, "UPDATE_REGISTRY_USER", "users", userId, {
+      full_name,
+      email,
+      phone
+    });
+    res.json({ message: "User saved successfully." });
+  })
+);
+
+app.patch(
+  "/api/system/registry/users/:id/status",
+  auth,
+  enforceModuleAccess(MODULE_KEYS.INSTITUTIONS_USERS_REGISTRY),
+  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
+  asyncHandler(async (req, res) => {
+    const userId = Number(req.params.id);
+    if (!userId) return res.status(400).json({ error: "Valid user id is required." });
+    const rows = await query(
+      `SELECT id, institution_id, role
+       FROM users
+       WHERE id = ?
+       LIMIT 1`,
+      [userId]
+    );
+    if (!rows.length) return res.status(404).json({ error: "User not found." });
+    const target = rows[0];
+    if (!canManageAcrossInstitutions(req.user) && target.institution_id !== req.user.institution_id) {
+      return res.status(403).json({ error: "You can only change status for users in your institution." });
+    }
+    const isActive = req.body?.is_active;
+    const isSuspended = req.body?.is_suspended;
+    const reason = cleanOptionalValue(req.body?.reason) || null;
+    await query(
+      `UPDATE users
+       SET is_active = COALESCE(?, is_active),
+           is_suspended = COALESCE(?, is_suspended),
+           status_reason = CASE WHEN ? IS NOT NULL AND ? = 0 THEN ? ELSE status_reason END,
+           suspended_reason = CASE WHEN ? IS NOT NULL AND ? = 1 THEN ? ELSE suspended_reason END
+       WHERE id = ?`,
+      [
+        isActive === undefined ? null : Number(Boolean(isActive)),
+        isSuspended === undefined ? null : Number(Boolean(isSuspended)),
+        reason,
+        isActive === undefined ? null : Number(Boolean(isActive)),
+        reason,
+        reason,
+        isSuspended === undefined ? null : Number(Boolean(isSuspended)),
+        reason,
+        userId
+      ]
+    );
+    await auditLog(req.user, "CHANGE_REGISTRY_USER_STATUS", "users", userId, {
+      is_active: isActive,
+      is_suspended: isSuspended,
+      reason
+    });
+    res.json({ message: "User status updated." });
   })
 );
 

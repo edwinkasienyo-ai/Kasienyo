@@ -318,6 +318,61 @@ async function ensureUserPasswordPolicyColumns() {
     await query("ALTER TABLE institutions ADD COLUMN agreement_template_file_url VARCHAR(255) NULL");
   }
 
+  const institutionActiveRows = await query(
+    `SELECT COUNT(*) total
+     FROM INFORMATION_SCHEMA.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = 'institutions'
+       AND COLUMN_NAME = 'is_active'`
+  );
+  if (!Number(institutionActiveRows[0]?.total || 0)) {
+    await query("ALTER TABLE institutions ADD COLUMN is_active TINYINT(1) NOT NULL DEFAULT 1");
+  }
+
+  const institutionSuspendedRows = await query(
+    `SELECT COUNT(*) total
+     FROM INFORMATION_SCHEMA.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = 'institutions'
+       AND COLUMN_NAME = 'is_suspended'`
+  );
+  if (!Number(institutionSuspendedRows[0]?.total || 0)) {
+    await query("ALTER TABLE institutions ADD COLUMN is_suspended TINYINT(1) NOT NULL DEFAULT 0");
+  }
+
+  const institutionStatusReasonRows = await query(
+    `SELECT COUNT(*) total
+     FROM INFORMATION_SCHEMA.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = 'institutions'
+       AND COLUMN_NAME = 'status_reason'`
+  );
+  if (!Number(institutionStatusReasonRows[0]?.total || 0)) {
+    await query("ALTER TABLE institutions ADD COLUMN status_reason TEXT NULL");
+  }
+
+  const userSuspendedRows = await query(
+    `SELECT COUNT(*) total
+     FROM INFORMATION_SCHEMA.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = 'users'
+       AND COLUMN_NAME = 'is_suspended'`
+  );
+  if (!Number(userSuspendedRows[0]?.total || 0)) {
+    await query("ALTER TABLE users ADD COLUMN is_suspended TINYINT(1) NOT NULL DEFAULT 0");
+  }
+
+  const userStatusReasonRows = await query(
+    `SELECT COUNT(*) total
+     FROM INFORMATION_SCHEMA.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = 'users'
+       AND COLUMN_NAME = 'status_reason'`
+  );
+  if (!Number(userStatusReasonRows[0]?.total || 0)) {
+    await query("ALTER TABLE users ADD COLUMN status_reason TEXT NULL");
+  }
+
   const moduleAccessRows = await query(
     `SELECT COUNT(*) total
      FROM INFORMATION_SCHEMA.TABLES

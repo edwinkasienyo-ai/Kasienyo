@@ -812,10 +812,22 @@ async function renderInstitutionsRegistry() {
         <p>${escapeHtml(portalContext?.role || "-")}</p>
       </div>
     `;
+    const canDeleteAny = String(portalContext?.role || "") === "SYSTEM_DEVELOPER";
+    const isSystemDeveloper = String(portalContext?.role || "") === "SYSTEM_DEVELOPER";
     document.getElementById("formArea").innerHTML = `
       <div class="module-header-card">
         <h3>Institutions Registry</h3>
         <p>Review institutions and user accounts available in your scope.</p>
+      </div>
+      <div class="actions-row registration-compact-actions">
+        <button id="registryViewInstitutionButton">View Institution</button>
+        <button id="registryEditInstitutionButton">Edit Institution</button>
+        <button id="registrySaveInstitutionButton">Save Institution</button>
+        <button id="registryPrintInstitutionButton">Print Institution</button>
+        <button id="registryDownloadInstitutionButton">Download Institution</button>
+        <button id="registryDeactivateInstitutionButton">Deactivate Institution</button>
+        <button id="registrySuspendInstitutionButton">Suspend Institution</button>
+        <button id="registryDeleteInstitutionButton" ${canDeleteAny ? "" : "disabled"}>Delete Institution</button>
       </div>
       ${buildDashboardTable(
         ["Institution", "Code", "County", "Email", "Phone"],
@@ -831,7 +843,7 @@ async function renderInstitutionsRegistry() {
     const head = document.getElementById("tableHead");
     const body = document.getElementById("tableBody");
     if (head && body) {
-      head.innerHTML = "<tr><th>User</th><th>Username</th><th>Role</th><th>Institution ID</th><th>Status</th><th>Created</th></tr>";
+      head.innerHTML = "<tr><th>User</th><th>Username</th><th>Role</th><th>Institution ID</th><th>Status</th><th>Suspended</th><th>Created</th></tr>";
       body.innerHTML = userRows
         .slice(0, 300)
         .map(
@@ -841,6 +853,7 @@ async function renderInstitutionsRegistry() {
             <td>${escapeHtml(row.role || "-")}</td>
             <td>${escapeHtml(String(row.institution_id || "-"))}</td>
             <td>${Number(row.is_active) === 1 ? "Active" : "Inactive"}</td>
+            <td>${Number(row.is_suspended) === 1 ? "Suspended" : "No"}</td>
             <td>${escapeHtml(formatDateTime(row.created_at))}</td>
           </tr>`
         )
@@ -849,6 +862,277 @@ async function renderInstitutionsRegistry() {
         resetDataTable("No user records found.");
       }
     }
+    const pickInstitutionId = () => Number(prompt("Enter Institution ID:") || 0);
+    const pickUserId = () => Number(prompt("Enter User ID:") || 0);
+    document.getElementById("registryViewInstitutionButton")?.addEventListener("click", () => {
+      const id = pickInstitutionId();
+      if (!id) return;
+      const item = institutionRows.find((row) => Number(row.id) === id);
+      if (!item) return alert("Institution not found.");
+      alert(JSON.stringify(item, null, 2));
+    });
+    document.getElementById("registryEditInstitutionButton")?.addEventListener("click", async () => {
+      const id = pickInstitutionId();
+      if (!id) return;
+      const institution_name = prompt("New institution name (leave blank to keep):", "");
+      const email = prompt("New email (leave blank to keep):", "");
+      const phone = prompt("New phone (leave blank to keep):", "");
+      try {
+        const result = await request(`/api/system/registry/institutions/${id}`, {
+          method: "PATCH",
+          body: JSON.stringify({ institution_name, email, phone })
+        });
+        alert(result.message || "Institution updated.");
+        await renderInstitutionsRegistry();
+      } catch (error) {
+        alert(error.message);
+      }
+    });
+    document.getElementById("registrySaveInstitutionButton")?.addEventListener("click", async () => {
+      const id = pickInstitutionId();
+      if (!id) return;
+      try {
+        const result = await request(`/api/system/registry/institutions/${id}/view`);
+        alert(`Institution loaded:\n${JSON.stringify(result.institution || {}, null, 2)}`);
+      } catch (error) {
+        alert(error.message);
+      }
+    });
+    document.getElementById("registryPrintInstitutionButton")?.addEventListener("click", () => window.print());
+    document.getElementById("registryDownloadInstitutionButton")?.addEventListener("click", () => {
+      const blob = new Blob([JSON.stringify(institutionRows, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "institutions-registry.json";
+      a.click();
+      URL.revokeObjectURL(url);
+    });
+    document.getElementById("registryDeactivateInstitutionButton")?.addEventListener("click", async () => {
+      const id = pickInstitutionId();
+      if (!id) return;
+      const reason = prompt("Reason for deactivation:");
+      if (!reason) return;
+      try {
+        const result = await request(`/api/system/registry/institutions/${id}/status`, {
+          method: "PATCH",
+          body: JSON.stringify({ is_active: false, is_suspended: false, reason })
+        });
+        alert(result.message || "Institution deactivated.");
+        await renderInstitutionsRegistry();
+      } catch (error) {
+        alert(error.message);
+      }
+    });
+    document.getElementById("registrySuspendInstitutionButton")?.addEventListener("click", async () => {
+      const id = pickInstitutionId();
+      if (!id) return;
+      const reason = prompt("Reason for suspension:");
+      if (!reason) return;
+      try {
+        const result = await request(`/api/system/registry/institutions/${id}/status`, {
+          method: "PATCH",
+          body: JSON.stringify({ is_suspended: true, reason })
+        });
+        alert(result.message || "Institution suspended.");
+        await renderInstitutionsRegistry();
+      } catch (error) {
+        alert(error.message);
+      }
+    });
+    document.getElementById("registrySuspendInstitutionButton")?.insertAdjacentHTML(
+      "afterend",
+      `<button id="registryUnsuspendInstitutionButton">Unsuspend Institution</button>`
+    );
+    document.getElementById("registryDeactivateInstitutionButton")?.insertAdjacentHTML(
+      "afterend",
+      `<button id="registryActivateInstitutionButton">Activate Institution</button>`
+    );
+    document.getElementById("registryUnsuspendInstitutionButton")?.addEventListener("click", async () => {
+      const id = pickInstitutionId();
+      if (!id) return;
+      try {
+        const result = await request(`/api/system/registry/institutions/${id}/status`, {
+          method: "PATCH",
+          body: JSON.stringify({ is_suspended: false, reason: "Unsuspended by administrator" })
+        });
+        alert(result.message || "Institution unsuspended.");
+        await renderInstitutionsRegistry();
+      } catch (error) {
+        alert(error.message);
+      }
+    });
+    document.getElementById("registryActivateInstitutionButton")?.addEventListener("click", async () => {
+      const id = pickInstitutionId();
+      if (!id) return;
+      try {
+        const result = await request(`/api/system/registry/institutions/${id}/status`, {
+          method: "PATCH",
+          body: JSON.stringify({ is_active: true, is_suspended: false, reason: "Activated by administrator" })
+        });
+        alert(result.message || "Institution activated.");
+        await renderInstitutionsRegistry();
+      } catch (error) {
+        alert(error.message);
+      }
+    });
+    document.getElementById("registryDeleteInstitutionButton")?.addEventListener("click", async () => {
+      if (!canDeleteAny) return;
+      const id = pickInstitutionId();
+      if (!id) return;
+      const ok = confirm("Are you sure you want to delete this institution to recycle bin?");
+      if (!ok) return;
+      try {
+        const result = await request(`/api/system/registry/institutions/${id}`, { method: "DELETE" });
+        alert(result.message || "Institution moved to recycle bin.");
+        await renderInstitutionsRegistry();
+      } catch (error) {
+        alert(error.message);
+      }
+    });
+    document.getElementById("cards").insertAdjacentHTML(
+      "beforeend",
+      `<div class="card stats-card"><h4>User Actions</h4><p>Use buttons below table</p></div>`
+    );
+    document.getElementById("formArea").insertAdjacentHTML(
+      "beforeend",
+      `<div class="actions-row registration-compact-actions">
+        <button id="registryViewUserButton">View User</button>
+        <button id="registryEditUserButton">Edit User</button>
+        <button id="registrySaveUserButton">Save User</button>
+        <button id="registryPrintUserButton">Print User</button>
+        <button id="registryDownloadUserButton">Download User</button>
+        <button id="registryDeactivateUserButton">Deactivate User</button>
+        <button id="registrySuspendUserButton">Suspend User</button>
+        <button id="registryDeleteUserButton" ${canDeleteAny ? "" : "disabled"}>Delete User</button>
+      </div>`
+    );
+    document.getElementById("registryViewUserButton")?.addEventListener("click", () => {
+      const id = pickUserId();
+      if (!id) return;
+      const item = userRows.find((row) => Number(row.id) === id);
+      if (!item) return alert("User not found.");
+      alert(JSON.stringify(item, null, 2));
+    });
+    document.getElementById("registryEditUserButton")?.addEventListener("click", async () => {
+      const id = pickUserId();
+      if (!id) return;
+      const full_name = prompt("New full name (leave blank to keep):", "");
+      const email = prompt("New email (leave blank to keep):", "");
+      const phone = prompt("New phone (leave blank to keep):", "");
+      try {
+        const result = await request(`/api/system/registry/users/${id}`, {
+          method: "PATCH",
+          body: JSON.stringify({ full_name, email, phone })
+        });
+        alert(result.message || "User updated.");
+        await renderInstitutionsRegistry();
+      } catch (error) {
+        alert(error.message);
+      }
+    });
+    document.getElementById("registrySaveUserButton")?.addEventListener("click", async () => {
+      const id = pickUserId();
+      if (!id) return;
+      try {
+        const result = await request(`/api/system/registry/users/${id}/view`);
+        alert(`User loaded:\n${JSON.stringify(result.user || {}, null, 2)}`);
+      } catch (error) {
+        alert(error.message);
+      }
+    });
+    document.getElementById("registryPrintUserButton")?.addEventListener("click", () => window.print());
+    document.getElementById("registryDownloadUserButton")?.addEventListener("click", () => {
+      const blob = new Blob([JSON.stringify(userRows, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "users-registry.json";
+      a.click();
+      URL.revokeObjectURL(url);
+    });
+    document.getElementById("registryDeactivateUserButton")?.addEventListener("click", async () => {
+      const id = pickUserId();
+      if (!id) return;
+      const reason = prompt("Reason for deactivation:");
+      if (!reason) return;
+      try {
+        const result = await request(`/api/system/registry/users/${id}/status`, {
+          method: "PATCH",
+          body: JSON.stringify({ is_active: false, is_suspended: false, reason })
+        });
+        alert(result.message || "User deactivated.");
+        await renderInstitutionsRegistry();
+      } catch (error) {
+        alert(error.message);
+      }
+    });
+    document.getElementById("registrySuspendUserButton")?.addEventListener("click", async () => {
+      const id = pickUserId();
+      if (!id) return;
+      const reason = prompt("Reason for suspension:");
+      if (!reason) return;
+      try {
+        const result = await request(`/api/system/registry/users/${id}/status`, {
+          method: "PATCH",
+          body: JSON.stringify({ is_suspended: true, reason })
+        });
+        alert(result.message || "User suspended.");
+        await renderInstitutionsRegistry();
+      } catch (error) {
+        alert(error.message);
+      }
+    });
+    document.getElementById("registrySuspendUserButton")?.insertAdjacentHTML(
+      "afterend",
+      `<button id="registryUnsuspendUserButton">Unsuspend User</button>`
+    );
+    document.getElementById("registryDeactivateUserButton")?.insertAdjacentHTML(
+      "afterend",
+      `<button id="registryActivateUserButton">Activate User</button>`
+    );
+    document.getElementById("registryUnsuspendUserButton")?.addEventListener("click", async () => {
+      const id = pickUserId();
+      if (!id) return;
+      try {
+        const result = await request(`/api/system/registry/users/${id}/status`, {
+          method: "PATCH",
+          body: JSON.stringify({ is_suspended: false, reason: "Unsuspended by administrator" })
+        });
+        alert(result.message || "User unsuspended.");
+        await renderInstitutionsRegistry();
+      } catch (error) {
+        alert(error.message);
+      }
+    });
+    document.getElementById("registryActivateUserButton")?.addEventListener("click", async () => {
+      const id = pickUserId();
+      if (!id) return;
+      try {
+        const result = await request(`/api/system/registry/users/${id}/status`, {
+          method: "PATCH",
+          body: JSON.stringify({ is_active: true, is_suspended: false, reason: "Activated by administrator" })
+        });
+        alert(result.message || "User activated.");
+        await renderInstitutionsRegistry();
+      } catch (error) {
+        alert(error.message);
+      }
+    });
+    document.getElementById("registryDeleteUserButton")?.addEventListener("click", async () => {
+      if (!canDeleteAny) return;
+      const id = pickUserId();
+      if (!id) return;
+      const ok = confirm("Are you sure you want to delete this user to recycle bin?");
+      if (!ok) return;
+      try {
+        const result = await request(`/api/system/registry/users/${id}`, { method: "DELETE" });
+        alert(result.message || "User moved to recycle bin.");
+        await renderInstitutionsRegistry();
+      } catch (error) {
+        alert(error.message);
+      }
+    });
   } catch (error) {
     alert(error.message);
   }
@@ -921,6 +1205,10 @@ async function renderRecycleBin() {
       }
     });
     document.getElementById("purgeRecycleItemButton")?.addEventListener("click", async () => {
+      if (!isSystemDeveloper && !["ADMIN", "HEAD_OF_INSTITUTION"].includes(String(portalContext?.role || ""))) {
+        alert("Only System Developer or HoI/Administrator can purge permanently.");
+        return;
+      }
       const recycleId = Number(prompt("Enter recycle item ID to purge permanently:"));
       if (!recycleId) return;
       const ok = window.confirm("Purge permanently? This action cannot be undone.");
