@@ -285,6 +285,39 @@ async function ensureUserPasswordPolicyColumns() {
     await query("ALTER TABLE users ADD COLUMN last_failed_login_at DATETIME NULL");
   }
 
+  const institutionPostalAddressRows = await query(
+    `SELECT COUNT(*) total
+     FROM INFORMATION_SCHEMA.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = 'institutions'
+       AND COLUMN_NAME = 'postal_address'`
+  );
+  if (!Number(institutionPostalAddressRows[0]?.total || 0)) {
+    await query("ALTER TABLE institutions ADD COLUMN postal_address VARCHAR(255) NULL");
+  }
+
+  const institutionAgreementTemplateRows = await query(
+    `SELECT COUNT(*) total
+     FROM INFORMATION_SCHEMA.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = 'institutions'
+       AND COLUMN_NAME = 'agreement_template_text'`
+  );
+  if (!Number(institutionAgreementTemplateRows[0]?.total || 0)) {
+    await query("ALTER TABLE institutions ADD COLUMN agreement_template_text TEXT NULL");
+  }
+
+  const institutionAgreementTemplateFileRows = await query(
+    `SELECT COUNT(*) total
+     FROM INFORMATION_SCHEMA.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = 'institutions'
+       AND COLUMN_NAME = 'agreement_template_file_url'`
+  );
+  if (!Number(institutionAgreementTemplateFileRows[0]?.total || 0)) {
+    await query("ALTER TABLE institutions ADD COLUMN agreement_template_file_url VARCHAR(255) NULL");
+  }
+
   const moduleAccessRows = await query(
     `SELECT COUNT(*) total
      FROM INFORMATION_SCHEMA.TABLES

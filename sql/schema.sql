@@ -10,9 +10,25 @@ CREATE TABLE IF NOT EXISTS institutions (
   county VARCHAR(100) NULL,
   sub_county VARCHAR(100) NULL,
   location VARCHAR(100) NULL,
+  postal_address VARCHAR(255) NULL,
   village VARCHAR(100) NULL,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS institution_agreement_templates (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  institution_id BIGINT NULL,
+  template_name VARCHAR(180) NOT NULL,
+  file_name VARCHAR(255) NULL,
+  file_path VARCHAR(255) NULL,
+  mime_type VARCHAR(120) NULL,
+  template_text LONGTEXT NULL,
+  is_active TINYINT(1) NOT NULL DEFAULT 1,
+  created_by_user_id BIGINT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  CONSTRAINT fk_agreement_template_institution FOREIGN KEY (institution_id) REFERENCES institutions(id)
 );
 
 CREATE TABLE IF NOT EXISTS users (

@@ -748,11 +748,16 @@ function getPostalDetails(postalCode) {
 
 async function nextInstitutionCode({ countyCode, categoryCode }) {
   const prefix = `${countyCode}/${categoryCode}/`;
-  const [row] = await query(
-    "SELECT COUNT(*) total FROM institutions WHERE institution_code LIKE ?",
+  const rows = await query(
+    "SELECT institution_code FROM institutions WHERE institution_code LIKE ?",
     [`${prefix}%`]
   );
-  const next = Number(row?.total || 0) + 1;
+  const next = rows.reduce((maxSerial, row) => {
+    const rawCode = cleanValue(row?.institution_code);
+    const parts = rawCode.split("/");
+    const serial = Number(parts[2] || 0);
+    return Number.isFinite(serial) && serial > maxSerial ? serial : maxSerial;
+  }, 0) + 1;
   return `${countyCode}/${categoryCode}/${padThree(next)}`;
 }
 
@@ -1067,6 +1072,23 @@ function getScopedFilter(config, user) {
 }
 
 function buildAgreementLines({ institution, adminUser }) {
+  const template = cleanOptionalValue(institution?.agreement_template_text);
+  if (template) {
+    const today = dayjs().format("YYYY-MM-DD");
+    const rendered = template
+      .replaceAll("{{DATE}}", today)
+      .replaceAll("{{INSTITUTION_NAME}}", institution.institution_name || "-")
+      .replaceAll("{{INSTITUTION_CODE}}", institution.institution_code || "-")
+      .replaceAll("{{COUNTY}}", institution.county || "-")
+      .replaceAll("{{POSTAL_ADDRESS}}", institution.postal_address || "-")
+      .replaceAll("{{EMAIL}}", institution.email || "-")
+      .replaceAll("{{PHONE}}", institution.phone || "-")
+      .replaceAll("{{ADMIN_USERNAME}}", adminUser?.username || "-")
+      .replaceAll("{{PROVIDER_NAME}}", AGREEMENT_COMPANY.name)
+      .replaceAll("{{PROVIDER_PHONE}}", AGREEMENT_COMPANY.phone)
+      .replaceAll("{{PROVIDER_EMAIL}}", AGREEMENT_COMPANY.email);
+    return rendered.split("\n");
+  }
   const today = dayjs().format("YYYY-MM-DD");
   return [
     `${AGREEMENT_COMPANY.name} - Institution System Agreement`,
@@ -2561,6 +2583,40 @@ app.get(
 );
 
 app.post(
+  "/api/institutions/preview-code",
+  auth,
+  enforceModuleAccess(MODULE_KEYS.REGISTRATION),
+  enforceRole([ROLES.SYSTEM_DEVELOPER]),
+  asyncHandler(async (req, res) => {
+    const countyInput = cleanOptionalValue(req.body?.county);
+    const countyCodeInput = cleanOptionalValue(req.body?.county_code);
+    const categoryInput = cleanOptionalValue(req.body?.category);
+    const countyRecord = resolveCounty({ countyCode: countyCodeInput, countyName: countyInput });
+    if (!countyRecord) {
+      return res.status(400).json({ error: "Select a valid county." });
+    }
+    const categoryRecord = resolveInstitutionCategory({
+      categoryCode: categoryInput,
+      categoryLabel: categoryInput
+    });
+    if (!categoryRecord) {
+      return res.status(400).json({ error: "Select a valid institution category." });
+    }
+    const institutionCode = await nextInstitutionCode({
+      countyCode: countyRecord.code,
+      categoryCode: categoryRecord.code
+    });
+    res.json({
+      county: countyRecord.name,
+      county_code: countyRecord.code,
+      category: categoryRecord.label,
+      category_code: categoryRecord.code,
+      institution_code: institutionCode
+    });
+  })
+);
+
+app.post(
   "/api/institutions",
   auth,
   accountMutationRateLimit,
@@ -2578,6 +2634,7 @@ app.post(
     const subCounty = cleanOptionalValue(req.body?.sub_county);
     const location = cleanOptionalValue(req.body?.location);
     const village = cleanOptionalValue(req.body?.village);
+    const postalAddress = cleanOptionalValue(req.body?.postal_address);
     const postalCodeInput = cleanOptionalValue(req.body?.postal_code);
     const townInput = cleanOptionalValue(req.body?.town);
     const sendAgreementEmail = parseTruthy(req.body?.send_agreement_email);
@@ -2638,8 +2695,8 @@ app.post(
 
     const institutionInsert = await query(
       `INSERT INTO institutions
-        (institution_name, institution_code, email, phone, county, sub_county, location, village)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        (institution_name, institution_code, email, phone, county, sub_county, location, village, postal_address)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         institutionName,
         institutionCode,
@@ -2648,7 +2705,8 @@ app.post(
         countyRecord.name,
         subCounty,
         location,
-        normalizedTown || village
+        normalizedTown || village,
+        postalAddress
       ]
     );
     const institutionId = institutionInsert.insertId;
@@ -2671,12 +2729,15 @@ app.post(
     );
 
     const credentialMessage = [
-      "Welcome to the Integrated Management Information System for Basic Education.",
+      "WELCOME TO INTEGRATED MANAGEMENT INFORMATION SYSTEM (IMIS).",
+      "Your account has been created successfully.",
       `Institution: ${institutionName}`,
       `Institution Code: ${institutionCode}`,
       `Username: ${adminUsername}`,
       `Password: ${adminPassword}`,
-      "Please change your password immediately after first login."
+      "",
+      "IMPORTANT SECURITY NOTE:",
+      "Please log in and change this password immediately after first sign-in."
     ].join("\n");
     const credentialDispatch = await dispatchCredentialNotice({
       email: institutionEmail,
@@ -2714,6 +2775,7 @@ app.post(
       county_code: countyRecord.code,
       category: categoryRecord.label,
       category_code: categoryRecord.code,
+      postal_address: postalAddress,
       admin_username: adminUsername,
       admin_role: portalRole
     });
@@ -2728,6 +2790,7 @@ app.post(
       county_code: countyRecord.code,
       category: categoryRecord.label,
       category_code: categoryRecord.code,
+      postal_address: postalAddress,
       postal_code: postalDetails?.postal_code || postalCodeInput || null,
       town: normalizedTown,
       agreement_pdf_url: `/api/institutions/${institutionId}/agreement.pdf`,
@@ -3476,10 +3539,14 @@ app.post(
   enforceModuleAccess(MODULE_KEYS.REGISTRATION),
   enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
   asyncHandler(async (req, res) => {
-    const { full_name, username, password, role, email, phone } = req.body;
-    if (!full_name || !username || !password || !role) {
-      return res.status(400).json({ error: "full_name, username, password and role are required." });
+    const { full_name, username, role, email, phone } = req.body;
+    if (!full_name || !username || !role) {
+      return res.status(400).json({ error: "full_name, username, and role are required." });
     }
+    if (!cleanOptionalValue(email) && !cleanOptionalValue(phone)) {
+      return res.status(400).json({ error: "Either email or phone is required." });
+    }
+    const password = generateStrongPassword(12);
     const weakPasswordError = requireStrongPassword(password, "password");
     if (weakPasswordError) {
       return res.status(400).json({ error: weakPasswordError });
@@ -3546,7 +3613,95 @@ app.post(
       role: normalizedRole,
       institution_id: targetInstitutionId
     });
-    res.status(201).json({ id: result.insertId, message: "User created successfully." });
+    const credentialMessage = [
+      "WELCOME TO INTEGRATED MANAGEMENT INFORMATION SYSTEM (IMIS).",
+      "Your user account has been created.",
+      `Username: ${username}`,
+      `Temporary Password: ${password}`,
+      "",
+      "Please change this password immediately after first login."
+    ].join("\n");
+    const credentialDispatch = await dispatchCredentialNotice({
+      email: cleanOptionalValue(email),
+      phone: cleanOptionalValue(phone),
+      subject: "IMIS User Account Credentials",
+      message: credentialMessage
+    });
+    res.status(201).json({
+      id: result.insertId,
+      message: "User created successfully.",
+      credential_dispatch: credentialDispatch,
+      generated_password: normalizeRole(req.user.role) === ROLES.SYSTEM_DEVELOPER ? password : null
+    });
+  })
+);
+
+app.get(
+  "/api/institutions/:id/agreement-template",
+  auth,
+  enforceModuleAccess(MODULE_KEYS.REGISTRATION),
+  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
+  asyncHandler(async (req, res) => {
+    const institutionId = Number(req.params.id);
+    const institution = await loadInstitutionAgreementContext(institutionId);
+    const accessError = assertInstitutionAgreementAccess(req, institution);
+    if (accessError) return res.status(accessError.status).json({ error: accessError.error });
+    res.json({
+      institution_id: institution.id,
+      agreement_template_text: institution.agreement_template_text || "",
+      agreement_template_file_url: institution.agreement_template_file_url || ""
+    });
+  })
+);
+
+app.put(
+  "/api/institutions/:id/agreement-template",
+  auth,
+  accountMutationRateLimit,
+  accountMutationCooldown,
+  enforceModuleAccess(MODULE_KEYS.REGISTRATION),
+  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
+  asyncHandler(async (req, res) => {
+    const institutionId = Number(req.params.id);
+    const institution = await loadInstitutionAgreementContext(institutionId);
+    const accessError = assertInstitutionAgreementAccess(req, institution);
+    if (accessError) return res.status(accessError.status).json({ error: accessError.error });
+    const templateText = cleanOptionalValue(req.body?.agreement_template_text);
+    const templateFileUrl = cleanOptionalValue(req.body?.agreement_template_file_url);
+    await query(
+      `UPDATE institutions
+       SET agreement_template_text = ?, agreement_template_file_url = ?
+       WHERE id = ?`,
+      [templateText, templateFileUrl, institutionId]
+    );
+    await auditLog(req.user, "UPSERT_AGREEMENT_TEMPLATE", "institutions", institutionId, {
+      has_template_text: Boolean(templateText),
+      has_template_file_url: Boolean(templateFileUrl)
+    });
+    res.json({ message: "Agreement template saved successfully." });
+  })
+);
+
+app.delete(
+  "/api/institutions/:id/agreement-template",
+  auth,
+  accountMutationRateLimit,
+  accountMutationCooldown,
+  enforceModuleAccess(MODULE_KEYS.REGISTRATION),
+  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
+  asyncHandler(async (req, res) => {
+    const institutionId = Number(req.params.id);
+    const institution = await loadInstitutionAgreementContext(institutionId);
+    const accessError = assertInstitutionAgreementAccess(req, institution);
+    if (accessError) return res.status(accessError.status).json({ error: accessError.error });
+    await query(
+      `UPDATE institutions
+       SET agreement_template_text = NULL, agreement_template_file_url = NULL
+       WHERE id = ?`,
+      [institutionId]
+    );
+    await auditLog(req.user, "DELETE_AGREEMENT_TEMPLATE", "institutions", institutionId, {});
+    res.json({ message: "Agreement template deleted successfully." });
   })
 );
 

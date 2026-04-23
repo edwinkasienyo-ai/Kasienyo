@@ -172,10 +172,8 @@ async function renderSystemRegistration() {
           </select>`
               : `<input id="sysInstitutionCounty" placeholder="County (exact name)" />`
           }
-          <label>County Code</label>
-          <input id="sysInstitutionCountyCode" placeholder="e.g. 001" ${
-            registrationMeta?.counties?.length ? 'readonly class="readonly-field"' : ""
-          } />
+          <label>Institution Code</label>
+          <input id="sysInstitutionCodePreview" placeholder="Auto-generated after county and category" readonly class="readonly-field" />
           <label>Category</label>
           ${
             registrationMeta?.categories?.length
@@ -196,6 +194,8 @@ async function renderSystemRegistration() {
           <input id="sysInstitutionLocation" placeholder="Location (optional)" />
           <label>Village/Town</label>
           <input id="sysInstitutionVillage" placeholder="Village or town (optional)" />
+          <label>Postal Address</label>
+          <input id="sysInstitutionPostalAddress" placeholder="Postal address (optional)" />
           <label>Postal Code</label>
           ${
             registrationMeta?.postalCodes?.length
@@ -227,13 +227,6 @@ async function renderSystemRegistration() {
             <option value="ADMIN">HoI/Administrator</option>
             <option value="HEAD_OF_INSTITUTION">D/HoI</option>
           </select>
-          <label>Admin Password</label>
-          <input id="sysInstitutionAdminPassword" type="text" placeholder="Admin password (unless auto-generated)" />
-          <label>Auto-generate password</label>
-          <select id="sysInstitutionAutoPassword">
-            <option value="true">Yes</option>
-            <option value="false">No</option>
-          </select>
           <label>Email agreement</label>
           <select id="sysInstitutionSendAgreement">
             <option value="false">No</option>
@@ -245,6 +238,43 @@ async function renderSystemRegistration() {
         </div>
       </div>
       ` : ""}
+      <div class="section-card registration-tools-card">
+        <div class="section-card-header">
+          <h3>Agreement Letter Sample & Generation</h3>
+          <p class="small-note">Upload or edit agreement templates, then generate, print, download, save, or email for the selected institution.</p>
+        </div>
+        <div class="form-grid">
+          <label>Institution for Agreement</label>
+          <select id="sysAgreementInstitutionId">
+            ${institutionRows
+              .map(
+                (item) =>
+                  `<option value="${item.id}" ${Number(item.id) === Number(defaultInstitution?.id || 0) ? "selected" : ""}>${escapeHtml(
+                    item.institution_name || "Institution"
+                  )} (${escapeHtml(item.institution_code || "-")})</option>`
+              )
+              .join("")}
+          </select>
+          <label>Template Text (supports placeholders like {{INSTITUTION_NAME}}, {{INSTITUTION_CODE}})</label>
+          <textarea id="sysAgreementTemplateText" rows="6" placeholder="Agreement body..."></textarea>
+          <label>Template File URL (optional, from upload)</label>
+          <input id="sysAgreementTemplateFileUrl" placeholder="/uploads/your-template.docx" />
+          <label>Upload Sample File</label>
+          <input id="sysAgreementTemplateUpload" type="file" />
+        </div>
+        <div class="actions-row">
+          <button id="sysAgreementUploadButton">Upload Sample</button>
+          <button id="sysAgreementSaveButton">Save</button>
+          <button id="sysAgreementEditButton">Edit/Reload</button>
+          <button id="sysAgreementDeleteButton" class="danger-button">Delete</button>
+        </div>
+        <div class="actions-row">
+          <button id="sysAgreementDownloadButton">Download PDF</button>
+          <button id="sysAgreementPrintButton">Print</button>
+          <button id="sysAgreementEmailButton">Email</button>
+          <button id="sysAgreementOpenButton">Save / Open PDF</button>
+        </div>
+      </div>
       <div class="section-card">
         <div class="section-card-header">
           <h3>Register User (Inside Institution Scope)</h3>
@@ -276,13 +306,8 @@ async function renderSystemRegistration() {
           <input id="sysUserEmail" placeholder="Email (optional)" />
           <label>Phone</label>
           <input id="sysUserPhone" placeholder="Phone (optional)" />
-          <label>Password</label>
-          <input id="sysUserPassword" type="text" placeholder="Password" />
-          <label>Auto-generate password</label>
-          <select id="sysUserAutoPassword">
-            <option value="false">No</option>
-            <option value="true">Yes</option>
-          </select>
+          <label>Password Policy</label>
+          <input id="sysUserPasswordPolicy" value="Auto-generated and sent via SMS/email" readonly class="readonly-field" />
         </div>
         <div class="actions-row">
           <button id="sysRegisterUserButton">Register User</button>
@@ -318,16 +343,31 @@ async function renderSystemRegistration() {
     }
 
     const countySelectEl = document.getElementById("sysInstitutionCounty");
-    const countyCodeEl = document.getElementById("sysInstitutionCountyCode");
+    const categorySelectEl = document.getElementById("sysInstitutionCategory");
+    const institutionCodePreviewEl = document.getElementById("sysInstitutionCodePreview");
     const postalSelectEl = document.getElementById("sysInstitutionPostalCode");
     const townEl = document.getElementById("sysInstitutionTown");
-    if (countySelectEl && countyCodeEl && registrationMeta?.counties?.length && countySelectEl.tagName === "SELECT") {
-      const syncCountyCode = () => {
-        const selected = registrationMeta.counties.find((c) => c.name === countySelectEl.value);
-        countyCodeEl.value = selected?.code || "";
+    if (countySelectEl && categorySelectEl && institutionCodePreviewEl) {
+      const syncInstitutionCodePreview = async () => {
+        const county = String(countySelectEl.value || "").trim();
+        const category = String(categorySelectEl.value || "").trim();
+        if (!county || !category) {
+          institutionCodePreviewEl.value = "";
+          return;
+        }
+        try {
+          const preview = await request("/api/institutions/preview-code", {
+            method: "POST",
+            body: JSON.stringify({ county, category })
+          });
+          institutionCodePreviewEl.value = preview?.institution_code || "";
+        } catch (_) {
+          institutionCodePreviewEl.value = "";
+        }
       };
-      countySelectEl.addEventListener("change", syncCountyCode);
-      syncCountyCode();
+      countySelectEl.addEventListener("change", syncInstitutionCodePreview);
+      categorySelectEl.addEventListener("change", syncInstitutionCodePreview);
+      syncInstitutionCodePreview();
     }
     if (postalSelectEl && townEl && registrationMeta?.postalCodes?.length && postalSelectEl.tagName === "SELECT") {
       postalSelectEl.addEventListener("change", () => {
@@ -342,20 +382,20 @@ async function renderSystemRegistration() {
         const payload = {
           institution_name: String(document.getElementById("sysInstitutionName")?.value || "").trim(),
           county: String(document.getElementById("sysInstitutionCounty")?.value || "").trim(),
-          county_code: String(document.getElementById("sysInstitutionCountyCode")?.value || "").trim(),
+          county_code: String(institutionCodePreviewEl?.value || "").trim().split("/")[0] || "",
           category: String(document.getElementById("sysInstitutionCategory")?.value || "").trim(),
           sub_county: String(document.getElementById("sysInstitutionSubCounty")?.value || "").trim(),
           location: String(document.getElementById("sysInstitutionLocation")?.value || "").trim(),
           village: String(document.getElementById("sysInstitutionVillage")?.value || "").trim(),
+          postal_address: String(document.getElementById("sysInstitutionPostalAddress")?.value || "").trim(),
           postal_code: String(document.getElementById("sysInstitutionPostalCode")?.value || "").trim(),
           town: String(document.getElementById("sysInstitutionTown")?.value || "").trim(),
           email: String(document.getElementById("sysInstitutionEmail")?.value || "").trim(),
           phone: String(document.getElementById("sysInstitutionPhone")?.value || "").trim(),
           admin_full_name: String(document.getElementById("sysInstitutionAdminName")?.value || "").trim(),
           admin_username: String(document.getElementById("sysInstitutionAdminUsername")?.value || "").trim(),
-          admin_password: String(document.getElementById("sysInstitutionAdminPassword")?.value || ""),
           portal_role: String(document.getElementById("sysInstitutionAdminRole")?.value || "ADMIN"),
-          auto_generate_password: String(document.getElementById("sysInstitutionAutoPassword")?.value || "true") === "true",
+          auto_generate_password: true,
           send_agreement_email: String(document.getElementById("sysInstitutionSendAgreement")?.value || "false") === "true"
         };
         const result = await request("/api/institutions", {
@@ -382,17 +422,134 @@ async function renderSystemRegistration() {
           email: String(document.getElementById("sysUserEmail")?.value || "").trim(),
           phone: String(document.getElementById("sysUserPhone")?.value || "").trim()
         };
-        const autoGenerate = String(document.getElementById("sysUserAutoPassword")?.value || "false") === "true";
-        if (autoGenerate) {
-          payload.password = `Aa1!${Math.random().toString(36).slice(-9)}#`;
-        } else {
-          payload.password = String(document.getElementById("sysUserPassword")?.value || "");
-        }
         const result = await request("/api/users", {
           method: "POST",
           body: JSON.stringify(payload)
         });
-        alert(result.message || "User registered successfully.");
+        const generatedNotice = result.generated_password
+          ? `\nGenerated Password: ${result.generated_password}`
+          : "";
+        alert((result.message || "User registered successfully.") + generatedNotice);
+      } catch (error) {
+        alert(error.message);
+      }
+    });
+    const agreementInstitutionEl = document.getElementById("sysAgreementInstitutionId");
+    const agreementTemplateTextEl = document.getElementById("sysAgreementTemplateText");
+    const agreementTemplateFileUrlEl = document.getElementById("sysAgreementTemplateFileUrl");
+    const loadAgreementTemplate = async () => {
+      const institutionId = Number(agreementInstitutionEl?.value || 0);
+      if (!institutionId) return;
+      const data = await request(`/api/institutions/${institutionId}/agreement-template`);
+      if (agreementTemplateTextEl) agreementTemplateTextEl.value = data?.agreement_template_text || "";
+      if (agreementTemplateFileUrlEl) agreementTemplateFileUrlEl.value = data?.agreement_template_file_url || "";
+    };
+    agreementInstitutionEl?.addEventListener("change", loadAgreementTemplate);
+    await loadAgreementTemplate();
+
+    document.getElementById("sysAgreementUploadButton")?.addEventListener("click", async () => {
+      try {
+        const fileInput = document.getElementById("sysAgreementTemplateUpload");
+        const file = fileInput?.files?.[0];
+        if (!file) {
+          alert("Choose a file to upload first.");
+          return;
+        }
+        const formData = new FormData();
+        formData.append("file", file);
+        const response = await fetch("/api/uploads", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}` },
+          body: formData
+        });
+        const json = await response.json();
+        if (!response.ok) {
+          throw new Error(json?.error || "Upload failed.");
+        }
+        if (agreementTemplateFileUrlEl) agreementTemplateFileUrlEl.value = json.filePath || "";
+        alert("Agreement sample uploaded.");
+      } catch (error) {
+        alert(error.message);
+      }
+    });
+    document.getElementById("sysAgreementSaveButton")?.addEventListener("click", async () => {
+      try {
+        const institutionId = Number(agreementInstitutionEl?.value || 0);
+        if (!institutionId) {
+          alert("Select institution first.");
+          return;
+        }
+        await request(`/api/institutions/${institutionId}/agreement-template`, {
+          method: "PUT",
+          body: JSON.stringify({
+            agreement_template_text: String(agreementTemplateTextEl?.value || ""),
+            agreement_template_file_url: String(agreementTemplateFileUrlEl?.value || "")
+          })
+        });
+        alert("Agreement template saved.");
+      } catch (error) {
+        alert(error.message);
+      }
+    });
+    document.getElementById("sysAgreementEditButton")?.addEventListener("click", async () => {
+      try {
+        await loadAgreementTemplate();
+        alert("Agreement template reloaded.");
+      } catch (error) {
+        alert(error.message);
+      }
+    });
+    document.getElementById("sysAgreementDeleteButton")?.addEventListener("click", async () => {
+      try {
+        const institutionId = Number(agreementInstitutionEl?.value || 0);
+        if (!institutionId) {
+          alert("Select institution first.");
+          return;
+        }
+        if (!confirm("Delete agreement template for this institution?")) return;
+        await request(`/api/institutions/${institutionId}/agreement-template`, { method: "DELETE" });
+        if (agreementTemplateTextEl) agreementTemplateTextEl.value = "";
+        if (agreementTemplateFileUrlEl) agreementTemplateFileUrlEl.value = "";
+        alert("Agreement template deleted.");
+      } catch (error) {
+        alert(error.message);
+      }
+    });
+    document.getElementById("sysAgreementDownloadButton")?.addEventListener("click", () => {
+      const institutionId = Number(agreementInstitutionEl?.value || 0);
+      if (!institutionId) {
+        alert("Select institution first.");
+        return;
+      }
+      window.open(`/api/institutions/${institutionId}/agreement.pdf`, "_blank", "noopener");
+    });
+    document.getElementById("sysAgreementOpenButton")?.addEventListener("click", () => {
+      const institutionId = Number(agreementInstitutionEl?.value || 0);
+      if (!institutionId) {
+        alert("Select institution first.");
+        return;
+      }
+      window.open(`/api/institutions/${institutionId}/agreement.pdf`, "_blank", "noopener");
+    });
+    document.getElementById("sysAgreementPrintButton")?.addEventListener("click", () => {
+      const institutionId = Number(agreementInstitutionEl?.value || 0);
+      if (!institutionId) {
+        alert("Select institution first.");
+        return;
+      }
+      const url = `/api/institutions/${institutionId}/agreement.pdf`;
+      const popup = window.open(url, "_blank");
+      setTimeout(() => popup?.print(), 700);
+    });
+    document.getElementById("sysAgreementEmailButton")?.addEventListener("click", async () => {
+      try {
+        const institutionId = Number(agreementInstitutionEl?.value || 0);
+        if (!institutionId) {
+          alert("Select institution first.");
+          return;
+        }
+        const result = await request(`/api/institutions/${institutionId}/agreement/send`, { method: "POST" });
+        alert(result.message || "Agreement emailed.");
       } catch (error) {
         alert(error.message);
       }
