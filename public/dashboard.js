@@ -2953,6 +2953,11 @@ function formatRoleDisplay(role) {
   return map[value] || String(role || "-");
 }
 
+// Backward compatibility for older cached dashboard bundles.
+function toRoleLabel(role) {
+  return formatRoleDisplay(role);
+}
+
 async function init() {
   try {
     [meta] = await Promise.all([request("/api/meta")]);
