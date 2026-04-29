@@ -416,7 +416,9 @@ select:disabled {
 .auth-card {
   width: 100%;
   max-width: 640px;
-  padding: 10px;
+  padding: 8px;
+  max-height: calc(100vh - 16px);
+  overflow-y: auto;
 }
 
 .auth-card h3 {
@@ -608,7 +610,7 @@ button:hover {
   margin-top: 8px;
   border: 1px solid #dce6f3;
   border-radius: 10px;
-  padding: 10px;
+  padding: 8px;
   background: #fbfdff;
 }
 
@@ -800,8 +802,10 @@ button:hover {
 
 .sidebar-brand p {
   margin: 0;
-  color: #c6e2f8;
-  font-size: 12px;
+  color: #f7db82;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.25;
 }
 
 .nav-group-label {
@@ -817,9 +821,20 @@ button:hover {
 
 .portal-label {
   font-size: 12px;
-  color: #d1e8fb;
+  color: #b7e4ff;
   margin-bottom: 12px;
   display: block;
+  font-weight: 800;
+  line-height: 1.2;
+  border: 1px solid rgba(241, 203, 88, 0.4);
+  background: linear-gradient(120deg, rgba(255, 214, 101, 0.14), rgba(47, 130, 187, 0.2));
+  padding: 7px 9px;
+  border-radius: 9px;
+}
+
+.sidebar-brand h2 {
+  color: #ffd76d;
+  text-shadow: 0 1px 0 rgba(0, 0, 0, 0.16), 0 0 16px rgba(255, 206, 84, 0.22);
 }
 
 .sidebar button {

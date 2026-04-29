@@ -89,6 +89,70 @@ function isSystemAdminRole() {
   return ["SYSTEM_DEVELOPER", "ADMIN", "HEAD_OF_INSTITUTION"].includes(role);
 }
 
+function formatRoleLabel(role) {
+  const normalized = String(role || "").toUpperCase();
+  if (normalized === "SYSTEM_DEVELOPER") return "SYSTEM DEVELOPER";
+  if (normalized === "HEAD_OF_INSTITUTION" || normalized === "ADMIN") return "HoI/Administrator";
+  if (normalized === "HEAD_OF_DEPARTMENT") return "Head of Department";
+  if (normalized === "SENIOR_TEACHER") return "Senior Teacher";
+  return normalized.replaceAll("_", " ");
+}
+
+function formatDashboardRoleLabel(role) {
+  const normalized = String(role || "").toUpperCase();
+  if (normalized === "HEAD_OF_INSTITUTION" || normalized === "ADMIN") return "HoI/Administrator";
+  if (normalized === "NON_TEACHING_STAFF") return "Support Staff";
+  if (normalized === "SENIOR_TEACHER") return "Senior Teacher";
+  if (normalized === "HEAD_OF_DEPARTMENT") return "Head of Department";
+  return String(role || "").replaceAll("_", " ");
+}
+
+function formatRoleForDisplay(role = "") {
+  const normalized = String(role || "").toUpperCase();
+  if (normalized === "SYSTEM_DEVELOPER") return "SYSTEM DEVELOPER";
+  if (normalized === "HEAD_OF_INSTITUTION") return "HOI/ADMINISTRATOR";
+  if (normalized === "SENIOR_TEACHER") return "SENIOR TEACHER";
+  if (normalized === "HEAD_OF_DEPARTMENT") return "HEAD OF DEPARTMENT";
+  return normalized.replaceAll("_", " ");
+}
+
+function toTitleCase(value = "") {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/\b\w/g, (match) => match.toUpperCase());
+}
+
+function applyDashboardIdentity(meData = {}) {
+  const systemTitle = document.querySelector(".sidebar-brand h2");
+  const systemSubtitle = document.querySelector(".sidebar-brand p");
+  if (systemTitle) {
+    systemTitle.textContent = "IMIS SYSTEM";
+  }
+  if (systemSubtitle) {
+    systemSubtitle.textContent = "Integrated Management Information System For Basic Education Learning Institutions";
+  }
+  const portalLabelEl = document.getElementById("portalLabel");
+  const institutionName = String(meData?.institution_name || "").trim() || "INSTITUTION";
+  const roleLabel = formatRoleForDisplay(meData?.role || portalContext?.role || "");
+  if (portalLabelEl) {
+    if (String(meData?.role || "").toUpperCase() === "SYSTEM_DEVELOPER") {
+      portalLabelEl.textContent = `System Developer Console (${roleLabel})`;
+      portalLabelEl.classList.add("portal-label-system");
+      portalLabelEl.classList.remove("portal-label-institution");
+    } else {
+      portalLabelEl.textContent = `${toTitleCase(institutionName)} (${roleLabel})`;
+      portalLabelEl.classList.add("portal-label-institution");
+      portalLabelEl.classList.remove("portal-label-system");
+    }
+  }
+  const welcomeEl = document.getElementById("dashboardWelcomeLine");
+  const nameCandidate = String(meData?.full_name || meData?.username || "").trim() || "USER";
+  const firstName = nameCandidate.split(/\s+/)[0] || nameCandidate;
+  if (welcomeEl) {
+    welcomeEl.textContent = `WELCOME ${firstName.toUpperCase()} TO THE IMIS FOR BASIC EDUCATION LEARNING INSTITUTIONS`;
+  }
+}
+
 async function renderSystemRegistration() {
   setActiveSidebarButton("system-register");
   document.getElementById("moduleTitle").textContent = "Register (Institution/User)";
@@ -2413,7 +2477,21 @@ async function globalSearch() {
   const q = document.getElementById("globalSearch").value.trim();
   if (!q) return;
   try {
-    const result = await request(`/api/search/global?q=${encodeURIComponent(q)}`);
+    const scopeElValue = String(document.getElementById("searchScope")?.value || "all");
+    const gradeFilterValue = String(document.getElementById("searchGradeFilter")?.value || "");
+    const streamFilterValue = String(document.getElementById("searchStreamFilter")?.value || "");
+    const statusFilterValue = String(document.getElementById("searchStatusFilter")?.value || "");
+    const roleFilterValue = String(document.getElementById("searchRoleFilter")?.value || "");
+    const params = new URLSearchParams({
+      q,
+      target: scopeElValue,
+      grade: gradeFilterValue,
+      stream: streamFilterValue,
+      learner_status: statusFilterValue,
+      teacher_category: roleFilterValue,
+      limit: "200"
+    });
+    const result = await request(`/api/search/global?${params.toString()}`);
     document.getElementById("moduleTitle").textContent = `Search Results: ${q}`;
     const summaryDescription =
       portalContext?.role === "SYSTEM_DEVELOPER"
@@ -2433,6 +2511,7 @@ async function globalSearch() {
         <p>${formatNumber(result.parentsAndBom?.length || 0)}</p>
       </div>
     `;
+    const showInstitutionUserScope = String(portalContext?.role || "") === "SYSTEM_DEVELOPER";
     document.getElementById("formArea").innerHTML = `
       <div class="module-header-card">
         <h3>Global Search Intelligence</h3>
@@ -2455,7 +2534,10 @@ async function globalSearch() {
               <option value="all">All</option>
               <option value="learners">Learners</option>
               <option value="teachers">Teachers</option>
-              <option value="parents-bom">Parents/BOM</option>
+              <option value="parents">Parents/Guardians</option>
+              <option value="bom">BoM Members</option>
+              ${showInstitutionUserScope ? '<option value="institutions">Institutions</option>' : ""}
+              ${showInstitutionUserScope ? '<option value="users">Users</option>' : ""}
             </select>
           </div>
           <div>
@@ -2483,8 +2565,12 @@ async function globalSearch() {
     `;
     const learnersData = Array.isArray(result.learners) ? result.learners : [];
     const teachersData = Array.isArray(result.teachers) ? result.teachers : [];
-    const parentsBomData = Array.isArray(result.parentsAndBom) ? result.parentsAndBom : [];
-    let combinedRows = [...learnersData, ...teachersData, ...parentsBomData];
+    const parentsData = Array.isArray(result.parents) ? result.parents : [];
+    const bomData = Array.isArray(result.bom) ? result.bom : [];
+    const institutionsData = Array.isArray(result.institutions) ? result.institutions : [];
+    const usersData = Array.isArray(result.users) ? result.users : [];
+    const parentsBomData = [...parentsData, ...bomData];
+    let combinedRows = [...learnersData, ...teachersData, ...parentsData, ...bomData, ...institutionsData, ...usersData];
     renderTable(combinedRows);
 
     const applyFilters = () => {
@@ -2499,9 +2585,15 @@ async function globalSearch() {
           ? learnersData
           : scope === "teachers"
             ? teachersData
-            : scope === "parents-bom"
-              ? parentsBomData
-              : combinedRows;
+            : scope === "parents"
+              ? parentsData
+              : scope === "bom"
+                ? bomData
+                : scope === "institutions"
+                  ? institutionsData
+                  : scope === "users"
+                    ? usersData
+                    : combinedRows;
       const filteredRows = sourceRows.filter((row) => {
         const rowRole = String(row.role || "").toLowerCase();
         const rowGrade = String(row.grade || "").toLowerCase();
@@ -2535,20 +2627,50 @@ async function globalSearch() {
 }
 
 async function changeCredentials() {
-  const currentPassword = prompt("Enter current password:");
-  if (!currentPassword) return;
-  const newUsername = prompt("Enter new username (optional):") || null;
-  const newPassword = prompt("Enter new password (optional):") || null;
   try {
-    await request("/api/profile/change-credentials", {
+    const profile = await request("/api/profile");
+    alert(
+      `Profile:\nFull Name: ${profile?.full_name || "-"}\nEmail: ${profile?.email || "-"}\nMobile: ${profile?.phone || "-"}\nInstitution: ${profile?.institution_name || "-"}`
+    );
+    const otpChannel = prompt("Choose OTP channel for updates: email or sms", "email");
+    if (!otpChannel) return;
+    const normalizedChannel = String(otpChannel || "email").trim().toLowerCase() === "sms" ? "sms" : "email";
+    const currentPassword = prompt("Enter previous password (required for password change):", "") || "";
+    const newPassword = prompt("Enter new password (optional):", "") || "";
+    const confirmPassword = newPassword ? (prompt("Confirm current/new password:", "") || "") : "";
+    if (newPassword && newPassword !== confirmPassword) {
+      alert("Password confirmation does not match.");
+      return;
+    }
+    const nextEmail = prompt("Enter new email (leave blank to keep):", profile?.email || "") || "";
+    const nextPhone = prompt("Enter new mobile number (leave blank to keep):", profile?.phone || "") || "";
+    let otpCode = "";
+    if (!["SYSTEM_DEVELOPER", "ADMIN"].includes(String(portalContext?.role || "").toUpperCase())) {
+      await request("/api/profile/request-update-otp", {
+        method: "POST",
+        body: JSON.stringify({
+          update_type: "profile_update",
+          otp_channel: normalizedChannel
+        })
+      });
+      otpCode = prompt(`Enter OTP sent via ${normalizedChannel}:`, "") || "";
+      if (!otpCode) {
+        alert("OTP is required.");
+        return;
+      }
+    }
+    await request("/api/profile/update", {
       method: "POST",
       body: JSON.stringify({
-        current_password: currentPassword,
-        new_username: newUsername,
-        new_password: newPassword
+        current_password: currentPassword || null,
+        email: nextEmail || null,
+        phone: nextPhone || null,
+        new_password: newPassword || null,
+        otp_code: otpCode || null
       })
     });
-    alert("Credentials updated successfully.");
+    alert("Profile updated successfully.");
+    await init();
   } catch (error) {
     alert(error.message);
   }
@@ -2662,6 +2784,105 @@ function bindTopbarButtons() {
   }
 }
 
+function renderProfileCenter(profile) {
+  const roleLabel = formatDashboardRoleLabel(profile?.role || "");
+  document.getElementById("moduleTitle").textContent = "Profile";
+  document.getElementById("cards").innerHTML = `
+    <div class="card stats-card metric-emphasis">
+      <h4>Profile Center</h4>
+      <p>Manage your account securely</p>
+    </div>
+    <div class="card stats-card">
+      <h4>Institution</h4>
+      <p>${escapeHtml(profile?.institution_name || "-")}</p>
+    </div>
+    <div class="card stats-card">
+      <h4>Role</h4>
+      <p>${escapeHtml(roleLabel || "-")}</p>
+    </div>
+  `;
+  document.getElementById("formArea").innerHTML = `
+    <div class="profile-center-grid">
+      <div class="profile-card">
+        <h3>${escapeHtml(profile?.full_name || "-")}</h3>
+        <p><strong>Email:</strong> ${escapeHtml(profile?.email || "-")}</p>
+        <p><strong>Mobile:</strong> ${escapeHtml(profile?.phone || "-")}</p>
+        <p><strong>Institution:</strong> ${escapeHtml(profile?.institution_name || "-")}</p>
+        <p><strong>Role:</strong> ${escapeHtml(roleLabel || "-")}</p>
+      </div>
+      <div class="profile-edit-card">
+        <h3>Update Contacts / Password</h3>
+        <p class="small-note">Use OTP channel (Email/SMS) for verification where required.</p>
+        <div class="form-grid">
+          <label>OTP Channel</label>
+          <select id="profileOtpChannel">
+            <option value="email">Email</option>
+            <option value="sms">SMS</option>
+          </select>
+          <label>Previous Password</label>
+          <input id="profileCurrentPassword" type="password" placeholder="Previous password" />
+          <label>Current/New Password</label>
+          <input id="profileNewPassword" type="password" placeholder="Current/New password" />
+          <label>Confirm Current/New Password</label>
+          <input id="profileConfirmPassword" type="password" placeholder="Confirm password" />
+          <label>New Email</label>
+          <input id="profileNewEmail" type="email" placeholder="Email" value="${escapeHtmlAttribute(profile?.email || "")}" />
+          <label>New Mobile Number</label>
+          <input id="profileNewPhone" placeholder="Mobile number" value="${escapeHtmlAttribute(profile?.phone || "")}" />
+          <label>OTP Code</label>
+          <input id="profileOtpCode" placeholder="Enter OTP when requested" />
+        </div>
+        <div class="actions-row">
+          <button id="requestProfileOtpButton">Request OTP</button>
+          <button id="saveProfileButton">Save Profile Updates</button>
+        </div>
+      </div>
+    </div>
+  `;
+  resetDataTable("Profile information is shown above.");
+  document.getElementById("requestProfileOtpButton")?.addEventListener("click", async () => {
+    try {
+      const otpChannel = String(document.getElementById("profileOtpChannel")?.value || "email");
+      const result = await request("/api/profile/request-update-otp", {
+        method: "POST",
+        body: JSON.stringify({
+          update_type: "profile_update",
+          otp_channel: otpChannel
+        })
+      });
+      alert(result.message || "OTP requested.");
+    } catch (error) {
+      alert(error.message);
+    }
+  });
+  document.getElementById("saveProfileButton")?.addEventListener("click", async () => {
+    const currentPassword = String(document.getElementById("profileCurrentPassword")?.value || "");
+    const newPassword = String(document.getElementById("profileNewPassword")?.value || "");
+    const confirmPassword = String(document.getElementById("profileConfirmPassword")?.value || "");
+    if (newPassword && newPassword !== confirmPassword) {
+      alert("Password confirmation does not match.");
+      return;
+    }
+    try {
+      const result = await request("/api/profile/update", {
+        method: "POST",
+        body: JSON.stringify({
+          current_password: currentPassword || null,
+          new_password: newPassword || null,
+          email: String(document.getElementById("profileNewEmail")?.value || "").trim() || null,
+          phone: String(document.getElementById("profileNewPhone")?.value || "").trim() || null,
+          otp_code: String(document.getElementById("profileOtpCode")?.value || "").trim() || null
+        })
+      });
+      alert(result.message || "Profile updated successfully.");
+      const refreshed = await request("/api/profile");
+      renderProfileCenter(refreshed || profile);
+    } catch (error) {
+      alert(error.message);
+    }
+  });
+}
+
 function bindQuickActionCards() {
   document.querySelectorAll(".quick-action-card[data-module]").forEach((card) => {
     card.addEventListener("click", async () => {
@@ -2712,6 +2933,26 @@ function bindQuickActionCards() {
   });
 }
 
+function formatRoleDisplay(role) {
+  const value = String(role || "").trim().toUpperCase();
+  const map = {
+    SYSTEM_DEVELOPER: "SYSTEM DEVELOPER",
+    ADMIN: "HoI/Administrator",
+    HEAD_OF_INSTITUTION: "HoI/Administrator",
+    TEACHER: "Teacher",
+    SENIOR_TEACHER: "Senior Teacher",
+    HEAD_OF_DEPARTMENT: "Head of Department",
+    BOM: "BoM Member",
+    PARENT: "Parent/Guardian",
+    NON_TEACHING_STAFF: "Support Staff",
+    SUPPLIER: "Supplier",
+    CONTRACTOR: "Contractor",
+    MOD: "MoE",
+    TSC: "TSC"
+  };
+  return map[value] || String(role || "-");
+}
+
 async function init() {
   try {
     [meta] = await Promise.all([request("/api/meta")]);
@@ -2719,7 +2960,11 @@ async function init() {
     portalContext = portalData || null;
     allowedModules = Array.isArray(portalData?.allowed_modules) ? portalData.allowed_modules : [];
     const meData = await request("/api/auth/me");
-    document.getElementById("portalLabel").textContent = `${portalData.portal} (${portalData.role})`;
+    const institutionName = String(
+      meData?.institution_name || portalData?.institution_name || "Institution"
+    ).trim();
+    const roleLabel = toRoleLabel(portalData?.role || meData?.role || "");
+    document.getElementById("portalLabel").textContent = `${institutionName} (${roleLabel})`;
     const buildLineEl = document.getElementById("iimsBuildLineDash");
     if (buildLineEl) {
       fetch("/api/build-info")

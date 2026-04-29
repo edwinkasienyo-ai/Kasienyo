@@ -115,6 +115,12 @@ function normalizeRoleValue(role) {
   if (normalized === "SYSTEMDEVELOPER") {
     return "SYSTEM_DEVELOPER";
   }
+  if (normalized === "SENIOR_TEACHER") {
+    return "SENIOR_TEACHER";
+  }
+  if (normalized === "HEAD_OF_DEPARTMENT" || normalized === "HOD") {
+    return "HEAD_OF_DEPARTMENT";
+  }
   return normalized;
 }
 
