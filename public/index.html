@@ -42,7 +42,7 @@
     <link rel="apple-touch-icon" href="/uploads/index-hero.jpg?v=20260411" />
     <link rel="manifest" href="/site.webmanifest" />
     <link rel="preload" as="image" href="/uploads/index-hero.jpg?v=20260411" />
-    <link rel="stylesheet" href="/styles.css?v=20" />
+    <link rel="stylesheet" href="/styles.css?v=21" />
   </head>
   <body class="login-page">
     <div class="login-left">
@@ -50,7 +50,7 @@
         <img
           class="hero-image"
           src="/uploads/index-hero.jpg?v=20260411"
-          onerror="this.onerror=null;this.style.display='none';this.parentElement.classList.add('hero-fallback');"
+          onerror="if(!this.dataset.fallbackApplied){this.dataset.fallbackApplied='1';this.src='/assets/imis-hero.jpg?v=20260411';return;}this.onerror=null;this.style.display='none';this.parentElement.classList.add('hero-fallback');"
           alt="Graduation group photo for IMIS hero"
           loading="eager"
         />
@@ -78,8 +78,8 @@
           </div>
         </div>
         <div class="contact-strip">
-          <span>+254725757767</span>
-          <span>MWENDEGUENTERPRISELTD@GMAIL.COM</span>
+          <span class="contact-phone">+254725757767</span>
+          <span class="contact-email">mwendeguenterpriseltd@gmail.com</span>
         </div>
         <div class="credit-strip">THIS SYSTEM WAS DEVELOPED BY MWENDEGU ENTERPRISE LIMITED C 2017</div>
       </div>
@@ -88,7 +88,7 @@
     <div class="login-right">
       <div class="card auth-card animated-panel glass-card">
         <div class="auth-card-header">
-          <p class="hero-title">Secure Institution Access</p>
+          <p class="hero-title">IMIS FOR BASIC EDUCATION LEARNING INSTITUTIONS</p>
         </div>
         <h3>Welcome back</h3>
         <p class="small-note">Sign in to IMIS with your credentials, then verify with OTP.</p>
@@ -104,13 +104,15 @@
           <option value="ADMIN">HoI/Administrator</option>
           <option value="HEAD_OF_INSTITUTION">D/HoI</option>
           <option value="TEACHER">Teacher</option>
+          <option value="SENIOR_TEACHER">Senior Teacher</option>
+          <option value="HEAD_OF_DEPARTMENT">Head of Department</option>
           <option value="BOM">BoM Member</option>
           <option value="NON_TEACHING_STAFF">Support Staff</option>
           <option value="PARENT">Parent/Guardian</option>
           <option value="SUPPLIER">Suppliers/Contuctors/Service Providers</option>
         </select>
         <label>Username</label>
-        <input id="username" placeholder="Enter username (System Developer default: 952252)" disabled />
+        <input id="username" placeholder="Enter username" disabled />
         <label>Password</label>
         <input id="password" type="password" placeholder="Enter password" disabled />
         <label>OTP channel</label>
@@ -134,52 +136,75 @@
 
         <section id="forgotPasswordPanel" class="auth-panel">
           <h4>Forgot Password</h4>
-          <div class="auth-grid">
-            <div>
-              <label>Institution Code</label>
-              <input id="forgotPasswordInstitutionCode" placeholder="Institution Code" />
+          <div class="recovery-flow-grid">
+            <div class="recovery-step-card">
+              <p class="recovery-step-title">Step 1 — Request OTP</p>
+              <div class="auth-grid">
+                <div>
+                  <label>Institution Code *</label>
+                  <input id="forgotPasswordInstitutionCode" placeholder="Institution Code" />
+                </div>
+                <div>
+                  <label>Username *</label>
+                  <input id="forgotPasswordUsername" placeholder="Username" />
+                </div>
+                <div>
+                  <label>Contact Method *</label>
+                  <select id="forgotPasswordContactMethod">
+                    <option value="email">Use Email</option>
+                    <option value="phone">Use Mobile Number</option>
+                  </select>
+                </div>
+                <div>
+                  <label>Email</label>
+                  <input id="forgotPasswordEmail" placeholder="Email" />
+                </div>
+                <div>
+                  <label>Mobile Number</label>
+                  <input id="forgotPasswordPhone" placeholder="Mobile Number" />
+                </div>
+                <div>
+                  <label>Receive OTP Via *</label>
+                  <select id="forgotPasswordOtpChannel">
+                    <option value="email">Email</option>
+                    <option value="sms">SMS</option>
+                  </select>
+                </div>
+              </div>
+              <div class="auth-actions-row">
+                <button id="forgotPasswordSendOtpButton" type="button">Send OTP</button>
+              </div>
             </div>
-            <div>
-              <label>Username</label>
-              <input id="forgotPasswordUsername" placeholder="Username" />
-            </div>
-            <div>
-              <label>Email (optional)</label>
-              <input id="forgotPasswordEmail" placeholder="Email" />
-            </div>
-            <div>
-              <label>Mobile Number (optional)</label>
-              <input id="forgotPasswordPhone" placeholder="Mobile Number" />
-            </div>
-            <div>
-              <label>New Password</label>
-              <input id="forgotPasswordNewPassword" type="password" placeholder="New Password" />
+            <div class="recovery-step-card">
+              <p class="recovery-step-title">Step 2 — Verify OTP &amp; Reset Password</p>
+              <div class="auth-grid">
+                <div>
+                  <label>OTP Code</label>
+                  <input id="forgotPasswordOtp" placeholder="Enter OTP received via email/phone" />
+                </div>
+                <div>
+                  <label>New Password</label>
+                  <input id="forgotPasswordNewPassword" type="password" placeholder="New Password" />
+                </div>
+                <div>
+                  <label>Confirm New Password</label>
+                  <input id="forgotPasswordConfirmNewPassword" type="password" placeholder="Confirm New Password" />
+                </div>
+              </div>
+              <div class="auth-actions-row">
+                <button id="forgotPasswordButton" type="button">Verify OTP &amp; Reset Password</button>
+              </div>
             </div>
           </div>
-          <button id="forgotPasswordButton" type="button">Reset password</button>
         </section>
-
-        <p id="iimsBuildLineLogin" class="iims-build-line" aria-live="polite">
-          Checking release…
-        </p>
 
         <section id="forgotUsernamePanel" class="auth-panel">
           <h4>Forgot Username</h4>
-          <div class="auth-grid">
-            <div>
-              <label>Institution Code</label>
-              <input id="forgotUsernameInstitutionCode" placeholder="Institution Code" />
-            </div>
-            <div>
-              <label>Email (optional)</label>
-              <input id="forgotUsernameEmail" placeholder="Email" />
-            </div>
-            <div>
-              <label>Mobile Number (optional)</label>
-              <input id="forgotUsernamePhone" placeholder="Mobile Number" />
-            </div>
-          </div>
-          <button id="forgotUsernameButton" type="button">Recover username</button>
+          <p class="small-note">
+            Please contact your institution administrator or the system developer for username recovery assistance.
+          </p>
+          <button id="forgotUsernameButton" type="button">Show guidance</button>
+          <div id="forgotUsernameGuidance" class="forgot-username-guidance" hidden aria-live="polite"></div>
         </section>
         <footer class="index-legal-footer">
           <a href="/about.html">About</a>
@@ -199,6 +224,6 @@
       </div>
     </div>
 
-    <script src="/main.js?v=20"></script>
+    <script src="/main.js?v=21"></script>
   </body>
 </html>

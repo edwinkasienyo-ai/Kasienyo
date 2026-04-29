@@ -44,6 +44,13 @@ const { hashPassword, verifyPassword } = require("./utils/password");
 const { sendSimplePdf, sendSimpleExcel } = require("./services/exportService");
 const { generateOtpCode, buildOtpExpiry, sendOtp } = require("./services/otpService");
 const { buildSearchWhere } = require("./utils/sql");
+const {
+  buildCbcSuggestion,
+  buildSuggestionFromMappings,
+  makeNotes,
+  getAllCbcLearningAreas,
+  buildBulkCbcEntries
+} = require("./config/cbcLibrary");
 
 /** Bump when shipping UI/API changes so schools can confirm they run the right copy. */
 const IIMS_BUILD_STAMP = process.env.IIMS_BUILD_STAMP || "20260422-ui9";
@@ -323,8 +330,17 @@ function normalizeRole(value) {
     DEPUTY_HEAD_OF_INSTITUTION: ROLES.HEAD_OF_INSTITUTION,
     HEAD: ROLES.HEAD_OF_INSTITUTION,
     HEAD_TEACHER: ROLES.HEAD_OF_INSTITUTION,
+    SENIOR_TEACHER: ROLES.SENIOR_TEACHER,
+    SENIORTEACHER: ROLES.SENIOR_TEACHER,
+    HOD: ROLES.HEAD_OF_DEPARTMENT,
+    HEAD_OF_DEPARTMENT: ROLES.HEAD_OF_DEPARTMENT,
+    HEAD_DEPARTMENT: ROLES.HEAD_OF_DEPARTMENT,
     PRINCIPAL: ROLES.HEAD_OF_INSTITUTION,
     HEAD_OF_SCHOOL: ROLES.HEAD_OF_INSTITUTION,
+    SENIOR_TEACHER: ROLES.SENIOR_TEACHER,
+    SR_TEACHER: ROLES.SENIOR_TEACHER,
+    HEAD_OF_DEPARTMENT: ROLES.HEAD_OF_DEPARTMENT,
+    HOD: ROLES.HEAD_OF_DEPARTMENT,
     SUPPORT_STAFF: ROLES.NON_TEACHING_STAFF,
     NON_TEACHING: ROLES.NON_TEACHING_STAFF,
     NONTEACHING: ROLES.NON_TEACHING_STAFF,
@@ -340,7 +356,9 @@ function normalizeRole(value) {
     SUPPLIER_CONTRACTOR_SERVICE_PROVIDER: ROLES.SUPPLIER,
     SERVICE_PROVIDER: ROLES.SUPPLIER,
     SYSTEMDEVELOPER: ROLES.SYSTEM_DEVELOPER,
-    CONTRACTORS: ROLES.CONTRACTOR
+    CONTRACTORS: ROLES.CONTRACTOR,
+    SENIOR_TEACHER: ROLES.TEACHER,
+    HEAD_OF_DEPARTMENT: ROLES.TEACHER
   };
   if (roleAliases[base]) {
     return roleAliases[base];
@@ -360,6 +378,8 @@ const PUBLIC_ROLE_OPTIONS = [
   ROLES.HEAD_OF_INSTITUTION,
   ROLES.ADMIN,
   ROLES.TEACHER,
+  ROLES.SENIOR_TEACHER,
+  ROLES.HEAD_OF_DEPARTMENT,
   ROLES.BOM,
   ROLES.NON_TEACHING_STAFF,
   ROLES.PARENT,
@@ -373,6 +393,7 @@ const AGREEMENT_COMPANY = {
   email: "mwendeguenterpriseltd@gmail.com",
   phone: "+254 725 757 767"
 };
+const RECYCLE_BIN_RETENTION_YEARS = Number(process.env.RECYCLE_BIN_RETENTION_YEARS || 12);
 
 const PASSWORD_ROTATION_DAYS = Number(process.env.PASSWORD_ROTATION_DAYS || 30);
 const PASSWORD_ROTATION_EXEMPT_ROLES = new Set([ROLES.SYSTEM_DEVELOPER]);
@@ -634,7 +655,7 @@ async function resetLoginFailureState(userId) {
 
 async function getActiveUserSecurityState(username) {
   const rows = await query(
-    `SELECT id, role, failed_login_attempts, locked_until
+    `SELECT id, role, institution_id, failed_login_attempts, locked_until, is_suspended, suspended_reason
      FROM users
      WHERE username = ? AND is_active = 1
      ORDER BY id DESC
@@ -642,6 +663,16 @@ async function getActiveUserSecurityState(username) {
     [cleanValue(username)]
   );
   return rows.length ? rows[0] : null;
+}
+
+async function purgeExpiredRecycleBinItems() {
+  await query(
+    `UPDATE recycle_bin_items
+     SET status = 'DELETED',
+         permanently_deleted_at = NOW()
+     WHERE status = 'TRASHED'
+       AND deleted_at <= DATE_SUB(NOW(), INTERVAL 12 YEAR)`
+  );
 }
 
 async function recordOtpFailure(identity) {
@@ -748,11 +779,16 @@ function getPostalDetails(postalCode) {
 
 async function nextInstitutionCode({ countyCode, categoryCode }) {
   const prefix = `${countyCode}/${categoryCode}/`;
-  const [row] = await query(
-    "SELECT COUNT(*) total FROM institutions WHERE institution_code LIKE ?",
+  const rows = await query(
+    "SELECT institution_code FROM institutions WHERE institution_code LIKE ?",
     [`${prefix}%`]
   );
-  const next = Number(row?.total || 0) + 1;
+  const next = rows.reduce((maxSerial, row) => {
+    const rawCode = cleanValue(row?.institution_code);
+    const parts = rawCode.split("/");
+    const serial = Number(parts[2] || 0);
+    return Number.isFinite(serial) && serial > maxSerial ? serial : maxSerial;
+  }, 0) + 1;
   return `${countyCode}/${categoryCode}/${padThree(next)}`;
 }
 
@@ -909,41 +945,17 @@ const MODULE_KEYS = {
 
 const DEFAULT_MODULE_ACCESS_BY_ROLE = {
   [ROLES.SYSTEM_DEVELOPER]: Object.values(MODULE_KEYS),
-  [ROLES.ADMIN]: Object.values(MODULE_KEYS),
-  [ROLES.HEAD_OF_INSTITUTION]: Object.values(MODULE_KEYS),
-  [ROLES.MOD]: [MODULE_KEYS.DASHBOARD],
-  [ROLES.TSC]: [MODULE_KEYS.DASHBOARD],
-  [ROLES.TEACHER]: [
-    MODULE_KEYS.ADMISSION,
-    MODULE_KEYS.CBC_CURRICULUM_EDITOR,
-    MODULE_KEYS.MANAGEMENT_TEACHER_RESOURCES,
-    MODULE_KEYS.ATTENDANCE,
-    MODULE_KEYS.ACADEMIC_EXAMS,
-    MODULE_KEYS.ACADEMIC_MARKS,
-    MODULE_KEYS.HR_LEAVE,
-    MODULE_KEYS.LEARNER_RESOURCES,
-    MODULE_KEYS.COMMUNICATION_ANNOUNCEMENTS,
-    MODULE_KEYS.LEARNER_MATERIALS,
-    MODULE_KEYS.DASHBOARD,
-    MODULE_KEYS.SEARCH
-  ],
-  [ROLES.NON_TEACHING_STAFF]: [
-    MODULE_KEYS.HR_LEAVE,
-    MODULE_KEYS.FINANCE_FEE_PAYMENTS,
-    MODULE_KEYS.FINANCE_PROCUREMENT,
-    MODULE_KEYS.FINANCE_PAYROLL,
-    MODULE_KEYS.FINANCE_SALARY_ADVANCE,
-    MODULE_KEYS.WELFARE_MEMBERS,
-    MODULE_KEYS.WELFARE_CONTRIBUTIONS,
-    MODULE_KEYS.WELFARE_LOANS,
-    MODULE_KEYS.LAWS,
-    MODULE_KEYS.DASHBOARD
-  ],
-  [ROLES.BOM]: [MODULE_KEYS.PARENT_RESULTS, MODULE_KEYS.ACADEMIC_MARKS, MODULE_KEYS.DASHBOARD],
-  [ROLES.PARENT]: [MODULE_KEYS.PARENT_RESULTS, MODULE_KEYS.DASHBOARD],
-  [ROLES.LEARNER]: [MODULE_KEYS.LEARNER_MATERIALS, MODULE_KEYS.DASHBOARD],
-  [ROLES.SUPPLIER]: [MODULE_KEYS.FINANCE_PROCUREMENT, MODULE_KEYS.DASHBOARD],
-  [ROLES.CONTRACTOR]: [MODULE_KEYS.FINANCE_PROCUREMENT, MODULE_KEYS.DASHBOARD]
+  [ROLES.ADMIN]: [],
+  [ROLES.HEAD_OF_INSTITUTION]: [],
+  [ROLES.MOD]: [],
+  [ROLES.TSC]: [],
+  [ROLES.TEACHER]: [],
+  [ROLES.NON_TEACHING_STAFF]: [],
+  [ROLES.BOM]: [],
+  [ROLES.PARENT]: [],
+  [ROLES.LEARNER]: [],
+  [ROLES.SUPPLIER]: [],
+  [ROLES.CONTRACTOR]: []
 };
 
 async function hasModuleAccess(user, moduleKey) {
@@ -960,6 +972,7 @@ async function hasModuleAccess(user, moduleKey) {
     `SELECT can_access
      FROM user_module_access_overrides
      WHERE user_id = ? AND module_key = ?
+       AND (permission_key = 'ACCESS' OR permission_key IS NULL OR permission_key = '')
      ORDER BY id DESC
      LIMIT 1`,
     [user.id, moduleKey]
@@ -972,6 +985,17 @@ async function hasModuleAccess(user, moduleKey) {
 
 function enforceModuleAccess(moduleKey) {
   return asyncHandler(async (req, res, next) => {
+    if (Number(req.user?.is_suspended) === 1) {
+      return res.status(403).json({
+        error:
+          `You are suspended. Kindly contact the System Developer (${SYSTEM_DEVELOPER_CONTACT_EMAIL}, ${SYSTEM_DEVELOPER_CONTACT_PHONE}).`,
+        suspended: true,
+        system_developer_contact: {
+          email: SYSTEM_DEVELOPER_CONTACT_EMAIL,
+          phone: SYSTEM_DEVELOPER_CONTACT_PHONE
+        }
+      });
+    }
     const allowed = await hasModuleAccess(req.user, moduleKey);
     if (!allowed) {
       return res.status(403).json({
@@ -1033,6 +1057,10 @@ async function archiveRecycleBinItem({
   );
 }
 
+function canManageInstitutionUser(reqUser, targetInstitutionId) {
+  return canManageAcrossInstitutions(reqUser) || Number(reqUser?.institution_id) === Number(targetInstitutionId || 0);
+}
+
 function isSafeTableIdentifier(name) {
   return /^[a-z_][a-z0-9_]*$/i.test(cleanValue(name));
 }
@@ -1067,6 +1095,23 @@ function getScopedFilter(config, user) {
 }
 
 function buildAgreementLines({ institution, adminUser }) {
+  const template = cleanOptionalValue(institution?.agreement_template_text);
+  if (template) {
+    const today = dayjs().format("YYYY-MM-DD");
+    const rendered = template
+      .replaceAll("{{DATE}}", today)
+      .replaceAll("{{INSTITUTION_NAME}}", institution.institution_name || "-")
+      .replaceAll("{{INSTITUTION_CODE}}", institution.institution_code || "-")
+      .replaceAll("{{COUNTY}}", institution.county || "-")
+      .replaceAll("{{POSTAL_ADDRESS}}", institution.postal_address || "-")
+      .replaceAll("{{EMAIL}}", institution.email || "-")
+      .replaceAll("{{PHONE}}", institution.phone || "-")
+      .replaceAll("{{ADMIN_USERNAME}}", adminUser?.username || "-")
+      .replaceAll("{{PROVIDER_NAME}}", AGREEMENT_COMPANY.name)
+      .replaceAll("{{PROVIDER_PHONE}}", AGREEMENT_COMPANY.phone)
+      .replaceAll("{{PROVIDER_EMAIL}}", AGREEMENT_COMPANY.email);
+    return rendered.split("\n");
+  }
   const today = dayjs().format("YYYY-MM-DD");
   return [
     `${AGREEMENT_COMPANY.name} - Institution System Agreement`,
@@ -1488,13 +1533,27 @@ async function createOtpSession({ identity, role, institutionId, payload, destin
 
 async function authenticateByUserTable(username, password) {
   const users = await query(
-    "SELECT * FROM users WHERE username = ? AND is_active = 1 LIMIT 1",
+    "SELECT * FROM users WHERE username = ? LIMIT 1",
     [username]
   );
   if (!users.length) {
     return null;
   }
   const user = users[0];
+  if (Number(user.is_active) !== 1) {
+    return {
+      blocked: true,
+      role: normalizeRole(user.role),
+      error: "This username is deactivated. Contact the System Developer."
+    };
+  }
+  if (Number(user.is_suspended) === 1) {
+    return {
+      blocked: true,
+      role: normalizeRole(user.role),
+      error: `This account is suspended. Contact the System Developer at ${AGREEMENT_COMPANY.email} or ${AGREEMENT_COMPANY.phone}.`
+    };
+  }
   const normalizedRole = normalizeRole(user.role);
   const valid = await verifyPassword(password, user.password_hash);
   if (!valid) {
@@ -1969,9 +2028,12 @@ app.get("/api/auth/me", auth, asyncHandler(async (req, res) => {
   }
 
   const rows = await query(
-    `SELECT id, role, institution_id, full_name, username, password_last_changed_at, password_expires_at, must_change_password
-     FROM users
-     WHERE id = ? AND institution_id = ?
+    `SELECT u.id, u.role, u.institution_id, u.full_name, u.username, u.email, u.phone, u.password_last_changed_at, u.password_expires_at, u.must_change_password,
+            u.is_active, u.is_suspended, u.status_reason, u.suspended_reason,
+            i.institution_name, i.institution_code
+     FROM users u
+     INNER JOIN institutions i ON i.id = u.institution_id
+     WHERE u.id = ? AND u.institution_id = ?
      LIMIT 1`,
     [req.user.id, req.user.institution_id]
   );
@@ -1979,6 +2041,20 @@ app.get("/api/auth/me", auth, asyncHandler(async (req, res) => {
     return res.status(404).json({ error: "User account not found." });
   }
   const user = rows[0];
+  if (Number(user.is_active) !== 1) {
+    return res.status(403).json({ error: "Your username is deactivated. Contact the System Developer." });
+  }
+  if (Number(user.is_suspended) === 1) {
+    return res.status(403).json({
+      error:
+        `You are suspended kindly contact the system developer (${AGREEMENT_COMPANY.email} / ${AGREEMENT_COMPANY.phone}).`,
+      suspended: true,
+      contact: {
+        email: AGREEMENT_COMPANY.email,
+        phone: AGREEMENT_COMPANY.phone
+      }
+    });
+  }
   const passwordPolicy = evaluatePasswordRotation(user);
   res.json({
     ...user,
@@ -2165,70 +2241,46 @@ app.post("/api/public/institutions/:id/agreement/send", publicWriteRateLimit, en
 }));
 
 app.post("/api/public/forgot-username", publicWriteRateLimit, enforcePublicSecurity, asyncHandler(async (req, res) => {
-  const institutionCode = cleanValue(req.body?.institution_code);
-  const email = cleanOptionalValue(req.body?.email);
-  const phone = cleanOptionalValue(req.body?.phone);
-
-  if (!email && !phone) {
-    return res.status(400).json({ error: "Provide email or phone." });
-  }
-
-  let where = "WHERE u.is_active = 1";
-  const params = [];
-  if (institutionCode) {
-    where += " AND i.institution_code = ?";
-    params.push(institutionCode);
-  }
-  if (email && phone) {
-    where += " AND (u.email = ? OR u.phone = ?)";
-    params.push(email, phone);
-  } else if (email) {
-    where += " AND u.email = ?";
-    params.push(email);
-  } else {
-    where += " AND u.phone = ?";
-    params.push(phone);
-  }
-
-  const rows = await query(
-    `SELECT u.username, i.institution_code, i.institution_name
-     FROM users u
-     INNER JOIN institutions i ON i.id = u.institution_id
-     ${where}
-     ORDER BY u.id DESC
-     LIMIT 10`,
-    params
-  );
-  if (!rows.length) {
-    return res.status(404).json({ error: "No usernames matched the details provided." });
-  }
-
-  res.json({
-    message: "Matching usernames found.",
-    usernames: rows.map((row) => ({
-      username: row.username,
-      institution_code: row.institution_code,
-      institution_name: row.institution_name
-    }))
+  return res.status(200).json({
+    message:
+      "For username recovery, contact your institution administrator or the system developer."
   });
 }));
 
 app.post("/api/public/forgot-password", publicWriteRateLimit, enforcePublicSecurity, asyncHandler(async (req, res) => {
-  const institutionCode = cleanValue(req.body?.institution_code);
+  const institutionCode = cleanOptionalValue(req.body?.institution_code);
   const username = cleanValue(req.body?.username);
-  const newPassword = cleanValue(req.body?.new_password);
-  const weakNewPasswordError = requireStrongPassword(newPassword, "new_password");
-  if (weakNewPasswordError) {
-    return res.status(400).json({ error: weakNewPasswordError });
-  }
   const email = cleanOptionalValue(req.body?.email);
   const phone = cleanOptionalValue(req.body?.phone);
+  const contactMethod = cleanOptionalValue(req.body?.contact_method);
+  const requestedOtpChannel = cleanOptionalValue(req.body?.otp_channel);
+  const otp = cleanOptionalValue(req.body?.otp);
+  const newPassword = cleanOptionalValue(req.body?.new_password);
+  const mode = otp && newPassword ? "verify" : "request";
 
-  if (!username || !newPassword) {
-    return res.status(400).json({ error: "username and new_password are required." });
+  if (!institutionCode) {
+    return res.status(400).json({ error: "institution_code is required." });
   }
-  if (!email && !phone) {
-    return res.status(400).json({ error: "Provide email or phone to verify identity." });
+  if (!username) {
+    return res.status(400).json({ error: "username is required." });
+  }
+  if (!contactMethod || !["email", "phone"].includes(contactMethod)) {
+    return res.status(400).json({ error: "contact_method must be either 'email' or 'phone'." });
+  }
+  if (contactMethod === "email" && !email) {
+    return res.status(400).json({ error: "Email is required when contact method is email." });
+  }
+  if (contactMethod === "phone" && !phone) {
+    return res.status(400).json({ error: "Mobile number is required when contact method is phone." });
+  }
+  if (mode === "request" && (!requestedOtpChannel || !["sms", "email"].includes(requestedOtpChannel))) {
+    return res.status(400).json({ error: "otp_channel must be either 'sms' or 'email'." });
+  }
+  if (mode === "verify") {
+    const weakNewPasswordError = requireStrongPassword(newPassword, "new_password");
+    if (weakNewPasswordError) {
+      return res.status(400).json({ error: weakNewPasswordError });
+    }
   }
 
   let where = "WHERE u.username = ?";
@@ -2250,12 +2302,79 @@ app.post("/api/public/forgot-password", publicWriteRateLimit, enforcePublicSecur
   }
 
   const user = rows[0];
-  if (email && cleanValue(user.email) !== cleanValue(email)) {
+  if (contactMethod === "email" && cleanValue(user.email) !== cleanValue(email)) {
     return res.status(401).json({ error: "Email does not match our records." });
   }
-  if (phone && cleanValue(user.phone) !== cleanValue(phone)) {
+  if (contactMethod === "phone" && cleanValue(user.phone) !== cleanValue(phone)) {
     return res.status(401).json({ error: "Phone does not match our records." });
   }
+
+  if (mode === "request") {
+    const identity = `pwdreset:${username.toLowerCase()}`;
+    const otpCooldown = checkOtpRequestCooldown(identity);
+    if (!otpCooldown.allowed) {
+      return res.status(429).json({
+        error: "OTP already requested recently. Please wait before requesting another code.",
+        otp_resend_available_after_seconds: otpCooldown.remainingSeconds
+      });
+    }
+
+    const contactDestination = contactMethod === "phone" ? cleanValue(phone) : cleanValue(email);
+    const channel = requestedOtpChannel;
+    if (!contactDestination) {
+      return res.status(400).json({ error: "Selected contact destination is missing." });
+    }
+    if (channel === "sms" && contactMethod !== "phone") {
+      return res.status(400).json({ error: "SMS delivery requires mobile number contact method." });
+    }
+    if (channel === "email" && contactMethod !== "email") {
+      return res.status(400).json({ error: "Email delivery requires email contact method." });
+    }
+    const payload = {
+      username,
+      institution_id: user.institution_id,
+      recovery_type: "PASSWORD_RESET",
+      email: cleanValue(email) || null,
+      phone: cleanValue(phone) || null,
+      contact_method: contactMethod
+    };
+    const otpSession = await createOtpSession({
+      identity,
+      role: "PUBLIC_PASSWORD_RESET",
+      institutionId: user.institution_id,
+      payload,
+      destination: contactDestination,
+      channel
+    });
+    await auditLog(
+      { institution_id: user.institution_id || null, id: user.id || null, role: "PUBLIC" },
+      "PUBLIC_PASSWORD_RESET_OTP_REQUESTED",
+      "otp_sessions",
+      null,
+      { username, otp_channel: channel, otp_expires_at: otpSession.expiresAt }
+    );
+    return res.json({
+      message: `OTP sent to your ${channel === "sms" ? "phone" : "email"}.`,
+      otp_channel_used: channel,
+      otp_resend_available_after_seconds: OTP_RESEND_COOLDOWN_SECONDS
+    });
+  }
+
+  const sessions = await query(
+    `SELECT * FROM otp_sessions
+     WHERE identity_value = ?
+       AND role_name = 'PUBLIC_PASSWORD_RESET'
+       AND otp_code = ?
+       AND is_used = 0
+       AND expires_at > NOW()
+     ORDER BY id DESC
+     LIMIT 1`,
+    [`pwdreset:${username.toLowerCase()}`, otp]
+  );
+  if (!sessions.length) {
+    return res.status(401).json({ error: "Invalid or expired OTP." });
+  }
+  await query("UPDATE otp_sessions SET is_used = 1 WHERE id = ?", [sessions[0].id]);
 
   const passwordHash = await hashPassword(newPassword);
   await query(
@@ -2277,7 +2396,6 @@ app.post("/api/public/forgot-password", publicWriteRateLimit, enforcePublicSecur
     message: [
       "Your IMIS password has been reset.",
       `Username: ${username}`,
-      `New Password: ${newPassword}`,
       "Please log in and change your password immediately."
     ].join("\n")
   });
@@ -2517,6 +2635,40 @@ app.get(
 );
 
 app.post(
+  "/api/institutions/preview-code",
+  auth,
+  enforceModuleAccess(MODULE_KEYS.REGISTRATION),
+  enforceRole([ROLES.SYSTEM_DEVELOPER]),
+  asyncHandler(async (req, res) => {
+    const countyInput = cleanOptionalValue(req.body?.county);
+    const countyCodeInput = cleanOptionalValue(req.body?.county_code);
+    const categoryInput = cleanOptionalValue(req.body?.category);
+    const countyRecord = resolveCounty({ countyCode: countyCodeInput, countyName: countyInput });
+    if (!countyRecord) {
+      return res.status(400).json({ error: "Select a valid county." });
+    }
+    const categoryRecord = resolveInstitutionCategory({
+      categoryCode: categoryInput,
+      categoryLabel: categoryInput
+    });
+    if (!categoryRecord) {
+      return res.status(400).json({ error: "Select a valid institution category." });
+    }
+    const institutionCode = await nextInstitutionCode({
+      countyCode: countyRecord.code,
+      categoryCode: categoryRecord.code
+    });
+    res.json({
+      county: countyRecord.name,
+      county_code: countyRecord.code,
+      category: categoryRecord.label,
+      category_code: categoryRecord.code,
+      institution_code: institutionCode
+    });
+  })
+);
+
+app.post(
   "/api/institutions",
   auth,
   accountMutationRateLimit,
@@ -2534,6 +2686,7 @@ app.post(
     const subCounty = cleanOptionalValue(req.body?.sub_county);
     const location = cleanOptionalValue(req.body?.location);
     const village = cleanOptionalValue(req.body?.village);
+    const postalAddress = cleanOptionalValue(req.body?.postal_address);
     const postalCodeInput = cleanOptionalValue(req.body?.postal_code);
     const townInput = cleanOptionalValue(req.body?.town);
     const sendAgreementEmail = parseTruthy(req.body?.send_agreement_email);
@@ -2551,6 +2704,10 @@ app.post(
       ? portalRoleRaw
       : ROLES.HEAD_OF_INSTITUTION;
 
+    if (!institutionName) {
+      return res.status(400).json({ error: "institution_name is required." });
+    }
+
     const countyRecord = resolveCounty({ countyCode: countyCodeInput, countyName: countyInput });
     if (!countyRecord) {
       return res.status(400).json({ error: "Select a valid county." });
@@ -2565,11 +2722,6 @@ app.post(
 
     const postalDetails = getPostalDetails(postalCodeInput);
     const normalizedTown = townInput || postalDetails?.town || null;
-    const institutionCode = await nextInstitutionCode({
-      countyCode: countyRecord.code,
-      categoryCode: categoryRecord.code
-    });
-
     const adminPassword = autoGeneratePassword
       ? generateStrongPassword(12)
       : adminPasswordInput;
@@ -2584,29 +2736,41 @@ app.post(
       });
     }
 
-    const existingInstitution = await query(
-      "SELECT id FROM institutions WHERE institution_code = ? LIMIT 1",
-      [institutionCode]
-    );
-    if (existingInstitution.length) {
-      return res.status(409).json({ error: "Institution code already exists." });
+    // Avoid duplicate institution_code under concurrent registrations by retrying on duplicate-key conflict.
+    let institutionCode = "";
+    let institutionInsert = null;
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      institutionCode = await nextInstitutionCode({
+        countyCode: countyRecord.code,
+        categoryCode: categoryRecord.code
+      });
+      try {
+        institutionInsert = await query(
+          `INSERT INTO institutions
+            (institution_name, institution_code, email, phone, county, sub_county, location, village, postal_address)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            institutionName,
+            institutionCode,
+            institutionEmail,
+            institutionPhone,
+            countyRecord.name,
+            subCounty,
+            location,
+            normalizedTown || village,
+            postalAddress
+          ]
+        );
+        break;
+      } catch (error) {
+        if (error?.code !== "ER_DUP_ENTRY" || attempt === 4) {
+          throw error;
+        }
+      }
     }
-
-    const institutionInsert = await query(
-      `INSERT INTO institutions
-        (institution_name, institution_code, email, phone, county, sub_county, location, village)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        institutionName,
-        institutionCode,
-        institutionEmail,
-        institutionPhone,
-        countyRecord.name,
-        subCounty,
-        location,
-        normalizedTown || village
-      ]
-    );
+    if (!institutionInsert?.insertId) {
+      return res.status(409).json({ error: "Unable to allocate a unique institution code. Please retry." });
+    }
     const institutionId = institutionInsert.insertId;
     const passwordHash = await hashPassword(adminPassword);
 
@@ -2627,12 +2791,15 @@ app.post(
     );
 
     const credentialMessage = [
-      "Welcome to the Integrated Management Information System for Basic Education.",
+      "WELCOME TO INTEGRATED MANAGEMENT INFORMATION SYSTEM (IMIS).",
+      "Your account has been created successfully.",
       `Institution: ${institutionName}`,
       `Institution Code: ${institutionCode}`,
       `Username: ${adminUsername}`,
       `Password: ${adminPassword}`,
-      "Please change your password immediately after first login."
+      "",
+      "IMPORTANT SECURITY NOTE:",
+      "Please log in and change this password immediately after first sign-in."
     ].join("\n");
     const credentialDispatch = await dispatchCredentialNotice({
       email: institutionEmail,
@@ -2670,6 +2837,7 @@ app.post(
       county_code: countyRecord.code,
       category: categoryRecord.label,
       category_code: categoryRecord.code,
+      postal_address: postalAddress,
       admin_username: adminUsername,
       admin_role: portalRole
     });
@@ -2684,6 +2852,7 @@ app.post(
       county_code: countyRecord.code,
       category: categoryRecord.label,
       category_code: categoryRecord.code,
+      postal_address: postalAddress,
       postal_code: postalDetails?.postal_code || postalCodeInput || null,
       town: normalizedTown,
       agreement_pdf_url: `/api/institutions/${institutionId}/agreement.pdf`,
@@ -2824,6 +2993,17 @@ app.get(
       "SELECT COUNT(*) totalLearners FROM learners WHERE institution_id = ?",
       [institutionId]
     );
+    const [activeLearners] = await query(
+      `SELECT COUNT(*) totalActiveLearners
+       FROM learners
+       WHERE institution_id = ?
+         AND (
+           status IS NULL
+           OR TRIM(status) = ''
+           OR LOWER(status) IN ('active', 'in session', 'continuing')
+         )`,
+      [institutionId]
+    );
     const [present] = await query(
       `SELECT COUNT(*) totalPresent
        FROM attendance_records
@@ -2860,10 +3040,111 @@ app.get(
       "SELECT COUNT(*) totalExpelled FROM learners WHERE institution_id = ? AND conduct_status = 'Expelled'",
       [institutionId]
     );
+    const [dropOutLearners] = await query(
+      `SELECT COUNT(*) totalDropOut
+       FROM learners
+       WHERE institution_id = ?
+         AND (
+           LOWER(COALESCE(status, '')) LIKE '%drop%'
+           OR LOWER(COALESCE(conduct_status, '')) LIKE '%drop%'
+           OR LOWER(COALESCE(reason_for_leaving, '')) LIKE '%drop%'
+         )`,
+      [institutionId]
+    );
+    const [completedLearners] = await query(
+      `SELECT COUNT(*) totalCompletion
+       FROM learners
+       WHERE institution_id = ?
+         AND (
+           LOWER(COALESCE(status, '')) LIKE '%complet%'
+           OR LOWER(COALESCE(conduct_status, '')) LIKE '%complet%'
+           OR LOWER(COALESCE(reason_for_leaving, '')) LIKE '%complet%'
+         )`,
+      [institutionId]
+    );
+    const [learnersTransferred] = await query(
+      `SELECT COUNT(*) totalTransferred
+       FROM learners
+       WHERE institution_id = ?
+         AND (
+           conduct_status = 'Transferred'
+           OR LOWER(COALESCE(conduct_status, '')) LIKE '%transfer%'
+         )`,
+      [institutionId]
+    );
     const [feesToday] = await query(
       `SELECT COALESCE(SUM(amount_paid), 0) totalFees, COUNT(*) totalPayments
        FROM finance_fee_payments
        WHERE institution_id = ? AND DATE(payment_date) = CURDATE()`,
+      [institutionId]
+    );
+    const [teachersTotal] = await query(
+      "SELECT COUNT(*) totalTeachers FROM teacher_profiles WHERE institution_id = ?",
+      [institutionId]
+    );
+    const [teachersPresent] = await query(
+      `SELECT COUNT(*) totalTeachersPresent
+       FROM attendance_records
+       WHERE institution_id = ?
+         AND attendance_type = 'Teacher'
+         AND status = 'Present'
+         AND DATE(attendance_date) = CURDATE()`,
+      [institutionId]
+    );
+    const [teachersOfficialLeave] = await query(
+      `SELECT COUNT(*) totalTeachersOfficialLeave
+       FROM teacher_profiles
+       WHERE institution_id = ?
+         AND LOWER(COALESCE(leave_status, '')) LIKE '%official leave%'`,
+      [institutionId]
+    );
+    const [teachersAbsentWithApology] = await query(
+      `SELECT COUNT(*) totalTeachersAbsentWithApology
+       FROM teacher_profiles
+       WHERE institution_id = ?
+         AND LOWER(COALESCE(accountability_status, '')) LIKE '%absent with apology%'`,
+      [institutionId]
+    );
+    const [teachersAbsentWithoutApology] = await query(
+      `SELECT COUNT(*) totalTeachersAbsentWithoutApology
+       FROM teacher_profiles
+       WHERE institution_id = ?
+         AND LOWER(COALESCE(accountability_status, '')) LIKE '%absent without apology%'`,
+      [institutionId]
+    );
+    const [teachersDeserter] = await query(
+      `SELECT COUNT(*) totalTeachersDeserter
+       FROM teacher_profiles
+       WHERE institution_id = ?
+         AND LOWER(COALESCE(employment_status, '')) LIKE '%deserter%'`,
+      [institutionId]
+    );
+    const [teachersSuspended] = await query(
+      `SELECT COUNT(*) totalTeachersSuspended
+       FROM teacher_profiles
+       WHERE institution_id = ?
+         AND LOWER(COALESCE(employment_status, '')) LIKE '%suspend%'`,
+      [institutionId]
+    );
+    const [teachersInterdicted] = await query(
+      `SELECT COUNT(*) totalTeachersInterdicted
+       FROM teacher_profiles
+       WHERE institution_id = ?
+         AND LOWER(COALESCE(employment_status, '')) LIKE '%interdict%'`,
+      [institutionId]
+    );
+    const [teachersTransferred] = await query(
+      `SELECT COUNT(*) totalTeachersTransferred
+       FROM teacher_profiles
+       WHERE institution_id = ?
+         AND LOWER(COALESCE(employment_status, '')) LIKE '%transfer%'`,
+      [institutionId]
+    );
+    const [teachersRetired] = await query(
+      `SELECT COUNT(*) totalTeachersRetired
+       FROM teacher_profiles
+       WHERE institution_id = ?
+         AND LOWER(COALESCE(employment_status, '')) LIKE '%retire%'`,
       [institutionId]
     );
     const [feesMonth] = await query(
@@ -2963,11 +3244,14 @@ app.get(
       0
     );
 
-    const logs = await query(
-      `SELECT id, actor_user_id, actor_role, action, entity_name, entity_id, details_json, created_at
-       FROM activity_logs
+    const [financeSessionRows] = await query(
+      `SELECT academic_year_label, term_name, capitation_received, fee_paid, grant_other,
+              COALESCE(available_balance, (capitation_received + fee_paid + grant_other - liabilities)) AS available_balance,
+              outstanding_balance, liabilities
+       FROM finance_session_sync
        WHERE institution_id = ?
-       ORDER BY id DESC LIMIT 20`,
+       ORDER BY id DESC
+       LIMIT 1`,
       [institutionId]
     );
     const alerts = [];
@@ -3027,10 +3311,12 @@ app.get(
       outstandingBalances
     };
 
+    const financeSession = financeSessionRows || null;
     res.json({
       generated_at: dayjs().format("YYYY-MM-DD HH:mm:ss"),
       stats: {
         totalLearners: toNumber(population.totalLearners),
+        totalActiveLearners: toNumber(activeLearners.totalActiveLearners),
         totalPresent: toNumber(present.totalPresent),
         totalAbsent: toNumber(absent.totalAbsent),
         totalBoys: toNumber(boys.totalBoys),
@@ -3038,16 +3324,113 @@ app.get(
         totalLate: toNumber(late.totalLate),
         totalSuspended: toNumber(suspension.totalSuspended),
         totalExpelled: toNumber(expelled.totalExpelled),
+        totalDropOut: toNumber(dropOutLearners.totalDropOut),
+        totalTransferred: toNumber(learnersTransferred.totalTransferred),
+        totalCompletion: toNumber(completedLearners.totalCompletion),
+        totalTeachers: toNumber(teachersTotal.totalTeachers),
+        totalTeachersPresent: toNumber(teachersPresent.totalTeachersPresent),
+        totalTeachersOfficialLeave: toNumber(teachersOfficialLeave.totalTeachersOfficialLeave),
+        totalTeachersAbsentWithApology: toNumber(teachersAbsentWithApology.totalTeachersAbsentWithApology),
+        totalTeachersAbsentWithoutApology: toNumber(teachersAbsentWithoutApology.totalTeachersAbsentWithoutApology),
+        totalTeachersDeserter: toNumber(teachersDeserter.totalTeachersDeserter),
+        totalTeachersSuspended: toNumber(teachersSuspended.totalTeachersSuspended),
+        totalTeachersInterdicted: toNumber(teachersInterdicted.totalTeachersInterdicted),
+        totalTeachersTransferred: toNumber(teachersTransferred.totalTeachersTransferred),
+        totalTeachersRetired: toNumber(teachersRetired.totalTeachersRetired),
         totalFeesCollectedToday: toMoney(feesToday.totalFees)
       },
       attendanceBreakdown,
       dailyAttendanceList,
       performanceByClass,
       feeCollectionSummary,
+      financeSessionSync: financeSession
+        ? {
+          academic_year: financeSession.academic_year_label,
+          term_name: financeSession.term_name,
+          capitation_received: toMoney(financeSession.capitation_received),
+          fee_paid: toMoney(financeSession.fee_paid),
+          grant_other: toMoney(financeSession.grant_other),
+          available_balance: toMoney(financeSession.available_balance),
+          outstanding_balance: toMoney(financeSession.outstanding_balance),
+          liabilities: toMoney(financeSession.liabilities)
+        }
+        : null,
       alerts,
-      announcements,
-      systemActivityLogs: logs
+      announcements
     });
+  })
+);
+
+app.post(
+  "/api/finance/session-sync",
+  auth,
+  enforceModuleAccess(MODULE_KEYS.FINANCE),
+  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
+  enforcePermission(PERMISSIONS.CREATE),
+  asyncHandler(async (req, res) => {
+    const institutionId = req.user.institution_id;
+    const academicYear = cleanValue(req.body?.academic_year);
+    const termName = cleanValue(req.body?.term_name);
+    const capitationReceived = Number(req.body?.capitation_received || 0);
+    const feePaid = Number(req.body?.fee_paid || 0);
+    const grantOther = Number(req.body?.grant_other || 0);
+    const availableBalance = Number(req.body?.available_balance || 0);
+    const outstandingBalance = Number(req.body?.outstanding_balance || 0);
+    const liabilities = Number(req.body?.liabilities || 0);
+
+    if (!academicYear || !termName) {
+      return res.status(400).json({ error: "academic_year and term_name are required." });
+    }
+
+    const existing = await query(
+      `SELECT id FROM finance_session_sync
+       WHERE institution_id = ? AND academic_year_label = ? AND term_name = ?
+       LIMIT 1`,
+      [institutionId, academicYear, termName]
+    );
+
+    if (existing.length) {
+      await query(
+        `UPDATE finance_session_sync
+         SET capitation_received = ?, fee_paid = ?, grant_other = ?, available_balance = ?,
+             outstanding_balance = ?, liabilities = ?, updated_at = NOW()
+         WHERE id = ?`,
+        [
+          capitationReceived,
+          feePaid,
+          grantOther,
+          availableBalance,
+          outstandingBalance,
+          liabilities,
+          existing[0].id
+        ]
+      );
+    } else {
+      await query(
+        `INSERT INTO finance_session_sync
+          (institution_id, academic_year_label, term_name, capitation_received, fee_paid, grant_other, available_balance, outstanding_balance, liabilities, created_by_user_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          institutionId,
+          academicYear,
+          termName,
+          capitationReceived,
+          feePaid,
+          grantOther,
+          availableBalance,
+          outstandingBalance,
+          liabilities,
+          req.user.id
+        ]
+      );
+    }
+
+    await auditLog(req.user, "UPSERT_FINANCE_SESSION_SYNC", "finance_session_sync", null, {
+      academic_year: academicYear,
+      term_name: termName
+    });
+
+    res.json({ message: "Academic session finance synchronization saved successfully." });
   })
 );
 
@@ -3218,10 +3601,14 @@ app.post(
   enforceModuleAccess(MODULE_KEYS.REGISTRATION),
   enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
   asyncHandler(async (req, res) => {
-    const { full_name, username, password, role, email, phone } = req.body;
-    if (!full_name || !username || !password || !role) {
-      return res.status(400).json({ error: "full_name, username, password and role are required." });
+    const { full_name, username, role, email, phone } = req.body;
+    if (!full_name || !username || !role) {
+      return res.status(400).json({ error: "full_name, username, and role are required." });
     }
+    if (!cleanOptionalValue(email) && !cleanOptionalValue(phone)) {
+      return res.status(400).json({ error: "Either email or phone is required." });
+    }
+    const password = generateStrongPassword(12);
     const weakPasswordError = requireStrongPassword(password, "password");
     if (weakPasswordError) {
       return res.status(400).json({ error: weakPasswordError });
@@ -3288,7 +3675,143 @@ app.post(
       role: normalizedRole,
       institution_id: targetInstitutionId
     });
-    res.status(201).json({ id: result.insertId, message: "User created successfully." });
+    const credentialMessage = [
+      "WELCOME TO INTEGRATED MANAGEMENT INFORMATION SYSTEM (IMIS).",
+      "Your user account has been created.",
+      `Username: ${username}`,
+      `Temporary Password: ${password}`,
+      "",
+      "Please change this password immediately after first login."
+    ].join("\n");
+    const credentialDispatch = await dispatchCredentialNotice({
+      email: cleanOptionalValue(email),
+      phone: cleanOptionalValue(phone),
+      subject: "IMIS User Account Credentials",
+      message: credentialMessage
+    });
+    res.status(201).json({
+      id: result.insertId,
+      message: "User created successfully.",
+      credential_dispatch: credentialDispatch,
+      generated_password: normalizeRole(req.user.role) === ROLES.SYSTEM_DEVELOPER ? password : null
+    });
+  })
+);
+
+app.get(
+  "/api/institutions/:id/agreement-template",
+  auth,
+  enforceModuleAccess(MODULE_KEYS.REGISTRATION),
+  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
+  asyncHandler(async (req, res) => {
+    const institutionId = Number(req.params.id);
+    const institution = await loadInstitutionAgreementContext(institutionId);
+    const accessError = assertInstitutionAgreementAccess(req, institution);
+    if (accessError) return res.status(accessError.status).json({ error: accessError.error });
+    res.json({
+      institution_id: institution.id,
+      agreement_template_text: institution.agreement_template_text || "",
+      agreement_template_file_url: institution.agreement_template_file_url || ""
+    });
+  })
+);
+
+app.put(
+  "/api/institutions/:id/agreement-template",
+  auth,
+  accountMutationRateLimit,
+  accountMutationCooldown,
+  enforceModuleAccess(MODULE_KEYS.REGISTRATION),
+  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
+  asyncHandler(async (req, res) => {
+    const institutionId = Number(req.params.id);
+    const institution = await loadInstitutionAgreementContext(institutionId);
+    const accessError = assertInstitutionAgreementAccess(req, institution);
+    if (accessError) return res.status(accessError.status).json({ error: accessError.error });
+    const templateText = cleanOptionalValue(req.body?.agreement_template_text);
+    const templateFileUrl = cleanOptionalValue(req.body?.agreement_template_file_url);
+    await query(
+      `UPDATE institutions
+       SET agreement_template_text = ?, agreement_template_file_url = ?
+       WHERE id = ?`,
+      [templateText, templateFileUrl, institutionId]
+    );
+    await auditLog(req.user, "UPSERT_AGREEMENT_TEMPLATE", "institutions", institutionId, {
+      has_template_text: Boolean(templateText),
+      has_template_file_url: Boolean(templateFileUrl)
+    });
+    res.json({ message: "Agreement template saved successfully." });
+  })
+);
+
+app.delete(
+  "/api/institutions/:id/agreement-template",
+  auth,
+  accountMutationRateLimit,
+  accountMutationCooldown,
+  enforceModuleAccess(MODULE_KEYS.REGISTRATION),
+  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
+  asyncHandler(async (req, res) => {
+    const institutionId = Number(req.params.id);
+    const institution = await loadInstitutionAgreementContext(institutionId);
+    const accessError = assertInstitutionAgreementAccess(req, institution);
+    if (accessError) return res.status(accessError.status).json({ error: accessError.error });
+    await query(
+      `UPDATE institutions
+       SET agreement_template_text = NULL, agreement_template_file_url = NULL
+       WHERE id = ?`,
+      [institutionId]
+    );
+    await auditLog(req.user, "DELETE_AGREEMENT_TEMPLATE", "institutions", institutionId, {});
+    res.json({ message: "Agreement template deleted successfully." });
+  })
+);
+
+app.patch(
+  "/api/institutions/:id/status",
+  auth,
+  accountMutationRateLimit,
+  accountMutationCooldown,
+  enforceModuleAccess(MODULE_KEYS.INSTITUTIONS_USERS_REGISTRY),
+  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
+  asyncHandler(async (req, res) => {
+    const institutionId = Number(req.params.id);
+    const { is_active, is_suspended, status_reason } = req.body || {};
+    if (!institutionId) {
+      return res.status(400).json({ error: "Valid institution id is required." });
+    }
+    const institutions = await query(
+      `SELECT id, institution_name, institution_code
+       FROM institutions
+       WHERE id = ?
+       LIMIT 1`,
+      [institutionId]
+    );
+    if (!institutions.length) {
+      return res.status(404).json({ error: "Institution not found." });
+    }
+    if (!canManageAcrossInstitutions(req.user) && Number(req.user.institution_id) !== institutionId) {
+      return res.status(403).json({ error: "You can only manage institution status within your own institution." });
+    }
+    const normalizedRole = normalizeRole(req.user.role);
+    if (normalizedRole !== ROLES.SYSTEM_DEVELOPER && Number(is_active) === 0) {
+      return res.status(403).json({ error: "Only System Developer can deactivate an institution." });
+    }
+    const nextActive = Number(typeof is_active === "boolean" || typeof is_active === "number" ? is_active : 1) === 1 ? 1 : 0;
+    const nextSuspended = Number(typeof is_suspended === "boolean" || typeof is_suspended === "number" ? is_suspended : 0) === 1 ? 1 : 0;
+    const reason = cleanOptionalValue(status_reason);
+    await query(
+      `UPDATE institutions
+       SET is_active = ?, is_suspended = ?, status_reason = ?, status_updated_at = NOW(), status_updated_by_user_id = ?
+       WHERE id = ?`,
+      [nextActive, nextSuspended, reason, req.user.id, institutionId]
+    );
+    await auditLog(req.user, "CHANGE_INSTITUTION_STATUS", "institutions", institutionId, {
+      is_active: nextActive,
+      is_suspended: nextSuspended,
+      status_reason: reason
+    });
+    res.json({ message: "Institution status updated successfully." });
   })
 );
 
@@ -3403,7 +3926,7 @@ app.delete(
   auth,
   accountMutationRateLimit,
   accountMutationCooldown,
-  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
+  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN]),
   asyncHandler(async (req, res) => {
     const userId = Number(req.params.id);
     if (!userId) {
@@ -3625,18 +4148,76 @@ app.post(
       return res.status(403).json({ error: "Cannot change module access for users outside your institution." });
     }
 
+    const actionKey = cleanValue(req.body?.action_key).toUpperCase() || "ACCESS";
     await query(
-      `INSERT INTO user_module_access_overrides (institution_id, user_id, module_key, can_access, created_by_user_id)
-       VALUES (?, ?, ?, ?, ?)`,
-      [targetUser.institution_id, userId, moduleKey, Number(canAccess), req.user.id]
+      `INSERT INTO user_module_access_overrides (institution_id, user_id, module_key, permission_key, can_access, created_by_user_id)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [targetUser.institution_id, userId, moduleKey, actionKey, Number(canAccess), req.user.id]
     );
 
     await auditLog(req.user, "MODULE_ACCESS_OVERRIDE", "user_module_access_overrides", userId, {
       module_key: moduleKey,
+      action_key: actionKey,
       can_access: canAccess
     });
 
-    res.json({ message: "Module access override saved.", user_id: userId, module_key: moduleKey, can_access: canAccess });
+    res.json({
+      message: "Module access override saved.",
+      user_id: userId,
+      module_key: moduleKey,
+      action_key: actionKey,
+      can_access: canAccess
+    });
+  })
+);
+
+app.post(
+  "/api/users/module-access/bulk",
+  auth,
+  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
+  asyncHandler(async (req, res) => {
+    const userId = Number(req.body?.user_id);
+    const entries = Array.isArray(req.body?.entries) ? req.body.entries : [];
+    if (!userId || !entries.length) {
+      return res.status(400).json({ error: "user_id and entries are required." });
+    }
+    const users = await query(
+      `SELECT id, institution_id, role
+       FROM users
+       WHERE id = ?
+       LIMIT 1`,
+      [userId]
+    );
+    if (!users.length) {
+      return res.status(404).json({ error: "Target user not found." });
+    }
+    const targetUser = users[0];
+    if (req.user.role !== ROLES.SYSTEM_DEVELOPER && targetUser.institution_id !== req.user.institution_id) {
+      return res.status(403).json({ error: "Cannot change module access for users outside your institution." });
+    }
+    const normalizedEntries = entries
+      .map((item) => ({
+        module_key: cleanValue(item?.module_key),
+        permission_key: cleanValue(item?.action_key || item?.permission_key || "ACCESS").toUpperCase(),
+        can_access: parseTruthy(item?.can_access)
+      }))
+      .filter((item) => item.module_key);
+    if (!normalizedEntries.length) {
+      return res.status(400).json({ error: "No valid module access entries provided." });
+    }
+    for (const entry of normalizedEntries) {
+      // eslint-disable-next-line no-await-in-loop
+      await query(
+        `INSERT INTO user_module_access_overrides
+          (institution_id, user_id, module_key, permission_key, can_access, created_by_user_id)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        [targetUser.institution_id, userId, entry.module_key, entry.permission_key, Number(entry.can_access), req.user.id]
+      );
+    }
+    await auditLog(req.user, "MODULE_ACCESS_BULK_OVERRIDE", "user_module_access_overrides", userId, {
+      entries: normalizedEntries.length
+    });
+    res.json({ message: "Module access matrix saved successfully.", user_id: userId, entries: normalizedEntries.length });
   })
 );
 
@@ -3665,7 +4246,7 @@ app.get(
       return res.status(403).json({ error: "Cannot view module overrides for users outside your institution." });
     }
     const overrides = await query(
-      `SELECT id, institution_id, user_id, module_key, can_access, created_by_user_id, created_at
+      `SELECT id, institution_id, user_id, module_key, permission_key, can_access, created_by_user_id, created_at
        FROM user_module_access_overrides
        WHERE user_id = ?
        ORDER BY id DESC`,
@@ -3768,6 +4349,267 @@ app.get(
         [req.user.institution_id]
       );
     res.json({ institutions, users });
+  })
+);
+
+app.get(
+  "/api/system/registry/institutions/:id/view",
+  auth,
+  enforceModuleAccess(MODULE_KEYS.INSTITUTIONS_USERS_REGISTRY),
+  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
+  asyncHandler(async (req, res) => {
+    const institutionId = Number(req.params.id);
+    if (!institutionId) return res.status(400).json({ error: "Valid institution id is required." });
+    const rows = await query(
+      `SELECT id, institution_name, institution_code, email, phone, county, sub_county, location, village,
+              postal_address, is_active, is_suspended, status_reason, suspended_reason, created_at
+       FROM institutions
+       WHERE id = ?
+       LIMIT 1`,
+      [institutionId]
+    );
+    if (!rows.length) {
+      return res.status(404).json({ error: "Institution not found." });
+    }
+    const institution = rows[0];
+    if (!canManageAcrossInstitutions(req.user) && institution.id !== req.user.institution_id) {
+      return res.status(403).json({ error: "You can only view institutions in your scope." });
+    }
+    res.json({ institution });
+  })
+);
+
+app.patch(
+  "/api/system/registry/institutions/:id",
+  auth,
+  enforceModuleAccess(MODULE_KEYS.INSTITUTIONS_USERS_REGISTRY),
+  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
+  asyncHandler(async (req, res) => {
+    const institutionId = Number(req.params.id);
+    if (!institutionId) return res.status(400).json({ error: "Valid institution id is required." });
+    const rows = await query("SELECT id, institution_name, email, phone FROM institutions WHERE id = ? LIMIT 1", [institutionId]);
+    if (!rows.length) return res.status(404).json({ error: "Institution not found." });
+    if (!canManageAcrossInstitutions(req.user) && institutionId !== req.user.institution_id) {
+      return res.status(403).json({ error: "You can only edit institutions in your scope." });
+    }
+    const institution_name = cleanOptionalValue(req.body?.institution_name);
+    const email = cleanOptionalValue(req.body?.email);
+    const phone = cleanOptionalValue(req.body?.phone);
+    await query(
+      `UPDATE institutions
+       SET institution_name = COALESCE(?, institution_name),
+           email = COALESCE(?, email),
+           phone = COALESCE(?, phone)
+       WHERE id = ?`,
+      [institution_name, email, phone, institutionId]
+    );
+    await auditLog(req.user, "UPDATE_REGISTRY_INSTITUTION", "institutions", institutionId, {
+      institution_name,
+      email,
+      phone
+    });
+    res.json({ message: "Institution saved successfully." });
+  })
+);
+
+app.patch(
+  "/api/system/registry/institutions/:id/status",
+  auth,
+  enforceModuleAccess(MODULE_KEYS.INSTITUTIONS_USERS_REGISTRY),
+  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
+  asyncHandler(async (req, res) => {
+    const institutionId = Number(req.params.id);
+    if (!institutionId) return res.status(400).json({ error: "Valid institution id is required." });
+    const rows = await query("SELECT id FROM institutions WHERE id = ? LIMIT 1", [institutionId]);
+    if (!rows.length) return res.status(404).json({ error: "Institution not found." });
+    if (!canManageAcrossInstitutions(req.user) && institutionId !== req.user.institution_id) {
+      return res.status(403).json({ error: "You can only change status for your institution." });
+    }
+    const isActive = req.body?.is_active;
+    const isSuspended = req.body?.is_suspended;
+    const reason = cleanOptionalValue(req.body?.reason) || null;
+    await query(
+      `UPDATE institutions
+       SET is_active = COALESCE(?, is_active),
+           is_suspended = COALESCE(?, is_suspended),
+           status_reason = CASE WHEN ? IS NOT NULL AND ? = 0 THEN ? ELSE status_reason END,
+           suspended_reason = CASE WHEN ? IS NOT NULL AND ? = 1 THEN ? ELSE suspended_reason END
+       WHERE id = ?`,
+      [
+        isActive === undefined ? null : Number(Boolean(isActive)),
+        isSuspended === undefined ? null : Number(Boolean(isSuspended)),
+        reason,
+        isActive === undefined ? null : Number(Boolean(isActive)),
+        reason,
+        reason,
+        isSuspended === undefined ? null : Number(Boolean(isSuspended)),
+        reason,
+        institutionId
+      ]
+    );
+    await auditLog(req.user, "CHANGE_INSTITUTION_STATUS", "institutions", institutionId, {
+      is_active: isActive,
+      is_suspended: isSuspended,
+      reason
+    });
+    res.json({ message: "Institution status updated." });
+  })
+);
+
+app.delete(
+  "/api/system/registry/institutions/:id",
+  auth,
+  enforceModuleAccess(MODULE_KEYS.INSTITUTIONS_USERS_REGISTRY),
+  enforceRole([ROLES.SYSTEM_DEVELOPER]),
+  asyncHandler(async (req, res) => {
+    const institutionId = Number(req.params.id);
+    if (!institutionId) return res.status(400).json({ error: "Valid institution id is required." });
+    if (institutionId === Number(req.user.institution_id)) {
+      return res.status(400).json({ error: "You cannot delete your own active institution." });
+    }
+    const institutions = await query(
+      `SELECT *
+       FROM institutions
+       WHERE id = ?
+       LIMIT 1`,
+      [institutionId]
+    );
+    if (!institutions.length) return res.status(404).json({ error: "Institution not found." });
+    const institution = institutions[0];
+    const users = await query("SELECT * FROM users WHERE institution_id = ?", [institutionId]);
+    await archiveRecycleBinItem({
+      institutionId,
+      entityName: "institutions",
+      entityId: institutionId,
+      payload: {
+        ...institution,
+        __cascade_users: users
+      },
+      deletedByUserId: req.user.id
+    });
+    await query("DELETE FROM users WHERE institution_id = ?", [institutionId]);
+    await query("DELETE FROM institutions WHERE id = ?", [institutionId]);
+    await auditLog(req.user, "DELETE_INSTITUTION", "institutions", institutionId, {
+      institution_code: institution.institution_code,
+      users_deleted: users.length
+    });
+    res.json({ message: "Institution moved to recycle bin successfully." });
+  })
+);
+
+app.get(
+  "/api/system/registry/users/:id/view",
+  auth,
+  enforceModuleAccess(MODULE_KEYS.INSTITUTIONS_USERS_REGISTRY),
+  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
+  asyncHandler(async (req, res) => {
+    const userId = Number(req.params.id);
+    if (!userId) return res.status(400).json({ error: "Valid user id is required." });
+    const rows = await query(
+      `SELECT id, institution_id, full_name, username, role, email, phone, is_active, is_suspended,
+              status_reason, suspended_reason, created_at
+       FROM users
+       WHERE id = ?
+       LIMIT 1`,
+      [userId]
+    );
+    if (!rows.length) return res.status(404).json({ error: "User not found." });
+    const user = rows[0];
+    if (!canManageAcrossInstitutions(req.user) && user.institution_id !== req.user.institution_id) {
+      return res.status(403).json({ error: "You can only view users in your scope." });
+    }
+    res.json({ user });
+  })
+);
+
+app.patch(
+  "/api/system/registry/users/:id",
+  auth,
+  enforceModuleAccess(MODULE_KEYS.INSTITUTIONS_USERS_REGISTRY),
+  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
+  asyncHandler(async (req, res) => {
+    const userId = Number(req.params.id);
+    if (!userId) return res.status(400).json({ error: "Valid user id is required." });
+    const rows = await query(
+      `SELECT id, institution_id
+       FROM users
+       WHERE id = ?
+       LIMIT 1`,
+      [userId]
+    );
+    if (!rows.length) return res.status(404).json({ error: "User not found." });
+    const target = rows[0];
+    if (!canManageAcrossInstitutions(req.user) && target.institution_id !== req.user.institution_id) {
+      return res.status(403).json({ error: "You can only edit users in your institution." });
+    }
+    const full_name = cleanOptionalValue(req.body?.full_name);
+    const email = cleanOptionalValue(req.body?.email);
+    const phone = cleanOptionalValue(req.body?.phone);
+    await query(
+      `UPDATE users
+       SET full_name = COALESCE(?, full_name),
+           email = COALESCE(?, email),
+           phone = COALESCE(?, phone)
+       WHERE id = ?`,
+      [full_name, email, phone, userId]
+    );
+    await auditLog(req.user, "UPDATE_REGISTRY_USER", "users", userId, {
+      full_name,
+      email,
+      phone
+    });
+    res.json({ message: "User saved successfully." });
+  })
+);
+
+app.patch(
+  "/api/system/registry/users/:id/status",
+  auth,
+  enforceModuleAccess(MODULE_KEYS.INSTITUTIONS_USERS_REGISTRY),
+  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
+  asyncHandler(async (req, res) => {
+    const userId = Number(req.params.id);
+    if (!userId) return res.status(400).json({ error: "Valid user id is required." });
+    const rows = await query(
+      `SELECT id, institution_id, role
+       FROM users
+       WHERE id = ?
+       LIMIT 1`,
+      [userId]
+    );
+    if (!rows.length) return res.status(404).json({ error: "User not found." });
+    const target = rows[0];
+    if (!canManageAcrossInstitutions(req.user) && target.institution_id !== req.user.institution_id) {
+      return res.status(403).json({ error: "You can only change status for users in your institution." });
+    }
+    const isActive = req.body?.is_active;
+    const isSuspended = req.body?.is_suspended;
+    const reason = cleanOptionalValue(req.body?.reason) || null;
+    await query(
+      `UPDATE users
+       SET is_active = COALESCE(?, is_active),
+           is_suspended = COALESCE(?, is_suspended),
+           status_reason = CASE WHEN ? IS NOT NULL AND ? = 0 THEN ? ELSE status_reason END,
+           suspended_reason = CASE WHEN ? IS NOT NULL AND ? = 1 THEN ? ELSE suspended_reason END
+       WHERE id = ?`,
+      [
+        isActive === undefined ? null : Number(Boolean(isActive)),
+        isSuspended === undefined ? null : Number(Boolean(isSuspended)),
+        reason,
+        isActive === undefined ? null : Number(Boolean(isActive)),
+        reason,
+        reason,
+        isSuspended === undefined ? null : Number(Boolean(isSuspended)),
+        reason,
+        userId
+      ]
+    );
+    await auditLog(req.user, "CHANGE_REGISTRY_USER_STATUS", "users", userId, {
+      is_active: isActive,
+      is_suspended: isSuspended,
+      reason
+    });
+    res.json({ message: "User status updated." });
   })
 );
 
@@ -3967,6 +4809,7 @@ app.post(
   asyncHandler(async (req, res) => {
     const data = pickFields(req.body, [
       "grade",
+      "form_name",
       "learning_area",
       "strand",
       "sub_strand",
@@ -3979,8 +4822,8 @@ app.post(
       "year",
       "notes"
     ]);
-    if (!cleanValue(data.grade) || !cleanValue(data.learning_area) || !cleanValue(data.strand)) {
-      return res.status(400).json({ error: "grade, learning_area and strand are required." });
+    if ((!cleanValue(data.grade) && !cleanValue(data.form_name)) || !cleanValue(data.learning_area) || !cleanValue(data.strand)) {
+      return res.status(400).json({ error: "grade or form_name, learning_area and strand are required." });
     }
     data.institution_id = req.user.institution_id;
     data.created_by_user_id = req.user.id;
@@ -4006,6 +4849,7 @@ app.put(
     if (!entryId) return res.status(400).json({ error: "Valid curriculum entry id is required." });
     const data = pickFields(req.body, [
       "grade",
+      "form_name",
       "learning_area",
       "strand",
       "sub_strand",
@@ -4070,12 +4914,627 @@ app.delete(
 );
 
 app.post(
+  "/api/cbc/curriculum/ai-suggest-structure",
+  auth,
+  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER]),
+  enforcePermission(PERMISSIONS.CREATE),
+  asyncHandler(async (req, res) => {
+    const grade = cleanValue(req.body?.grade);
+    const formName = cleanValue(req.body?.form_name);
+    const learningArea = cleanValue(req.body?.learning_area);
+    if ((!grade && !formName) || !learningArea) {
+      return res.status(400).json({ error: "grade or form_name and learning_area are required." });
+    }
+    const mappingRows = await query(
+      `SELECT strand, sub_strand
+       FROM cbc_structure_mappings
+       WHERE institution_id = ?
+         AND learning_area = ?
+         AND ((? IS NULL AND grade IS NULL) OR grade = ? OR grade IS NULL OR grade = '')
+         AND ((? IS NULL AND form_name IS NULL) OR form_name = ? OR form_name IS NULL OR form_name = '')
+       ORDER BY strand, sub_strand`,
+      [req.user.institution_id, learningArea, grade || null, grade || null, formName || null, formName || null]
+    );
+    const suggestion =
+      buildSuggestionFromMappings({ grade, formName, learningArea, mappings: mappingRows }) ||
+      buildCbcSuggestion({ grade, formName, learningArea });
+    await auditLog(req.user, "GENERATE_CBC_AI_STRUCTURE", "cbc_curriculum_entries", null, {
+      grade: grade || null,
+      form_name: formName || null,
+      learning_area: learningArea
+    });
+    res.json(suggestion);
+  })
+);
+
+// Backward-compatible aliases for older frontend route names.
+app.post(
+  "/api/cbc/curriculum/ai-suggest-strands",
+  auth,
+  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER]),
+  enforcePermission(PERMISSIONS.CREATE),
+  asyncHandler(async (req, res) => {
+    const grade = cleanValue(req.body?.grade);
+    const formName = cleanValue(req.body?.form_name);
+    const learningArea = cleanValue(req.body?.learning_area);
+    if ((!grade && !formName) || !learningArea) {
+      return res.status(400).json({ error: "grade or form_name and learning_area are required." });
+    }
+    const mappingRows = await query(
+      `SELECT strand, sub_strand
+       FROM cbc_structure_mappings
+       WHERE institution_id = ?
+         AND learning_area = ?
+         AND ((? IS NULL AND grade IS NULL) OR grade = ? OR grade IS NULL OR grade = '')
+         AND ((? IS NULL AND form_name IS NULL) OR form_name = ? OR form_name IS NULL OR form_name = '')
+       ORDER BY strand, sub_strand`,
+      [req.user.institution_id, learningArea, grade || null, grade || null, formName || null, formName || null]
+    );
+    const suggestion =
+      buildSuggestionFromMappings({ grade, formName, learningArea, mappings: mappingRows }) ||
+      buildCbcSuggestion({ grade, formName, learningArea });
+    await auditLog(req.user, "GENERATE_CBC_AI_STRUCTURE", "cbc_curriculum_entries", null, {
+      grade: grade || null,
+      form_name: formName || null,
+      learning_area: learningArea,
+      endpoint_alias: "ai-suggest-strands"
+    });
+    res.json(suggestion);
+  })
+);
+
+app.post(
+  "/api/cbc/curriculum/ai-suggest-substrands",
+  auth,
+  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER]),
+  enforcePermission(PERMISSIONS.CREATE),
+  asyncHandler(async (req, res) => {
+    const grade = cleanValue(req.body?.grade);
+    const formName = cleanValue(req.body?.form_name);
+    const learningArea = cleanValue(req.body?.learning_area);
+    if ((!grade && !formName) || !learningArea) {
+      return res.status(400).json({ error: "grade or form_name and learning_area are required." });
+    }
+    const mappingRows = await query(
+      `SELECT strand, sub_strand
+       FROM cbc_structure_mappings
+       WHERE institution_id = ?
+         AND learning_area = ?
+         AND ((? IS NULL AND grade IS NULL) OR grade = ? OR grade IS NULL OR grade = '')
+         AND ((? IS NULL AND form_name IS NULL) OR form_name = ? OR form_name IS NULL OR form_name = '')
+       ORDER BY strand, sub_strand`,
+      [req.user.institution_id, learningArea, grade || null, grade || null, formName || null, formName || null]
+    );
+    const suggestion =
+      buildSuggestionFromMappings({ grade, formName, learningArea, mappings: mappingRows }) ||
+      buildCbcSuggestion({ grade, formName, learningArea });
+    await auditLog(req.user, "GENERATE_CBC_AI_STRUCTURE", "cbc_curriculum_entries", null, {
+      grade: grade || null,
+      form_name: formName || null,
+      learning_area: learningArea,
+      endpoint_alias: "ai-suggest-substrands"
+    });
+    res.json(suggestion);
+  })
+);
+
+app.post(
+  "/api/cbc/curriculum/ai-generate-notes",
+  auth,
+  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER]),
+  enforcePermission(PERMISSIONS.CREATE),
+  asyncHandler(async (req, res) => {
+    const grade = cleanValue(req.body?.grade);
+    const formName = cleanValue(req.body?.form_name);
+    const learningArea = cleanValue(req.body?.learning_area);
+    const strand = cleanValue(req.body?.strand);
+    const subStrand = cleanValue(req.body?.sub_strand);
+    if ((!grade && !formName) || !learningArea || !strand) {
+      return res.status(400).json({ error: "grade or form_name, learning_area and strand are required." });
+    }
+    const mappingRows = await query(
+      `SELECT strand, sub_strand
+       FROM cbc_structure_mappings
+       WHERE institution_id = ?
+         AND learning_area = ?
+         AND ((? IS NULL AND grade IS NULL) OR grade = ? OR grade IS NULL OR grade = '')
+         AND ((? IS NULL AND form_name IS NULL) OR form_name = ? OR form_name IS NULL OR form_name = '')
+       ORDER BY strand, sub_strand`,
+      [req.user.institution_id, learningArea, grade || null, grade || null, formName || null, formName || null]
+    );
+    const fallbackStructure =
+      buildSuggestionFromMappings({ grade, formName, learningArea, mappings: mappingRows }) ||
+      buildCbcSuggestion({ grade, formName, learningArea });
+    const resolvedSubStrand = subStrand || fallbackStructure.sub_strand;
+    const generated = makeNotes({
+      grade,
+      formName,
+      learningArea,
+      strand,
+      subStrand: resolvedSubStrand
+    });
+    await auditLog(req.user, "GENERATE_CBC_AI_NOTES", "cbc_curriculum_entries", null, {
+      grade: grade || null,
+      form_name: formName || null,
+      learning_area: learningArea,
+      strand,
+      sub_strand: resolvedSubStrand
+    });
+    res.json({
+      message: "AI simplified notes generated successfully.",
+      generated_notes: generated,
+      textbook_references: fallbackStructure.textbook_references
+    });
+  })
+);
+
+app.get(
+  "/api/cbc/curriculum/materials",
+  auth,
+  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER]),
+  enforcePermission(PERMISSIONS.VIEW),
+  asyncHandler(async (req, res) => {
+    const rows = await query(
+      `SELECT id, resource_type, title, description, grade, stream AS form_name, term, strand, sub_strand, file_path, created_at
+       FROM teacher_resources
+       WHERE institution_id = ?
+       ORDER BY id DESC
+       LIMIT 300`,
+      [req.user.institution_id]
+    );
+    res.json(rows);
+  })
+);
+
+app.post(
+  "/api/cbc/curriculum/materials/upload",
+  auth,
+  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER]),
+  enforcePermission(PERMISSIONS.CREATE),
+  upload.single("file"),
+  asyncHandler(async (req, res) => {
+    const payload = pickFields(req.body, [
+      "resource_type",
+      "title",
+      "description",
+      "grade",
+      "form_name",
+      "term",
+      "strand",
+      "sub_strand"
+    ]);
+    if (!cleanValue(payload.title)) {
+      payload.title = req.file?.originalname || "CBC/CBE Material";
+    }
+    const result = await query(
+      `INSERT INTO teacher_resources
+       (institution_id, teacher_profile_id, resource_type, title, description, grade, stream, term, strand, sub_strand, file_path, auto_generated, created_by_user_id)
+       VALUES (?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)`,
+      [
+        req.user.institution_id,
+        cleanValue(payload.resource_type) || "CBC_CBE_MATERIAL_UPLOAD",
+        cleanValue(payload.title),
+        cleanOptionalValue(payload.description),
+        cleanOptionalValue(payload.grade),
+        cleanOptionalValue(payload.form_name),
+        cleanOptionalValue(payload.term),
+        cleanOptionalValue(payload.strand),
+        cleanOptionalValue(payload.sub_strand),
+        req.file ? `/uploads/${req.file.filename}` : null,
+        req.user.id
+      ]
+    );
+    await auditLog(req.user, "UPLOAD_CBC_CBE_MATERIAL", "teacher_resources", result.insertId, {
+      title: cleanValue(payload.title),
+      grade: cleanOptionalValue(payload.grade),
+      form_name: cleanOptionalValue(payload.form_name),
+      learning_area: cleanOptionalValue(req.body?.learning_area)
+    });
+    res.status(201).json({
+      id: result.insertId,
+      message: "Material uploaded successfully."
+    });
+  })
+);
+
+app.patch(
+  "/api/cbc/curriculum/materials/:id(\\d+)",
+  auth,
+  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER]),
+  enforcePermission(PERMISSIONS.UPDATE),
+  asyncHandler(async (req, res) => {
+    const materialId = Number(req.params.id);
+    if (!materialId) return res.status(400).json({ error: "Valid material id is required." });
+    const data = pickFields(req.body, ["title", "description"]);
+    const columns = Object.keys(data).filter((key) => cleanValue(data[key]) || data[key] === "");
+    if (!columns.length) {
+      return res.status(400).json({ error: "No editable fields provided." });
+    }
+    await query(
+      `UPDATE teacher_resources
+       SET ${columns.map((column) => `${column} = ?`).join(", ")}, updated_at = NOW()
+       WHERE id = ? AND institution_id = ?`,
+      [...columns.map((column) => cleanOptionalValue(data[column])), materialId, req.user.institution_id]
+    );
+    await auditLog(req.user, "UPDATE_CBC_CBE_MATERIAL", "teacher_resources", materialId, data);
+    res.json({ message: "Material updated." });
+  })
+);
+
+app.post(
+  "/api/cbc/curriculum/bulk-generate",
+  auth,
+  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
+  enforcePermission(PERMISSIONS.CREATE),
+  asyncHandler(async (req, res) => {
+    const grade = cleanValue(req.body?.grade);
+    const formName = cleanValue(req.body?.form_name);
+    const term = cleanOptionalValue(req.body?.term) || "Term One";
+    const year = Number(req.body?.year || 0) || dayjs().year();
+    const overwriteExisting = parseTruthy(req.body?.overwrite_existing);
+    if (!grade && !formName) {
+      return res.status(400).json({ error: "grade or form_name is required for bulk generation." });
+    }
+
+    const learningAreas = getAllCbcLearningAreas();
+    let entriesCreated = 0;
+    let materialsCreated = 0;
+    for (const learningArea of learningAreas) {
+      const mappingRows = await query(
+        `SELECT strand, sub_strand
+         FROM cbc_structure_mappings
+         WHERE institution_id = ?
+           AND learning_area = ?
+           AND ((? IS NULL AND grade IS NULL) OR grade = ? OR grade IS NULL OR grade = '')
+           AND ((? IS NULL AND form_name IS NULL) OR form_name = ? OR form_name IS NULL OR form_name = '')
+         ORDER BY strand, sub_strand`,
+        [req.user.institution_id, learningArea, grade || null, grade || null, formName || null, formName || null]
+      );
+      const suggestion =
+        buildSuggestionFromMappings({ grade, formName, learningArea, mappings: mappingRows }) ||
+        buildCbcSuggestion({ grade, formName, learningArea });
+      const strands = Array.isArray(suggestion.strand_options) ? suggestion.strand_options : [];
+      for (const strand of strands) {
+        const subStrands = Array.isArray(suggestion.sub_strand_options_by_strand?.[strand])
+          ? suggestion.sub_strand_options_by_strand[strand]
+          : [];
+        for (const subStrand of subStrands) {
+          const existingEntries = await query(
+            `SELECT id
+             FROM cbc_curriculum_entries
+             WHERE institution_id = ?
+               AND learning_area = ?
+               AND strand = ?
+               AND sub_strand = ?
+               AND ((? IS NULL AND grade IS NULL) OR grade = ?)
+               AND ((? IS NULL AND form_name IS NULL) OR form_name = ?)
+             LIMIT 1`,
+            [
+              req.user.institution_id,
+              learningArea,
+              strand,
+              subStrand,
+              grade || null,
+              grade || null,
+              formName || null,
+              formName || null
+            ]
+          );
+          const notes = makeNotes({
+            grade,
+            formName,
+            learningArea,
+            strand,
+            subStrand
+          });
+          if (existingEntries.length && overwriteExisting) {
+            await query(
+              `UPDATE cbc_curriculum_entries
+               SET specific_learning_outcomes = ?,
+                   suggested_assessment_rubric = ?,
+                   resources_reference = ?,
+                   term = ?,
+                   year = ?,
+                   notes = ?,
+                   updated_at = NOW()
+               WHERE id = ? AND institution_id = ?`,
+              [
+                suggestion.learning_outcomes,
+                suggestion.assessment_rubric,
+                (suggestion.textbook_references || []).join("\n"),
+                term,
+                year,
+                notes,
+                existingEntries[0].id,
+                req.user.institution_id
+              ]
+            );
+          } else if (!existingEntries.length) {
+            await query(
+              `INSERT INTO cbc_curriculum_entries
+                (institution_id, grade, form_name, learning_area, strand, sub_strand, specific_learning_outcomes, suggested_assessment_rubric, resources_reference, term, year, notes, created_by_user_id)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+              [
+                req.user.institution_id,
+                grade || null,
+                formName || null,
+                learningArea,
+                strand,
+                subStrand,
+                suggestion.learning_outcomes,
+                suggestion.assessment_rubric,
+                (suggestion.textbook_references || []).join("\n"),
+                term,
+                year,
+                notes,
+                req.user.id
+              ]
+            );
+            entriesCreated += 1;
+          }
+          await query(
+            `INSERT INTO teacher_resources
+              (institution_id, teacher_profile_id, resource_type, title, description, grade, stream, term, strand, sub_strand, auto_generated, created_by_user_id)
+             VALUES (?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)`,
+            [
+              req.user.institution_id,
+              "CBC_AUTO_GENERATED_NOTES",
+              `${learningArea} - ${strand} - ${subStrand}`,
+              notes,
+              grade || null,
+              formName || null,
+              term,
+              strand,
+              subStrand,
+              req.user.id
+            ]
+          );
+          materialsCreated += 1;
+        }
+      }
+    }
+
+    await auditLog(req.user, "BULK_GENERATE_CBC_LIBRARY", "cbc_curriculum_entries", null, {
+      grade: grade || null,
+      form_name: formName || null,
+      learning_area_count: learningAreas.length,
+      entries_created: entriesCreated,
+      materials_created: materialsCreated,
+      term,
+      year
+    });
+
+    res.status(201).json({
+      message: "CBC/CBE bulk generation completed.",
+      learning_areas_processed: learningAreas.length,
+      entries_created: entriesCreated,
+      materials_created: materialsCreated
+    });
+  })
+);
+
+function parseCbcMappingCsv(csvText = "") {
+  const lines = String(csvText || "")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (!lines.length) return [];
+  const rows = [];
+  for (let index = 1; index < lines.length; index += 1) {
+    const line = lines[index];
+    const parts = line.split(",").map((part) => part.trim());
+    if (parts.length < 3) continue;
+    rows.push({
+      learning_area: parts[0] || "",
+      strand: parts[1] || "",
+      sub_strand: parts[2] || "",
+      notes: parts[3] || "",
+      grade: parts[4] || "",
+      form_name: parts[5] || "",
+      source_label: parts[6] || "CSV Import"
+    });
+  }
+  return rows.filter((row) => row.learning_area && row.strand && row.sub_strand);
+}
+
+app.get(
+  "/api/cbc/curriculum/structure-mappings/template",
+  auth,
+  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER]),
+  enforcePermission(PERMISSIONS.VIEW),
+  asyncHandler(async (_, res) => {
+    const csv = [
+      "learning_area,strand,sub_strand,notes,grade,form_name,source_label",
+      "English,Reading,Comprehension Skills,Learners identify main ideas and answer comprehension questions.,Grade 4,,KICD",
+      "Mathematics,Numbers,Fractions and Decimals,Learners represent fractions and decimals and solve daily-life examples.,Grade 6,,KICD"
+    ].join("\n");
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", "attachment; filename=\"cbc-structure-mappings-template.csv\"");
+    res.send(csv);
+  })
+);
+
+app.get(
+  "/api/cbc/curriculum/structure-mappings/template-doc",
+  auth,
+  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER]),
+  enforcePermission(PERMISSIONS.VIEW),
+  asyncHandler(async (_, res) => {
+    const docText = [
+      "CBC/CBE STRAND-SUB-STRAND-NOTES TEMPLATE",
+      "",
+      "Instructions:",
+      "1. Fill one entry block per sub-strand.",
+      "2. Save this file as .docx or .txt, then copy entries into CSV template if needed.",
+      "",
+      "Entry Block:",
+      "Learning Area: ____________________________",
+      "Strand: __________________________________",
+      "Sub-Strand: ______________________________",
+      "Notes: ___________________________________",
+      "Grade (optional): ________________________",
+      "Form (optional): _________________________",
+      "Source Label: ____________________________",
+      "",
+      "Example:",
+      "Learning Area: Mathematics",
+      "Strand: Numbers",
+      "Sub-Strand: Fractions and Decimals",
+      "Notes: Learners identify numerator/denominator and solve real-life fraction tasks.",
+      "Grade (optional): Grade 6",
+      "Form (optional):",
+      "Source Label: KICD"
+    ].join("\r\n");
+    res.setHeader("Content-Type", "application/msword; charset=utf-8");
+    res.setHeader("Content-Disposition", "attachment; filename=\"cbc-structure-mappings-template.doc\"");
+    res.send(docText);
+  })
+);
+
+app.post(
+  "/api/cbc/curriculum/structure-mappings/import",
+  auth,
+  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
+  enforcePermission(PERMISSIONS.CREATE),
+  upload.single("file"),
+  asyncHandler(async (req, res) => {
+    if (!req.file) {
+      return res.status(400).json({ error: "CSV file is required." });
+    }
+    const csvText = fs.readFileSync(req.file.path, "utf8");
+    const rows = parseCbcMappingCsv(csvText);
+    if (!rows.length) {
+      return res.status(400).json({ error: "No valid mapping rows found in CSV." });
+    }
+    let imported = 0;
+    for (const row of rows) {
+      await query(
+        `INSERT INTO cbc_structure_mappings
+          (institution_id, learning_area, strand, sub_strand, notes, grade, form_name, source_label, created_by_user_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          req.user.institution_id,
+          cleanValue(row.learning_area),
+          cleanValue(row.strand),
+          cleanValue(row.sub_strand),
+          cleanOptionalValue(row.notes),
+          cleanOptionalValue(row.grade),
+          cleanOptionalValue(row.form_name),
+          cleanOptionalValue(row.source_label) || "CSV Import",
+          req.user.id
+        ]
+      );
+      imported += 1;
+    }
+    await auditLog(req.user, "IMPORT_CBC_STRUCTURE_MAPPINGS", "cbc_structure_mappings", null, { imported });
+    res.status(201).json({ message: "Structure mappings imported.", imported });
+  })
+);
+
+app.post(
+  "/api/cbc/curriculum/structure-mappings",
+  auth,
+  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
+  enforcePermission(PERMISSIONS.CREATE),
+  asyncHandler(async (req, res) => {
+    const learningArea = cleanValue(req.body?.learning_area);
+    const strand = cleanValue(req.body?.strand);
+    const subStrand = cleanValue(req.body?.sub_strand);
+    const notes = cleanOptionalValue(req.body?.notes);
+    const grade = cleanOptionalValue(req.body?.grade);
+    const formName = cleanOptionalValue(req.body?.form_name);
+    const sourceLabel = cleanOptionalValue(req.body?.source_label) || "Manual Correction";
+    if (!learningArea || !strand || !subStrand) {
+      return res.status(400).json({ error: "learning_area, strand and sub_strand are required." });
+    }
+    const result = await query(
+      `INSERT INTO cbc_structure_mappings
+        (institution_id, learning_area, strand, sub_strand, notes, grade, form_name, source_label, created_by_user_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [req.user.institution_id, learningArea, strand, subStrand, notes, grade, formName, sourceLabel, req.user.id]
+    );
+    await auditLog(req.user, "SAVE_CBC_STRUCTURE_MAPPING", "cbc_structure_mappings", result.insertId, {
+      learning_area: learningArea,
+      strand,
+      sub_strand: subStrand,
+      notes,
+      grade,
+      form_name: formName,
+      source_label: sourceLabel
+    });
+    res.status(201).json({ id: result.insertId, message: "Structure mapping saved." });
+  })
+);
+
+app.get(
+  "/api/cbc/curriculum/structure-mappings",
+  auth,
+  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER]),
+  enforcePermission(PERMISSIONS.VIEW),
+  asyncHandler(async (req, res) => {
+    const learningArea = cleanOptionalValue(req.query?.learning_area);
+    const grade = cleanOptionalValue(req.query?.grade);
+    const formName = cleanOptionalValue(req.query?.form_name);
+    const whereParts = ["institution_id = ?"];
+    const params = [req.user.institution_id];
+    if (learningArea) {
+      whereParts.push("learning_area = ?");
+      params.push(learningArea);
+    }
+    if (grade) {
+      whereParts.push("(grade = ? OR grade IS NULL OR grade = '')");
+      params.push(grade);
+    }
+    if (formName) {
+      whereParts.push("(form_name = ? OR form_name IS NULL OR form_name = '')");
+      params.push(formName);
+    }
+    const rows = await query(
+      `SELECT id, learning_area, strand, sub_strand, notes, grade, form_name, source_label, created_at, updated_at
+       FROM cbc_structure_mappings
+       WHERE ${whereParts.join(" AND ")}
+       ORDER BY learning_area, strand, sub_strand
+       LIMIT 1000`,
+      params
+    );
+    res.json(rows);
+  })
+);
+
+app.patch(
+  "/api/cbc/curriculum/structure-mappings/:id(\\d+)",
+  auth,
+  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
+  enforcePermission(PERMISSIONS.UPDATE),
+  asyncHandler(async (req, res) => {
+    const mappingId = Number(req.params.id);
+    if (!mappingId) {
+      return res.status(400).json({ error: "Valid mapping id is required." });
+    }
+    const data = pickFields(req.body || {}, ["strand", "sub_strand", "notes", "source_label", "grade", "form_name"]);
+    const columns = Object.keys(data).filter((key) => cleanValue(data[key]) || data[key] === "");
+    if (!columns.length) {
+      return res.status(400).json({ error: "No mapping fields provided." });
+    }
+    await query(
+      `UPDATE cbc_structure_mappings
+       SET ${columns.map((column) => `${column} = ?`).join(", ")}, updated_at = NOW()
+       WHERE id = ? AND institution_id = ?`,
+      [...columns.map((column) => cleanOptionalValue(data[column])), mappingId, req.user.institution_id]
+    );
+    await auditLog(req.user, "UPDATE_CBC_STRUCTURE_MAPPING", "cbc_structure_mappings", mappingId, data);
+    res.json({ message: "Structure mapping updated." });
+  })
+);
+
+app.post(
   "/api/profile/change-credentials",
   auth,
   accountMutationRateLimit,
   accountMutationCooldown,
   asyncHandler(async (req, res) => {
     const { current_password, new_username, new_password } = req.body;
+    const requesterRole = normalizeRole(req.user.role);
     const users = await query("SELECT * FROM users WHERE id = ? AND institution_id = ? LIMIT 1", [
       req.user.id,
       req.user.institution_id
@@ -4093,6 +5552,11 @@ app.post(
     const params = [];
 
     if (new_username) {
+      if (![ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN].includes(requesterRole)) {
+        return res.status(403).json({
+          error: "Only the System Developer or HoI/Administrator can change usernames."
+        });
+      }
       const usernameValidationError = validateUsername(new_username, "new_username");
       if (usernameValidationError) {
         return res.status(400).json({ error: usernameValidationError });
@@ -4133,6 +5597,176 @@ app.post(
     await query(`UPDATE users SET ${updates.join(", ")} WHERE id = ?`, [...params, user.id]);
     await auditLog(req.user, "CHANGE_OWN_CREDENTIALS", "users", user.id, { new_username });
     res.json({ message: "Credentials updated successfully." });
+  })
+);
+
+app.get("/api/profile", auth, asyncHandler(async (req, res) => {
+  const rows = await query(
+    `SELECT u.id, u.institution_id, u.role, u.full_name, u.username, u.email, u.phone, u.created_at,
+            i.institution_name
+     FROM users u
+     LEFT JOIN institutions i ON i.id = u.institution_id
+     WHERE u.id = ? AND u.institution_id = ?
+     LIMIT 1`,
+    [req.user.id, req.user.institution_id]
+  );
+  if (!rows.length) {
+    return res.status(404).json({ error: "Profile not found." });
+  }
+  const profile = rows[0];
+  res.json({
+    id: profile.id,
+    institution_id: profile.institution_id,
+    institution_name: profile.institution_name || null,
+    role: profile.role,
+    full_name: profile.full_name,
+    username: profile.username,
+    email: profile.email,
+    phone: profile.phone,
+    created_at: profile.created_at
+  });
+}));
+
+app.post(
+  "/api/profile/request-update-otp",
+  auth,
+  accountMutationRateLimit,
+  accountMutationCooldown,
+  asyncHandler(async (req, res) => {
+    const requesterRole = normalizeRole(req.user.role);
+    if ([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN].includes(requesterRole)) {
+      return res.json({
+        message: "OTP is optional for your role. Proceed with profile update directly.",
+        otp_required: false
+      });
+    }
+    const updateType = cleanValue(req.body?.update_type || "profile_update");
+    const requestedChannel = cleanValue(req.body?.otp_channel || "email").toLowerCase();
+    const meRows = await query(
+      `SELECT id, institution_id, username, email, phone
+       FROM users
+       WHERE id = ? AND institution_id = ?
+       LIMIT 1`,
+      [req.user.id, req.user.institution_id]
+    );
+    if (!meRows.length) {
+      return res.status(404).json({ error: "Profile user not found." });
+    }
+    const me = meRows[0];
+    const channel = isOtpChannelConfigured(requestedChannel) ? requestedChannel : "console";
+    const destination = channel === "sms" ? cleanValue(me.phone) : cleanValue(me.email);
+    if (!destination) {
+      return res.status(400).json({
+        error: channel === "sms"
+          ? "No phone number found for SMS OTP."
+          : "No email address found for email OTP."
+      });
+    }
+    const identity = `profile-update:${me.username}`;
+    const otpSession = await createOtpSession({
+      identity,
+      role: "PROFILE_UPDATE",
+      institutionId: me.institution_id,
+      payload: { user_id: me.id, update_type: updateType },
+      destination,
+      channel
+    });
+    await auditLog(req.user, "PROFILE_UPDATE_OTP_REQUESTED", "otp_sessions", null, {
+      update_type: updateType,
+      otp_channel: channel,
+      otp_expires_at: otpSession.expiresAt
+    });
+    res.json({
+      message: `OTP sent via ${channel}.`,
+      otp_required: true,
+      otp_channel_used: channel
+    });
+  })
+);
+
+app.post(
+  "/api/profile/update",
+  auth,
+  accountMutationRateLimit,
+  accountMutationCooldown,
+  asyncHandler(async (req, res) => {
+    const requesterRole = normalizeRole(req.user.role);
+    const email = cleanOptionalValue(req.body?.email);
+    const phone = cleanOptionalValue(req.body?.phone);
+    const newPassword = cleanOptionalValue(req.body?.new_password);
+    const otpCode = cleanOptionalValue(req.body?.otp_code);
+    const requireOtp = ![ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN].includes(requesterRole);
+
+    const users = await query(
+      `SELECT id, institution_id, username, password_hash, email, phone
+       FROM users
+       WHERE id = ? AND institution_id = ?
+       LIMIT 1`,
+      [req.user.id, req.user.institution_id]
+    );
+    if (!users.length) {
+      return res.status(404).json({ error: "Profile not found." });
+    }
+    const user = users[0];
+
+    if (requireOtp) {
+      if (!otpCode) {
+        return res.status(400).json({ error: "OTP code is required for this profile update." });
+      }
+      const otpRows = await query(
+        `SELECT id
+         FROM otp_sessions
+         WHERE identity_value = ?
+           AND role_name = 'PROFILE_UPDATE'
+           AND otp_code = ?
+           AND is_used = 0
+           AND expires_at > NOW()
+         ORDER BY id DESC
+         LIMIT 1`,
+        [`profile-update:${user.username}`, otpCode]
+      );
+      if (!otpRows.length) {
+        return res.status(401).json({ error: "Invalid or expired OTP code." });
+      }
+      await query("UPDATE otp_sessions SET is_used = 1 WHERE id = ?", [otpRows[0].id]);
+    }
+
+    const updates = [];
+    const params = [];
+    if (email !== null) {
+      updates.push("email = ?");
+      params.push(email);
+    }
+    if (phone !== null) {
+      updates.push("phone = ?");
+      params.push(phone);
+    }
+    if (newPassword) {
+      const weakPasswordError = requireStrongPassword(newPassword, "new_password");
+      if (weakPasswordError) {
+        return res.status(400).json({ error: weakPasswordError });
+      }
+      updates.push("password_hash = ?");
+      params.push(await hashPassword(newPassword));
+      updates.push("password_last_changed_at = NOW()");
+      updates.push("password_expires_at = DATE_ADD(NOW(), INTERVAL ? DAY)");
+      params.push(PASSWORD_ROTATION_DAYS);
+      updates.push("must_change_password = 0");
+      updates.push("failed_login_attempts = 0");
+      updates.push("locked_until = NULL");
+      updates.push("last_failed_login_at = NULL");
+    }
+    if (!updates.length) {
+      return res.status(400).json({ error: "No profile changes supplied." });
+    }
+    await query(`UPDATE users SET ${updates.join(", ")} WHERE id = ?`, [...params, user.id]);
+    await auditLog(req.user, "PROFILE_UPDATED", "users", user.id, {
+      email_updated: email !== null,
+      phone_updated: phone !== null,
+      password_updated: Boolean(newPassword),
+      otp_used: requireOtp
+    });
+    res.json({ message: "Profile updated successfully." });
   })
 );
 
@@ -4190,13 +5824,16 @@ const moduleConfigs = [
     route: "/api/management/teachers",
     table: "teacher_profiles",
     moduleKey: MODULE_KEYS.MANAGEMENT_TEACHERS,
-    searchFields: ["full_name", "id_number", "tsc_number", "phone_number"],
+    searchFields: ["full_name", "id_number", "tsc_number", "phone_number", "employment_status", "leave_status", "accountability_status"],
     allowedRoles: [ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION],
     fields: [
       "full_name",
       "tsc_number",
       "id_number",
       "phone_number",
+      "employment_status",
+      "leave_status",
+      "accountability_status",
       "category",
       "major_subject",
       "other_subject",
@@ -4388,7 +6025,14 @@ const moduleConfigs = [
       "payment_method",
       "receipt_number",
       "payment_date",
-      "balance_after_payment"
+      "balance_after_payment",
+      "academic_year",
+      "term",
+      "capitation_received",
+      "grant_other",
+      "liabilities",
+      "available_balance",
+      "outstanding_balance"
     ]
   },
   {
