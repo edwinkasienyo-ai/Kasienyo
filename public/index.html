@@ -50,7 +50,7 @@
         <img
           class="hero-image"
           src="/uploads/index-hero.jpg?v=20260411"
-          onerror="this.onerror=null;this.style.display='none';this.parentElement.classList.add('hero-fallback');"
+          onerror="if(!this.dataset.fallbackApplied){this.dataset.fallbackApplied='1';this.src='/assets/imis-hero.jpg?v=20260411';return;}this.onerror=null;this.style.display='none';this.parentElement.classList.add('hero-fallback');"
           alt="Graduation group photo for IMIS hero"
           loading="eager"
         />
