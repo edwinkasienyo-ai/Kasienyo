@@ -46,6 +46,7 @@ const { generateOtpCode, buildOtpExpiry, sendOtp } = require("./services/otpServ
 const { buildSearchWhere } = require("./utils/sql");
 const {
   buildCbcSuggestion,
+  buildSuggestionFromMappings,
   makeNotes,
   getAllCbcLearningAreas,
   buildBulkCbcEntries
@@ -4921,7 +4922,9 @@ app.post(
        ORDER BY strand, sub_strand`,
       [req.user.institution_id, learningArea, grade || null, grade || null, formName || null, formName || null]
     );
-    const suggestion = buildCbcSuggestion({ grade, formName, learningArea, mappingRows });
+    const suggestion =
+      buildSuggestionFromMappings({ grade, formName, learningArea, mappings: mappingRows }) ||
+      buildCbcSuggestion({ grade, formName, learningArea });
     await auditLog(req.user, "GENERATE_CBC_AI_STRUCTURE", "cbc_curriculum_entries", null, {
       grade: grade || null,
       form_name: formName || null,
@@ -4954,7 +4957,9 @@ app.post(
        ORDER BY strand, sub_strand`,
       [req.user.institution_id, learningArea, grade || null, grade || null, formName || null, formName || null]
     );
-    const suggestion = buildCbcSuggestion({ grade, formName, learningArea, mappingRows });
+    const suggestion =
+      buildSuggestionFromMappings({ grade, formName, learningArea, mappings: mappingRows }) ||
+      buildCbcSuggestion({ grade, formName, learningArea });
     await auditLog(req.user, "GENERATE_CBC_AI_STRUCTURE", "cbc_curriculum_entries", null, {
       grade: grade || null,
       form_name: formName || null,
@@ -4987,7 +4992,9 @@ app.post(
        ORDER BY strand, sub_strand`,
       [req.user.institution_id, learningArea, grade || null, grade || null, formName || null, formName || null]
     );
-    const suggestion = buildCbcSuggestion({ grade, formName, learningArea, mappingRows });
+    const suggestion =
+      buildSuggestionFromMappings({ grade, formName, learningArea, mappings: mappingRows }) ||
+      buildCbcSuggestion({ grade, formName, learningArea });
     await auditLog(req.user, "GENERATE_CBC_AI_STRUCTURE", "cbc_curriculum_entries", null, {
       grade: grade || null,
       form_name: formName || null,
@@ -5022,7 +5029,9 @@ app.post(
        ORDER BY strand, sub_strand`,
       [req.user.institution_id, learningArea, grade || null, grade || null, formName || null, formName || null]
     );
-    const fallbackStructure = buildCbcSuggestion({ grade, formName, learningArea, mappingRows });
+    const fallbackStructure =
+      buildSuggestionFromMappings({ grade, formName, learningArea, mappings: mappingRows }) ||
+      buildCbcSuggestion({ grade, formName, learningArea });
     const resolvedSubStrand = subStrand || fallbackStructure.sub_strand;
     const generated = makeNotes({
       grade,
@@ -5168,7 +5177,9 @@ app.post(
          ORDER BY strand, sub_strand`,
         [req.user.institution_id, learningArea, grade || null, grade || null, formName || null, formName || null]
       );
-      const suggestion = buildCbcSuggestion({ grade, formName, learningArea, mappingRows });
+      const suggestion =
+        buildSuggestionFromMappings({ grade, formName, learningArea, mappings: mappingRows }) ||
+        buildCbcSuggestion({ grade, formName, learningArea });
       const strands = Array.isArray(suggestion.strand_options) ? suggestion.strand_options : [];
       for (const strand of strands) {
         const subStrands = Array.isArray(suggestion.sub_strand_options_by_strand?.[strand])

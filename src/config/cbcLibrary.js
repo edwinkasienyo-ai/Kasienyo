@@ -93,7 +93,16 @@ function makeNotes({ grade, formName, learningArea, strand, subStrand }) {
   ].join("\n");
 }
 
-function buildCbcSuggestion({ grade, formName, learningArea }) {
+function buildCbcSuggestion({ grade, formName, learningArea, mappingRows = [] }) {
+  const mappedSuggestion = buildSuggestionFromMappings({
+    grade,
+    formName,
+    learningArea,
+    mappings: Array.isArray(mappingRows) ? mappingRows : []
+  });
+  if (mappedSuggestion) {
+    return mappedSuggestion;
+  }
   const subjectKey = normalize(learningArea);
   const library = SUBJECT_LIBRARY[subjectKey];
   const strands = library?.strands?.length ? library.strands : DEFAULT_STRANDS;
