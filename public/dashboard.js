@@ -2963,7 +2963,7 @@ async function init() {
     const institutionName = String(
       meData?.institution_name || portalData?.institution_name || "Institution"
     ).trim();
-    const roleLabel = toRoleLabel(portalData?.role || meData?.role || "");
+    const roleLabel = formatRoleDisplay(portalData?.role || meData?.role || "");
     document.getElementById("portalLabel").textContent = `${institutionName} (${roleLabel})`;
     const buildLineEl = document.getElementById("iimsBuildLineDash");
     if (buildLineEl) {
