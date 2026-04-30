@@ -1683,6 +1683,12 @@ async function getPaginatedRows({
   return query(sql, [...search.params, Number(limit), Number(offset)]);
 }
 
+async function getExistingColumns(tableName, candidateColumns = []) {
+  const tableColumns = await getTableColumns(tableName);
+  const available = new Set(tableColumns);
+  return candidateColumns.filter((column) => available.has(column));
+}
+
 function sendBuildInfoJson(res) {
   res.set("Cache-Control", "no-store");
   res.json({
@@ -3516,15 +3522,27 @@ app.get(
       .slice()
       .sort((a, b) => String(a.full_name || "").localeCompare(String(b.full_name || "")));
     const teacherRows = includeTeachers
-      ? await getPaginatedRows({
-        table: "teacher_profiles",
-        institutionId,
-        searchFields: ["full_name", "id_number", "tsc_number", "major_subject", "other_subject"],
-        q,
-        extraWhere: teacherExtraWhere,
-        extraParams: teacherExtraParams,
-        limit: rowLimit
-      })
+      ? await (async () => {
+        const teacherSearchFields = await getExistingColumns("teacher_profiles", [
+          "full_name",
+          "id_number",
+          "tsc_number",
+          "major_subject",
+          "other_subject"
+        ]);
+        const fallbackTeacherFields = teacherSearchFields.length
+          ? teacherSearchFields
+          : ["full_name", "id_number", "tsc_number"];
+        return getPaginatedRows({
+          table: "teacher_profiles",
+          institutionId,
+          searchFields: fallbackTeacherFields,
+          q,
+          extraWhere: teacherExtraWhere,
+          extraParams: teacherExtraParams,
+          limit: rowLimit
+        });
+      })()
       : [];
     const sortedTeacherRows = teacherRows
       .slice()
