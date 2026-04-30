@@ -8,6 +8,7 @@ let currentModule = "dashboard";
 let currentEditId = null;
 let allowedModules = [];
 let portalContext = null;
+let searchRowDrafts = {};
 const DASHBOARD_STAT_LABELS = {
   totalLearners: "Total Learners Population",
   totalPresent: "Present Today",
@@ -2493,6 +2494,25 @@ function buildSearchScopeSection(title, headers, rows) {
       ${buildDashboardTable(headers, rows)}
     </section>
   `;
+}
+
+function renderSearchActionButtons(scope, row = {}) {
+  const rowId = Number(row?.id || 0);
+  if (!rowId) return "-";
+  return `
+    <div class="search-inline-actions">
+      <button class="search-action-icon view" title="View" onclick="handleSearchRowAction('${escapeHtmlAttribute(scope)}', ${rowId}, 'view')">👁</button>
+      <button class="search-action-icon edit" title="Edit" onclick="handleSearchRowAction('${escapeHtmlAttribute(scope)}', ${rowId}, 'edit')">✎</button>
+      <button class="search-action-icon save" title="Save" onclick="handleSearchRowAction('${escapeHtmlAttribute(scope)}', ${rowId}, 'save')">💾</button>
+      <button class="search-action-icon pdf" title="Download PDF" onclick="handleSearchRowAction('${escapeHtmlAttribute(scope)}', ${rowId}, 'pdf')">📄</button>
+      <button class="search-action-icon print" title="Print" onclick="handleSearchRowAction('${escapeHtmlAttribute(scope)}', ${rowId}, 'print')">🖨</button>
+      <button class="search-action-icon delete" title="Delete" onclick="handleSearchRowAction('${escapeHtmlAttribute(scope)}', ${rowId}, 'delete')">🗑</button>
+    </div>
+  `;
+}
+
+function normalizeSearchText(value) {
+  return String(value || "").trim().toLowerCase();
 }
 
 async function globalSearch() {

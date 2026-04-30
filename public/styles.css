@@ -2365,6 +2365,28 @@ tbody tr:hover {
   font-size: 11px;
 }
 
+.search-scope-actions {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  margin: 4px 0 6px;
+}
+
+.icon-mini-btn {
+  width: auto;
+  min-height: 22px;
+  padding: 3px 6px;
+  border-radius: 6px;
+  font-size: 10px;
+  line-height: 1;
+  box-shadow: none;
+}
+
+.icon-mini-btn:hover {
+  transform: none;
+  box-shadow: none;
+}
+
 .search-results-separate {
   display: grid;
   gap: 8px;

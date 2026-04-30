@@ -3679,6 +3679,38 @@ app.get(
   })
 );
 
+app.post(
+  "/api/search/export/pdf",
+  auth,
+  enforceModuleAccess(MODULE_KEYS.SEARCH),
+  enforcePermission(PERMISSIONS.VIEW),
+  asyncHandler(async (req, res) => {
+    const scope = cleanValue(req.body?.scope || "search_record");
+    const rowPayload = req.body?.row;
+    if (!rowPayload || typeof rowPayload !== "object") {
+      return res.status(400).json({ error: "row payload is required." });
+    }
+    const row = { ...rowPayload };
+    delete row.password_hash;
+    delete row.learner_password_hash;
+    delete row.details_json;
+    const lines = [
+      "IMIS SEARCH RECORD EXPORT",
+      `Scope: ${scope || "-"}`,
+      `Generated At: ${dayjs().format("YYYY-MM-DD HH:mm:ss")}`,
+      ""
+    ];
+    Object.entries(row).forEach(([key, value]) => {
+      lines.push(`${toTitleCase(key)}: ${cleanValue(value) || "-"}`);
+    });
+    sendSimplePdf(
+      res,
+      `search-${scope.toLowerCase().replace(/[^a-z0-9]+/gi, "-")}-${Date.now()}`,
+      lines
+    );
+  })
+);
+
 app.get(
   "/api/users",
   auth,
