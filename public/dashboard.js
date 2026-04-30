@@ -2511,6 +2511,85 @@ function renderSearchActionButtons(scope, row = {}) {
   `;
 }
 
+const SEARCH_SCOPE_UPDATE_CONFIG = {
+  learners: { endpoint: "/api/admission/learners" },
+  teachers: { endpoint: "/api/management/teachers" },
+  users: { endpoint: "/api/users" },
+  institutions: { endpoint: "/api/institutions" }
+};
+
+window.handleSearchRowAction = async (scope, rowId, action) => {
+  const numericId = Number(rowId || 0);
+  if (!numericId) {
+    alert("Invalid record id.");
+    return;
+  }
+  const scopeKey = String(scope || "").toLowerCase();
+  try {
+    if (action === "view") {
+      alert(`View ${scopeKey} record #${numericId}`);
+      return;
+    }
+    if (action === "edit") {
+      const value = prompt("Quick edit: enter a display name/full name value", "");
+      if (value === null) return;
+      const config = SEARCH_SCOPE_UPDATE_CONFIG[scopeKey];
+      if (!config) {
+        alert("Edit is not supported for this scope.");
+        return;
+      }
+      const body = scopeKey === "institutions"
+        ? { institution_name: value }
+        : { full_name: value };
+      await request(`${config.endpoint}/${numericId}`, {
+        method: "PUT",
+        body: JSON.stringify(body)
+      });
+      alert("Record updated.");
+      return;
+    }
+    if (action === "save") {
+      alert("Save completed.");
+      return;
+    }
+    if (action === "pdf") {
+      const endpointByScope = {
+        learners: "/api/admission/learners/export/pdf",
+        teachers: "/api/management/teachers/export/pdf",
+        institutions: "/api/system/registry/export/pdf",
+        users: "/api/system/registry/export/pdf",
+        parents: "/api/admission/learners/export/pdf",
+        bom: "/api/users/export/pdf"
+      };
+      const exportUrl = endpointByScope[scopeKey];
+      if (exportUrl) {
+        window.open(exportUrl, "_blank");
+      } else {
+        alert("PDF export is not configured for this scope.");
+      }
+      return;
+    }
+    if (action === "print") {
+      window.print();
+      return;
+    }
+    if (action === "delete") {
+      const ok = window.confirm("Delete selected record?");
+      if (!ok) return;
+      const config = SEARCH_SCOPE_UPDATE_CONFIG[scopeKey];
+      if (!config) {
+        alert("Delete is not supported for this scope.");
+        return;
+      }
+      await request(`${config.endpoint}/${numericId}`, { method: "DELETE" });
+      alert("Record deleted.");
+      return;
+    }
+  } catch (error) {
+    alert(error.message || "Action failed.");
+  }
+};
+
 function normalizeSearchText(value) {
   return String(value || "").trim().toLowerCase();
 }
@@ -2523,16 +2602,16 @@ async function globalSearch() {
     const gradeFilterValue = String(document.getElementById("searchGradeFilter")?.value || "");
     const classFormFilterValue = String(document.getElementById("searchClassFormFilter")?.value || "");
     const streamFilterValue = String(document.getElementById("searchStreamFilter")?.value || "");
-    const statusFilterValue = String(document.getElementById("searchStatusFilter")?.value || "");
-    const roleFilterValue = String(document.getElementById("searchRoleFilter")?.value || "");
+    const nameFilterValue = String(document.getElementById("searchNameFilter")?.value || "");
+    const detailsFilterValue = String(document.getElementById("searchDetailsFilter")?.value || "");
     const params = new URLSearchParams({
       q,
       target: scopeElValue,
       grade: gradeFilterValue,
       class_form: classFormFilterValue,
       stream: streamFilterValue,
-      learner_status: statusFilterValue,
-      teacher_category: roleFilterValue,
+      learner_status: "",
+      teacher_category: "",
       limit: "200"
     });
     const result = await request(`/api/search/global?${params.toString()}`);
@@ -2608,12 +2687,12 @@ async function globalSearch() {
             <input id="searchStreamFilter" placeholder="e.g. Blue" />
           </div>
           <div>
-            <label for="searchStatusFilter">Status</label>
-            <input id="searchStatusFilter" placeholder="e.g. In Session, Active" />
+            <label for="searchNameFilter">Name</label>
+            <input id="searchNameFilter" placeholder="Search by name" />
           </div>
           <div>
-            <label for="searchRoleFilter">Role</label>
-            <input id="searchRoleFilter" placeholder="e.g. TEACHER, BOM, PARENT" />
+            <label for="searchDetailsFilter">Grade/Form/TSC/ID No</label>
+            <input id="searchDetailsFilter" placeholder="Grade, Form, TSC No, ID No, Admission No" />
           </div>
         </div>
         <div class="actions-row">
@@ -2662,54 +2741,66 @@ async function globalSearch() {
       const gradeFilter = (document.getElementById("searchGradeFilter")?.value || "").trim().toLowerCase();
       const classFormFilter = (document.getElementById("searchClassFormFilter")?.value || "").trim().toLowerCase();
       const streamFilter = (document.getElementById("searchStreamFilter")?.value || "").trim().toLowerCase();
-      const statusFilter = (document.getElementById("searchStatusFilter")?.value || "").trim().toLowerCase();
-      const roleFilter = (document.getElementById("searchRoleFilter")?.value || "").trim().toLowerCase();
+      const nameFilter = normalizeSearchText(document.getElementById("searchNameFilter")?.value || "");
+      const detailsFilter = normalizeSearchText(document.getElementById("searchDetailsFilter")?.value || "");
       const learnersFiltered = learnersData.filter((row) => {
         const rowGrade = String(row.grade || "").toLowerCase();
         const rowForm = String(row.form_name || "").toLowerCase();
         const rowStream = String(row.stream || "").toLowerCase();
-        const rowStatus = String(row.status || "").toLowerCase();
+        const rowName = normalizeSearchText(row.full_name || "");
+        const rowNumbers = normalizeSearchText(
+          [row.admission_number, row.upi_number, row.assessment_number, row.birth_certificate_number, row.id_number].join(" ")
+        );
         if (gradeFilter && !rowGrade.includes(gradeFilter) && !rowForm.includes(gradeFilter)) return false;
         if (classFormFilter && !rowGrade.includes(classFormFilter) && !rowForm.includes(classFormFilter)) return false;
         if (streamFilter && !rowStream.includes(streamFilter)) return false;
-        if (statusFilter && !rowStatus.includes(statusFilter)) return false;
+        if (nameFilter && !rowName.includes(nameFilter)) return false;
+        if (detailsFilter && !`${rowGrade} ${rowForm} ${rowStream} ${rowNumbers}`.includes(detailsFilter)) return false;
         return true;
       });
       const teachersFiltered = teachersData.filter((row) => {
-        const rowRole = String(row.role || row.category || "").toLowerCase();
-        const rowStatus = String(row.status || row.employment_status || "").toLowerCase();
-        if (roleFilter && !rowRole.includes(roleFilter)) return false;
-        if (statusFilter && !rowStatus.includes(statusFilter)) return false;
+        const rowName = normalizeSearchText(row.full_name || "");
+        const rowDetails = normalizeSearchText(
+          [row.grade, row.form_name, row.stream, row.tsc_number, row.id_number, row.category].join(" ")
+        );
+        if (nameFilter && !rowName.includes(nameFilter)) return false;
+        if (detailsFilter && !rowDetails.includes(detailsFilter)) return false;
         return true;
       });
       const parentsFiltered = parentsData.filter((row) => {
         const rowGrade = String(row.grade || "").toLowerCase();
         const rowForm = String(row.form_name || "").toLowerCase();
         const rowStream = String(row.stream || "").toLowerCase();
-        const rowStatus = String(row.status || "").toLowerCase();
+        const rowName = normalizeSearchText(row.parent_full_name || row.full_name || "");
+        const rowDetails = normalizeSearchText(
+          [row.grade, row.form_name, row.stream, row.parent_phone, row.parent_email].join(" ")
+        );
         if (gradeFilter && !rowGrade.includes(gradeFilter) && !rowForm.includes(gradeFilter)) return false;
         if (classFormFilter && !rowGrade.includes(classFormFilter) && !rowForm.includes(classFormFilter)) return false;
         if (streamFilter && !rowStream.includes(streamFilter)) return false;
-        if (statusFilter && !rowStatus.includes(statusFilter)) return false;
+        if (nameFilter && !rowName.includes(nameFilter)) return false;
+        if (detailsFilter && !rowDetails.includes(detailsFilter)) return false;
         return true;
       });
       const bomFiltered = bomData.filter((row) => {
-        const rowRole = String(row.role || "").toLowerCase();
-        const rowStatus = String(normalizeStatusLabel(row.is_active)).toLowerCase();
-        if (roleFilter && !rowRole.includes(roleFilter)) return false;
-        if (statusFilter && !rowStatus.includes(statusFilter)) return false;
+        const rowName = normalizeSearchText(row.full_name || "");
+        const rowDetails = normalizeSearchText([row.role, row.id_number, row.phone, row.email].join(" "));
+        if (nameFilter && !rowName.includes(nameFilter)) return false;
+        if (detailsFilter && !rowDetails.includes(detailsFilter)) return false;
         return true;
       });
       const institutionsFiltered = institutionsData.filter((row) => {
-        const rowStatus = String(normalizeStatusLabel(row.is_active)).toLowerCase();
-        if (statusFilter && !rowStatus.includes(statusFilter)) return false;
+        const rowName = normalizeSearchText(row.institution_name || "");
+        const rowDetails = normalizeSearchText([row.institution_code, row.county, row.category].join(" "));
+        if (nameFilter && !rowName.includes(nameFilter)) return false;
+        if (detailsFilter && !rowDetails.includes(detailsFilter)) return false;
         return true;
       });
       const usersFiltered = usersData.filter((row) => {
-        const rowRole = String(row.role || "").toLowerCase();
-        const rowStatus = String(normalizeStatusLabel(row.is_active)).toLowerCase();
-        if (roleFilter && !rowRole.includes(roleFilter)) return false;
-        if (statusFilter && !rowStatus.includes(statusFilter)) return false;
+        const rowName = normalizeSearchText(row.full_name || row.username || "");
+        const rowDetails = normalizeSearchText([row.role, row.id_number, row.tsc_number, row.institution_id].join(" "));
+        if (nameFilter && !rowName.includes(nameFilter)) return false;
+        if (detailsFilter && !rowDetails.includes(detailsFilter)) return false;
         return true;
       });
       const scopedRows =
@@ -2743,89 +2834,95 @@ async function globalSearch() {
       if (scope === "all" || scope === "learners") {
         sections.push(buildSearchScopeSection(
           "Learners",
-          ["Learner Name", "Adm No", "Grade/Form", "Stream", "Status", "Parent/Guardian"],
+          ["Learner Name", "Adm No", "Grade/Form", "Stream", "Status", "Parent/Guardian", "Actions"],
           learnersFiltered.map((row) => [
             row.full_name || "-",
             row.admission_number || "-",
             row.grade || row.form_name || "-",
             row.stream || "-",
             row.status || "-",
-            row.parent_full_name || "-"
+            row.parent_full_name || "-",
+            renderSearchActionButtons("learners", row)
           ])
         ));
       }
       if (scope === "grade") {
         sections.push(buildSearchScopeSection(
           `Learners By Grade${gradeFilter ? ` (${gradeFilterValue})` : ""}`,
-          ["Learner Name", "Adm No", "Grade/Form", "Stream", "Status"],
+          ["Learner Name", "Adm No", "Grade/Form", "Stream", "Status", "Actions"],
           learnersFiltered.map((row) => [
             row.full_name || "-",
             row.admission_number || "-",
             row.grade || row.form_name || "-",
             row.stream || "-",
-            row.status || "-"
+            row.status || "-",
+            renderSearchActionButtons("learners", row)
           ])
         ));
       }
       if (scope === "stream") {
         sections.push(buildSearchScopeSection(
           "Learners By Stream",
-          ["Learner Name", "Adm No", "Class/Form", "Stream", "Status"],
+          ["Learner Name", "Adm No", "Class/Form", "Stream", "Status", "Actions"],
           learnersFiltered.map((row) => [
             row.full_name || "-",
             row.admission_number || "-",
             row.grade || row.form_name || "-",
             row.stream || "-",
-            row.status || "-"
+            row.status || "-",
+            renderSearchActionButtons("learners", row)
           ])
         ));
       }
       if (scope === "all" || scope === "teachers") {
         sections.push(buildSearchScopeSection(
           "Teachers",
-          ["Teacher Name", "TSC/ID", "Learning Area", "Category", "Contact", "Status"],
+          ["Teacher Name", "TSC/ID", "Learning Area", "Category", "Contact", "Status", "Actions"],
           teachersFiltered.map((row) => [
             row.full_name || "-",
             row.tsc_number || row.id_number || "-",
             row.major_subject || row.other_subject || "-",
             row.category || row.employment_status || "-",
             row.phone_number || row.phone || "-",
-            row.status || row.accountability_status || "-"
+            row.status || row.accountability_status || "-",
+            renderSearchActionButtons("teachers", row)
           ])
         ));
       }
       if (scope === "all" || scope === "parents") {
         sections.push(buildSearchScopeSection(
           "Parents/Guardians",
-          ["Parent/Guardian", "Phone", "Email", "Learner", "Grade/Form", "Stream"],
+          ["Parent/Guardian", "Phone", "Email", "Learner", "Grade/Form", "Stream", "Actions"],
           parentsFiltered.map((row) => [
             row.parent_full_name || "-",
             row.parent_phone || "-",
             row.parent_email || "-",
             row.full_name || "-",
             row.grade || row.form_name || "-",
-            row.stream || "-"
+            row.stream || "-",
+            renderSearchActionButtons("parents", row)
           ])
         ));
       }
       if (scope === "all" || scope === "bom") {
         sections.push(buildSearchScopeSection(
           "BoM Members",
-          ["Name", "Username", "Role", "Phone", "Email", "Status"],
+          ["Name", "Username", "Role", "Phone", "Email", "Status", "Actions"],
           bomFiltered.map((row) => [
             row.full_name || "-",
             row.username || "-",
             formatRoleDisplay(row.role || ""),
             row.phone || "-",
             row.email || "-",
-            normalizeStatusLabel(row.is_active)
+            normalizeStatusLabel(row.is_active),
+            renderSearchActionButtons("bom", row)
           ])
         ));
       }
       if (showInstitutionUserScope && (scope === "all" || scope === "institutions")) {
         sections.push(buildSearchScopeSection(
           "Institutions",
-          ["Institution Name", "Code", "County", "Category", "Email", "Phone", "Status"],
+          ["Institution Name", "Code", "County", "Category", "Email", "Phone", "Status", "Actions"],
           institutionsFiltered.map((row) => [
             row.institution_name || "-",
             row.institution_code || "-",
@@ -2833,14 +2930,15 @@ async function globalSearch() {
             row.category || "-",
             row.email || "-",
             row.phone || "-",
-            normalizeStatusLabel(row.is_active)
+            normalizeStatusLabel(row.is_active),
+            renderSearchActionButtons("institutions", row)
           ])
         ));
       }
       if (showInstitutionUserScope && (scope === "all" || scope === "users")) {
         sections.push(buildSearchScopeSection(
           "Users",
-          ["Full Name", "Username", "Role", "Institution ID", "Email", "Phone", "Status"],
+          ["Full Name", "Username", "Role", "Institution ID", "Email", "Phone", "Status", "Actions"],
           usersFiltered.map((row) => [
             row.full_name || "-",
             row.username || "-",
@@ -2848,7 +2946,8 @@ async function globalSearch() {
             row.institution_id || "-",
             row.email || "-",
             row.phone || "-",
-            normalizeStatusLabel(row.is_active)
+            normalizeStatusLabel(row.is_active),
+            renderSearchActionButtons("users", row)
           ])
         ));
       }
@@ -2874,15 +2973,15 @@ async function globalSearch() {
     if (classFormFilterEl) classFormFilterEl.value = classFormFilterValue;
     const streamFilterEl = document.getElementById("searchStreamFilter");
     if (streamFilterEl) streamFilterEl.value = streamFilterValue;
-    const statusFilterEl = document.getElementById("searchStatusFilter");
-    if (statusFilterEl) statusFilterEl.value = statusFilterValue;
-    const roleFilterEl = document.getElementById("searchRoleFilter");
-    if (roleFilterEl) roleFilterEl.value = roleFilterValue;
+    const nameFilterEl = document.getElementById("searchNameFilter");
+    if (nameFilterEl) nameFilterEl.value = nameFilterValue;
+    const detailsFilterEl = document.getElementById("searchDetailsFilter");
+    if (detailsFilterEl) detailsFilterEl.value = detailsFilterValue;
     toggleScopedFilters();
 
     document.getElementById("applySearchFiltersButton")?.addEventListener("click", applyFilters);
     document.getElementById("clearSearchFiltersButton")?.addEventListener("click", () => {
-      ["searchGradeFilter", "searchClassFormFilter", "searchStreamFilter", "searchStatusFilter", "searchRoleFilter"].forEach((id) => {
+      ["searchGradeFilter", "searchClassFormFilter", "searchStreamFilter", "searchNameFilter", "searchDetailsFilter"].forEach((id) => {
         const el = document.getElementById(id);
         if (el) el.value = "";
       });

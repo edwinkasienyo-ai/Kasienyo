@@ -2387,6 +2387,33 @@ tbody tr:hover {
   box-shadow: none;
 }
 
+.search-inline-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: nowrap;
+}
+
+.search-action-icon {
+  width: auto;
+  min-height: 20px;
+  min-width: 22px;
+  padding: 2px 5px;
+  border-radius: 6px;
+  font-size: 10px;
+  line-height: 1;
+  box-shadow: none;
+}
+
+.search-action-icon:hover {
+  transform: none;
+  box-shadow: none;
+}
+
+.search-action-icon.delete {
+  background: linear-gradient(140deg, #991b1b, #ef4444);
+}
+
 .search-results-separate {
   display: grid;
   gap: 8px;
