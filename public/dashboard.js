@@ -2485,10 +2485,10 @@ async function loadLearnerMaterials() {
 async function globalSearch() {
   setActiveSidebarButton(null);
   const q = document.getElementById("globalSearch").value.trim();
-  if (!q) return;
   try {
     const scopeElValue = String(document.getElementById("searchScope")?.value || "all");
     const gradeFilterValue = String(document.getElementById("searchGradeFilter")?.value || "");
+    const classFormFilterValue = String(document.getElementById("searchClassFormFilter")?.value || "");
     const streamFilterValue = String(document.getElementById("searchStreamFilter")?.value || "");
     const statusFilterValue = String(document.getElementById("searchStatusFilter")?.value || "");
     const roleFilterValue = String(document.getElementById("searchRoleFilter")?.value || "");
@@ -2496,17 +2496,21 @@ async function globalSearch() {
       q,
       target: scopeElValue,
       grade: gradeFilterValue,
+      class_form: classFormFilterValue,
       stream: streamFilterValue,
       learner_status: statusFilterValue,
       teacher_category: roleFilterValue,
       limit: "200"
     });
     const result = await request(`/api/search/global?${params.toString()}`);
-    document.getElementById("moduleTitle").textContent = `Search Results: ${q}`;
+    document.getElementById("moduleTitle").textContent = `SEARCH RESULTS: ${q || "ALL"}`;
     const summaryDescription =
       portalContext?.role === "SYSTEM_DEVELOPER"
         ? "Cross-portal search intelligence view."
         : "Search intelligence view for your institution.";
+    const gradeOptions = Array.isArray(meta?.gradeOptions) ? meta.gradeOptions : [];
+    const formOptions = Array.isArray(meta?.formOptions) ? meta.formOptions : [];
+    const classOrFormOptions = Array.from(new Set([...gradeOptions, ...formOptions].filter(Boolean)));
     document.getElementById("cards").innerHTML = `
       <div class="card stats-card">
         <h4>Learners Found</h4>
@@ -2543,6 +2547,8 @@ async function globalSearch() {
             <select id="searchScope">
               <option value="all">All</option>
               <option value="learners">Learners</option>
+              <option value="grade">Grade</option>
+              <option value="stream">Stream</option>
               <option value="teachers">Teachers</option>
               <option value="parents">Parents/Guardians</option>
               <option value="bom">BoM Members</option>
@@ -2550,11 +2556,21 @@ async function globalSearch() {
               ${showInstitutionUserScope ? '<option value="users">Users</option>' : ""}
             </select>
           </div>
-          <div>
+          <div id="searchGradeFilterWrap">
             <label for="searchGradeFilter">Grade</label>
-            <input id="searchGradeFilter" placeholder="e.g. Grade 7" />
+            <select id="searchGradeFilter">
+              <option value="">All Grades/Forms</option>
+              ${classOrFormOptions.map((item) => `<option value="${escapeHtml(item)}">${escapeHtml(item)}</option>`).join("")}
+            </select>
           </div>
-          <div>
+          <div id="searchClassFormFilterWrap">
+            <label for="searchClassFormFilter">Class/Form</label>
+            <select id="searchClassFormFilter">
+              <option value="">All Classes/Forms</option>
+              ${classOrFormOptions.map((item) => `<option value="${escapeHtml(item)}">${escapeHtml(item)}</option>`).join("")}
+            </select>
+          </div>
+          <div id="searchStreamFilterWrap">
             <label for="searchStreamFilter">Stream</label>
             <input id="searchStreamFilter" placeholder="e.g. Blue" />
           </div>
@@ -2573,19 +2589,53 @@ async function globalSearch() {
         </div>
       </div>
     `;
-    const learnersData = Array.isArray(result.learners) ? result.learners : [];
-    const teachersData = Array.isArray(result.teachers) ? result.teachers : [];
-    const parentsData = Array.isArray(result.parents) ? result.parents : [];
-    const bomData = Array.isArray(result.bom) ? result.bom : [];
-    const institutionsData = Array.isArray(result.institutions) ? result.institutions : [];
-    const usersData = Array.isArray(result.users) ? result.users : [];
-    const parentsBomData = [...parentsData, ...bomData];
-    let combinedRows = [...learnersData, ...teachersData, ...parentsData, ...bomData, ...institutionsData, ...usersData];
+    const byNameAsc = (rows = []) =>
+      [...rows].sort((a, b) => {
+        const aKey = String(
+          a.full_name || a.parent_full_name || a.institution_name || a.username || a.learner_name || ""
+        ).toLowerCase();
+        const bKey = String(
+          b.full_name || b.parent_full_name || b.institution_name || b.username || b.learner_name || ""
+        ).toLowerCase();
+        return aKey.localeCompare(bKey);
+      });
+    const learnersData = byNameAsc(Array.isArray(result.learners) ? result.learners : []);
+    const teachersData = byNameAsc(Array.isArray(result.teachers) ? result.teachers : []);
+    const parentsData = byNameAsc(Array.isArray(result.parents) ? result.parents : []);
+    const bomData = byNameAsc(Array.isArray(result.bom) ? result.bom : []);
+    const institutionsData = byNameAsc(Array.isArray(result.institutions) ? result.institutions : []);
+    const usersData = byNameAsc(Array.isArray(result.users) ? result.users : []);
+    const parentsBomData = byNameAsc([...parentsData, ...bomData]);
+    let combinedRows = byNameAsc([
+      ...learnersData,
+      ...teachersData,
+      ...parentsData,
+      ...bomData,
+      ...institutionsData,
+      ...usersData
+    ]);
     renderTable(combinedRows);
+
+    const toggleScopedFilters = () => {
+      const scope = (document.getElementById("searchScope")?.value || "all").toLowerCase();
+      const gradeWrap = document.getElementById("searchGradeFilterWrap");
+      const classFormWrap = document.getElementById("searchClassFormFilterWrap");
+      const streamWrap = document.getElementById("searchStreamFilterWrap");
+      if (gradeWrap) {
+        gradeWrap.style.display = scope === "grade" ? "block" : "none";
+      }
+      if (classFormWrap) {
+        classFormWrap.style.display = scope === "stream" ? "block" : "none";
+      }
+      if (streamWrap) {
+        streamWrap.style.display = scope === "stream" ? "block" : "none";
+      }
+    };
 
     const applyFilters = () => {
       const scope = (document.getElementById("searchScope")?.value || "all").toLowerCase();
       const gradeFilter = (document.getElementById("searchGradeFilter")?.value || "").trim().toLowerCase();
+      const classFormFilter = (document.getElementById("searchClassFormFilter")?.value || "").trim().toLowerCase();
       const streamFilter = (document.getElementById("searchStreamFilter")?.value || "").trim().toLowerCase();
       const statusFilter = (document.getElementById("searchStatusFilter")?.value || "").trim().toLowerCase();
       const roleFilter = (document.getElementById("searchRoleFilter")?.value || "").trim().toLowerCase();
@@ -2599,6 +2649,10 @@ async function globalSearch() {
               ? parentsData
               : scope === "bom"
                 ? bomData
+                : scope === "grade"
+                  ? learnersData
+                  : scope === "stream"
+                    ? learnersData
                 : scope === "institutions"
                   ? institutionsData
                   : scope === "users"
@@ -2607,29 +2661,50 @@ async function globalSearch() {
       const filteredRows = sourceRows.filter((row) => {
         const rowRole = String(row.role || "").toLowerCase();
         const rowGrade = String(row.grade || "").toLowerCase();
+        const rowForm = String(row.form_name || "").toLowerCase();
         const rowStream = String(row.stream || "").toLowerCase();
         const rowStatus = String(row.status || "").toLowerCase();
-        if (gradeFilter && !rowGrade.includes(gradeFilter)) return false;
+        if (gradeFilter && !rowGrade.includes(gradeFilter) && !rowForm.includes(gradeFilter)) return false;
+        if (classFormFilter && !rowGrade.includes(classFormFilter) && !rowForm.includes(classFormFilter)) return false;
         if (streamFilter && !rowStream.includes(streamFilter)) return false;
         if (statusFilter && !rowStatus.includes(statusFilter)) return false;
         if (roleFilter && !rowRole.includes(roleFilter)) return false;
         return true;
       });
-      renderTable(filteredRows);
+      const sortedRows = byNameAsc(filteredRows);
+      renderTable(sortedRows);
       if (!filteredRows.length) {
         resetDataTable("No records match your selected filters.");
       }
     };
 
+    const scopeEl = document.getElementById("searchScope");
+    if (scopeEl) {
+      scopeEl.value = scopeElValue || "all";
+      scopeEl.addEventListener("change", toggleScopedFilters);
+    }
+    const gradeFilterEl = document.getElementById("searchGradeFilter");
+    if (gradeFilterEl) gradeFilterEl.value = gradeFilterValue;
+    const classFormFilterEl = document.getElementById("searchClassFormFilter");
+    if (classFormFilterEl) classFormFilterEl.value = classFormFilterValue;
+    const streamFilterEl = document.getElementById("searchStreamFilter");
+    if (streamFilterEl) streamFilterEl.value = streamFilterValue;
+    const statusFilterEl = document.getElementById("searchStatusFilter");
+    if (statusFilterEl) statusFilterEl.value = statusFilterValue;
+    const roleFilterEl = document.getElementById("searchRoleFilter");
+    if (roleFilterEl) roleFilterEl.value = roleFilterValue;
+    toggleScopedFilters();
+
     document.getElementById("applySearchFiltersButton")?.addEventListener("click", applyFilters);
     document.getElementById("clearSearchFiltersButton")?.addEventListener("click", () => {
-      ["searchGradeFilter", "searchStreamFilter", "searchStatusFilter", "searchRoleFilter"].forEach((id) => {
+      ["searchGradeFilter", "searchClassFormFilter", "searchStreamFilter", "searchStatusFilter", "searchRoleFilter"].forEach((id) => {
         const el = document.getElementById(id);
         if (el) el.value = "";
       });
       const scopeEl = document.getElementById("searchScope");
       if (scopeEl) scopeEl.value = "all";
       renderTable(combinedRows);
+      toggleScopedFilters();
     });
   } catch (error) {
     alert(error.message);
@@ -2639,48 +2714,7 @@ async function globalSearch() {
 async function changeCredentials() {
   try {
     const profile = await request("/api/profile");
-    alert(
-      `Profile:\nFull Name: ${profile?.full_name || "-"}\nEmail: ${profile?.email || "-"}\nMobile: ${profile?.phone || "-"}\nInstitution: ${profile?.institution_name || "-"}`
-    );
-    const otpChannel = prompt("Choose OTP channel for updates: email or sms", "email");
-    if (!otpChannel) return;
-    const normalizedChannel = String(otpChannel || "email").trim().toLowerCase() === "sms" ? "sms" : "email";
-    const currentPassword = prompt("Enter previous password (required for password change):", "") || "";
-    const newPassword = prompt("Enter new password (optional):", "") || "";
-    const confirmPassword = newPassword ? (prompt("Confirm current/new password:", "") || "") : "";
-    if (newPassword && newPassword !== confirmPassword) {
-      alert("Password confirmation does not match.");
-      return;
-    }
-    const nextEmail = prompt("Enter new email (leave blank to keep):", profile?.email || "") || "";
-    const nextPhone = prompt("Enter new mobile number (leave blank to keep):", profile?.phone || "") || "";
-    let otpCode = "";
-    if (!["SYSTEM_DEVELOPER", "ADMIN"].includes(String(portalContext?.role || "").toUpperCase())) {
-      await request("/api/profile/request-update-otp", {
-        method: "POST",
-        body: JSON.stringify({
-          update_type: "profile_update",
-          otp_channel: normalizedChannel
-        })
-      });
-      otpCode = prompt(`Enter OTP sent via ${normalizedChannel}:`, "") || "";
-      if (!otpCode) {
-        alert("OTP is required.");
-        return;
-      }
-    }
-    await request("/api/profile/update", {
-      method: "POST",
-      body: JSON.stringify({
-        current_password: currentPassword || null,
-        email: nextEmail || null,
-        phone: nextPhone || null,
-        new_password: newPassword || null,
-        otp_code: otpCode || null
-      })
-    });
-    alert("Profile updated successfully.");
-    await init();
+    renderProfileCenter(profile || {});
   } catch (error) {
     alert(error.message);
   }
@@ -2758,7 +2792,14 @@ function bindTopbarButtons() {
   });
   document
     .getElementById("changeCredentialsButton")
-    .addEventListener("click", changeCredentials);
+    .addEventListener("click", async () => {
+      try {
+        const profile = await request("/api/profile");
+        renderProfileCenter(profile || {});
+      } catch (error) {
+        alert(error.message);
+      }
+    });
   const heroButton = document.getElementById("updateHeroImageButton");
   const heroInput = document.getElementById("heroImageInput");
   const canManageHeroImage = ["SYSTEM_DEVELOPER", "ADMIN", "HEAD_OF_INSTITUTION"].includes(
@@ -2831,10 +2872,10 @@ function renderProfileCenter(profile) {
           </select>
           <label>Previous Password</label>
           <input id="profileCurrentPassword" type="password" placeholder="Previous password" />
-          <label>Current/New Password</label>
-          <input id="profileNewPassword" type="password" placeholder="Current/New password" />
-          <label>Confirm Current/New Password</label>
-          <input id="profileConfirmPassword" type="password" placeholder="Confirm password" />
+          <label>New Password</label>
+          <input id="profileNewPassword" type="password" placeholder="New password" />
+          <label>Confirm New Password</label>
+          <input id="profileConfirmPassword" type="password" placeholder="Confirm new password" />
           <label>New Email</label>
           <input id="profileNewEmail" type="email" placeholder="Email" value="${escapeHtmlAttribute(profile?.email || "")}" />
           <label>New Mobile Number</label>

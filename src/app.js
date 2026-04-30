@@ -3444,6 +3444,7 @@ app.get(
       q = "",
       target = "all",
       grade = "",
+      class_form = "",
       stream = "",
       learner_status = "",
       teacher_category = "",
@@ -3453,16 +3454,28 @@ app.get(
     const normalizedTarget = cleanValue(target).toLowerCase();
     const rowLimit = Math.min(Math.max(Number(limit) || 20, 1), 100);
 
-    const includeLearners = ["all", "learners", "learner"].includes(normalizedTarget);
+    const includeLearners = ["all", "learners", "learner", "grade", "stream"].includes(normalizedTarget);
     const includeTeachers = ["all", "teachers", "teacher"].includes(normalizedTarget);
     const includeParents = ["all", "parents", "parent"].includes(normalizedTarget);
     const includeBom = ["all", "bom"].includes(normalizedTarget);
+    const includeInstitutions = ["all", "institutions", "institution"].includes(normalizedTarget);
+    const includeUsers = ["all", "users", "user"].includes(normalizedTarget);
+    const isSystemDeveloper = normalizeRole(req.user.role) === ROLES.SYSTEM_DEVELOPER;
+    if (!isSystemDeveloper && ["institutions", "institution", "users", "user"].includes(normalizedTarget)) {
+      return res.status(403).json({
+        error: "Institutions and users search scope is restricted to System Developer."
+      });
+    }
 
     const learnerExtraWhereParts = [];
     const learnerExtraParams = [];
     if (cleanValue(grade)) {
       learnerExtraWhereParts.push(" AND grade = ?");
       learnerExtraParams.push(cleanValue(grade));
+    }
+    if (cleanValue(class_form)) {
+      learnerExtraWhereParts.push(" AND (grade = ? OR form_name = ?)");
+      learnerExtraParams.push(cleanValue(class_form), cleanValue(class_form));
     }
     if (cleanValue(stream)) {
       learnerExtraWhereParts.push(" AND stream = ?");
@@ -3499,6 +3512,9 @@ app.get(
         limit: rowLimit
       })
       : [];
+    const sortedLearnerRows = learnerRows
+      .slice()
+      .sort((a, b) => String(a.full_name || "").localeCompare(String(b.full_name || "")));
     const teacherRows = includeTeachers
       ? await getPaginatedRows({
         table: "teacher_profiles",
@@ -3510,6 +3526,9 @@ app.get(
         limit: rowLimit
       })
       : [];
+    const sortedTeacherRows = teacherRows
+      .slice()
+      .sort((a, b) => String(a.full_name || "").localeCompare(String(b.full_name || "")));
     const parentRows = includeParents
       ? await getPaginatedRows({
         table: "learners",
@@ -3528,6 +3547,9 @@ app.get(
         limit: rowLimit
       })
       : [];
+    const sortedParentRows = parentRows
+      .slice()
+      .sort((a, b) => String(a.parent_full_name || "").localeCompare(String(b.parent_full_name || "")));
     const bomRows = includeBom
       ? await query(
         `SELECT id, full_name, username, role, email, phone, is_active, created_at
@@ -3541,32 +3563,80 @@ app.get(
              OR email LIKE CONCAT('%', ?, '%')
              OR phone LIKE CONCAT('%', ?, '%')
            )
-         ORDER BY id DESC
+         ORDER BY full_name ASC
          LIMIT ?`,
         [institutionId, ROLES.BOM, "BOARD_OF_MANAGEMENT", cleanValue(q), cleanValue(q), cleanValue(q), cleanValue(q), cleanValue(q), rowLimit]
       )
       : [];
+    const institutionRows = includeInstitutions
+      ? (isSystemDeveloper
+        ? await query(
+          `SELECT id, institution_name, institution_code, county, category, email, phone, is_active, created_at
+           FROM institutions
+           WHERE ? = ''
+             OR institution_name LIKE CONCAT('%', ?, '%')
+             OR institution_code LIKE CONCAT('%', ?, '%')
+             OR county LIKE CONCAT('%', ?, '%')
+             OR email LIKE CONCAT('%', ?, '%')
+             OR phone LIKE CONCAT('%', ?, '%')
+           ORDER BY institution_name ASC
+           LIMIT ?`,
+          [cleanValue(q), cleanValue(q), cleanValue(q), cleanValue(q), cleanValue(q), cleanValue(q), rowLimit]
+        )
+        : [])
+      : [];
+    const userRows = includeUsers
+      ? (isSystemDeveloper
+        ? await query(
+          `SELECT id, institution_id, full_name, username, role, email, phone, is_active, created_at
+           FROM users
+           WHERE ? = ''
+             OR full_name LIKE CONCAT('%', ?, '%')
+             OR username LIKE CONCAT('%', ?, '%')
+             OR role LIKE CONCAT('%', ?, '%')
+             OR email LIKE CONCAT('%', ?, '%')
+             OR phone LIKE CONCAT('%', ?, '%')
+           ORDER BY full_name ASC
+           LIMIT ?`,
+          [cleanValue(q), cleanValue(q), cleanValue(q), cleanValue(q), cleanValue(q), cleanValue(q), rowLimit]
+        )
+        : [])
+      : [];
+    const filteredLearnerRows = normalizedTarget === "grade"
+      ? sortedLearnerRows.filter((row) => cleanValue(grade) ? cleanValue(row.grade) === cleanValue(grade) : true)
+      : normalizedTarget === "stream"
+        ? sortedLearnerRows.filter((row) => {
+          const streamMatches = cleanValue(stream) ? cleanValue(row.stream) === cleanValue(stream) : true;
+          const gradeMatches = cleanValue(grade) ? cleanValue(row.grade) === cleanValue(grade) : true;
+          return streamMatches && gradeMatches;
+        })
+        : sortedLearnerRows;
 
     res.json({
       filters_applied: {
         target: normalizedTarget || "all",
         grade: cleanValue(grade) || null,
+        class_form: cleanValue(class_form) || null,
         stream: cleanValue(stream) || null,
         learner_status: cleanValue(learner_status) || null,
         teacher_category: cleanValue(teacher_category) || null,
         limit: rowLimit
       },
       totals: {
-        learners: learnerRows.length,
-        teachers: teacherRows.length,
-        parents: parentRows.length,
-        bom: bomRows.length
+        learners: filteredLearnerRows.length,
+        teachers: sortedTeacherRows.length,
+        parents: sortedParentRows.length,
+        bom: bomRows.length,
+        institutions: institutionRows.length,
+        users: userRows.length
       },
-      learners: learnerRows,
-      teachers: teacherRows,
-      parents: parentRows,
+      learners: filteredLearnerRows,
+      teachers: sortedTeacherRows,
+      parents: sortedParentRows,
       bom: bomRows,
-      parentsAndBom: [...parentRows, ...bomRows]
+      institutions: institutionRows,
+      users: userRows,
+      parentsAndBom: [...sortedParentRows, ...bomRows]
     });
   })
 );
