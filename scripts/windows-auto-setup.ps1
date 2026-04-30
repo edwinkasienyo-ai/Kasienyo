@@ -1,5 +1,5 @@
 param(
-  [string]$Branch = "cursor/autofix-port-fallback-2a2b",
+  [string]$Branch = "cursor/dashboard-welcome-alerts-layout-2a2b",
   [string]$RepoZipBase = "https://github.com/edwinkasienyo-ai/Kasienyo/archive/refs/heads",
   [string]$DbPort = "3307",
   [string]$DbHost = "127.0.0.1",
