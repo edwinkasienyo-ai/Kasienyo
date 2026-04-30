@@ -1323,9 +1323,9 @@ button:hover {
 
 .cards {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
-  gap: 5px;
-  margin-bottom: 6px;
+  grid-template-columns: repeat(auto-fit, minmax(92px, 1fr));
+  gap: 4px;
+  margin-bottom: 5px;
 }
 
 .stats-card {
@@ -1397,7 +1397,19 @@ button:hover {
 
 .metric-card {
   border-top: 3px solid var(--accent-500);
-  min-height: 74px;
+  min-height: 58px;
+  padding: 4px 5px;
+}
+
+.metric-card h4 {
+  font-size: 8px;
+  line-height: 1.1;
+  margin-bottom: 2px;
+}
+
+.metric-card p {
+  font-size: 10px;
+  line-height: 1.1;
 }
 
 .metric-alertsAnnouncements {
