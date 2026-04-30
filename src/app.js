@@ -3571,7 +3571,7 @@ app.get(
     const institutionRows = includeInstitutions
       ? (isSystemDeveloper
         ? await query(
-          `SELECT id, institution_name, institution_code, county, category, email, phone, is_active, created_at
+          `SELECT id, institution_name, institution_code, county, NULL AS category, email, phone, is_active, created_at
            FROM institutions
            WHERE ? = ''
              OR institution_name LIKE CONCAT('%', ?, '%')
