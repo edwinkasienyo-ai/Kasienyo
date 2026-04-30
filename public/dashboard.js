@@ -2482,6 +2482,19 @@ async function loadLearnerMaterials() {
   }
 }
 
+function normalizeStatusLabel(value) {
+  return Number(value) === 1 || String(value).toLowerCase() === "active" ? "Active" : "Inactive";
+}
+
+function buildSearchScopeSection(title, headers, rows) {
+  return `
+    <section class="dashboard-section search-scope-table">
+      <h4>${escapeHtml(title)}</h4>
+      ${buildDashboardTable(headers, rows)}
+    </section>
+  `;
+}
+
 async function globalSearch() {
   setActiveSidebarButton(null);
   const q = document.getElementById("globalSearch").value.trim();
@@ -2588,6 +2601,7 @@ async function globalSearch() {
           <button id="clearSearchFiltersButton">Clear Filters</button>
         </div>
       </div>
+      <div id="searchResultsPanels" class="search-results-panels"></div>
     `;
     const byNameAsc = (rows = []) =>
       [...rows].sort((a, b) => {
@@ -2605,16 +2619,7 @@ async function globalSearch() {
     const bomData = byNameAsc(Array.isArray(result.bom) ? result.bom : []);
     const institutionsData = byNameAsc(Array.isArray(result.institutions) ? result.institutions : []);
     const usersData = byNameAsc(Array.isArray(result.users) ? result.users : []);
-    const parentsBomData = byNameAsc([...parentsData, ...bomData]);
-    let combinedRows = byNameAsc([
-      ...learnersData,
-      ...teachersData,
-      ...parentsData,
-      ...bomData,
-      ...institutionsData,
-      ...usersData
-    ]);
-    renderTable(combinedRows);
+    resetDataTable("Search results are shown above in separate scope tables.");
 
     const toggleScopedFilters = () => {
       const scope = (document.getElementById("searchScope")?.value || "all").toLowerCase();
@@ -2639,27 +2644,7 @@ async function globalSearch() {
       const streamFilter = (document.getElementById("searchStreamFilter")?.value || "").trim().toLowerCase();
       const statusFilter = (document.getElementById("searchStatusFilter")?.value || "").trim().toLowerCase();
       const roleFilter = (document.getElementById("searchRoleFilter")?.value || "").trim().toLowerCase();
-
-      const sourceRows =
-        scope === "learners"
-          ? learnersData
-          : scope === "teachers"
-            ? teachersData
-            : scope === "parents"
-              ? parentsData
-              : scope === "bom"
-                ? bomData
-                : scope === "grade"
-                  ? learnersData
-                  : scope === "stream"
-                    ? learnersData
-                : scope === "institutions"
-                  ? institutionsData
-                  : scope === "users"
-                    ? usersData
-                    : combinedRows;
-      const filteredRows = sourceRows.filter((row) => {
-        const rowRole = String(row.role || "").toLowerCase();
+      const learnersFiltered = learnersData.filter((row) => {
         const rowGrade = String(row.grade || "").toLowerCase();
         const rowForm = String(row.form_name || "").toLowerCase();
         const rowStream = String(row.stream || "").toLowerCase();
@@ -2668,12 +2653,192 @@ async function globalSearch() {
         if (classFormFilter && !rowGrade.includes(classFormFilter) && !rowForm.includes(classFormFilter)) return false;
         if (streamFilter && !rowStream.includes(streamFilter)) return false;
         if (statusFilter && !rowStatus.includes(statusFilter)) return false;
-        if (roleFilter && !rowRole.includes(roleFilter)) return false;
         return true;
       });
-      const sortedRows = byNameAsc(filteredRows);
-      renderTable(sortedRows);
-      if (!filteredRows.length) {
+      const teachersFiltered = teachersData.filter((row) => {
+        const rowRole = String(row.role || row.category || "").toLowerCase();
+        const rowStatus = String(row.status || row.employment_status || "").toLowerCase();
+        if (roleFilter && !rowRole.includes(roleFilter)) return false;
+        if (statusFilter && !rowStatus.includes(statusFilter)) return false;
+        return true;
+      });
+      const parentsFiltered = parentsData.filter((row) => {
+        const rowGrade = String(row.grade || "").toLowerCase();
+        const rowForm = String(row.form_name || "").toLowerCase();
+        const rowStream = String(row.stream || "").toLowerCase();
+        const rowStatus = String(row.status || "").toLowerCase();
+        if (gradeFilter && !rowGrade.includes(gradeFilter) && !rowForm.includes(gradeFilter)) return false;
+        if (classFormFilter && !rowGrade.includes(classFormFilter) && !rowForm.includes(classFormFilter)) return false;
+        if (streamFilter && !rowStream.includes(streamFilter)) return false;
+        if (statusFilter && !rowStatus.includes(statusFilter)) return false;
+        return true;
+      });
+      const bomFiltered = bomData.filter((row) => {
+        const rowRole = String(row.role || "").toLowerCase();
+        const rowStatus = String(normalizeStatusLabel(row.is_active)).toLowerCase();
+        if (roleFilter && !rowRole.includes(roleFilter)) return false;
+        if (statusFilter && !rowStatus.includes(statusFilter)) return false;
+        return true;
+      });
+      const institutionsFiltered = institutionsData.filter((row) => {
+        const rowStatus = String(normalizeStatusLabel(row.is_active)).toLowerCase();
+        if (statusFilter && !rowStatus.includes(statusFilter)) return false;
+        return true;
+      });
+      const usersFiltered = usersData.filter((row) => {
+        const rowRole = String(row.role || "").toLowerCase();
+        const rowStatus = String(normalizeStatusLabel(row.is_active)).toLowerCase();
+        if (roleFilter && !rowRole.includes(roleFilter)) return false;
+        if (statusFilter && !rowStatus.includes(statusFilter)) return false;
+        return true;
+      });
+      const scopedRows =
+        scope === "learners"
+          ? learnersFiltered
+          : scope === "grade"
+            ? learnersFiltered
+            : scope === "stream"
+              ? learnersFiltered
+              : scope === "teachers"
+                ? teachersFiltered
+                : scope === "parents"
+                  ? parentsFiltered
+                  : scope === "bom"
+                    ? bomFiltered
+                    : scope === "institutions"
+                      ? institutionsFiltered
+                      : scope === "users"
+                        ? usersFiltered
+                        : [
+                            ...learnersFiltered,
+                            ...teachersFiltered,
+                            ...parentsFiltered,
+                            ...bomFiltered,
+                            ...institutionsFiltered,
+                            ...usersFiltered
+                          ];
+      const searchPanels = document.getElementById("searchResultsPanels");
+      if (!searchPanels) return;
+      const sections = [];
+      if (scope === "all" || scope === "learners") {
+        sections.push(buildSearchScopeSection(
+          "Learners",
+          ["Learner Name", "Adm No", "Grade/Form", "Stream", "Status", "Parent/Guardian"],
+          learnersFiltered.map((row) => [
+            row.full_name || "-",
+            row.admission_number || "-",
+            row.grade || row.form_name || "-",
+            row.stream || "-",
+            row.status || "-",
+            row.parent_full_name || "-"
+          ])
+        ));
+      }
+      if (scope === "grade") {
+        sections.push(buildSearchScopeSection(
+          `Learners By Grade${gradeFilter ? ` (${gradeFilterValue})` : ""}`,
+          ["Learner Name", "Adm No", "Grade/Form", "Stream", "Status"],
+          learnersFiltered.map((row) => [
+            row.full_name || "-",
+            row.admission_number || "-",
+            row.grade || row.form_name || "-",
+            row.stream || "-",
+            row.status || "-"
+          ])
+        ));
+      }
+      if (scope === "stream") {
+        sections.push(buildSearchScopeSection(
+          "Learners By Stream",
+          ["Learner Name", "Adm No", "Class/Form", "Stream", "Status"],
+          learnersFiltered.map((row) => [
+            row.full_name || "-",
+            row.admission_number || "-",
+            row.grade || row.form_name || "-",
+            row.stream || "-",
+            row.status || "-"
+          ])
+        ));
+      }
+      if (scope === "all" || scope === "teachers") {
+        sections.push(buildSearchScopeSection(
+          "Teachers",
+          ["Teacher Name", "TSC/ID", "Learning Area", "Category", "Contact", "Status"],
+          teachersFiltered.map((row) => [
+            row.full_name || "-",
+            row.tsc_number || row.id_number || "-",
+            row.major_subject || row.other_subject || "-",
+            row.category || row.employment_status || "-",
+            row.phone_number || row.phone || "-",
+            row.status || row.accountability_status || "-"
+          ])
+        ));
+      }
+      if (scope === "all" || scope === "parents") {
+        sections.push(buildSearchScopeSection(
+          "Parents/Guardians",
+          ["Parent/Guardian", "Phone", "Email", "Learner", "Grade/Form", "Stream"],
+          parentsFiltered.map((row) => [
+            row.parent_full_name || "-",
+            row.parent_phone || "-",
+            row.parent_email || "-",
+            row.full_name || "-",
+            row.grade || row.form_name || "-",
+            row.stream || "-"
+          ])
+        ));
+      }
+      if (scope === "all" || scope === "bom") {
+        sections.push(buildSearchScopeSection(
+          "BoM Members",
+          ["Name", "Username", "Role", "Phone", "Email", "Status"],
+          bomFiltered.map((row) => [
+            row.full_name || "-",
+            row.username || "-",
+            formatRoleDisplay(row.role || ""),
+            row.phone || "-",
+            row.email || "-",
+            normalizeStatusLabel(row.is_active)
+          ])
+        ));
+      }
+      if (showInstitutionUserScope && (scope === "all" || scope === "institutions")) {
+        sections.push(buildSearchScopeSection(
+          "Institutions",
+          ["Institution Name", "Code", "County", "Category", "Email", "Phone", "Status"],
+          institutionsFiltered.map((row) => [
+            row.institution_name || "-",
+            row.institution_code || "-",
+            row.county || "-",
+            row.category || "-",
+            row.email || "-",
+            row.phone || "-",
+            normalizeStatusLabel(row.is_active)
+          ])
+        ));
+      }
+      if (showInstitutionUserScope && (scope === "all" || scope === "users")) {
+        sections.push(buildSearchScopeSection(
+          "Users",
+          ["Full Name", "Username", "Role", "Institution ID", "Email", "Phone", "Status"],
+          usersFiltered.map((row) => [
+            row.full_name || "-",
+            row.username || "-",
+            formatRoleDisplay(row.role || ""),
+            row.institution_id || "-",
+            row.email || "-",
+            row.phone || "-",
+            normalizeStatusLabel(row.is_active)
+          ])
+        ));
+      }
+      if (!showInstitutionUserScope && (scope === "institutions" || scope === "users")) {
+        sections.push('<section class="dashboard-section search-scope-table"><h4>Access Denied</h4><p class="small-note">Institutions and Users search scopes are available to the System Developer only.</p></section>');
+      }
+      searchPanels.innerHTML = sections.length
+        ? sections.join("")
+        : '<section class="dashboard-section search-scope-table"><h4>No Results</h4><p class="small-note">No records match your selected filters.</p></section>';
+      if (!scopedRows.length) {
         resetDataTable("No records match your selected filters.");
       }
     };
@@ -2703,9 +2868,11 @@ async function globalSearch() {
       });
       const scopeEl = document.getElementById("searchScope");
       if (scopeEl) scopeEl.value = "all";
-      renderTable(combinedRows);
+      resetDataTable("Search results are shown above in separate scope tables.");
       toggleScopedFilters();
+      applyFilters();
     });
+    applyFilters();
   } catch (error) {
     alert(error.message);
   }

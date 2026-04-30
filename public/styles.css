@@ -2353,6 +2353,32 @@ tbody tr:hover {
   font-size: 11px;
 }
 
+.search-results-separate {
+  display: grid;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.search-results-section {
+  border: 1px solid var(--line-200);
+  border-radius: var(--radius-md);
+  background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
+  box-shadow: var(--shadow-sm);
+  padding: 8px;
+}
+
+.search-results-section h4 {
+  margin: 0 0 6px;
+  color: var(--primary-900);
+  font-size: 13px;
+}
+
+.search-results-empty {
+  margin: 0;
+  font-size: 11px;
+  color: var(--text-700);
+}
+
 .chat-panel {
   border: 1px solid #dce6f3;
   border-radius: 10px;
