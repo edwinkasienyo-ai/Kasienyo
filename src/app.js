@@ -3586,10 +3586,30 @@ app.get(
         [institutionId, ROLES.BOM, "BOARD_OF_MANAGEMENT", cleanValue(q), cleanValue(q), cleanValue(q), cleanValue(q), cleanValue(q), rowLimit]
       )
       : [];
-    const institutionRows = includeInstitutions
-      ? (isSystemDeveloper
-        ? await query(
+    let institutionRows = [];
+    if (includeInstitutions && isSystemDeveloper) {
+      try {
+        institutionRows = await query(
           `SELECT id, institution_name, institution_code, county, sub_county AS category, email, phone, is_active, created_at
+           FROM institutions
+           WHERE ? = ''
+             OR institution_name LIKE CONCAT('%', ?, '%')
+             OR institution_code LIKE CONCAT('%', ?, '%')
+             OR county LIKE CONCAT('%', ?, '%')
+             OR sub_county LIKE CONCAT('%', ?, '%')
+             OR email LIKE CONCAT('%', ?, '%')
+             OR phone LIKE CONCAT('%', ?, '%')
+           ORDER BY institution_name ASC
+           LIMIT ?`,
+          [cleanValue(q), cleanValue(q), cleanValue(q), cleanValue(q), cleanValue(q), cleanValue(q), cleanValue(q), rowLimit]
+        );
+      } catch (error) {
+        // Compatibility fallback for legacy schemas where sub_county/category may be absent.
+        if (error?.code !== "ER_BAD_FIELD_ERROR") {
+          throw error;
+        }
+        institutionRows = await query(
+          `SELECT id, institution_name, institution_code, county, NULL AS category, email, phone, is_active, created_at
            FROM institutions
            WHERE ? = ''
              OR institution_name LIKE CONCAT('%', ?, '%')
@@ -3600,9 +3620,9 @@ app.get(
            ORDER BY institution_name ASC
            LIMIT ?`,
           [cleanValue(q), cleanValue(q), cleanValue(q), cleanValue(q), cleanValue(q), cleanValue(q), rowLimit]
-        )
-        : [])
-      : [];
+        );
+      }
+    }
     const userRows = includeUsers
       ? (isSystemDeveloper
         ? await query(
