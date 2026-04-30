@@ -296,6 +296,18 @@ async function ensureUserPasswordPolicyColumns() {
     await query("ALTER TABLE institutions ADD COLUMN postal_address VARCHAR(255) NULL");
   }
 
+  const institutionCategoryRows = await query(
+    `SELECT COUNT(*) total
+     FROM INFORMATION_SCHEMA.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = 'institutions'
+       AND COLUMN_NAME = 'category'`
+  );
+  if (!Number(institutionCategoryRows[0]?.total || 0)) {
+    // Backward compatibility for older search queries that still reference institutions.category.
+    await query("ALTER TABLE institutions ADD COLUMN category VARCHAR(100) NULL");
+  }
+
   const institutionAgreementTemplateRows = await query(
     `SELECT COUNT(*) total
      FROM INFORMATION_SCHEMA.COLUMNS
