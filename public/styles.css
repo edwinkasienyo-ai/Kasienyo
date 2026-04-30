@@ -961,7 +961,7 @@ button:hover {
 
 .dashboard-alerts-priority h3 {
   margin: 0 0 5px;
-  font-size: 13px;
+  font-size: 14px;
   color: #e8b53c;
 }
 
@@ -978,6 +978,19 @@ button:hover {
 
 .alerts-top-slot {
   margin-bottom: 8px;
+}
+
+.dashboard-alerts-priority-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.dashboard-alerts-priority-col {
+  border: 1px solid var(--line-200);
+  border-radius: 10px;
+  background: #f8fbff;
+  padding: 6px 8px;
 }
 
 .profile-card {
@@ -1226,7 +1239,10 @@ button:hover {
 
 .topbar-left h1 {
   margin: 0;
-  font-size: 12px;
+  font-size: 20px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-weight: 900;
   line-height: 1.1;
 }
 

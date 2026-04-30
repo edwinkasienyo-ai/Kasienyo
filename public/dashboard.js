@@ -147,9 +147,8 @@ function applyDashboardIdentity(meData = {}) {
   }
   const welcomeEl = document.getElementById("dashboardWelcomeLine");
   const nameCandidate = String(meData?.full_name || meData?.username || "").trim() || "USER";
-  const firstName = nameCandidate.split(/\s+/)[0] || nameCandidate;
   if (welcomeEl) {
-    welcomeEl.textContent = `WELCOME ${firstName.toUpperCase()} TO THE IMIS FOR BASIC EDUCATION LEARNING INSTITUTIONS`;
+    welcomeEl.textContent = `WELCOME ${nameCandidate.toUpperCase()} TO THE IMIS FOR BASIC EDUCATION LEARNING INSTITUTIONS`;
   }
 }
 
@@ -2267,7 +2266,7 @@ function renderDashboardCards(stats) {
 
 async function loadDashboard() {
   setActiveSidebarButton("dashboard");
-  document.getElementById("moduleTitle").textContent = "Dashboard";
+  document.getElementById("moduleTitle").textContent = "DASHBOARD";
   try {
     const data = await request("/api/dashboard/summary");
     renderDashboardCards(data.stats || {});
@@ -2333,6 +2332,28 @@ async function loadDashboard() {
       `
       )
       .join("");
+    const topAreaEl = document.getElementById("dashboardTopArea");
+    if (topAreaEl) {
+      topAreaEl.innerHTML = `
+        <section class="dashboard-section dashboard-alerts-priority alerts-top-slot">
+          <h3>Alerts & Announcements</h3>
+          <div class="dashboard-alerts-priority-grid">
+            <div class="dashboard-alerts-priority-col">
+              <h4>System Alerts</h4>
+              <div class="dashboard-alerts">
+                ${alertsMarkup || '<p class="small-note">No Active Announcements</p><p class="small-note">There are no active announcements scheduled for today.</p>'}
+              </div>
+            </div>
+            <div class="dashboard-alerts-priority-col">
+              <h4>Active Announcements</h4>
+              <div class="dashboard-announcements">
+                ${announcementMarkup || '<p class="small-note">No active announcements.</p>'}
+              </div>
+            </div>
+          </div>
+        </section>
+      `;
+    }
     const logRows = (data.systemActivityLogs || []).map((row) => [
       formatDateTime(row.created_at),
       row.actor_role || "-",
@@ -2386,17 +2407,6 @@ async function loadDashboard() {
           )}
           <h4>Learners with Outstanding Balances</h4>
           ${buildDashboardTable(["Learner", "Adm No", "Grade", "Stream", "Balance"], outstandingRows)}
-        </section>
-        <section class="dashboard-section">
-          <h3>Alerts & Announcements</h3>
-          <h4>System Alerts</h4>
-          <div class="dashboard-alerts">
-            ${alertsMarkup || '<p class="small-note">No alerts for today.</p>'}
-          </div>
-          <h4>Active Announcements</h4>
-          <div class="dashboard-announcements">
-            ${announcementMarkup || '<p class="small-note">No active announcements.</p>'}
-          </div>
         </section>
         <section class="dashboard-section">
           <h3>System Activity Logs</h3>
