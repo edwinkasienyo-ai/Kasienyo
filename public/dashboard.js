@@ -90,6 +90,14 @@ function isSystemAdminRole() {
   return ["SYSTEM_DEVELOPER", "ADMIN", "HEAD_OF_INSTITUTION"].includes(role);
 }
 
+function isSystemDeveloperRole(roleValue = "") {
+  const normalized = String(roleValue || "")
+    .trim()
+    .toUpperCase()
+    .replace(/\s+/g, "_");
+  return ["SYSTEM_DEVELOPER", "SYSTEMDEVELOPER", "SYTEM_DEVELOPER"].includes(normalized);
+}
+
 function formatRoleLabel(role) {
   const normalized = String(role || "").toUpperCase();
   if (normalized === "SYSTEM_DEVELOPER") return "SYSTEM DEVELOPER";
@@ -2617,7 +2625,7 @@ async function globalSearch() {
     const result = await request(`/api/search/global?${params.toString()}`);
     document.getElementById("moduleTitle").textContent = `SEARCH RESULTS: ${q || "ALL"}`;
     const summaryDescription =
-      portalContext?.role === "SYSTEM_DEVELOPER"
+      isSystemDeveloperRole(portalContext?.role)
         ? "Cross-portal search intelligence view."
         : "Search intelligence view for your institution.";
     const gradeOptions = Array.isArray(meta?.gradeOptions) ? meta.gradeOptions : [];
@@ -2637,7 +2645,7 @@ async function globalSearch() {
         <p>${formatNumber(result.parentsAndBom?.length || 0)}</p>
       </div>
     `;
-    const showInstitutionUserScope = String(portalContext?.role || "") === "SYSTEM_DEVELOPER";
+    const showInstitutionUserScope = isSystemDeveloperRole(portalContext?.role);
     document.getElementById("formArea").innerHTML = `
       <div class="module-header-card">
         <h3>Global Search Intelligence</h3>
