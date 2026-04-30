@@ -3039,10 +3039,10 @@ function renderProfileCenter(profile) {
           </select>
           <label>Previous Password</label>
           <input id="profileCurrentPassword" type="password" placeholder="Previous password" />
-          <label>New Password</label>
-          <input id="profileNewPassword" type="password" placeholder="New password" />
-          <label>Confirm New Password</label>
-          <input id="profileConfirmPassword" type="password" placeholder="Confirm new password" />
+          <label>Current Password</label>
+          <input id="profileNewPassword" type="password" placeholder="Current password" />
+          <label>Confirm Current Password</label>
+          <input id="profileConfirmPassword" type="password" placeholder="Confirm current password" />
           <label>New Email</label>
           <input id="profileNewEmail" type="email" placeholder="Email" value="${escapeHtmlAttribute(profile?.email || "")}" />
           <label>New Mobile Number</label>
