@@ -9,7 +9,7 @@ let currentEditId = null;
 let allowedModules = [];
 let portalContext = null;
 let searchRowDrafts = {};
-let dashboardAutoRefreshHandle = null;
+const CLIENT_UI_BUNDLE_ID = "dash-bundle-rev36";
 const DASHBOARD_STAT_LABELS = {
   totalLearners: "Total Learners Population",
   totalActiveLearners: "Active Learners",
@@ -36,9 +36,23 @@ const DASHBOARD_STAT_LABELS = {
   totalFeesCollectedToday: "Fees Collected Today (KES)"
 };
 
+const DASHBOARD_WIDGET_KEYS = [
+  "dashboard-alerts-announcements",
+  "dashboard-attendance-list",
+  "dashboard-performance",
+  "dashboard-fee-collection",
+  "dashboard-outstanding-balances"
+];
+
 const MODULE_KEY_BY_ID = {
   dashboard: "dashboard",
+  "dashboard-alerts-announcements": "dashboard-alerts-announcements",
+  "dashboard-attendance-list": "dashboard-attendance-list",
+  "dashboard-performance": "dashboard-performance",
+  "dashboard-fee-collection": "dashboard-fee-collection",
+  "dashboard-outstanding-balances": "dashboard-outstanding-balances",
   admission: "admission",
+  "management-staff-service": "staff-service-providers",
   "management-teachers": "management-teachers",
   "management-non-teaching": "management-non-teaching",
   "management-teacher-resources": "management-teacher-resources",
@@ -72,7 +86,11 @@ const MODULE_DESCRIPTIONS = {
   dashboard: "Real-time institution intelligence and activity overview.",
   admission: "Manage learner admissions, profiles, and onboarding records.",
   "management-teachers": "Maintain teacher profiles and professional details.",
-  "management-non-teaching": "Manage non-teaching staff records and roles.",
+  "management-non-teaching": "Manage support staff records and roles.",
+  "management-staff-service":
+    "Consolidated hub for teachers, support staff, BoM members, and service providers with registration workflows.",
+  "management-service-providers": "Register service providers and companies supporting the institution.",
+  "management-bom": "Maintain Board of Management member profiles and contact data.",
   "management-teacher-resources": "Organize lesson plans, schemes, and class resources.",
   attendance: "Track daily attendance, punctuality, and attendance analytics.",
   "academic-exams": "Create and manage assessments by class, strand, and term.",
@@ -105,6 +123,15 @@ function isSystemAdminRole() {
   return ["SYSTEM_DEVELOPER", "ADMIN", "HEAD_OF_INSTITUTION"].includes(role);
 }
 
+function canOpenSecurityAuditModule() {
+  const role = normalizeRoleKey(portalContext?.role || "");
+  return role === "SYSTEM_DEVELOPER" || role === "HEAD_OF_INSTITUTION";
+}
+
+function isAllowedAccessControlAdministrator() {
+  const role = normalizeRoleKey(portalContext?.role || "");
+  return role === "SYSTEM_DEVELOPER" || role === "HEAD_OF_INSTITUTION";
+}
 function isSystemDeveloperRole(roleValue = "") {
   const normalized = String(roleValue || "")
     .trim()
@@ -371,7 +398,8 @@ async function performRegistryRowAction(entityType, row = {}, action = "view") {
         return;
       }
       if (action === "delete") {
-        if (!window.confirm("Move this institution to recycle bin?")) return;
+        const ok = await confirmSoftDeletePrompts();
+        if (!ok) return;
         await request(`/api/system/registry/institutions/${rowId}`, { method: "DELETE" });
         alert("Institution moved to recycle bin.");
         await renderInstitutionsRegistry();
@@ -435,9 +463,10 @@ async function performRegistryRowAction(entityType, row = {}, action = "view") {
       await renderInstitutionsRegistry();
       return;
     }
-    if (action === "delete") {
-      if (!window.confirm("Move this user to recycle bin?")) return;
-      await request(`/api/users/${rowId}`, { method: "DELETE" });
+      if (action === "delete") {
+        const ok = await confirmSoftDeletePrompts();
+        if (!ok) return;
+        await request(`/api/users/${rowId}`, { method: "DELETE" });
       alert("User moved to recycle bin.");
       await renderInstitutionsRegistry();
       return;
@@ -462,11 +491,15 @@ async function performRegistryRowAction(entityType, row = {}, action = "view") {
 
 async function purgeRecycleWithThreeStepPrompt(recycleId) {
   if (!recycleId) throw new Error("Recycle item id is required.");
-  const first = prompt("Permanent delete confirmation step 1: Type YES");
+  if (!window.confirm("Confirm permanently delete this recycle bin record?")) return null;
+  if (!window.confirm("Acknowledge that data cannot be retrieved once permanently deleted.")) return null;
+  if (!window.confirm("Confirm the System Developer will not be held individually or collectively liable for this action."))
+    return null;
+  const first = prompt("Permanent delete verification step 1: Type YES");
   if (first === null) return null;
-  const second = prompt("Permanent delete confirmation step 2: Type CONFIRM");
+  const second = prompt("Permanent delete verification step 2: Type CONFIRM");
   if (second === null) return null;
-  const third = prompt("Permanent delete confirmation step 3: Type DELETE");
+  const third = prompt("Permanent delete verification step 3: Type DELETE");
   if (third === null) return null;
   return request(`/api/system/recycle-bin/${recycleId}`, {
     method: "DELETE",
@@ -1138,19 +1171,48 @@ async function renderSystemRegistration() {
 async function renderModuleRights() {
   setActiveSidebarButton("system-access-control");
   document.getElementById("moduleTitle").textContent = "Access Control (Module Rights)";
-  if (!isSystemAdminRole()) {
-    alert("Only System Developer, Admin, or Head of Institution can manage module rights.");
-    return loadDashboard();
+  if (!isAllowedAccessControlAdministrator()) {
+    try {
+      const me = await request("/api/auth/me");
+      const res = await request(`/api/system/module-access/overrides?user_id=${me.id}`);
+      const overrides = Array.isArray(res?.overrides) ? res.overrides : [];
+      const hasDelegated = overrides.some(
+        (row) =>
+          String(row.module_key) === "access-control" &&
+          Number(row.can_access) === 1 &&
+          ["ACCESS", "VIEW", "", null].includes(String(row.permission_key || "ACCESS"))
+      );
+      if (!hasDelegated) {
+        alert(
+          "Access Control is reserved for the System Developer and Head of Institution unless the System Developer has granted you delegated access."
+        );
+        return loadDashboard();
+      }
+      allowedModules = Array.from(new Set([...(allowedModules || []), "access-control"]));
+    } catch (error) {
+      alert(error.message || "You do not have access to Access Control.");
+      return loadDashboard();
+    }
   }
   try {
     const [users, metaData] = await Promise.all([
       request("/api/users"),
       request("/api/meta")
     ]);
-    const moduleKeys = Object.values(metaData?.moduleKeys || {});
+    const moduleKeysRaw = Array.from(new Set(Object.values(metaData?.moduleKeys || {})));
+    const dashboardWidgetKeys = [
+      "dashboard-alerts-announcements",
+      "dashboard-attendance-list",
+      "dashboard-performance",
+      "dashboard-fee-collection",
+      "dashboard-outstanding-balances"
+    ];
+    const moduleKeys = Array.from(new Set([...moduleKeysRaw, ...dashboardWidgetKeys])).sort((a, b) =>
+      String(a).localeCompare(String(b))
+    );
     const defaultMap = metaData?.defaultModuleAccessByRole || {};
     const rows = Array.isArray(users) ? users.slice(0, 200) : [];
-    const permissionKeys = ["ACCESS", "VIEW", "EDIT", "DELETE", "SAVE", "PROCESS", "SHOW_ROLES"];
+    const permissionKeys = ["ACCESS", "VIEW", "EDIT", "DELETE", "SAVE", "PROCESS", "MODIFY", "DOWNLOAD", "SHOW_ROLES"];
     const permissionLabels = {
       ACCESS: "View",
       VIEW: "View",
@@ -1158,6 +1220,8 @@ async function renderModuleRights() {
       DELETE: "Delete",
       SAVE: "Save",
       PROCESS: "Process",
+      MODIFY: "Modify",
+      DOWNLOAD: "Download",
       SHOW_ROLES: "Show Roles"
     };
     const fallbackModuleError = "Access denied until rights are granted by the System Developer.";
@@ -1203,6 +1267,8 @@ async function renderModuleRights() {
         <button class="iim-action-btn delete" id="moduleAccessSelectDeleteButton" title="Select All Delete">🗑 Delete</button>
         <button class="iim-action-btn success" id="moduleAccessSelectSaveButton" title="Select All Save">💾 Save</button>
         <button class="iim-action-btn warn" id="moduleAccessSelectProcessButton" title="Select All Process">⚙ Process</button>
+        <button class="iim-action-btn" id="moduleAccessSelectModifyButton" title="Select All Modify">✎ Modify</button>
+        <button class="iim-action-btn warn" id="moduleAccessSelectDownloadButton" title="Select All Download">⬇ Download</button>
         <button class="iim-action-btn success" id="saveModuleAccessButton" title="Save">💾 Save</button>
         <button class="iim-action-btn" id="modifyModuleAccessButton" title="Modify">✎ Modify</button>
         <button class="iim-action-btn warn" id="processModuleAccessButton" title="Process">⚙ Process</button>
@@ -1360,6 +1426,8 @@ async function renderModuleRights() {
     document.getElementById("moduleAccessSelectDeleteButton")?.addEventListener("click", () => setAllForPermission("DELETE", true));
     document.getElementById("moduleAccessSelectSaveButton")?.addEventListener("click", () => setAllForPermission("SAVE", true));
     document.getElementById("moduleAccessSelectProcessButton")?.addEventListener("click", () => setAllForPermission("PROCESS", true));
+    document.getElementById("moduleAccessSelectModifyButton")?.addEventListener("click", () => setAllForPermission("MODIFY", true));
+    document.getElementById("moduleAccessSelectDownloadButton")?.addEventListener("click", () => setAllForPermission("DOWNLOAD", true));
 
     await loadOverrides();
     resetDataTable("Module access matrix loaded.");
@@ -1371,9 +1439,21 @@ async function renderModuleRights() {
 async function renderSecurityAudit() {
   setActiveSidebarButton("system-audit");
   document.getElementById("moduleTitle").textContent = "Security and Logging Audit";
-  if (!isSystemAdminRole()) {
-    alert("Only System Developer, Admin, or Head of Institution can view audit logs.");
-    return loadDashboard();
+  if (!canOpenSecurityAuditModule()) {
+    document.getElementById("cards").innerHTML = `
+      <div class="card stats-card metric-emphasis">
+        <h4>Section Not Allowed</h4>
+        <p>Restricted</p>
+      </div>
+    `;
+    document.getElementById("formArea").innerHTML = `
+      <div class="module-header-card">
+        <h3>Security & Logging Audit</h3>
+        <p class="small-note">This module is not available for your role. Only the System Developer may review every institution, while the Head of Institution may review audit trails for users registered to their institution.</p>
+      </div>
+    `;
+    resetDataTable("Security audit unavailable for this account.");
+    return;
   }
   try {
     const logs = await request("/api/system/audit-logs?limit=240");
@@ -1395,7 +1475,7 @@ async function renderSecurityAudit() {
     document.getElementById("formArea").innerHTML = `
       <div class="module-header-card">
         <h3>Security & Logging Audit</h3>
-        <p>System Developer sees all logs; HoI/Administrator sees logs scoped to own institution. Other users are not allowed.</p>
+        <p>System Developer reviews every institution; Head of Institution reviews only institution-scoped activity. Entries include username, institution code, IP address, machine identifier, logging status, login time, activities, and logout time where recorded.</p>
       </div>
       <div class="actions-row">
         <button id="auditScrollLeftButton">◀</button>
@@ -1558,7 +1638,7 @@ async function renderRecycleBin() {
   try {
     const recycleData = await request("/api/system/recycle-bin?status=TRASHED&limit=200");
     const rows = Array.isArray(recycleData?.items) ? recycleData.items : [];
-    const retentionYears = Number(recycleData?.retention_years || 12);
+    const retentionYears = Number(recycleData?.retention_years || 15);
     document.getElementById("cards").innerHTML = `
       <div class="card stats-card metric-emphasis">
         <h4>Trashed Items</h4>
@@ -1576,7 +1656,7 @@ async function renderRecycleBin() {
     document.getElementById("formArea").innerHTML = `
       <div class="module-header-card">
         <h3>Recycle Bin Management</h3>
-        <p>Deleted items are retained for ${retentionYears} years. HoI/Admin purge hides item from their view but keeps it visible to System Developer retention controls.</p>
+        <p>Trashed learner and operational records remain available for institutional recovery for at least ${retentionYears} years. Non–System Developers who purge records only hide them locally; System Developer consoles retain supervisory copies for supervisory retention periods.</p>
       </div>
       <div class="actions-row">
         <button id="restoreRecycleItemButton">Restore Item</button>
@@ -2513,68 +2593,161 @@ const moduleConfigs = {
     title: "Admission Module - Learners Bio Data",
     endpoint: "/api/admission/learners",
     fields: [
-      { name: "first_name", label: "First Name" },
+      { name: "first_name", label: "Learner First Name *" },
       { name: "middle_name", label: "Middle Name" },
-      { name: "last_name", label: "Last Name" },
+      { name: "last_name", label: "Last Name *" },
       { name: "other_names", label: "Other Names" },
-      { name: "full_name", label: "Full Name" },
-      { name: "admission_number", label: "Admission Number" },
+      { name: "full_name", label: "Full Name (leave blank to auto-build)" },
+      { name: "admission_number", label: "Admission Number *" },
       { name: "date_of_admission", label: "Date of Admission", type: "date" },
-      { name: "grade", label: "Grade", type: "select", optionsKey: "gradeOptions" },
-      { name: "form_name", label: "Form", type: "select", optionsKey: "formOptions" },
+      { name: "grade", label: "Grade *", type: "select", optionsKey: "gradeOptions" },
+      { name: "form_name", label: "Form (3–4)", type: "select", optionsKey: "formOptions" },
       { name: "stream", label: "Stream" },
       { name: "assessment_number", label: "Assessment Number" },
       { name: "upi_number", label: "UPI Number" },
-      { name: "birth_certificate_number", label: "Birth Certificate Number" },
+      { name: "birth_certificate_number", label: "Birth Certificate Number *" },
       { name: "date_of_birth", label: "Date of Birth", type: "date" },
       { name: "gender", label: "Gender", type: "select", optionsKey: "genderOptions" },
-      { name: "passport_photo_path", label: "Passport Photo Path (/uploads/...)" },
-      { name: "religion", label: "Religion" },
-      { name: "nationality", label: "Nationality" },
-      { name: "county", label: "County" },
-      { name: "sub_county", label: "Sub County" },
+      { name: "passport_photo_path", label: "Photo Path (/uploads/...)", type: "textarea" },
+      { name: "religion", label: "Religion", type: "select", optionsKey: "religionOptions" },
+      { name: "nationality", label: "Nationality", type: "select", optionsKey: "nationalityOptions" },
+      { name: "county", label: "County", type: "select", optionsKey: "kenyaCountyOptions" },
+      { name: "sub_county", label: "Sub County (manual)" },
       { name: "location", label: "Location" },
-      { name: "sub_location", label: "Sub Location" },
+      { name: "sub_location", label: "Sub-location" },
       { name: "village", label: "Village" },
-      { name: "year_joined", label: "Year Joined", type: "select", optionsKey: "yearJoinedOptions" },
-      { name: "term_joined", label: "Term Joined", type: "select", optionsKey: "termOptions" },
-      { name: "orphan_condition", label: "Condition", type: "select", optionsKey: "orphanStatus" },
+      { name: "year_joined", label: "Year Joined", type: "select", optionsKey: "yearJoinedWideOptions" },
+      { name: "term_joined", label: "Term", type: "select", optionsKey: "termOptions" },
+      { name: "learner_condition", label: "Learner Condition", type: "select", options: ["Without disability", "With disability"] },
+      { name: "disability_type", label: "Disability Type", type: "select", optionsKey: "disabilityTypes" },
+      { name: "biological_parental_status", label: "Biological parental status", type: "select", options: ["Both parents alive", "Partial orphan", "Total orphan", "Others"] },
+      { name: "orphan_condition", label: "Orphan classification (legacy)", type: "select", optionsKey: "orphanStatus" },
       { name: "status", label: "Status", type: "select", optionsKey: "admissionStatus" },
-      { name: "parent_full_name", label: "Parent Name" },
-      { name: "parent_relationship", label: "Parent Relationship", type: "select", optionsKey: "relationshipOptions" },
-      { name: "parent_id_number", label: "Parent ID Number" },
-      { name: "parent_phone", label: "Parent Phone Number" },
-      { name: "parent_email", label: "Parent Email Address" }
+      { name: "parent_full_name", label: "Parent/Guardian 1 Full Name *" },
+      { name: "parent_relationship", label: "Parent/Guardian 1 Relationship", type: "select", optionsKey: "relationshipOptions" },
+      { name: "parent_id_number", label: "Parent/Guardian 1 ID Number" },
+      { name: "parent_phone", label: "Parent/Guardian 1 Mobile *" },
+      { name: "parent_phone_secondary", label: "Parent/Guardian 1 Mobile 2" },
+      { name: "parent_email", label: "Parent/Guardian 1 Email" },
+      { name: "parent_nationality", label: "Parent/Guardian 1 Nationality *", type: "select", optionsKey: "nationalityOptions" },
+      { name: "parent_residence", label: "Parent/Guardian 1 Residence *" },
+      { name: "parent_occupation", label: "Parent/Guardian 1 Occupation *" },
+      { name: "parent2_full_name", label: "Parent/Guardian 2 Full Name" },
+      { name: "parent2_relationship", label: "Parent/Guardian 2 Relationship", type: "select", optionsKey: "relationshipOptions" },
+      { name: "parent2_id_number", label: "Parent/Guardian 2 ID Number" },
+      { name: "parent2_phone_primary", label: "Parent/Guardian 2 Mobile" },
+      { name: "parent2_phone_secondary", label: "Parent/Guardian 2 Mobile 2" },
+      { name: "parent2_email", label: "Parent/Guardian 2 Email" },
+      { name: "parent2_nationality", label: "Parent/Guardian 2 Nationality", type: "select", optionsKey: "nationalityOptions" },
+      { name: "parent2_residence", label: "Parent/Guardian 2 Residence" },
+      { name: "parent2_occupation", label: "Parent/Guardian 2 Occupation" },
+      { name: "postal_code_lookup", label: "Kenya postal code → town (helper)", type: "select", optionsKey: "postalCodeTownOptions" },
+      { name: "conduct_status", label: "Conduct Status" },
+      { name: "learner_password_hash", label: "Learner password hash (technical)" }
     ]
   },
   "management-teachers": {
     title: "Teachers Profile",
     endpoint: "/api/management/teachers",
     fields: [
-      { name: "full_name", label: "Full Name" },
-      { name: "tsc_number", label: "TSC Number" },
-      { name: "id_number", label: "ID Number" },
-      { name: "phone_number", label: "Phone Number" },
+      { name: "full_name", label: "Full Name *" },
+      { name: "tsc_number", label: "TSC Number *" },
+      { name: "id_number", label: "ID Number *" },
+      { name: "postal_address", label: "Postal Address" },
+      { name: "postal_code", label: "Postal Code (Kenya)" },
+      { name: "town", label: "Town" },
+      {
+        name: "postal_code_lookup",
+        label: "Postal code → town helper",
+        type: "select",
+        optionsKey: "postalCodeTownOptions"
+      },
+      { name: "phone_number", label: "Mobile Number *" },
+      { name: "email_address", label: "Email Address" },
       { name: "category", label: "Category", type: "select", optionsKey: "staffCategories" },
       { name: "major_subject", label: "Major Subject", type: "select", optionsKey: "subjectOptions" },
       { name: "other_subject", label: "Other Subject", type: "select", optionsKey: "subjectOptions" },
       { name: "next_of_kin_name", label: "Next of Kin Name" },
       { name: "next_of_kin_relationship", label: "Next of Kin Relationship" },
       { name: "next_of_kin_mobile", label: "Next of Kin Mobile" },
-      { name: "next_of_kin_email", label: "Next of Kin Email" }
+      { name: "next_of_kin_email", label: "Next of Kin Email" },
+      { name: "passport_photo_path", label: "Photo path (/uploads/...)" },
+      { name: "employment_status", label: "Employment Status", type: "select", options: ["Active", "Suspended", "Inactive"] }
     ]
   },
   "management-non-teaching": {
-    title: "Non-Teaching Staff Profile",
+    title: "Support Staff Profile",
     endpoint: "/api/management/non-teaching-staff",
     fields: [
-      { name: "full_name", label: "Full Name" },
-      { name: "staff_number", label: "Staff Number (or auto generated)" },
+      { name: "full_name", label: "Full Name *" },
+      { name: "staff_number", label: "Service Number *" },
       { name: "id_number", label: "ID Number" },
-      { name: "phone_number", label: "Phone Number" },
+      { name: "postal_address", label: "Postal Address" },
+      { name: "postal_code", label: "Postal Code" },
+      { name: "town", label: "Town" },
+      {
+        name: "postal_code_lookup",
+        label: "Postal code → town helper",
+        type: "select",
+        optionsKey: "postalCodeTownOptions"
+      },
+      { name: "phone_number", label: "Mobile Number *" },
+      { name: "email_address", label: "Email Address" },
       { name: "position_department", label: "Position/Department" },
       { name: "next_of_kin_name", label: "Next of Kin Name" },
-      { name: "next_of_kin_contact", label: "Next of Kin Contact" }
+      { name: "next_of_kin_relationship", label: "Next of Kin Relationship" },
+      { name: "next_of_kin_mobile", label: "Next of Kin Mobile" },
+      { name: "next_of_kin_email", label: "Next of Kin Email" },
+      { name: "next_of_kin_contact", label: "Next of Kin Contact (legacy)" },
+      { name: "passport_photo_path", label: "Photo path (/uploads/...)" }
+    ]
+  },
+  "management-service-providers": {
+    title: "Service Providers Profile",
+    endpoint: "/api/management/service-providers",
+    fields: [
+      { name: "full_name", label: "Full Name *" },
+      { name: "company_name", label: "Entity / Company Name" },
+      { name: "id_number", label: "ID Number" },
+      { name: "service_rendered", label: "Service Being Rendered" },
+      { name: "postal_address", label: "Postal Address" },
+      { name: "postal_code", label: "Postal Code" },
+      { name: "town", label: "Town" },
+      {
+        name: "postal_code_lookup",
+        label: "Postal code → town helper",
+        type: "select",
+        optionsKey: "postalCodeTownOptions"
+      },
+      { name: "phone_number", label: "Mobile Number *" },
+      { name: "email_address", label: "Email Address" },
+      { name: "next_of_kin_name", label: "Next of Kin Name" },
+      { name: "next_of_kin_relationship", label: "Relationship" },
+      { name: "next_of_kin_mobile", label: "Next of Kin Mobile" },
+      { name: "next_of_kin_email", label: "Next of Kin Email" },
+      { name: "passport_photo_path", label: "Photo path (/uploads/...)" },
+      { name: "employment_status", label: "Status", type: "select", options: ["Active", "Suspended", "Inactive"] }
+    ]
+  },
+  "management-bom": {
+    title: "Board of Management (BoM)",
+    endpoint: "/api/management/bom",
+    fields: [
+      { name: "full_name", label: "BoM Member Full Name *" },
+      { name: "id_number", label: "ID Number" },
+      { name: "postal_address", label: "Postal Address" },
+      { name: "postal_code", label: "Postal Code" },
+      { name: "town", label: "Town" },
+      {
+        name: "postal_code_lookup",
+        label: "Postal code → town helper",
+        type: "select",
+        optionsKey: "postalCodeTownOptions"
+      },
+      { name: "phone_number", label: "Mobile Number *" },
+      { name: "email_address", label: "Email Address" },
+      { name: "passport_photo_path", label: "Photo path (/uploads/...)" },
+      { name: "employment_status", label: "Status", type: "select", options: ["Active", "Suspended", "Inactive"] }
     ]
   },
   "management-teacher-resources": {
@@ -2973,12 +3146,21 @@ function toAuditStripMarkup(row) {
   const username = row.username || row.user_name || "-";
   const passwordCorrect = toFlagLabel(row.password_correct);
   const otpCorrect = toFlagLabel(row.otp_correct);
+  const inferredFailed =
+    passwordCorrect === "No" ||
+    otpCorrect === "No" ||
+    String(row.activity_done || "").toUpperCase().includes("FAILED") ||
+    String(row.action || "").toUpperCase().includes("FAILED");
+  const loggingStatus =
+    row.logging_status || (inferredFailed ? "NOT SUCCESSFUL" : "SUCCESSFUL");
   const ipAddress = row.ip_address || "-";
   const machineName = row.machine_name || "-";
+  const serialLabel = machineName;
   const loginTime = formatDateTime(row.login_time || row.created_at);
   const logoutTime = formatDateTime(row.logout_time);
   const activityDone = row.activity_done || row.action || "-";
   const actorRole = row.actor_role || "-";
+  const institutionCode = row.institution_code || row.joined_institution_code || "-";
   const institutionId = row.institution_id || "-";
   const title = `${activityDone} • ${actorRole}`;
   const rawDetails = row?.details_json && typeof row.details_json === "object"
@@ -2989,15 +3171,17 @@ function toAuditStripMarkup(row) {
       <div class="audit-strip-title">${escapeHtml(title)}</div>
       <div class="audit-strip-line">
         <span class="audit-chip">User: ${escapeHtml(username)}</span>
+        <span class="audit-chip">Institution Code: ${escapeHtml(String(institutionCode))}</span>
+        <span class="audit-chip">Institution ID: ${escapeHtml(String(institutionId))}</span>
+        <span class="audit-chip">Logging Status: ${escapeHtml(String(loggingStatus))}</span>
         <span class="audit-chip">Password Correct: ${escapeHtml(passwordCorrect)}</span>
         <span class="audit-chip">OTP Correct: ${escapeHtml(otpCorrect)}</span>
         <span class="audit-chip">IP Address: ${escapeHtml(ipAddress)}</span>
-        <span class="audit-chip">Machine: ${escapeHtml(machineName)}</span>
+        <span class="audit-chip">Machine / Serial: ${escapeHtml(serialLabel)}</span>
         <span class="audit-chip">Login Time: ${escapeHtml(loginTime)}</span>
         <span class="audit-chip">Logout Time: ${escapeHtml(logoutTime)}</span>
         <span class="audit-chip">Activity: ${escapeHtml(activityDone)}</span>
         <span class="audit-chip">Role: ${escapeHtml(actorRole)}</span>
-        <span class="audit-chip">Institution: ${escapeHtml(String(institutionId))}</span>
       </div>
     </div>
   `;
@@ -3041,6 +3225,30 @@ function isModuleAllowed(moduleKey) {
 
 function isSidebarModuleAllowed(moduleId) {
   return isModuleAllowed(MODULE_KEY_BY_ID[moduleId] || moduleId);
+}
+
+function isDashboardWidgetVisible(widgetKey) {
+  if (!Array.isArray(allowedModules) || !allowedModules.length) return true;
+  if (allowedModules.includes("dashboard")) return true;
+  return allowedModules.includes(widgetKey);
+}
+
+async function mergeDashboardWidgetOverrides(userId) {
+  const uid = Number(userId || 0);
+  if (!uid) return;
+  try {
+    const res = await request(`/api/system/module-access/overrides?user_id=${uid}`);
+    const overrides = Array.isArray(res?.overrides) ? res.overrides : [];
+    const next = new Set(allowedModules || []);
+    overrides.forEach((row) => {
+      const mk = String(row.module_key || "");
+      if (!DASHBOARD_WIDGET_KEYS.includes(mk)) return;
+      if (Number(row.can_access) === 1) next.add(mk);
+    });
+    allowedModules = Array.from(next);
+  } catch (_) {
+    /* keep portal defaults if overrides unavailable */
+  }
 }
 
 function setActiveSidebarButton(moduleId) {
@@ -3132,6 +3340,74 @@ async function saveCurrentModule() {
   config.fields.forEach((field) => {
     payload[field.name] = getFieldValue(field);
   });
+  delete payload.postal_code_lookup;
+
+  if (currentModule === "admission") {
+    if (!String(payload.admission_number || "").trim()) {
+      const wantsAuto =
+        typeof window.confirm === "function" &&
+        window.confirm("Admission number missing. Generate one automatically?");
+      if (wantsAuto) {
+        const sample = prompt("Optional sample prefix (letters/numbers):", "");
+        const prefix =
+          sample !== null && String(sample).trim()
+            ? `${String(sample).trim().replace(/\/$/, "")}/`
+            : "ADM/";
+        payload.admission_number = `${prefix}${Date.now()}`.slice(0, 80);
+      } else {
+        alert("Admission number is required.");
+        return;
+      }
+    }
+    const first = String(payload.first_name || "").trim();
+    const last = String(payload.last_name || "").trim();
+    const gradeVal = String(payload.grade || "").trim();
+    const parentName = String(payload.parent_full_name || "").trim();
+    const parentNationality = String(payload.parent_nationality || "").trim();
+    const parentResidence = String(payload.parent_residence || "").trim();
+    const parentOccupation = String(payload.parent_occupation || "").trim();
+    const parentMobile = String(payload.parent_phone || "").trim();
+    if (!first || !gradeVal || !parentName || !parentNationality || !parentResidence || !parentOccupation || !parentMobile) {
+      alert(
+        "Mandatory fields missing: learner first name, grade, parent/guardian full name, nationality, residence, occupation, and mobile."
+      );
+      return;
+    }
+    if (!(String(payload.birth_certificate_number || "").trim() || "").length) {
+      alert("Birth certificate number is mandatory.");
+      return;
+    }
+    payload.full_name = String(payload.full_name || "").trim() || `${first} ${last}`.trim();
+    if (String(payload.learner_condition || "").trim() !== "With disability") {
+      payload.disability_type = "";
+    }
+  }
+
+  const staffMandatoryModules = [
+    "management-teachers",
+    "management-non-teaching",
+    "management-service-providers",
+    "management-bom"
+  ];
+  if (staffMandatoryModules.includes(currentModule)) {
+    const nameVal = String(payload.full_name || "").trim();
+    const phoneVal = String(payload.phone_number || "").trim();
+    const emailVal = String(payload.email_address || "").trim();
+    const tsc = String(payload.tsc_number || "").trim();
+    const idNo = String(payload.id_number || "").trim();
+    if (!nameVal) {
+      alert("Full name is required.");
+      return;
+    }
+    if (!phoneVal && !emailVal) {
+      alert("Either mobile number or email is required.");
+      return;
+    }
+    if (currentModule === "management-teachers" && !(tsc || idNo)) {
+      alert("Either TSC number or ID number is required for teachers.");
+      return;
+    }
+  }
 
   if (currentModule === "academic-marks" && payload.marks !== null) {
     payload.percentage = payload.percentage ?? payload.marks;
@@ -3175,6 +3451,17 @@ async function editRow(id) {
   }
 }
 
+async function confirmSoftDeletePrompts() {
+  if (isSystemDeveloperRole(portalContext?.role || "")) {
+    const ok = window.confirm("Move this record to the Recycle Bin?");
+    return Boolean(ok);
+  }
+  const first = window.confirm("Delete this record? It will move to the Recycle Bin.");
+  if (!first) return false;
+  const second = window.confirm("Permanently remove from active lists and send to recycle bin?");
+  return Boolean(second);
+}
+
 async function deleteRow(id) {
   const config = moduleConfigs[currentModule];
   if (!config) return;
@@ -3182,7 +3469,7 @@ async function deleteRow(id) {
     alert("Your role does not have access to this module.");
     return;
   }
-  const ok = window.confirm("Delete this record permanently?");
+  const ok = await confirmSoftDeletePrompts();
   if (!ok) return;
   try {
     await request(`${config.endpoint}/${id}`, { method: "DELETE" });
@@ -3420,11 +3707,23 @@ async function openCommunicationChat() {
   }
 }
 
-function renderCrudModule(moduleKey) {
+function renderCrudModule(moduleKey, options = {}) {
   const config = moduleConfigs[moduleKey];
+  const container = options.container || document.getElementById("formArea");
+  const preserveCards = Boolean(options.preserveCards);
+  const btnPrefix = `${moduleKey.replace(/[^a-z0-9_-]/gi, "-")}-${Date.now().toString(36)}`;
+  const saveId = `${btnPrefix}-save`;
+  const clearId = `${btnPrefix}-clear`;
+  const procId = `${btnPrefix}-process`;
+  const pdfId = `${btnPrefix}-pdf`;
+  const xlsId = `${btnPrefix}-xls`;
+  const printId = `${btnPrefix}-print`;
+  const viewId = `${btnPrefix}-view`;
+  if (!container || !config) return;
   setActiveSidebarButton(moduleKey);
   document.getElementById("moduleTitle").textContent = config.title;
-  document.getElementById("cards").innerHTML = `
+  if (!preserveCards) {
+    document.getElementById("cards").innerHTML = `
     <div class="card stats-card metric-emphasis">
       <h4>Active Module</h4>
       <p>${escapeHtml(config.title)}</p>
@@ -3438,7 +3737,8 @@ function renderCrudModule(moduleKey) {
       <p>Role-based controlled</p>
     </div>
   `;
-  document.getElementById("formArea").innerHTML = `
+  }
+  container.innerHTML = `
     <div class="section-card-header">
       <h3>${config.title}</h3>
       <p class="small-note">${escapeHtml(MODULE_DESCRIPTIONS[moduleKey] || "Manage records and actions for this module.")}</p>
@@ -3447,28 +3747,28 @@ function renderCrudModule(moduleKey) {
       ${config.fields.map(buildInput).join("")}
     </div>
     <div class="actions-row">
-      <button id="saveButton">Save</button>
-      <button id="clearButton">Clear</button>
-      <button id="processButton">Process</button>
-      <button id="downloadPdfButton">Download PDF</button>
-      <button id="downloadExcelButton">Download Excel</button>
-      <button id="printButton">Print</button>
-      <button id="viewButton">View</button>
-      ${moduleKey === "finance-payroll" ? '<button id="autoGeneratePayrollButton">Auto Generate Payroll</button>' : ""}
-      ${moduleKey === "finance-salary-advance" ? '<button id="processAdvanceButton">Process Selected Advance</button>' : ""}
-      ${moduleKey === "communication-messages" ? '<button id="dispatchQueuedMessagesButton">Dispatch Queued</button>' : ""}
-      ${moduleKey === "communication-messages" ? '<button id="openChatButton">Open Chat</button>' : ""}
+      <button id="${saveId}" type="button">Save</button>
+      <button id="${clearId}" type="button">Clear</button>
+      <button id="${procId}" type="button">Process</button>
+      <button id="${pdfId}" type="button">Download PDF</button>
+      <button id="${xlsId}" type="button">Download Excel</button>
+      <button id="${printId}" type="button">Print</button>
+      <button id="${viewId}" type="button">View</button>
+      ${moduleKey === "finance-payroll" ? `<button id="${btnPrefix}-auto-payroll" type="button">Auto Generate Payroll</button>` : ""}
+      ${moduleKey === "finance-salary-advance" ? `<button id="${btnPrefix}-advance" type="button">Process Selected Advance</button>` : ""}
+      ${moduleKey === "communication-messages" ? `<button id="${btnPrefix}-dispatch" type="button">Dispatch Queued</button>` : ""}
+      ${moduleKey === "communication-messages" ? `<button id="${btnPrefix}-chat" type="button">Open Chat</button>` : ""}
     </div>
   `;
-  document.getElementById("saveButton").onclick = saveCurrentModule;
-  document.getElementById("clearButton").onclick = () => clearForm(config);
-  document.getElementById("processButton").onclick = () => alert("Processing completed for this module.");
-  document.getElementById("downloadPdfButton").onclick = exportPdf;
-  document.getElementById("downloadExcelButton").onclick = exportExcel;
-  document.getElementById("printButton").onclick = () => window.print();
-  document.getElementById("viewButton").onclick = () => loadModuleData(config);
+  document.getElementById(saveId).onclick = saveCurrentModule;
+  document.getElementById(clearId).onclick = () => clearForm(config);
+  document.getElementById(procId).onclick = () => alert("Processing completed for this module.");
+  document.getElementById(pdfId).onclick = exportPdf;
+  document.getElementById(xlsId).onclick = exportExcel;
+  document.getElementById(printId).onclick = () => window.print();
+  document.getElementById(viewId).onclick = () => loadModuleData(config);
   if (moduleKey === "finance-payroll") {
-    document.getElementById("autoGeneratePayrollButton")?.addEventListener("click", async () => {
+    document.getElementById(`${btnPrefix}-auto-payroll`)?.addEventListener("click", async () => {
       const payrollMonth = prompt("Payroll month (e.g. April):", "");
       if (payrollMonth === null) return;
       const payrollYearInput = prompt("Payroll year (e.g. 2026):", String(new Date().getFullYear()));
@@ -3498,7 +3798,7 @@ function renderCrudModule(moduleKey) {
     });
   }
   if (moduleKey === "finance-salary-advance") {
-    document.getElementById("processAdvanceButton")?.addEventListener("click", async () => {
+    document.getElementById(`${btnPrefix}-advance`)?.addEventListener("click", async () => {
       const requestIdInput = prompt("Enter Salary Advance Request ID to process:");
       if (!requestIdInput) return;
       const decisionInput = (prompt("Decision (approve/reject):", "approve") || "").trim().toLowerCase();
@@ -3538,23 +3838,75 @@ function renderCrudModule(moduleKey) {
     });
   }
   if (moduleKey === "communication-messages") {
-    document.getElementById("dispatchQueuedMessagesButton")?.addEventListener("click", dispatchQueuedMessages);
-    document.getElementById("openChatButton")?.addEventListener("click", openCommunicationChat);
+    document.getElementById(`${btnPrefix}-dispatch`)?.addEventListener("click", dispatchQueuedMessages);
+    document.getElementById(`${btnPrefix}-chat`)?.addEventListener("click", openCommunicationChat);
   }
   loadModuleData(config);
+  setTimeout(() => attachPostalCodeTownHelper(container), 0);
 }
 
 function renderDashboardCards(stats) {
-  document.getElementById("cards").innerHTML = Object.entries(stats)
-    .map(
-      ([key, value]) => `
+  const feeCardKeys = new Set([
+    "totalFeesCollectedToday",
+    "totalFeesCollectedMonth",
+    "totalFeesCollectedYear",
+    "totalFeesExpectedYear",
+    "totalFeesVarianceYear"
+  ]);
+  const outstandingCardKeys = new Set([
+    "outstandingBalanceTotal",
+    "learnersWithOutstandingBalance",
+    "totalOutstandingBalance"
+  ]);
+  const attendanceCardKeys = new Set([
+    "totalPresent",
+    "totalAbsent",
+    "totalLate",
+    "totalTeachersPresent",
+    "totalTeachersOfficialLeave",
+    "totalTeachersAbsentWithApology",
+    "totalTeachersAbsentWithoutApology",
+    "totalTeachersDeserter",
+    "totalTeachersTransferred",
+    "totalTeachersSuspended",
+    "totalTeachersInterdicted",
+    "totalTeachersRetired"
+  ]);
+  const performanceCardKeys = new Set(["totalTeachers"]);
+  const populationCardKeys = new Set([
+    "totalLearners",
+    "totalActiveLearners",
+    "totalBoys",
+    "totalGirls",
+    "totalSuspended",
+    "totalExpelled",
+    "totalDropOut",
+    "totalTransferred",
+    "totalCompletion"
+  ]);
+
+  function cardAllowedForStat(key) {
+    if (feeCardKeys.has(key)) return isDashboardWidgetVisible("dashboard-fee-collection");
+    if (outstandingCardKeys.has(key)) return isDashboardWidgetVisible("dashboard-outstanding-balances");
+    if (attendanceCardKeys.has(key)) return isDashboardWidgetVisible("dashboard-attendance-list");
+    if (performanceCardKeys.has(key)) return isDashboardWidgetVisible("dashboard-performance");
+    if (populationCardKeys.has(key)) return isDashboardWidgetVisible("dashboard-performance");
+    return true;
+  }
+
+  const entries = Object.entries(stats || {}).filter(([key]) => cardAllowedForStat(key));
+  document.getElementById("cards").innerHTML = entries.length
+    ? entries
+        .map(
+          ([key, value]) => `
       <div class="card stats-card metric-card metric-${escapeHtml(key)}">
         <h4>${DASHBOARD_STAT_LABELS[key] || key.replace(/([A-Z])/g, " $1")}</h4>
         <p>${key.toLowerCase().includes("fee") ? formatMoney(value) : formatNumber(value)}</p>
       </div>
     `
-    )
-    .join("");
+        )
+        .join("")
+    : '<p class="small-note dashboard-hidden-widget">Dashboard statistics cards are restricted for your account.</p>';
 }
 
 function stopDashboardAutoRefresh() {
@@ -3649,7 +4001,8 @@ async function loadDashboard(options = {}) {
       .join("");
     const topAreaEl = document.getElementById("dashboardTopArea");
     if (topAreaEl) {
-      topAreaEl.innerHTML = `
+      if (isDashboardWidgetVisible("dashboard-alerts-announcements")) {
+        topAreaEl.innerHTML = `
         <section class="dashboard-section dashboard-alerts-priority alerts-top-slot">
           <h3>Alerts & Announcements</h3>
           <div class="dashboard-alerts-priority-grid">
@@ -3668,8 +4021,60 @@ async function loadDashboard(options = {}) {
           </div>
         </section>
       `;
+      } else {
+        topAreaEl.innerHTML = "";
+      }
     }
     const feeSummary = data.feeCollectionSummary || {};
+    const showAttendanceList = isDashboardWidgetVisible("dashboard-attendance-list");
+    const showPerformance = isDashboardWidgetVisible("dashboard-performance");
+    const showFeeSummary = isDashboardWidgetVisible("dashboard-fee-collection");
+    const showOutstanding = isDashboardWidgetVisible("dashboard-outstanding-balances");
+    const feeBlock = `
+        <section class="dashboard-section">
+          <h3>Fee Collection Summary</h3>
+          <div class="dashboard-metrics">
+            <p><strong>Today:</strong> ${escapeHtml(formatMoney(feeSummary.todayTotal))} (${escapeHtml(formatNumber(feeSummary.todayPaymentsCount))} payment(s))</p>
+            <p><strong>Month to Date:</strong> ${escapeHtml(formatMoney(feeSummary.monthTotal))} (${escapeHtml(formatNumber(feeSummary.monthPaymentsCount))} payment(s))</p>
+            <p><strong>Year Total:</strong> ${escapeHtml(formatMoney(feeSummary.yearTotal))}</p>
+            <p><strong>Year Target:</strong> ${escapeHtml(formatMoney(feeSummary.yearExpected))}</p>
+            <p><strong>Variance:</strong> ${escapeHtml(formatMoney(feeSummary.yearVariance))}</p>
+            ${showOutstanding ? `<p><strong>Outstanding Balance:</strong> ${escapeHtml(formatMoney(feeSummary.outstandingBalanceTotal))} (${escapeHtml(formatNumber(feeSummary.learnersWithOutstandingBalance))} learner(s))</p>` : ""}
+          </div>
+          <h4>Recent Fee Payments</h4>
+          ${buildDashboardTable(
+      ["Learner", "Adm No", "Grade", "Stream", "Amount", "Method", "Receipt", "Payment Date", "Balance"],
+      recentPaymentsRows
+    )}
+          ${
+      showOutstanding
+        ? `<h4>Learners with Outstanding Balances</h4>
+          ${buildDashboardTable(["Learner", "Adm No", "Grade", "Stream", "Balance"], outstandingRows)}`
+        : ""
+      }
+        </section>`;
+    const gridSections = [
+      showAttendanceList
+        ? `<section class="dashboard-section">
+          <h3>Daily Attendance List</h3>
+          <p class="small-note">Showing up to 40 latest records for today.</p>
+          ${buildDashboardTable(
+      ["Type", "Name", "Person ID", "Grade", "Stream", "Status", "Reason", "Attendance Time", "Time In", "Time Out"],
+      attendanceRows
+    )}
+        </section>`
+        : "",
+      showPerformance
+        ? `<section class="dashboard-section">
+          <h3>Performance by Class/Grade & Stream</h3>
+          ${buildDashboardTable(
+      ["Grade", "Stream", "Learners", "Entries", "Mean", "Lowest", "Highest"],
+      performanceRows
+    )}
+        </section>`
+        : "",
+      showFeeSummary ? feeBlock : ""
+    ].filter(Boolean);
     document.getElementById("formArea").innerHTML = `
       <section class="dashboard-hero">
         <div>
@@ -3682,41 +4087,7 @@ async function loadDashboard(options = {}) {
           <span class="tag">Generated: ${escapeHtml(formatDateTime(data.generated_at))}</span>
         </div>
       </section>
-      <div class="dashboard-grid">
-        <section class="dashboard-section">
-          <h3>Daily Attendance List</h3>
-          <p class="small-note">Showing up to 40 latest records for today.</p>
-          ${buildDashboardTable(
-            ["Type", "Name", "Person ID", "Grade", "Stream", "Status", "Reason", "Attendance Time", "Time In", "Time Out"],
-            attendanceRows
-          )}
-        </section>
-        <section class="dashboard-section">
-          <h3>Performance by Class/Grade & Stream</h3>
-          ${buildDashboardTable(
-            ["Grade", "Stream", "Learners", "Entries", "Mean", "Lowest", "Highest"],
-            performanceRows
-          )}
-        </section>
-        <section class="dashboard-section">
-          <h3>Fee Collection Summary</h3>
-          <div class="dashboard-metrics">
-            <p><strong>Today:</strong> ${escapeHtml(formatMoney(feeSummary.todayTotal))} (${escapeHtml(formatNumber(feeSummary.todayPaymentsCount))} payment(s))</p>
-            <p><strong>Month to Date:</strong> ${escapeHtml(formatMoney(feeSummary.monthTotal))} (${escapeHtml(formatNumber(feeSummary.monthPaymentsCount))} payment(s))</p>
-            <p><strong>Year Total:</strong> ${escapeHtml(formatMoney(feeSummary.yearTotal))}</p>
-            <p><strong>Year Target:</strong> ${escapeHtml(formatMoney(feeSummary.yearExpected))}</p>
-            <p><strong>Variance:</strong> ${escapeHtml(formatMoney(feeSummary.yearVariance))}</p>
-            <p><strong>Outstanding Balance:</strong> ${escapeHtml(formatMoney(feeSummary.outstandingBalanceTotal))} (${escapeHtml(formatNumber(feeSummary.learnersWithOutstandingBalance))} learner(s))</p>
-          </div>
-          <h4>Recent Fee Payments</h4>
-          ${buildDashboardTable(
-            ["Learner", "Adm No", "Grade", "Stream", "Amount", "Method", "Receipt", "Payment Date", "Balance"],
-            recentPaymentsRows
-          )}
-          <h4>Learners with Outstanding Balances</h4>
-          ${buildDashboardTable(["Learner", "Adm No", "Grade", "Stream", "Balance"], outstandingRows)}
-        </section>
-      </div>
+      ${gridSections.length ? `<div class="dashboard-grid">${gridSections.join("")}</div>` : '<p class="small-note dashboard-hidden-widget">Some dashboard tiles are hidden based on Access Control settings for your account.</p>'}
     `;
     document.getElementById("tableHead").innerHTML = "";
     document.getElementById("tableBody").innerHTML = "";
@@ -3789,6 +4160,135 @@ async function loadLearnerMaterials() {
     document.getElementById("tableHead").innerHTML = "";
     document.getElementById("tableBody").innerHTML = `<tr><td>${error.message}</td></tr>`;
   }
+}
+
+const STAFF_HUB_ROLE_BY_MODULE = {
+  "management-teachers": "TEACHER",
+  "management-non-teaching": "NON_TEACHING_STAFF",
+  "management-bom": "BOM",
+  "management-service-providers": "SUPPLIER"
+};
+
+function attachPostalCodeTownHelper(scopeEl) {
+  if (!scopeEl) return;
+  const lk = scopeEl.querySelector("#field-postal_code_lookup");
+  if (!lk || lk.dataset.bound === "1") return;
+  lk.dataset.bound = "1";
+  lk.addEventListener("change", () => {
+    const value = lk.value || "";
+    const delimiter = value.includes(" — ") ? " — " : " - ";
+    const [codeRaw, townRaw = ""] = value.split(delimiter);
+    const pcEl = scopeEl.querySelector("#field-postal_code");
+    const townEl = scopeEl.querySelector("#field-town");
+    if (pcEl && codeRaw) pcEl.value = codeRaw.trim();
+    if (townEl && townRaw) townEl.value = townRaw.trim();
+  });
+}
+
+async function renderStaffServiceHub() {
+  stopDashboardAutoRefresh();
+  currentEditId = null;
+  currentModule = "management-teachers";
+  setActiveSidebarButton("management-staff-service");
+  document.getElementById("moduleTitle").textContent = "Staff & Service Providers Profile";
+
+  document.getElementById("cards").innerHTML = `
+    <div class="card stats-card metric-emphasis">
+      <h4>Staff Hub</h4>
+      <p>Teachers • Support • BoM • Providers</p>
+    </div>
+    <div class="card stats-card">
+      <h4>Registration</h4>
+      <p>HoI fills profile, presses Register</p>
+    </div>
+    <div class="card stats-card">
+      <h4>Postal Codes</h4>
+      <p>Kenya town helper dropdown</p>
+    </div>
+  `;
+
+  const categories = [
+    { key: "management-teachers", label: "Teacher" },
+    { key: "management-non-teaching", label: "Support Staff" },
+    { key: "management-bom", label: "BoM Member" },
+    { key: "management-service-providers", label: "Service Provider" }
+  ];
+
+  document.getElementById("formArea").innerHTML = `
+    <div class="module-header-card">
+      <h3>Staff & Service Providers Profile</h3>
+      <p class="small-note">
+        HoI/Administrator registers portal users here. Use <strong>Register</strong> after entering contact channels so SMS/email instructions can be dispatched automatically where configured.
+      </p>
+    </div>
+    <div class="form-grid staff-hub-category-grid">
+      <label>Category</label>
+      <select id="staffHubCategorySelect">
+        ${categories.map((c) => `<option value="${escapeHtmlAttribute(c.key)}">${escapeHtml(c.label)}</option>`).join("")}
+      </select>
+    </div>
+    <div id="staffHubMount"></div>
+  `;
+
+  const mount = document.getElementById("staffHubMount");
+  const catSelect = document.getElementById("staffHubCategorySelect");
+
+  const mountCategory = (key) => {
+    if (!mount || !moduleConfigs[key]) return;
+    currentEditId = null;
+    document.getElementById("tableHead").innerHTML = "";
+    document.getElementById("tableBody").innerHTML = "";
+    currentModule = key;
+    renderCrudModule(key, { container: mount, preserveCards: true });
+    setTimeout(() => {
+      attachPostalCodeTownHelper(mount);
+      const actions = mount.querySelector(".actions-row");
+      if (actions && !mount.querySelector("#staffHubRegisterPortalButton")) {
+        const regBtn = document.createElement("button");
+        regBtn.id = "staffHubRegisterPortalButton";
+        regBtn.type = "button";
+        regBtn.className = "success";
+        regBtn.textContent = "Register";
+        actions.insertBefore(regBtn, actions.firstChild);
+        regBtn.onclick = async () => {
+          const role = STAFF_HUB_ROLE_BY_MODULE[key];
+          const fullInput = mount.querySelector("#field-full_name");
+          const emailInput = mount.querySelector("#field-email_address");
+          const phoneInput = mount.querySelector("#field-phone_number");
+          const full_name = fullInput?.value?.trim();
+          const email = emailInput?.value?.trim() || "";
+          const phone = phoneInput?.value?.trim() || "";
+          if (!full_name) {
+            alert("Full name is required before registering a portal user.");
+            return;
+          }
+          if (!email && !phone) {
+            alert("Provide at least an email or mobile number for login instructions.");
+            return;
+          }
+          const username = email
+            ? email.split("@")[0].replace(/[^a-z0-9]+/gi, "").slice(0, 40)
+            : phone.replace(/\D/g, "").slice(-10);
+          if (!username) {
+            alert("Could not derive username from email/phone.");
+            return;
+          }
+          try {
+            const result = await request("/api/management/staff-portal-account", {
+              method: "POST",
+              body: JSON.stringify({ full_name, username, email: email || null, phone: phone || null, role })
+            });
+            alert(result.message || "Registration notification sent.");
+          } catch (error) {
+            alert(error.message);
+          }
+        };
+      }
+    }, 0);
+  };
+
+  catSelect?.addEventListener("change", () => mountCategory(catSelect.value));
+  mountCategory(catSelect?.value || "management-teachers");
 }
 
 function normalizeStatusLabel(value) {
@@ -3897,7 +4397,7 @@ window.handleSearchRowAction = async (scope, rowId, action) => {
       return;
     }
     if (action === "delete") {
-      const ok = window.confirm("Delete selected record?");
+      const ok = await confirmSoftDeletePrompts();
       if (!ok) return;
       const config = SEARCH_SCOPE_UPDATE_CONFIG[scopeKey];
       if (!config) {
@@ -4658,6 +5158,24 @@ async function init() {
     ).trim();
     const roleLabel = formatRoleDisplay(portalData?.role || meData?.role || "");
     document.getElementById("portalLabel").textContent = `${institutionName} (${roleLabel})`;
+    try {
+      let stamp = "unknown";
+      try {
+        const buildRes = await fetch("/api/build-info", { cache: "no-store" });
+        if (buildRes.ok) {
+          const b = await buildRes.json();
+          stamp = b?.build_stamp || stamp;
+        }
+      } catch (_) {
+        /* ignore */
+      }
+      const fp = document.getElementById("dashUiFingerprint");
+      if (fp) {
+        fp.textContent = `${CLIENT_UI_BUNDLE_ID} · API build_stamp: ${stamp} — if this text is old, redeploy or hard-refresh.`;
+      }
+    } catch (_) {
+      /* ignore */
+    }
     const buildLineEl = document.getElementById("iimsBuildLineDash");
     if (buildLineEl) {
       buildLineEl.textContent = "";
