@@ -1,13 +1,27 @@
 const API_BASE = "";
 
 async function request(path, options = {}) {
-  const response = await fetch(`${API_BASE}${path}`, {
-    headers: {
-      "Content-Type": "application/json",
-      ...(options.headers || {})
-    },
-    ...options
-  });
+  const controller = new AbortController();
+  const timeoutMs = options.timeoutMs || 25000;
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  let response;
+  try {
+    response = await fetch(`${API_BASE}${path}`, {
+      headers: {
+        "Content-Type": "application/json",
+        ...(options.headers || {})
+      },
+      signal: controller.signal,
+      ...options
+    });
+  } catch (err) {
+    clearTimeout(timer);
+    if (err && err.name === "AbortError") {
+      throw new Error("Network timeout. Server slow or unreachable. Check the dev terminal for errors.");
+    }
+    throw new Error(`Network error: ${err?.message || "failed to fetch"}.  Is the server running on this URL?`);
+  }
+  clearTimeout(timer);
   const rawText = await response.text();
   let data = null;
   try {
@@ -35,7 +49,7 @@ async function loadBuildStampLogin() {
     }
     const data = response.ok ? await response.json() : null;
     const stamp = data?.build_stamp || "unknown";
-    el.textContent = `Release: ${stamp} · UI bundle rev37 — match /api/build-info after deploy.`;
+    el.textContent = `Release: ${stamp} · UI bundle rev38 — OTP dispatch and fetch hardening.`;
   } catch (_) {
     el.textContent =
       "Could not load release info. Ensure Node is running from your updated project (e.g. BASIC EDUCATION) and try again.";

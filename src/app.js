@@ -57,7 +57,7 @@ const {
 } = require("./config/cbcLibrary");
 
 /** Bump when shipping UI/API changes so schools can confirm they run the right copy. */
-const IIMS_BUILD_STAMP = process.env.IIMS_BUILD_STAMP || "ui-deploy-rev37";
+const IIMS_BUILD_STAMP = process.env.IIMS_BUILD_STAMP || "ui-deploy-rev38";
 
 const app = express();
 
@@ -1862,26 +1862,40 @@ async function createOtpSession({
       OTP_MAX_VERIFY_ATTEMPTS
     ]
   );
+  const OTP_DISPATCH_TIMEOUT_MS = Number(process.env.OTP_DISPATCH_TIMEOUT_MS || 7000);
+  const dispatchWithTimeout = async (entry) => {
+    return Promise.race([
+      sendOtp({
+        channel: entry.channel,
+        destination: entry.destination,
+        code
+      }).then(() => `${entry.channel}:ok`).catch((err) => `${entry.channel}:fail:${err?.message || "error"}`),
+      new Promise((resolve) =>
+        setTimeout(() => resolve(`${entry.channel}:timeout`), OTP_DISPATCH_TIMEOUT_MS)
+      )
+    ]);
+  };
+
   const sendResults = [];
   if (deliveryPlan && Array.isArray(deliveryPlan.channels) && deliveryPlan.channels.length) {
-    await Promise.all(
-      deliveryPlan.channels.map(async (entry) => {
-        try {
-          await sendOtp({
-            channel: entry.channel,
-            destination: entry.destination,
-            code
-          });
-          sendResults.push(`${entry.channel}:ok`);
-        } catch (err) {
-          sendResults.push(`${entry.channel}:fail:${err?.message || "error"}`);
-        }
-      })
+    const settled = await Promise.allSettled(
+      deliveryPlan.channels.map((entry) => dispatchWithTimeout(entry))
     );
+    settled.forEach((r) => {
+      if (r.status === "fulfilled") sendResults.push(r.value);
+      else sendResults.push(`channel:fail:${r.reason?.message || "rejected"}`);
+    });
   }
   if (!sendResults.length) {
-    await sendOtp({ channel, destination, code });
-    sendResults.push(`${channel}:${destination}`);
+    try {
+      await Promise.race([
+        sendOtp({ channel, destination, code }),
+        new Promise((_, reject) => setTimeout(() => reject(new Error("dispatch-timeout")), OTP_DISPATCH_TIMEOUT_MS))
+      ]);
+      sendResults.push(`${channel}:ok`);
+    } catch (err) {
+      sendResults.push(`${channel}:fail:${err?.message || "error"}`);
+    }
   }
   return { code, expiresAt, sendResults };
 }
