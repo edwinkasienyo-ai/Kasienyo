@@ -308,6 +308,17 @@ async function ensureUserPasswordPolicyColumns() {
     await query("ALTER TABLE institutions ADD COLUMN category VARCHAR(100) NULL");
   }
 
+  const institutionHeroImagePathRows = await query(
+    `SELECT COUNT(*) total
+     FROM INFORMATION_SCHEMA.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = 'institutions'
+       AND COLUMN_NAME = 'login_hero_image_path'`
+  );
+  if (!Number(institutionHeroImagePathRows[0]?.total || 0)) {
+    await query("ALTER TABLE institutions ADD COLUMN login_hero_image_path VARCHAR(255) NULL");
+  }
+
   const institutionAgreementTemplateRows = await query(
     `SELECT COUNT(*) total
      FROM INFORMATION_SCHEMA.COLUMNS
@@ -468,6 +479,17 @@ async function ensureUserPasswordPolicyColumns() {
         INDEX idx_recycle_bin_lookup (institution_id, entity_name, status, deleted_at)
       )`
     );
+  }
+
+  const recycleBinHiddenRolesRows = await query(
+    `SELECT COUNT(*) total
+     FROM INFORMATION_SCHEMA.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = 'recycle_bin_items'
+       AND COLUMN_NAME = 'hidden_for_roles_json'`
+  );
+  if (!Number(recycleBinHiddenRolesRows[0]?.total || 0)) {
+    await query("ALTER TABLE recycle_bin_items ADD COLUMN hidden_for_roles_json JSON NULL");
   }
 
   const cbcCurriculumRows = await query(

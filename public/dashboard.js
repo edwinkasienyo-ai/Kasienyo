@@ -9,8 +9,10 @@ let currentEditId = null;
 let allowedModules = [];
 let portalContext = null;
 let searchRowDrafts = {};
+let dashboardAutoRefreshHandle = null;
 const DASHBOARD_STAT_LABELS = {
   totalLearners: "Total Learners Population",
+  totalActiveLearners: "Active Learners",
   totalPresent: "Present Today",
   totalAbsent: "Absent Today",
   totalBoys: "Total Boys",
@@ -18,6 +20,19 @@ const DASHBOARD_STAT_LABELS = {
   totalLate: "Late Today",
   totalSuspended: "Suspended",
   totalExpelled: "Expelled",
+  totalDropOut: "Drop Out",
+  totalTransferred: "Transferred",
+  totalCompletion: "Completion",
+  totalTeachers: "Total Teachers",
+  totalTeachersPresent: "Teachers Present",
+  totalTeachersOfficialLeave: "Teachers on Official Leave",
+  totalTeachersAbsentWithApology: "Teachers Absent (Apology)",
+  totalTeachersAbsentWithoutApology: "Teachers Absent (No Apology)",
+  totalTeachersDeserter: "Teacher Deserters",
+  totalTeachersSuspended: "Teachers Suspended",
+  totalTeachersInterdicted: "Teachers Interdicted",
+  totalTeachersTransferred: "Teachers Transferred",
+  totalTeachersRetired: "Teachers Retired",
   totalFeesCollectedToday: "Fees Collected Today (KES)"
 };
 
@@ -120,6 +135,9 @@ function formatRoleForDisplay(role = "") {
   const normalized = String(role || "").toUpperCase();
   if (normalized === "SYSTEM_DEVELOPER") return "SYSTEM DEVELOPER";
   if (normalized === "HEAD_OF_INSTITUTION") return "HOI/ADMINISTRATOR";
+  if (normalized === "ADMIN") return "HOI/ADMINISTRATOR";
+  if (normalized === "MOD") return "MOE";
+  if (normalized === "TSC") return "TSC";
   if (normalized === "SENIOR_TEACHER") return "SENIOR TEACHER";
   if (normalized === "HEAD_OF_DEPARTMENT") return "HEAD OF DEPARTMENT";
   return normalized.replaceAll("_", " ");
@@ -129,6 +147,333 @@ function toTitleCase(value = "") {
   return String(value || "")
     .toLowerCase()
     .replace(/\b\w/g, (match) => match.toUpperCase());
+}
+
+function normalizeRoleKey(value = "") {
+  return String(value || "")
+    .trim()
+    .toUpperCase()
+    .replace(/[\s-]+/g, "_");
+}
+
+function isSystemAdminRoleValue(roleValue = "") {
+  const normalized = normalizeRoleKey(roleValue);
+  return ["SYSTEM_DEVELOPER", "ADMIN", "HEAD_OF_INSTITUTION"].includes(normalized);
+}
+
+function shouldHideInstitutionForIdentity(user = {}) {
+  const normalizedRole = normalizeRoleKey(user?.role || "");
+  return normalizedRole === "TSC" || normalizedRole === "MOD";
+}
+
+function friendlyRoleName(roleValue = "") {
+  const normalized = normalizeRoleKey(roleValue);
+  const map = {
+    SYSTEM_DEVELOPER: "System Developer",
+    ADMIN: "HoI/Administrator",
+    HEAD_OF_INSTITUTION: "HoI/Administrator",
+    TEACHER: "Teacher",
+    SENIOR_TEACHER: "Senior Teacher",
+    HEAD_OF_DEPARTMENT: "Head of Department",
+    PARENT: "Parent/Guardian",
+    NON_TEACHING_STAFF: "Support Staff",
+    BOM: "BoM Member",
+    MOD: "MoE",
+    TSC: "TSC"
+  };
+  return map[normalized] || String(roleValue || "-");
+}
+
+function buildWelcomeMessageTemplate({ institutionName, institutionCode, fullName, role }) {
+  const normalizedRole = normalizeRoleKey(role);
+  if (normalizedRole === "SYSTEM_DEVELOPER") {
+    return `WELCOME-MWENDEGU ENTERPRISE LIMITED-254001-${String(fullName || "SYSTEM USER").toUpperCase()}-SYSTEM DEVELOPER`;
+  }
+  const resolvedInstitution = String(institutionName || "INSTITUTION").toUpperCase();
+  const resolvedCode = String(institutionCode || "-").toUpperCase();
+  const resolvedName = String(fullName || "USER").trim() || "USER";
+  const roleLabel = formatRoleForDisplay(role || "");
+  return `WELCOME TO ${resolvedInstitution} IMIS-${resolvedCode}-${resolvedName}-${roleLabel}`;
+}
+
+function systemDeveloperWelcomeMeta(profile = {}) {
+  return {
+    institutionName: profile?.institution_name || "MWENDEGU ENTERPRISE LIMITED",
+    institutionCode: profile?.institution_code || "254001",
+    fullName: profile?.full_name || profile?.username || "Mr.EDWIN ONYANGO",
+    role: profile?.role || "SYSTEM_DEVELOPER"
+  };
+}
+
+function buildRoleScopedUserLabel(user = {}) {
+  const fullName = String(user?.full_name || user?.username || "-").trim();
+  if (shouldHideInstitutionForIdentity(user)) {
+    return fullName || "-";
+  }
+  const institutionName = String(user?.institution_name || "").trim();
+  if (!institutionName) return fullName || "-";
+  return `${fullName} - ${institutionName}`;
+}
+
+function resolveRegistryScopeOptions() {
+  const normalizedRole = normalizeRoleKey(portalContext?.role || "");
+  if (normalizedRole === "SYSTEM_DEVELOPER") {
+    return [
+      { key: "institution", label: "Institution" },
+      { key: "user", label: "User" }
+    ];
+  }
+  if (normalizedRole === "ADMIN" || normalizedRole === "HEAD_OF_INSTITUTION") {
+    return [{ key: "user", label: "User" }];
+  }
+  return [];
+}
+
+function buildAuditOutcomeLabel(row = {}) {
+  const action = normalizeRoleKey(row?.action || "");
+  if (action.includes("FAILED") || action.includes("LOCKED") || action.includes("DENIED")) {
+    return "Mistake/Failed";
+  }
+  if (action.includes("LOGIN") || action.includes("OTP") || action.includes("SUCCESS")) {
+    return "Successful";
+  }
+  return "Recorded";
+}
+
+function buildDashboardFinanceSyncCard(financeSessionSync = null) {
+  const defaults = {
+    academic_year: "",
+    term_name: "",
+    capitation_received: "",
+    fee_paid: "",
+    grant_other: "",
+    available_balance: "",
+    outstanding_balance: "",
+    liabilities: ""
+  };
+  const values = {
+    ...defaults,
+    ...(financeSessionSync && typeof financeSessionSync === "object" ? financeSessionSync : {})
+  };
+  return `
+    <section class="dashboard-section">
+      <h3>Academic Year / Term Finance Sync</h3>
+      <p class="small-note">Enter capitation, fee paid, grant/other, balance, outstanding, and liabilities to keep dashboard figures accurate.</p>
+      <div class="register-grid-compact">
+        <label>Academic Year</label>
+        <input id="dashboardSyncAcademicYear" placeholder="e.g. 2026" value="${escapeHtmlAttribute(values.academic_year || "")}" />
+        <label>Term</label>
+        <select id="dashboardSyncTermName">
+          <option value="">Select term</option>
+          ${(Array.isArray(meta?.termOptions) ? meta.termOptions : ["Term One", "Term Two", "Term Three"])
+            .map((term) => `<option value="${escapeHtml(term)}" ${term === values.term_name ? "selected" : ""}>${escapeHtml(term)}</option>`)
+            .join("")}
+        </select>
+        <label>Capitation Received</label>
+        <input id="dashboardSyncCapitation" type="number" min="0" step="0.01" value="${escapeHtmlAttribute(values.capitation_received || "")}" />
+        <label>Fee Paid</label>
+        <input id="dashboardSyncFeePaid" type="number" min="0" step="0.01" value="${escapeHtmlAttribute(values.fee_paid || "")}" />
+        <label>Grant / Other</label>
+        <input id="dashboardSyncGrantOther" type="number" min="0" step="0.01" value="${escapeHtmlAttribute(values.grant_other || "")}" />
+        <label>Available Balance</label>
+        <input id="dashboardSyncAvailableBalance" type="number" min="0" step="0.01" value="${escapeHtmlAttribute(values.available_balance || "")}" />
+        <label>Outstanding Balance</label>
+        <input id="dashboardSyncOutstandingBalance" type="number" min="0" step="0.01" value="${escapeHtmlAttribute(values.outstanding_balance || "")}" />
+        <label>Liabilities</label>
+        <input id="dashboardSyncLiabilities" type="number" min="0" step="0.01" value="${escapeHtmlAttribute(values.liabilities || "")}" />
+      </div>
+      <div class="actions-row">
+        <button id="saveDashboardSyncButton">Save Dashboard Sync</button>
+      </div>
+    </section>
+  `;
+}
+
+async function upsertDashboardFinanceSync() {
+  const payload = {
+    academic_year: String(document.getElementById("dashboardSyncAcademicYear")?.value || "").trim(),
+    term_name: String(document.getElementById("dashboardSyncTermName")?.value || "").trim(),
+    capitation_received: Number(document.getElementById("dashboardSyncCapitation")?.value || 0),
+    fee_paid: Number(document.getElementById("dashboardSyncFeePaid")?.value || 0),
+    grant_other: Number(document.getElementById("dashboardSyncGrantOther")?.value || 0),
+    available_balance: Number(document.getElementById("dashboardSyncAvailableBalance")?.value || 0),
+    outstanding_balance: Number(document.getElementById("dashboardSyncOutstandingBalance")?.value || 0),
+    liabilities: Number(document.getElementById("dashboardSyncLiabilities")?.value || 0)
+  };
+  if (!payload.academic_year || !payload.term_name) {
+    throw new Error("Academic year and term are required.");
+  }
+  const response = await request("/api/finance/session-sync", {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+  return response;
+}
+
+async function withLoadingMessage(message, handler) {
+  const tableHead = document.getElementById("tableHead");
+  const tableBody = document.getElementById("tableBody");
+  if (tableHead && tableBody) {
+    tableHead.innerHTML = "";
+    tableBody.innerHTML = `<tr><td>${escapeHtml(message)}</td></tr>`;
+  }
+  return handler();
+}
+
+async function performRegistryRowAction(entityType, row = {}, action = "view") {
+  const rowId = Number(row?.id || 0);
+  if (!rowId) {
+    alert("Invalid row selected.");
+    return;
+  }
+  try {
+    if (entityType === "institution") {
+      if (action === "view") {
+        const response = await request(`/api/system/registry/institutions/${rowId}/view`);
+        alert(JSON.stringify(response?.institution || {}, null, 2));
+        return;
+      }
+      if (action === "edit" || action === "save") {
+        const institutionName = prompt("Institution name", row.institution_name || "");
+        if (institutionName === null) return;
+        const email = prompt("Institution email", row.email || "");
+        if (email === null) return;
+        const phone = prompt("Institution phone", row.phone || "");
+        if (phone === null) return;
+        await request(`/api/system/registry/institutions/${rowId}`, {
+          method: "PATCH",
+          body: JSON.stringify({
+            institution_name: institutionName,
+            email,
+            phone
+          })
+        });
+        alert("Institution saved successfully.");
+        await renderInstitutionsRegistry();
+        return;
+      }
+      if (action === "suspend" || action === "deactivate") {
+        const reason = prompt("Reason is required", "");
+        if (!reason) {
+          alert("Reason is required.");
+          return;
+        }
+        const payload =
+          action === "suspend"
+            ? { is_suspended: true, reason }
+            : { is_active: false, reason };
+        await request(`/api/system/registry/institutions/${rowId}/status`, {
+          method: "PATCH",
+          body: JSON.stringify(payload)
+        });
+        alert("Institution status updated.");
+        await renderInstitutionsRegistry();
+        return;
+      }
+      if (action === "delete") {
+        if (!window.confirm("Move this institution to recycle bin?")) return;
+        await request(`/api/system/registry/institutions/${rowId}`, { method: "DELETE" });
+        alert("Institution moved to recycle bin.");
+        await renderInstitutionsRegistry();
+        return;
+      }
+      if (action === "print") {
+        window.print();
+        return;
+      }
+      if (action === "download") {
+        window.open("/api/system/registry/export/excel", "_blank");
+        return;
+      }
+      if (action === "pdf") {
+        window.open("/api/system/registry/export/pdf", "_blank");
+        return;
+      }
+      alert("Action is not available for this institution row.");
+      return;
+    }
+
+    if (action === "view") {
+      const response = await request(`/api/system/registry/users/${rowId}/view`);
+      alert(JSON.stringify(response?.user || {}, null, 2));
+      return;
+    }
+    if (action === "edit" || action === "save") {
+      const fullName = prompt("Full name", row.full_name || "");
+      if (fullName === null) return;
+      const email = prompt("Email", row.email || "");
+      if (email === null) return;
+      const phone = prompt("Phone", row.phone || "");
+      if (phone === null) return;
+      await request(`/api/system/registry/users/${rowId}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          full_name: fullName,
+          email,
+          phone
+        })
+      });
+      alert("User saved successfully.");
+      await renderInstitutionsRegistry();
+      return;
+    }
+    if (action === "suspend" || action === "deactivate") {
+      const reason = prompt("Reason is required", "");
+      if (!reason) {
+        alert("Reason is required.");
+        return;
+      }
+      const payload =
+        action === "suspend"
+          ? { is_suspended: true, reason }
+          : { is_active: false, reason };
+      await request(`/api/system/registry/users/${rowId}/status`, {
+        method: "PATCH",
+        body: JSON.stringify(payload)
+      });
+      alert("User status updated.");
+      await renderInstitutionsRegistry();
+      return;
+    }
+    if (action === "delete") {
+      if (!window.confirm("Move this user to recycle bin?")) return;
+      await request(`/api/users/${rowId}`, { method: "DELETE" });
+      alert("User moved to recycle bin.");
+      await renderInstitutionsRegistry();
+      return;
+    }
+    if (action === "print") {
+      window.print();
+      return;
+    }
+    if (action === "download") {
+      window.open("/api/users/export/excel", "_blank");
+      return;
+    }
+    if (action === "pdf") {
+      window.open("/api/users/export/pdf", "_blank");
+      return;
+    }
+    alert("Action is not available for this user row.");
+  } catch (error) {
+    alert(error.message || "Action failed.");
+  }
+}
+
+async function purgeRecycleWithThreeStepPrompt(recycleId) {
+  if (!recycleId) throw new Error("Recycle item id is required.");
+  const first = prompt("Permanent delete confirmation step 1: Type YES");
+  if (first === null) return null;
+  const second = prompt("Permanent delete confirmation step 2: Type CONFIRM");
+  if (second === null) return null;
+  const third = prompt("Permanent delete confirmation step 3: Type DELETE");
+  if (third === null) return null;
+  return request(`/api/system/recycle-bin/${recycleId}`, {
+    method: "DELETE",
+    body: JSON.stringify({
+      confirmations: [first, second, third]
+    })
+  });
 }
 
 function applyDashboardIdentity(meData = {}) {
@@ -155,9 +500,57 @@ function applyDashboardIdentity(meData = {}) {
     }
   }
   const welcomeEl = document.getElementById("dashboardWelcomeLine");
-  const nameCandidate = String(meData?.full_name || meData?.username || "").trim() || "USER";
+  const isSystemDeveloper = isSystemDeveloperRole(meData?.role || portalContext?.role || "");
+  const welcomeMeta = isSystemDeveloper ? systemDeveloperWelcomeMeta(meData) : {
+    institutionName: meData?.institution_name,
+    institutionCode: meData?.institution_code,
+    fullName: meData?.full_name || meData?.username,
+    role: meData?.role || portalContext?.role
+  };
   if (welcomeEl) {
-    welcomeEl.textContent = `WELCOME ${nameCandidate.toUpperCase()} TO THE IMIS FOR BASIC EDUCATION LEARNING INSTITUTIONS`;
+    welcomeEl.textContent = buildWelcomeMessageTemplate(welcomeMeta);
+  }
+  const welcomeMetaEl = document.getElementById("dashboardWelcomeMeta");
+  if (welcomeMetaEl) {
+    const resolvedRole = friendlyRoleName(meData?.role || portalContext?.role || "");
+    welcomeMetaEl.innerHTML = `
+      <span class="tag">Institution: ${escapeHtml(toTitleCase(institutionName))}</span>
+      <span class="tag">Code: ${escapeHtml(String(meData?.institution_code || "-"))}</span>
+      <span class="tag">Role: ${escapeHtml(resolvedRole)}</span>
+    `;
+  }
+  const welcomeTop = document.getElementById("dashboardWelcomeTop");
+  const institutionId = Number(meData?.institution_id || portalContext?.institution_id || 0) || 0;
+  if (welcomeTop) {
+    const leftPane = welcomeTop.querySelector("div");
+    if (leftPane) {
+      let logoWrap = document.getElementById("dashboardInstitutionLogoWrap");
+      if (!logoWrap) {
+        logoWrap = document.createElement("div");
+        logoWrap.id = "dashboardInstitutionLogoWrap";
+        logoWrap.className = "dashboard-welcome-logo-wrap";
+        logoWrap.innerHTML = '<img id="dashboardInstitutionLogo" class="dashboard-welcome-logo" alt="Institution logo" />';
+        leftPane.prepend(logoWrap);
+      }
+      const logoImg = document.getElementById("dashboardInstitutionLogo");
+      if (logoWrap && logoImg && institutionId > 0) {
+        request(`/api/public/branding/hero-image?institution_id=${institutionId}`)
+          .then((branding) => {
+            const heroUrl = String(branding?.hero_image_url || "");
+            if (!heroUrl) {
+              logoWrap.style.display = "none";
+              return;
+            }
+            logoImg.src = heroUrl;
+            logoWrap.style.display = "flex";
+          })
+          .catch(() => {
+            logoWrap.style.display = "none";
+          });
+      } else if (logoWrap) {
+        logoWrap.style.display = "none";
+      }
+    }
   }
 }
 
@@ -169,150 +562,202 @@ async function renderSystemRegistration() {
     return loadDashboard();
   }
   try {
-    const options = await request("/api/users/registrar-options");
+    const [options, users] = await Promise.all([
+      request("/api/users/registrar-options"),
+      request("/api/users")
+    ]);
     const institutionRows = Array.isArray(options?.institutions) ? options.institutions : [];
+    const userRows = Array.isArray(users) ? users : [];
     const roleOptions = Array.isArray(options?.assignable_roles) ? options.assignable_roles : [];
     const canRegisterInstitution = Boolean(options?.can_register_institution);
     const canManageAllInstitutions = Boolean(options?.can_manage_all_institutions);
+    const canRegisterUsers = Boolean(options?.can_register_users);
     const registrationMeta = options?.registration_meta || null;
-    const defaultInstitutionId = Number(options?.institution_scope_id || 0) || Number(portalContext?.institution_id || 0) || 0;
-    const defaultInstitution = institutionRows.find((item) => Number(item.id) === defaultInstitutionId) || institutionRows[0] || null;
-    const defaultInstitutionCode = defaultInstitution?.institution_code || "";
+    const defaultInstitutionId =
+      Number(options?.institution_scope_id || 0) ||
+      Number(portalContext?.institution_id || 0) ||
+      Number(institutionRows[0]?.id || 0) ||
+      0;
+    const defaultInstitution =
+      institutionRows.find((item) => Number(item.id) === defaultInstitutionId) ||
+      institutionRows[0] ||
+      null;
     const defaultRole = roleOptions[0] || "";
+    const canSelectInstitutionForUser = canManageAllInstitutions;
+    let latestInstitutionId = Number(defaultInstitution?.id || 0) || null;
+
+    const renderRegistryUserActions = (row) => {
+      const rowId = Number(row?.id || 0);
+      if (!rowId) return "-";
+      return `
+        <div class="search-inline-actions">
+          <button class="search-action-icon view" title="View" onclick="performRegistryRowAction('user', { id: ${rowId} }, 'view')">👁</button>
+          <button class="search-action-icon edit" title="Edit" onclick="performRegistryRowAction('user', ${JSON.stringify({
+            id: rowId,
+            full_name: row?.full_name || "",
+            email: row?.email || "",
+            phone: row?.phone || ""
+          }).replace(/"/g, "&quot;")}, 'edit')">✎</button>
+          <button class="search-action-icon delete" title="Delete" onclick="performRegistryRowAction('user', { id: ${rowId} }, 'delete')">🗑</button>
+        </div>
+      `;
+    };
+
     document.getElementById("cards").innerHTML = `
       <div class="card stats-card metric-emphasis">
         <h4>Registration Center</h4>
-        <p>${formatNumber(institutionRows.length)} institution record(s)</p>
+        <p>${formatNumber(institutionRows.length)} institution(s)</p>
       </div>
       <div class="card stats-card">
-        <h4>Assignable Roles</h4>
-        <p>${formatNumber(roleOptions.length)}</p>
+        <h4>Registered Users</h4>
+        <p>${formatNumber(userRows.length)}</p>
       </div>
       <div class="card stats-card">
         <h4>Scope</h4>
-        <p>${canManageAllInstitutions ? "Global (System Developer)" : "Institution only (HoI/Admin)"}</p>
+        <p>${canManageAllInstitutions ? "System Developer - Global" : "HoI/Admin - Institution Only"}</p>
       </div>
     `;
+
     document.getElementById("formArea").innerHTML = `
       <div class="module-header-card">
-        <h3>Registration and Onboarding Center</h3>
-        <p>All registration is done inside the system. HoI/Admin are restricted to their institution and cannot create System Developer, MoE, or TSC users.</p>
+        <h3>Register (Institution/User)</h3>
+        <p>System Developer can register institutions and users. HoI/Administrator only registers users in their institution.</p>
       </div>
+
       ${canRegisterInstitution ? `
-      <div class="section-card">
+      <section class="registration-compact-card register-section-compact">
         <div class="section-card-header">
           <h3>Register Institution (System Developer only)</h3>
-          <p class="small-note">Creates institution and HoI/Administrator account in one secure flow.</p>
+          <p class="small-note">Institution code is auto-generated from county + category with strict non-duplicate sequencing.</p>
         </div>
-        <div class="form-grid">
+        <div class="form-grid registration-compact-grid">
           <label>Institution Name</label>
           <input id="sysInstitutionName" placeholder="Institution name" />
           <label>County</label>
           ${
             registrationMeta?.counties?.length
               ? `<select id="sysInstitutionCounty">
-            <option value="">Select county</option>
-            ${registrationMeta.counties
-              .map(
-                (c) =>
-                  `<option value="${escapeHtml(c.name)}">${escapeHtml(c.name)} (${escapeHtml(c.code)})</option>`
-              )
-              .join("")}
-          </select>`
-              : `<input id="sysInstitutionCounty" placeholder="County (exact name)" />`
+                  <option value="">Select county</option>
+                  ${registrationMeta.counties
+                    .map((c) => `<option value="${escapeHtml(c.name)}" data-county-code="${escapeHtml(c.code)}">${escapeHtml(c.name)} (${escapeHtml(c.code)})</option>`)
+                    .join("")}
+                </select>`
+              : `<input id="sysInstitutionCounty" placeholder="County" />`
           }
-          <label>County Code</label>
-          <input id="sysInstitutionCountyCode" placeholder="e.g. 001" ${
-            registrationMeta?.counties?.length ? 'readonly class="readonly-field"' : ""
-          } />
+          <label>Institution's Code</label>
+          <input id="sysInstitutionCodePreview" class="readonly-field" readonly placeholder="Auto-generated code" />
+          <input id="sysInstitutionCountyCode" type="hidden" />
           <label>Category</label>
           ${
             registrationMeta?.categories?.length
               ? `<select id="sysInstitutionCategory">
-            <option value="">Select category</option>
-            ${registrationMeta.categories
-              .map(
-                (c) =>
-                  `<option value="${escapeHtml(c.label)}">${escapeHtml(c.label)} (${escapeHtml(c.code)})</option>`
-              )
-              .join("")}
-          </select>`
-              : `<input id="sysInstitutionCategory" placeholder="Category (e.g. Primary)" />`
+                  <option value="">Select category</option>
+                  ${registrationMeta.categories
+                    .map((c) => `<option value="${escapeHtml(c.label)}">${escapeHtml(c.label)} (${escapeHtml(c.code)})</option>`)
+                    .join("")}
+                </select>`
+              : `<input id="sysInstitutionCategory" placeholder="Category" />`
           }
           <label>Sub County</label>
-          <input id="sysInstitutionSubCounty" placeholder="Sub county (optional)" />
+          <input id="sysInstitutionSubCounty" placeholder="Sub county" />
           <label>Location</label>
-          <input id="sysInstitutionLocation" placeholder="Location (optional)" />
-          <label>Village/Town</label>
-          <input id="sysInstitutionVillage" placeholder="Village or town (optional)" />
+          <input id="sysInstitutionLocation" placeholder="Location" />
+          <label>Village</label>
+          <input id="sysInstitutionVillage" placeholder="Village" />
+          <label>Postal Address</label>
+          <input id="sysInstitutionPostalAddress" placeholder="P.O Box ..." />
           <label>Postal Code</label>
           ${
             registrationMeta?.postalCodes?.length
               ? `<select id="sysInstitutionPostalCode">
-            <option value="">Optional — select postal code</option>
-            ${registrationMeta.postalCodes
-              .map(
-                (p) =>
-                  `<option value="${escapeHtml(String(p.postal_code))}">${escapeHtml(
-                    String(p.postal_code)
-                  )} — ${escapeHtml(p.town)}</option>`
-              )
-              .join("")}
-          </select>`
-              : `<input id="sysInstitutionPostalCode" placeholder="Postal code (optional)" />`
+                  <option value="">Select postal code</option>
+                  ${registrationMeta.postalCodes
+                    .map((p) => `<option value="${escapeHtml(String(p.postal_code))}">${escapeHtml(String(p.postal_code))} — ${escapeHtml(p.town)}</option>`)
+                    .join("")}
+                  <option value="__manual__">Manual entry</option>
+                </select>`
+              : `<input id="sysInstitutionPostalCode" placeholder="Postal code" />`
           }
-          <label>Town (post office)</label>
-          <input id="sysInstitutionTown" placeholder="Town (optional, or pick postal code above)" />
-          <label>Institution Email</label>
-          <input id="sysInstitutionEmail" placeholder="Email (optional)" />
-          <label>Institution Phone</label>
-          <input id="sysInstitutionPhone" placeholder="Phone (optional)" />
-          <label>Admin Full Name</label>
-          <input id="sysInstitutionAdminName" placeholder="HoI/Administrator full name" />
+          <label id="sysInstitutionManualPostalCodeLabel" style="display:none;">Manual Postal Code</label>
+          <input id="sysInstitutionManualPostalCode" placeholder="Enter postal code manually" style="display:none;" />
+          <label>Town</label>
+          <input id="sysInstitutionTown" placeholder="Town" />
+          <label>Email</label>
+          <input id="sysInstitutionEmail" placeholder="Institution email" />
+          <label>Phone</label>
+          <input id="sysInstitutionPhone" placeholder="07..., 01..., +254..., +" />
+          <label>Head of Institution / Deputy Name</label>
+          <input id="sysInstitutionAdminName" placeholder="Full name" />
           <label>Admin Username</label>
-          <input id="sysInstitutionAdminUsername" placeholder="Admin username" />
+          <input id="sysInstitutionAdminUsername" placeholder="Username" />
           <label>Admin Role</label>
           <select id="sysInstitutionAdminRole">
             <option value="ADMIN">HoI/Administrator</option>
-            <option value="HEAD_OF_INSTITUTION">D/HoI</option>
+            <option value="HEAD_OF_INSTITUTION">Deputy HoI</option>
           </select>
           <label>Admin Password</label>
-          <input id="sysInstitutionAdminPassword" type="text" placeholder="Admin password (unless auto-generated)" />
-          <label>Auto-generate password</label>
-          <select id="sysInstitutionAutoPassword">
-            <option value="true">Yes</option>
-            <option value="false">No</option>
-          </select>
+          <input id="sysInstitutionAdminPassword" type="password" placeholder="Strong password" />
           <label>Email agreement</label>
           <select id="sysInstitutionSendAgreement">
             <option value="false">No</option>
             <option value="true">Yes</option>
           </select>
         </div>
-        <div class="actions-row">
-          <button id="sysRegisterInstitutionButton">Register Institution</button>
+        <div class="agreement-toolbar-row" id="sysAgreementActionsRow">
+          <button id="sysSendAgreementButton" style="display:none;">Send Agreement</button>
+          <button id="sysViewAgreementButton">View PDF</button>
+          <button id="sysDownloadAgreementButton">Download PDF</button>
+          <button id="sysPrintAgreementButton">Print PDF</button>
         </div>
-      </div>
-      ` : ""}
-      <div class="section-card">
-        <div class="section-card-header">
-          <h3>Register User (Inside Institution Scope)</h3>
-          <p class="small-note">System Developer can target any institution; HoI/Admin are locked to their own institution.</p>
-        </div>
-        <div class="form-grid">
-          <label>Institution</label>
-          <select id="sysUserInstitutionId">
+        <div class="form-grid registration-compact-grid">
+          <label>Agreement Template Institution</label>
+          <select id="sysAgreementInstitutionId">
             ${institutionRows
-              .map(
-                (item) =>
-                  `<option value="${item.id}" ${Number(item.id) === Number(defaultInstitution?.id || 0) ? "selected" : ""}>${escapeHtml(
-                    item.institution_name || "Institution"
-                  )} (${escapeHtml(item.institution_code || "-")})</option>`
-              )
+              .map((item) => `<option value="${item.id}" ${Number(item.id) === Number(defaultInstitutionId) ? "selected" : ""}>${escapeHtml(item.institution_name || "Institution")} (${escapeHtml(item.institution_code || "-")})</option>`)
               .join("")}
           </select>
-          <label>Institution Code</label>
-          <input id="sysUserInstitutionCodePreview" value="${escapeHtml(defaultInstitutionCode)}" readonly />
+          <label>Upload Agreement Letter Sample (PDF)</label>
+          <input id="sysAgreementTemplateFile" type="file" accept="application/pdf" />
+          <label>Agreement Template Text</label>
+          <textarea id="sysAgreementTemplateText" placeholder="Optional agreement body template"></textarea>
+        </div>
+        <div class="agreement-toolbar-row">
+          <button id="sysSaveAgreementTemplateButton">Save Template</button>
+          <button id="sysLoadAgreementTemplateButton">Open Template</button>
+          <button id="sysDeleteAgreementTemplateButton" class="danger-button">Delete Template</button>
+        </div>
+        <div class="dashboard-welcome-pill" id="agreementPreviewBox">
+          <strong>Agreement Preview:</strong>
+          <div id="agreementPreviewBody">Institution Name · Postal Address · Addressee · Date/Time</div>
+        </div>
+        <div class="registration-compact-actions">
+          <button id="sysRegisterInstitutionButton">Register Institution</button>
+        </div>
+      </section>
+      ` : `
+      <section class="registration-compact-card register-section-compact">
+        <div class="section-card-header">
+          <h3>Register Institution</h3>
+          <p class="small-note">Visible but not active for this role.</p>
+        </div>
+        <p class="small-note">Not allowed.</p>
+      </section>
+      `}
+
+      <section class="registration-compact-card register-section-compact">
+        <div class="section-card-header">
+          <h3>Register User (Inside Institution Scope)</h3>
+          <p class="small-note">Auto-generated password can be sent through Email, SMS, or both with legal onboarding text.</p>
+        </div>
+        <div class="form-grid registration-compact-grid">
+          <label>Institution</label>
+          <select id="sysUserInstitutionId" ${canSelectInstitutionForUser ? "" : "disabled"}>
+            ${institutionRows
+              .map((item) => `<option value="${item.id}" ${Number(item.id) === Number(defaultInstitutionId) ? "selected" : ""}>${escapeHtml(item.institution_name || "Institution")} (${escapeHtml(item.institution_code || "-")})</option>`)
+              .join("")}
+          </select>
+          <label>Institution's Code</label>
+          <input id="sysUserInstitutionCodePreview" class="readonly-field" readonly value="${escapeHtmlAttribute(defaultInstitution?.institution_code || "")}" />
           <label>Full Name</label>
           <input id="sysUserFullName" placeholder="Full name" />
           <label>Username</label>
@@ -322,81 +767,195 @@ async function renderSystemRegistration() {
             ${roleOptions.map((role) => `<option value="${escapeHtml(role)}">${escapeHtml(toLabel(role))}</option>`).join("")}
           </select>
           <label>Email</label>
-          <input id="sysUserEmail" placeholder="Email (optional)" />
+          <input id="sysUserEmail" placeholder="Email" />
           <label>Phone</label>
-          <input id="sysUserPhone" placeholder="Phone (optional)" />
+          <input id="sysUserPhone" placeholder="07..., 01..., +254..., +" />
           <label>Password</label>
-          <input id="sysUserPassword" type="text" placeholder="Password" />
-          <label>Auto-generate password</label>
+          <input id="sysUserPassword" type="text" placeholder="Manual password if auto-generate is No" />
+          <label>Auto Password</label>
           <select id="sysUserAutoPassword">
-            <option value="false">No</option>
             <option value="true">Yes</option>
+            <option value="false">No</option>
+          </select>
+          <label>Welcome Message Delivery</label>
+          <select id="sysUserWelcomeDispatch">
+            <option value="BOTH">Email + SMS</option>
+            <option value="EMAIL">Email only</option>
+            <option value="SMS">SMS only</option>
+            <option value="NONE">Do not send</option>
           </select>
         </div>
-        <div class="actions-row">
-          <button id="sysRegisterUserButton">Register User</button>
-          <button id="refreshInstitutionRegistryButton">Refresh Registry</button>
+        <div class="registration-compact-actions">
+          <button id="sysRegisterUserButton" ${canRegisterUsers ? "" : "disabled"}>Register User</button>
+          <button id="refreshInstitutionRegistryButton">Refresh User List</button>
         </div>
-      </div>
-      ${buildDashboardTable(
-        ["Institution", "Code", "County", "Email", "Phone", "Created"],
-        institutionRows.map((row) => [
-          row.institution_name || "-",
-          row.institution_code || "-",
-          row.county || "-",
-          row.email || "-",
-          row.phone || "-",
-          formatDateTime(row.created_at)
-        ])
-      )}
-    `;
-    resetDataTable("Registration center loaded.");
-    const institutionSelect = document.getElementById("sysUserInstitutionId");
-    const institutionCodePreview = document.getElementById("sysUserInstitutionCodePreview");
-    const refreshInstitutionCodePreview = () => {
-      if (!institutionSelect || !institutionCodePreview) return;
-      const selected = institutionRows.find((item) => Number(item.id) === Number(institutionSelect.value));
-      institutionCodePreview.value = selected?.institution_code || "";
-    };
-    if (institutionSelect) {
-      if (!canManageAllInstitutions) {
-        institutionSelect.disabled = true;
-      }
-      institutionSelect.addEventListener("change", refreshInstitutionCodePreview);
-      refreshInstitutionCodePreview();
-    }
+      </section>
 
-    const countySelectEl = document.getElementById("sysInstitutionCounty");
-    const countyCodeEl = document.getElementById("sysInstitutionCountyCode");
-    const postalSelectEl = document.getElementById("sysInstitutionPostalCode");
-    const townEl = document.getElementById("sysInstitutionTown");
-    if (countySelectEl && countyCodeEl && registrationMeta?.counties?.length && countySelectEl.tagName === "SELECT") {
-      const syncCountyCode = () => {
-        const selected = registrationMeta.counties.find((c) => c.name === countySelectEl.value);
-        countyCodeEl.value = selected?.code || "";
-      };
-      countySelectEl.addEventListener("change", syncCountyCode);
-      syncCountyCode();
-    }
-    if (postalSelectEl && townEl && registrationMeta?.postalCodes?.length && postalSelectEl.tagName === "SELECT") {
-      postalSelectEl.addEventListener("change", () => {
-        const code = postalSelectEl.value;
-        const selected = registrationMeta.postalCodes.find((p) => String(p.postal_code) === String(code));
-        if (selected) townEl.value = selected.town || "";
-      });
+      <section class="registration-compact-card register-section-compact">
+        <div class="section-card-header">
+          <h3>Registered Users</h3>
+          <p class="small-note">All users in your scope are listed below with compact actions.</p>
+        </div>
+        <div class="search-inline-actions">
+          <button class="search-action-icon edit" id="bulkEditUserButton" title="Edit User">✎ Edit User</button>
+          <button class="search-action-icon view" id="bulkViewUserButton" title="View User">👁 View User</button>
+          <button class="search-action-icon delete" id="bulkDeleteUserButton" title="Delete User">🗑 Delete User</button>
+          <button class="search-action-icon save" id="bulkRefreshUserButton" title="Refresh User">↻ Refresh User</button>
+        </div>
+        ${buildDashboardTable(
+          ["Name", "Username", "Role", "Institution", "Email", "Phone", "Created", "Actions"],
+          userRows.map((row) => [
+            row.full_name || "-",
+            row.username || "-",
+            formatRoleDisplay(row.role || "-"),
+            row.institution_name || row.institution_id || "-",
+            row.email || "-",
+            row.phone || "-",
+            formatDateTime(row.created_at),
+            renderRegistryUserActions(row)
+          ])
+        )}
+      </section>
+    `;
+
+    resetDataTable("Registration center loaded.");
+
+    const institutionSelect = document.getElementById("sysUserInstitutionId");
+    const userInstitutionCodePreview = document.getElementById("sysUserInstitutionCodePreview");
+    const agreementInstitutionSelect = document.getElementById("sysAgreementInstitutionId");
+    const countySelect = document.getElementById("sysInstitutionCounty");
+    const countyCodeInput = document.getElementById("sysInstitutionCountyCode");
+    const categorySelect = document.getElementById("sysInstitutionCategory");
+    const institutionCodePreview = document.getElementById("sysInstitutionCodePreview");
+    const postalCodeSelect = document.getElementById("sysInstitutionPostalCode");
+    const townInput = document.getElementById("sysInstitutionTown");
+    const manualPostalInput = document.getElementById("sysInstitutionManualPostalCode");
+    const manualPostalLabel = document.getElementById("sysInstitutionManualPostalCodeLabel");
+    const sendAgreementSelect = document.getElementById("sysInstitutionSendAgreement");
+    const sendAgreementButton = document.getElementById("sysSendAgreementButton");
+    const viewAgreementButton = document.getElementById("sysViewAgreementButton");
+    const downloadAgreementButton = document.getElementById("sysDownloadAgreementButton");
+    const printAgreementButton = document.getElementById("sysPrintAgreementButton");
+    const previewBody = document.getElementById("agreementPreviewBody");
+
+    const getInstitutionForSelection = (institutionId) =>
+      institutionRows.find((item) => Number(item.id) === Number(institutionId)) || null;
+
+    const updateUserInstitutionCodePreview = () => {
+      if (!institutionSelect || !userInstitutionCodePreview) return;
+      const selectedInstitution = getInstitutionForSelection(institutionSelect.value);
+      userInstitutionCodePreview.value = selectedInstitution?.institution_code || "";
+    };
+
+    const updateAgreementPreview = () => {
+      if (!previewBody) return;
+      const institutionName = String(document.getElementById("sysInstitutionName")?.value || "").trim() || "-";
+      const postalAddress = String(document.getElementById("sysInstitutionPostalAddress")?.value || "").trim() || "-";
+      const addressee = String(document.getElementById("sysInstitutionAdminName")?.value || "").trim() || "Head of Institution / Deputy";
+      previewBody.textContent = `${institutionName} | P.O Box ${postalAddress} | To: ${addressee} | ${formatDateTime(new Date())}`;
+    };
+
+    const togglePostalManualEntry = () => {
+      if (!postalCodeSelect || !manualPostalInput || !manualPostalLabel) return;
+      const manual = String(postalCodeSelect.value || "") === "__manual__";
+      manualPostalInput.style.display = manual ? "block" : "none";
+      manualPostalLabel.style.display = manual ? "block" : "none";
+      if (!manual) {
+        manualPostalInput.value = "";
+      }
+    };
+
+    const syncPostalTown = () => {
+      if (!postalCodeSelect || !townInput || !Array.isArray(registrationMeta?.postalCodes)) return;
+      const code = String(postalCodeSelect.value || "");
+      const selected = registrationMeta.postalCodes.find((item) => String(item.postal_code) === code);
+      if (selected && selected.town) {
+        townInput.value = selected.town;
+      }
+    };
+
+    const refreshInstitutionCodePreview = async () => {
+      if (!canRegisterInstitution || !institutionCodePreview || !countySelect || !categorySelect) return;
+      const countyValue = String(countySelect.value || "").trim();
+      const categoryValue = String(categorySelect.value || "").trim();
+      if (!countyValue || !categoryValue) {
+        institutionCodePreview.value = "";
+        return;
+      }
+      const selectedCounty = countySelect.selectedOptions?.[0];
+      const countyCode = String(selectedCounty?.dataset?.countyCode || "").trim();
+      countyCodeInput.value = countyCode;
+      try {
+        const preview = await request("/api/institutions/preview-code", {
+          method: "POST",
+          body: JSON.stringify({
+            county: countyValue,
+            county_code: countyCode,
+            category: categoryValue
+          })
+        });
+        institutionCodePreview.value = preview?.institution_code || "";
+      } catch (_) {
+        institutionCodePreview.value = "";
+      }
+    };
+
+    const toggleAgreementActionState = () => {
+      const canSendAgreement = String(sendAgreementSelect?.value || "false") === "true";
+      if (sendAgreementButton) sendAgreementButton.style.display = canSendAgreement ? "inline-flex" : "none";
+      if (viewAgreementButton) viewAgreementButton.style.display = canSendAgreement ? "none" : "inline-flex";
+      if (downloadAgreementButton) downloadAgreementButton.style.display = canSendAgreement ? "none" : "inline-flex";
+      if (printAgreementButton) printAgreementButton.style.display = canSendAgreement ? "none" : "inline-flex";
+    };
+
+    const resolveAgreementInstitutionId = () => {
+      if (agreementInstitutionSelect && Number(agreementInstitutionSelect.value || 0) > 0) {
+        return Number(agreementInstitutionSelect.value);
+      }
+      if (latestInstitutionId && Number(latestInstitutionId) > 0) {
+        return Number(latestInstitutionId);
+      }
+      if (institutionSelect && Number(institutionSelect.value || 0) > 0) {
+        return Number(institutionSelect.value);
+      }
+      return Number(defaultInstitutionId || 0) || null;
+    };
+
+    institutionSelect?.addEventListener("change", updateUserInstitutionCodePreview);
+    updateUserInstitutionCodePreview();
+    countySelect?.addEventListener("change", refreshInstitutionCodePreview);
+    categorySelect?.addEventListener("change", refreshInstitutionCodePreview);
+    postalCodeSelect?.addEventListener("change", () => {
+      togglePostalManualEntry();
+      syncPostalTown();
+    });
+    sendAgreementSelect?.addEventListener("change", toggleAgreementActionState);
+    document.getElementById("sysInstitutionName")?.addEventListener("input", updateAgreementPreview);
+    document.getElementById("sysInstitutionPostalAddress")?.addEventListener("input", updateAgreementPreview);
+    document.getElementById("sysInstitutionAdminName")?.addEventListener("input", updateAgreementPreview);
+    togglePostalManualEntry();
+    toggleAgreementActionState();
+    updateAgreementPreview();
+    if (!canSelectInstitutionForUser && institutionSelect) {
+      institutionSelect.disabled = true;
     }
 
     document.getElementById("sysRegisterInstitutionButton")?.addEventListener("click", async () => {
       try {
+        const postalCodeValue = String(postalCodeSelect?.value || "").trim();
         const payload = {
           institution_name: String(document.getElementById("sysInstitutionName")?.value || "").trim(),
-          county: String(document.getElementById("sysInstitutionCounty")?.value || "").trim(),
-          county_code: String(document.getElementById("sysInstitutionCountyCode")?.value || "").trim(),
-          category: String(document.getElementById("sysInstitutionCategory")?.value || "").trim(),
+          county: String(countySelect?.value || "").trim(),
+          county_code: String(countyCodeInput?.value || "").trim(),
+          category: String(categorySelect?.value || "").trim(),
           sub_county: String(document.getElementById("sysInstitutionSubCounty")?.value || "").trim(),
           location: String(document.getElementById("sysInstitutionLocation")?.value || "").trim(),
           village: String(document.getElementById("sysInstitutionVillage")?.value || "").trim(),
-          postal_code: String(document.getElementById("sysInstitutionPostalCode")?.value || "").trim(),
+          postal_address: String(document.getElementById("sysInstitutionPostalAddress")?.value || "").trim(),
+          postal_code: postalCodeValue,
+          postal_code_manual: postalCodeValue === "__manual__"
+            ? String(manualPostalInput?.value || "").trim()
+            : undefined,
           town: String(document.getElementById("sysInstitutionTown")?.value || "").trim(),
           email: String(document.getElementById("sysInstitutionEmail")?.value || "").trim(),
           phone: String(document.getElementById("sysInstitutionPhone")?.value || "").trim(),
@@ -404,17 +963,14 @@ async function renderSystemRegistration() {
           admin_username: String(document.getElementById("sysInstitutionAdminUsername")?.value || "").trim(),
           admin_password: String(document.getElementById("sysInstitutionAdminPassword")?.value || ""),
           portal_role: String(document.getElementById("sysInstitutionAdminRole")?.value || "ADMIN"),
-          auto_generate_password: String(document.getElementById("sysInstitutionAutoPassword")?.value || "true") === "true",
-          send_agreement_email: String(document.getElementById("sysInstitutionSendAgreement")?.value || "false") === "true"
+          send_agreement_email: String(sendAgreementSelect?.value || "false") === "true"
         };
         const result = await request("/api/institutions", {
           method: "POST",
           body: JSON.stringify(payload)
         });
-        alert(
-          `Institution registered. Code: ${result.institution_code}. Admin: ${result.admin_username}.` +
-          (result.admin_password ? ` Password: ${result.admin_password}` : "")
-        );
+        latestInstitutionId = Number(result?.institution_id || 0) || latestInstitutionId;
+        alert(`Institution registered successfully. Code: ${result.institution_code}`);
         await renderSystemRegistration();
       } catch (error) {
         alert(error.message);
@@ -423,30 +979,157 @@ async function renderSystemRegistration() {
 
     document.getElementById("sysRegisterUserButton")?.addEventListener("click", async () => {
       try {
+        const autoGenerate = String(document.getElementById("sysUserAutoPassword")?.value || "true") === "true";
         const payload = {
-          institution_id: Number(document.getElementById("sysUserInstitutionId")?.value || 0) || undefined,
+          institution_id: Number(institutionSelect?.value || 0) || undefined,
           full_name: String(document.getElementById("sysUserFullName")?.value || "").trim(),
           username: String(document.getElementById("sysUserUsername")?.value || "").trim(),
           role: String(document.getElementById("sysUserRole")?.value || defaultRole),
           email: String(document.getElementById("sysUserEmail")?.value || "").trim(),
-          phone: String(document.getElementById("sysUserPhone")?.value || "").trim()
+          phone: String(document.getElementById("sysUserPhone")?.value || "").trim(),
+          auto_generate_password: autoGenerate,
+          password: autoGenerate ? null : String(document.getElementById("sysUserPassword")?.value || ""),
+          send_welcome_via: String(document.getElementById("sysUserWelcomeDispatch")?.value || "BOTH")
         };
-        const autoGenerate = String(document.getElementById("sysUserAutoPassword")?.value || "false") === "true";
-        if (autoGenerate) {
-          payload.password = `Aa1!${Math.random().toString(36).slice(-9)}#`;
-        } else {
-          payload.password = String(document.getElementById("sysUserPassword")?.value || "");
-        }
         const result = await request("/api/users", {
           method: "POST",
           body: JSON.stringify(payload)
         });
-        alert(result.message || "User registered successfully.");
+        const passwordLine = result?.generated_password ? ` Generated Password: ${result.generated_password}` : "";
+        alert(`${result.message || "User registered successfully."}${passwordLine}`);
+        await renderSystemRegistration();
       } catch (error) {
         alert(error.message);
       }
     });
+
     document.getElementById("refreshInstitutionRegistryButton")?.addEventListener("click", renderSystemRegistration);
+
+    document.getElementById("bulkEditUserButton")?.addEventListener("click", async () => {
+      const userId = Number(prompt("Enter User ID to edit:", "") || 0);
+      if (!userId) return;
+      await performRegistryRowAction("user", { id: userId }, "edit");
+    });
+    document.getElementById("bulkViewUserButton")?.addEventListener("click", async () => {
+      const userId = Number(prompt("Enter User ID to view:", "") || 0);
+      if (!userId) return;
+      await performRegistryRowAction("user", { id: userId }, "view");
+    });
+    document.getElementById("bulkDeleteUserButton")?.addEventListener("click", async () => {
+      const userId = Number(prompt("Enter User ID to delete:", "") || 0);
+      if (!userId) return;
+      await performRegistryRowAction("user", { id: userId }, "delete");
+    });
+    document.getElementById("bulkRefreshUserButton")?.addEventListener("click", renderSystemRegistration);
+
+    document.getElementById("sysSaveAgreementTemplateButton")?.addEventListener("click", async () => {
+      try {
+        const institutionId = resolveAgreementInstitutionId();
+        if (!institutionId) {
+          alert("Select an institution first.");
+          return;
+        }
+        let templateFileUrl = null;
+        const templateFile = document.getElementById("sysAgreementTemplateFile")?.files?.[0] || null;
+        if (templateFile) {
+          const uploadForm = new FormData();
+          uploadForm.append("file", templateFile);
+          const response = await fetch("/api/uploads", {
+            method: "POST",
+            headers: { Authorization: `Bearer ${token}` },
+            body: uploadForm
+          });
+          const uploaded = await response.json();
+          if (!response.ok) {
+            throw new Error(uploaded?.error || "Agreement template upload failed.");
+          }
+          templateFileUrl = uploaded.filePath;
+        }
+        const payload = {
+          agreement_template_text: String(document.getElementById("sysAgreementTemplateText")?.value || "").trim(),
+          agreement_template_file_url: templateFileUrl
+        };
+        const result = await request(`/api/institutions/${institutionId}/agreement-template`, {
+          method: "PUT",
+          body: JSON.stringify(payload)
+        });
+        alert(result.message || "Agreement template saved.");
+      } catch (error) {
+        alert(error.message);
+      }
+    });
+
+    document.getElementById("sysLoadAgreementTemplateButton")?.addEventListener("click", async () => {
+      try {
+        const institutionId = resolveAgreementInstitutionId();
+        if (!institutionId) {
+          alert("Select an institution first.");
+          return;
+        }
+        const data = await request(`/api/institutions/${institutionId}/agreement-template`);
+        document.getElementById("sysAgreementTemplateText").value = data?.agreement_template_text || "";
+        alert("Agreement template loaded.");
+      } catch (error) {
+        alert(error.message);
+      }
+    });
+
+    document.getElementById("sysDeleteAgreementTemplateButton")?.addEventListener("click", async () => {
+      try {
+        const institutionId = resolveAgreementInstitutionId();
+        if (!institutionId) {
+          alert("Select an institution first.");
+          return;
+        }
+        if (!window.confirm("Delete this institution agreement template?")) return;
+        const result = await request(`/api/institutions/${institutionId}/agreement-template`, { method: "DELETE" });
+        alert(result.message || "Agreement template deleted.");
+      } catch (error) {
+        alert(error.message);
+      }
+    });
+
+    document.getElementById("sysSendAgreementButton")?.addEventListener("click", async () => {
+      try {
+        const institutionId = resolveAgreementInstitutionId();
+        if (!institutionId) {
+          alert("Select an institution first.");
+          return;
+        }
+        const result = await request(`/api/institutions/${institutionId}/agreement/send`, { method: "POST" });
+        alert(result.message || "Agreement sent successfully.");
+      } catch (error) {
+        alert(error.message);
+      }
+    });
+
+    document.getElementById("sysViewAgreementButton")?.addEventListener("click", () => {
+      const institutionId = resolveAgreementInstitutionId();
+      if (!institutionId) {
+        alert("Select an institution first.");
+        return;
+      }
+      window.open(`/api/institutions/${institutionId}/agreement.pdf`, "_blank");
+    });
+    document.getElementById("sysDownloadAgreementButton")?.addEventListener("click", () => {
+      const institutionId = resolveAgreementInstitutionId();
+      if (!institutionId) {
+        alert("Select an institution first.");
+        return;
+      }
+      window.open(`/api/institutions/${institutionId}/agreement.pdf`, "_blank");
+    });
+    document.getElementById("sysPrintAgreementButton")?.addEventListener("click", () => {
+      const institutionId = resolveAgreementInstitutionId();
+      if (!institutionId) {
+        alert("Select an institution first.");
+        return;
+      }
+      const printWindow = window.open(`/api/institutions/${institutionId}/agreement.pdf`, "_blank");
+      setTimeout(() => {
+        printWindow?.print();
+      }, 700);
+    });
   } catch (error) {
     alert(error.message);
   }
@@ -460,95 +1143,179 @@ async function renderModuleRights() {
     return loadDashboard();
   }
   try {
-    const [users, metaData] = await Promise.all([request("/api/users"), request("/api/meta")]);
+    const [users, metaData] = await Promise.all([
+      request("/api/users"),
+      request("/api/meta")
+    ]);
     const moduleKeys = Object.values(metaData?.moduleKeys || {});
     const defaultMap = metaData?.defaultModuleAccessByRole || {};
-    const rows = (users || []).slice(0, 120);
+    const rows = Array.isArray(users) ? users.slice(0, 200) : [];
+    const permissionKeys = ["ACCESS", "VIEW", "EDIT", "DELETE", "SAVE", "PROCESS", "SHOW_ROLES"];
+    const permissionLabels = {
+      ACCESS: "View",
+      VIEW: "View",
+      EDIT: "Edit",
+      DELETE: "Delete",
+      SAVE: "Save",
+      PROCESS: "Process",
+      SHOW_ROLES: "Show Roles"
+    };
+    const fallbackModuleError = "Access denied until rights are granted by the System Developer.";
+    let currentUserId = Number(rows[0]?.id || 0) || null;
+    let overrideMap = new Map();
+
     document.getElementById("cards").innerHTML = `
       <div class="card stats-card metric-emphasis">
-        <h4>Module Access Management</h4>
-        <p>${formatNumber(rows.length)} user(s) available</p>
+        <h4>Module Rights Overrides</h4>
+        <p>${formatNumber(rows.length)} user(s) loaded</p>
       </div>
       <div class="card stats-card">
-        <h4>Available Modules</h4>
+        <h4>Modules</h4>
         <p>${formatNumber(moduleKeys.length)}</p>
       </div>
       <div class="card stats-card">
-        <h4>Control</h4>
-        <p>Per-user module overrides</p>
+        <h4>Policy</h4>
+        <p>Deny by default, grant per user</p>
       </div>
     `;
+
     document.getElementById("formArea").innerHTML = `
-      <div class="module-header-card">
-        <h3>Module Rights Overrides</h3>
-        <p>Select a user and override specific module access rights.</p>
-      </div>
-      <div class="form-grid">
+      <section class="module-rights-compact">
+        <h3>Access Control Module Rights</h3>
+      </section>
+      <div class="module-rights-grid">
         <label>User</label>
         <select id="moduleAccessUserSelect">
           <option value="">Select user...</option>
           ${rows
-            .map(
-              (user) =>
-                `<option value="${user.id}" data-role="${escapeHtml(user.role || "")}" data-inst="${escapeHtml(
-                  String(user.institution_id || "")
-                )}">${escapeHtml(user.full_name || user.username || `User ${user.id}`)} (${escapeHtml(
-                  user.username || "-"
-                )}) • ${escapeHtml(user.role || "-")} • Inst ${escapeHtml(String(user.institution_id || "-"))}</option>`
-            )
+            .map((user) => `
+              <option value="${user.id}" data-role="${escapeHtml(user.role || "")}">
+                ${escapeHtml(buildRoleScopedUserLabel(user))}
+              </option>`)
             .join("")}
         </select>
-        <label>Module</label>
-        <select id="moduleAccessModuleSelect">
-          <option value="">Select module...</option>
-          ${moduleKeys.map((item) => `<option value="${escapeHtml(item)}">${escapeHtml(item)}</option>`).join("")}
-        </select>
-        <label>Can Access</label>
-        <select id="moduleAccessStateSelect">
-          <option value="true">Allow</option>
-          <option value="false">Deny</option>
-        </select>
       </div>
-      <div class="actions-row">
-        <button id="saveModuleAccessButton">Save Override</button>
+      <div class="module-rights-matrix-tools">
+        <button id="moduleAccessMassSelectButton">Select All Access</button>
+        <button id="moduleAccessMassClearButton">Deselect All Access</button>
+        <button id="saveModuleAccessButton">Save</button>
         <button id="showRoleDefaultsButton">Show Role Defaults</button>
       </div>
       <div id="moduleAccessInfo" class="small-note"></div>
+      <div class="module-rights-matrix-wrap">
+        <div class="module-rights-matrix" id="moduleRightsMatrixHost"></div>
+      </div>
     `;
-    resetDataTable("Use controls above to manage module overrides.");
-    document.getElementById("saveModuleAccessButton")?.addEventListener("click", async () => {
-      const userId = Number(document.getElementById("moduleAccessUserSelect")?.value || 0);
-      const moduleKey = String(document.getElementById("moduleAccessModuleSelect")?.value || "");
-      const canAccess = String(document.getElementById("moduleAccessStateSelect")?.value || "true") === "true";
-      if (!userId || !moduleKey) {
-        alert("Select user and module first.");
+
+    const userSelect = document.getElementById("moduleAccessUserSelect");
+    const info = document.getElementById("moduleAccessInfo");
+    const matrixHost = document.getElementById("moduleRightsMatrixHost");
+
+    if (userSelect && currentUserId) {
+      userSelect.value = String(currentUserId);
+    }
+
+    const renderMatrix = () => {
+      if (!matrixHost) return;
+      const rowsMarkup = moduleKeys
+        .map((moduleKey) => {
+          const cells = permissionKeys
+            .map((permissionKey) => {
+              const key = `${moduleKey}::${permissionKey}`;
+              const checked = overrideMap.has(key) ? Number(overrideMap.get(key)) === 1 : false;
+              return `<td><input type="checkbox" class="module-access-check" data-module="${escapeHtmlAttribute(moduleKey)}" data-action="${escapeHtmlAttribute(permissionKey)}" ${checked ? "checked" : ""} /></td>`;
+            })
+            .join("");
+          return `<tr>
+            <td class="module-name-col">${escapeHtml(moduleKey)}</td>
+            ${cells}
+            <td>${escapeHtml(fallbackModuleError)}</td>
+          </tr>`;
+        })
+        .join("");
+      matrixHost.innerHTML = `
+        <table class="module-rights-matrix-table">
+          <thead>
+            <tr>
+              <th class="module-name-col">Module</th>
+              ${permissionKeys.map((key) => `<th>${escapeHtml(permissionLabels[key] || key)}</th>`).join("")}
+              <th>Error Message</th>
+            </tr>
+          </thead>
+          <tbody>${rowsMarkup}</tbody>
+        </table>
+      `;
+    };
+
+    const loadOverrides = async () => {
+      const selectedUserId = Number(userSelect?.value || 0);
+      if (!selectedUserId) {
+        overrideMap = new Map();
+        renderMatrix();
+        if (info) info.textContent = "Select user to view and manage module rights.";
         return;
       }
+      const selectedRole = normalizeRoleKey(userSelect?.selectedOptions?.[0]?.dataset?.role || "");
+      const response = await request(`/api/system/module-access/overrides?user_id=${selectedUserId}`);
+      const overrides = Array.isArray(response?.overrides) ? response.overrides : [];
+      overrideMap = new Map(
+        overrides.map((row) => [`${row.module_key}::${String(row.permission_key || "ACCESS").toUpperCase()}`, Number(row.can_access || 0)])
+      );
+      renderMatrix();
+      if (info) {
+        const defaults = Array.isArray(defaultMap[selectedRole]) ? defaultMap[selectedRole] : [];
+        info.textContent = `Role: ${friendlyRoleName(selectedRole)} | Default Allowed Modules: ${defaults.join(", ") || "None"}`;
+      }
+    };
+
+    userSelect?.addEventListener("change", loadOverrides);
+    document.getElementById("moduleAccessMassSelectButton")?.addEventListener("click", () => {
+      document.querySelectorAll(".module-access-check").forEach((input) => {
+        input.checked = true;
+      });
+    });
+    document.getElementById("moduleAccessMassClearButton")?.addEventListener("click", () => {
+      document.querySelectorAll(".module-access-check").forEach((input) => {
+        input.checked = false;
+      });
+    });
+    document.getElementById("showRoleDefaultsButton")?.addEventListener("click", () => {
+      const selectedRole = normalizeRoleKey(userSelect?.selectedOptions?.[0]?.dataset?.role || "");
+      const defaults = Array.isArray(defaultMap[selectedRole]) ? defaultMap[selectedRole] : [];
+      if (info) {
+        info.textContent = selectedRole
+          ? `Role default modules (${friendlyRoleName(selectedRole)}): ${defaults.join(", ") || "None"}`
+          : "Select a user to show role defaults.";
+      }
+    });
+    document.getElementById("saveModuleAccessButton")?.addEventListener("click", async () => {
+      const selectedUserId = Number(userSelect?.value || 0);
+      if (!selectedUserId) {
+        alert("Select a user first.");
+        return;
+      }
+      const entries = Array.from(document.querySelectorAll(".module-access-check")).map((input) => ({
+        module_key: String(input.getAttribute("data-module") || ""),
+        action_key: String(input.getAttribute("data-action") || "ACCESS"),
+        can_access: input.checked
+      }));
       try {
-        const response = await request("/api/users/module-access", {
+        const result = await request("/api/users/module-access/bulk", {
           method: "POST",
           body: JSON.stringify({
-            user_id: userId,
-            module_key: moduleKey,
-            can_access: canAccess
+            user_id: selectedUserId,
+            entries
           })
         });
-        alert(response.message || "Module access override saved.");
+        alert(result.message || "Module rights saved.");
+        await loadOverrides();
       } catch (error) {
         alert(error.message);
       }
     });
-    document.getElementById("showRoleDefaultsButton")?.addEventListener("click", () => {
-      const selected = document.getElementById("moduleAccessUserSelect");
-      const selectedRole = selected?.selectedOptions?.[0]?.dataset?.role || "";
-      const defaults = Array.isArray(defaultMap[selectedRole]) ? defaultMap[selectedRole] : [];
-      const info = document.getElementById("moduleAccessInfo");
-      if (info) {
-        info.textContent = selectedRole
-          ? `Default modules for ${selectedRole}: ${defaults.join(", ") || "None"}`
-          : "Select a user to view role defaults.";
-      }
-    });
+
+    await loadOverrides();
+    resetDataTable("Module access matrix loaded.");
   } catch (error) {
     alert(error.message);
   }
@@ -562,7 +1329,7 @@ async function renderSecurityAudit() {
     return loadDashboard();
   }
   try {
-    const logs = await request("/api/system/audit-logs?limit=200");
+    const logs = await request("/api/system/audit-logs?limit=240");
     const rows = Array.isArray(logs?.logs) ? logs.logs : [];
     document.getElementById("cards").innerHTML = `
       <div class="card stats-card metric-emphasis">
@@ -581,32 +1348,28 @@ async function renderSecurityAudit() {
     document.getElementById("formArea").innerHTML = `
       <div class="module-header-card">
         <h3>Security & Logging Audit</h3>
-        <p>Track login outcomes, OTP validation, and account mutation events.</p>
+        <p>System Developer sees all logs; HoI/Administrator sees logs scoped to own institution. Other users are not allowed.</p>
       </div>
-      <div class="dashboard-metrics">
-        <p><strong>Failed login events (24h):</strong> ${formatNumber(logs?.metrics?.failed_login_events_24h || 0)}</p>
-        <p><strong>OTP failure events (24h):</strong> ${formatNumber(logs?.metrics?.otp_fail_events_24h || 0)}</p>
+      <div class="actions-row">
+        <button id="auditScrollLeftButton">◀</button>
+        <button id="auditScrollRightButton">▶</button>
+        <button id="refreshAuditLogButton">Refresh</button>
+      </div>
+      <div id="auditStripScroller" class="dashboard-table-wrap" style="overflow-x:auto; white-space:nowrap;">
+        <div id="auditStripList">
+          ${rows.length ? rows.map((row) => toAuditStripMarkup(row)).join("") : '<p class="small-note">No audit log entries found.</p>'}
+        </div>
       </div>
     `;
-    const tableRows = rows.map((row) => [
-      formatDateTime(row.created_at),
-      row.actor_role || "-",
-      row.action || "-",
-      row.entity_name || "-",
-      row.entity_id || "-",
-      typeof row.details_json === "object" ? JSON.stringify(row.details_json) : row.details_json || "-"
-    ]);
-    const head = document.getElementById("tableHead");
-    const body = document.getElementById("tableBody");
-    if (head && body) {
-      head.innerHTML = `<tr><th>When</th><th>Actor Role</th><th>Action</th><th>Entity</th><th>Entity ID</th><th>Details</th></tr>`;
-      body.innerHTML = tableRows
-        .map((row) => `<tr>${row.map((value) => `<td>${escapeHtml(value)}</td>`).join("")}</tr>`)
-        .join("");
-      if (!tableRows.length) {
-        resetDataTable("No audit log entries found.");
-      }
-    }
+    resetDataTable("Audit strips loaded above.");
+    const scroller = document.getElementById("auditStripScroller");
+    document.getElementById("auditScrollLeftButton")?.addEventListener("click", () => {
+      scroller?.scrollBy({ left: -520, behavior: "smooth" });
+    });
+    document.getElementById("auditScrollRightButton")?.addEventListener("click", () => {
+      scroller?.scrollBy({ left: 520, behavior: "smooth" });
+    });
+    document.getElementById("refreshAuditLogButton")?.addEventListener("click", renderSecurityAudit);
   } catch (error) {
     alert(error.message);
   }
@@ -621,10 +1384,16 @@ async function renderInstitutionsRegistry() {
   }
   try {
     const registry = await request("/api/system/registry");
+    const includeInstitutionRegistry = Boolean(registry?.include_institution_registry);
     const institutions = Array.isArray(registry?.institutions) ? registry.institutions : [];
     const users = Array.isArray(registry?.users) ? registry.users : [];
-    const institutionRows = Array.isArray(institutions) ? institutions : [];
-    const userRows = Array.isArray(users) ? users : [];
+    const institutionRows = institutions;
+    const userRows = users;
+    const scopeOptions = resolveRegistryScopeOptions().filter(
+      (option) => option.key !== "institution" || includeInstitutionRegistry
+    );
+    const initialScope = scopeOptions[0]?.key || "user";
+
     document.getElementById("cards").innerHTML = `
       <div class="card stats-card metric-emphasis">
         <h4>Institutions</h4>
@@ -636,46 +1405,97 @@ async function renderInstitutionsRegistry() {
       </div>
       <div class="card stats-card">
         <h4>Registry Scope</h4>
-        <p>${escapeHtml(portalContext?.role || "-")}</p>
+        <p>${escapeHtml(friendlyRoleName(portalContext?.role || "-"))}</p>
       </div>
     `;
+
+    const institutionActions = (row) => {
+      const rowId = Number(row?.id || 0);
+      if (!rowId) return "-";
+      return `
+        <div class="search-inline-actions">
+          <button class="search-action-icon view" onclick="performRegistryRowAction('institution', { id: ${rowId} }, 'view')" title="View">👁</button>
+          <button class="search-action-icon edit" onclick="performRegistryRowAction('institution', { id: ${rowId} }, 'edit')" title="Edit">✎</button>
+          <button class="search-action-icon save" onclick="performRegistryRowAction('institution', { id: ${rowId} }, 'save')" title="Save">💾</button>
+          <button class="search-action-icon print" onclick="performRegistryRowAction('institution', { id: ${rowId} }, 'print')" title="Print">🖨</button>
+          <button class="search-action-icon pdf" onclick="performRegistryRowAction('institution', { id: ${rowId} }, 'pdf')" title="PDF">📄</button>
+          <button class="search-action-icon delete" onclick="performRegistryRowAction('institution', { id: ${rowId} }, 'delete')" title="Delete">🗑</button>
+          <button class="search-action-icon edit" onclick="performRegistryRowAction('institution', { id: ${rowId} }, 'deactivate')" title="Deactivate">⛔</button>
+          <button class="search-action-icon view" onclick="performRegistryRowAction('institution', { id: ${rowId} }, 'suspend')" title="Suspend">⏸</button>
+        </div>
+      `;
+    };
+
+    const userActions = (row) => {
+      const rowId = Number(row?.id || 0);
+      if (!rowId) return "-";
+      return `
+        <div class="search-inline-actions">
+          <button class="search-action-icon view" onclick="performRegistryRowAction('user', { id: ${rowId} }, 'view')" title="View">👁</button>
+          <button class="search-action-icon edit" onclick="performRegistryRowAction('user', { id: ${rowId} }, 'edit')" title="Edit">✎</button>
+          <button class="search-action-icon save" onclick="performRegistryRowAction('user', { id: ${rowId} }, 'save')" title="Save">💾</button>
+          <button class="search-action-icon print" onclick="performRegistryRowAction('user', { id: ${rowId} }, 'print')" title="Print">🖨</button>
+          <button class="search-action-icon pdf" onclick="performRegistryRowAction('user', { id: ${rowId} }, 'pdf')" title="PDF">📄</button>
+          <button class="search-action-icon delete" onclick="performRegistryRowAction('user', { id: ${rowId} }, 'delete')" title="Delete">🗑</button>
+          <button class="search-action-icon edit" onclick="performRegistryRowAction('user', { id: ${rowId} }, 'deactivate')" title="Deactivate">⛔</button>
+          <button class="search-action-icon view" onclick="performRegistryRowAction('user', { id: ${rowId} }, 'suspend')" title="Suspend">⏸</button>
+        </div>
+      `;
+    };
+
     document.getElementById("formArea").innerHTML = `
       <div class="module-header-card">
-        <h3>Institutions Registry</h3>
-        <p>Review institutions and user accounts available in your scope.</p>
+        <h3>Registry</h3>
       </div>
-      ${buildDashboardTable(
-        ["Institution", "Code", "County", "Email", "Phone"],
-        institutionRows.slice(0, 100).map((item) => [
-          item.institution_name || "-",
-          item.institution_code || "-",
-          item.county || "-",
-          item.email || "-",
-          item.phone || "-"
-        ])
-      )}
+      <div class="form-grid">
+        <label>Registry Scope</label>
+        <select id="registryScopeSelect">
+          ${scopeOptions.map((option) => `<option value="${option.key}">${escapeHtml(option.label)}</option>`).join("")}
+        </select>
+      </div>
+      <div id="registryScopeTable"></div>
     `;
-    const head = document.getElementById("tableHead");
-    const body = document.getElementById("tableBody");
-    if (head && body) {
-      head.innerHTML = "<tr><th>User</th><th>Username</th><th>Role</th><th>Institution ID</th><th>Status</th><th>Created</th></tr>";
-      body.innerHTML = userRows
-        .slice(0, 300)
-        .map(
-          (row) => `<tr>
-            <td>${escapeHtml(row.full_name || "-")}</td>
-            <td>${escapeHtml(row.username || "-")}</td>
-            <td>${escapeHtml(row.role || "-")}</td>
-            <td>${escapeHtml(String(row.institution_id || "-"))}</td>
-            <td>${Number(row.is_active) === 1 ? "Active" : "Inactive"}</td>
-            <td>${escapeHtml(formatDateTime(row.created_at))}</td>
-          </tr>`
-        )
-        .join("");
-      if (!userRows.length) {
-        resetDataTable("No user records found.");
+
+    const renderRegistryScope = (scope = initialScope) => {
+      const holder = document.getElementById("registryScopeTable");
+      if (!holder) return;
+      if (scope === "institution" && includeInstitutionRegistry) {
+        holder.innerHTML = buildDashboardTable(
+          ["Institution", "Code", "County", "Email", "Phone", "Date Created", "Actions"],
+          institutionRows.map((item) => [
+            item.institution_name || "-",
+            item.institution_code || "-",
+            item.county || "-",
+            item.email || "-",
+            item.phone || "-",
+            formatDateTime(item.created_at),
+            institutionActions(item)
+          ])
+        );
+      } else if (scope === "user") {
+        holder.innerHTML = buildDashboardTable(
+          ["Name", "Username", "Role", "Institution Code", "Email", "Phone", "Date Created", "Status", "Actions"],
+          userRows.map((row) => [
+            row.full_name || "-",
+            row.username || "-",
+            friendlyRoleName(row.role || ""),
+            row.institution_code || "-",
+            row.email || "-",
+            row.phone || "-",
+            formatDateTime(row.created_at),
+            normalizeStatusLabel(row.is_active),
+            userActions(row)
+          ])
+        );
+      } else {
+        holder.innerHTML = '<p class="small-note">Not allowed.</p>';
       }
-    }
+    };
+
+    const scopeSelect = document.getElementById("registryScopeSelect");
+    scopeSelect?.addEventListener("change", () => renderRegistryScope(scopeSelect.value));
+    renderRegistryScope(initialScope);
+    resetDataTable("Registry records loaded above.");
   } catch (error) {
     alert(error.message);
   }
@@ -691,51 +1511,91 @@ async function renderRecycleBin() {
   try {
     const recycleData = await request("/api/system/recycle-bin?status=TRASHED&limit=200");
     const rows = Array.isArray(recycleData?.items) ? recycleData.items : [];
+    const retentionYears = Number(recycleData?.retention_years || 12);
     document.getElementById("cards").innerHTML = `
       <div class="card stats-card metric-emphasis">
         <h4>Trashed Items</h4>
         <p>${formatNumber(rows.length)}</p>
       </div>
       <div class="card stats-card">
-        <h4>Restore</h4>
-        <p>Bring deleted records back</p>
+        <h4>Retention</h4>
+        <p>${retentionYears} years</p>
       </div>
       <div class="card stats-card">
-        <h4>Purge</h4>
-        <p>Permanent cleanup control</p>
+        <h4>Purge Rule</h4>
+        <p>3-step confirmation required</p>
       </div>
     `;
     document.getElementById("formArea").innerHTML = `
       <div class="module-header-card">
         <h3>Recycle Bin Management</h3>
-        <p>Restore records by recycle item ID or purge permanently.</p>
+        <p>Deleted items are retained for ${retentionYears} years. HoI/Admin purge hides item from their view but keeps it visible to System Developer retention controls.</p>
       </div>
       <div class="actions-row">
         <button id="restoreRecycleItemButton">Restore Item</button>
         <button id="purgeRecycleItemButton" class="danger">Purge Item</button>
+        <button id="viewRecycleItemButton">View Item</button>
         <button id="refreshRecycleBinButton">Refresh</button>
       </div>
+      <div id="recycleTableHolder"></div>
     `;
-    const head = document.getElementById("tableHead");
-    const body = document.getElementById("tableBody");
-    if (head && body) {
-      head.innerHTML = "<tr><th>Recycle ID</th><th>Entity</th><th>Entity ID</th><th>Deleted At</th><th>Deleted By</th><th>Status</th></tr>";
-      body.innerHTML = rows
-        .map(
-          (row) => `<tr>
-            <td>${escapeHtml(String(row.id || "-"))}</td>
-            <td>${escapeHtml(row.entity_name || "-")}</td>
-            <td>${escapeHtml(String(row.entity_id || "-"))}</td>
-            <td>${escapeHtml(formatDateTime(row.deleted_at))}</td>
-            <td>${escapeHtml(String(row.deleted_by_user_id || "-"))}</td>
-            <td>${escapeHtml(row.status || "-")}</td>
-          </tr>`
-        )
-        .join("");
-      if (!rows.length) {
-        resetDataTable("Recycle bin is empty.");
-      }
+
+    const recycleTableHolder = document.getElementById("recycleTableHolder");
+    const actionButtons = (row) => `
+      <div class="search-inline-actions">
+        <button class="search-action-icon view" data-recycle-action="view" data-recycle-id="${Number(row.id || 0)}" title="View">👁</button>
+        <button class="search-action-icon save" data-recycle-action="restore" data-recycle-id="${Number(row.id || 0)}" title="Restore">↩</button>
+        <button class="search-action-icon delete" data-recycle-action="purge" data-recycle-id="${Number(row.id || 0)}" title="Delete Permanently">🗑</button>
+      </div>
+    `;
+    if (recycleTableHolder) {
+      recycleTableHolder.innerHTML = buildDashboardTable(
+        ["Recycle ID", "Entity", "Entity ID", "Deleted By", "Username", "Deleted At", "IP Address", "Machine", "Description", "Status", "Actions"],
+        rows.map((row) => [
+          row.id || "-",
+          row.entity_name || "-",
+          row.entity_id || "-",
+          row.deleted_by_name || "-",
+          row.deleted_by_username || "-",
+          formatDateTime(row.deleted_at),
+          row.deleted_ip_address || "-",
+          row.deleted_machine_name || "-",
+          row.delete_description || "-",
+          row.status || "-",
+          actionButtons(row)
+        ])
+      );
+      recycleTableHolder.querySelectorAll("[data-recycle-action]").forEach((button) => {
+        button.addEventListener("click", async () => {
+          const recycleId = Number(button.getAttribute("data-recycle-id") || 0);
+          const action = String(button.getAttribute("data-recycle-action") || "");
+          if (!recycleId) return;
+          try {
+            if (action === "view") {
+              const item = rows.find((row) => Number(row.id) === recycleId) || null;
+              alert(JSON.stringify(item || {}, null, 2));
+              return;
+            }
+            if (action === "restore") {
+              const result = await request(`/api/system/recycle-bin/${recycleId}/restore`, { method: "POST" });
+              alert(result.message || "Item restored.");
+              await renderRecycleBin();
+              return;
+            }
+            if (action === "purge") {
+              const result = await purgeRecycleWithThreeStepPrompt(recycleId);
+              if (!result) return;
+              alert(result.message || "Item purged.");
+              await renderRecycleBin();
+            }
+          } catch (error) {
+            alert(error.message);
+          }
+        });
+      });
     }
+
+    resetDataTable("Recycle bin records loaded above.");
     document.getElementById("restoreRecycleItemButton")?.addEventListener("click", async () => {
       const recycleId = Number(prompt("Enter recycle item ID to restore:"));
       if (!recycleId) return;
@@ -750,15 +1610,24 @@ async function renderRecycleBin() {
     document.getElementById("purgeRecycleItemButton")?.addEventListener("click", async () => {
       const recycleId = Number(prompt("Enter recycle item ID to purge permanently:"));
       if (!recycleId) return;
-      const ok = window.confirm("Purge permanently? This action cannot be undone.");
-      if (!ok) return;
       try {
-        const result = await request(`/api/system/recycle-bin/${recycleId}`, { method: "DELETE" });
+        const result = await purgeRecycleWithThreeStepPrompt(recycleId);
+        if (!result) return;
         alert(result.message || "Item purged permanently.");
         await renderRecycleBin();
       } catch (error) {
         alert(error.message);
       }
+    });
+    document.getElementById("viewRecycleItemButton")?.addEventListener("click", () => {
+      const recycleId = Number(prompt("Enter recycle item ID to view:", "") || 0);
+      if (!recycleId) return;
+      const item = rows.find((row) => Number(row.id) === recycleId);
+      if (!item) {
+        alert("Recycle item not found in current list.");
+        return;
+      }
+      alert(JSON.stringify(item, null, 2));
     });
     document.getElementById("refreshRecycleBinButton")?.addEventListener("click", renderRecycleBin);
   } catch (error) {
@@ -2283,7 +3152,29 @@ function renderDashboardCards(stats) {
     .join("");
 }
 
-async function loadDashboard() {
+function stopDashboardAutoRefresh() {
+  if (dashboardAutoRefreshHandle) {
+    clearInterval(dashboardAutoRefreshHandle);
+    dashboardAutoRefreshHandle = null;
+  }
+}
+
+function startDashboardAutoRefresh() {
+  stopDashboardAutoRefresh();
+  dashboardAutoRefreshHandle = setInterval(() => {
+    if (currentModule !== "dashboard") {
+      stopDashboardAutoRefresh();
+      return;
+    }
+    loadDashboard({ silent: true, skipAutoRefresh: true }).catch(() => {
+      // Keep the dashboard usable even if one refresh cycle fails.
+    });
+  }, 2000);
+}
+
+async function loadDashboard(options = {}) {
+  const { silent = false, skipAutoRefresh = false } = options;
+  currentModule = "dashboard";
   setActiveSidebarButton("dashboard");
   document.getElementById("moduleTitle").textContent = "DASHBOARD";
   try {
@@ -2373,13 +3264,6 @@ async function loadDashboard() {
         </section>
       `;
     }
-    const logRows = (data.systemActivityLogs || []).map((row) => [
-      formatDateTime(row.created_at),
-      row.actor_role || "-",
-      row.action || "-",
-      row.entity_name || "-",
-      row.entity_id || "-"
-    ]);
     const feeSummary = data.feeCollectionSummary || {};
     document.getElementById("formArea").innerHTML = `
       <section class="dashboard-hero">
@@ -2427,16 +3311,17 @@ async function loadDashboard() {
           <h4>Learners with Outstanding Balances</h4>
           ${buildDashboardTable(["Learner", "Adm No", "Grade", "Stream", "Balance"], outstandingRows)}
         </section>
-        <section class="dashboard-section">
-          <h3>System Activity Logs</h3>
-          ${buildDashboardTable(["When", "Actor Role", "Action", "Entity", "Entity ID"], logRows)}
-        </section>
       </div>
     `;
     document.getElementById("tableHead").innerHTML = "";
     document.getElementById("tableBody").innerHTML = "";
+    if (!skipAutoRefresh) {
+      startDashboardAutoRefresh();
+    }
   } catch (error) {
-    alert(error.message);
+    if (!silent) {
+      alert(error.message);
+    }
   }
 }
 
@@ -3148,6 +4033,10 @@ function bindTopbarButtons() {
 }
 
 function renderProfileCenter(profile) {
+  const photoSrc = String(
+    profile?.photo_url || profile?.profile_photo_url || profile?.avatar_url || profile?.photo || ""
+  ).trim();
+  const profileInitial = String(profile?.full_name || "U").trim().charAt(0).toUpperCase() || "U";
   const roleLabel = formatDashboardRoleLabel(profile?.role || "");
   document.getElementById("moduleTitle").textContent = "Profile";
   document.getElementById("cards").innerHTML = `
@@ -3167,6 +4056,13 @@ function renderProfileCenter(profile) {
   document.getElementById("formArea").innerHTML = `
     <div class="profile-center-grid">
       <div class="profile-card">
+        <div class="profile-avatar-shell">
+          ${
+            photoSrc
+              ? `<img src="${escapeHtmlAttribute(photoSrc)}" alt="Profile photo" class="profile-avatar-image" />`
+              : `<div class="profile-avatar-fallback">${escapeHtml(profileInitial)}</div>`
+          }
+        </div>
         <h3>${escapeHtml(profile?.full_name || "-")}</h3>
         <p><strong>Email:</strong> ${escapeHtml(profile?.email || "-")}</p>
         <p><strong>Mobile:</strong> ${escapeHtml(profile?.phone || "-")}</p>
@@ -3184,10 +4080,10 @@ function renderProfileCenter(profile) {
           </select>
           <label>Previous Password</label>
           <input id="profileCurrentPassword" type="password" placeholder="Previous password" />
-          <label>Current Password</label>
-          <input id="profileNewPassword" type="password" placeholder="Current password" />
-          <label>Confirm Current Password</label>
-          <input id="profileConfirmPassword" type="password" placeholder="Confirm current password" />
+          <label>New Password</label>
+          <input id="profileNewPassword" type="password" placeholder="New password" />
+          <label>Confirm New Password</label>
+          <input id="profileConfirmPassword" type="password" placeholder="Confirm new password" />
           <label>New Email</label>
           <input id="profileNewEmail" type="email" placeholder="Email" value="${escapeHtmlAttribute(profile?.email || "")}" />
           <label>New Mobile Number</label>
@@ -3335,15 +4231,7 @@ async function init() {
     document.getElementById("portalLabel").textContent = `${institutionName} (${roleLabel})`;
     const buildLineEl = document.getElementById("iimsBuildLineDash");
     if (buildLineEl) {
-      fetch("/api/build-info")
-        .then((r) => (r.ok ? r.json() : null))
-        .then((data) => {
-          const stamp = data?.build_stamp;
-          buildLineEl.textContent = stamp ? `Release ${stamp} · UI v20` : "";
-        })
-        .catch(() => {
-          buildLineEl.textContent = "";
-        });
+      buildLineEl.textContent = "";
     }
     bindSidebar();
     bindTopbarButtons();

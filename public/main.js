@@ -46,8 +46,32 @@ async function loadPublicHeroImage() {
   const heroImageEl = document.querySelector(".hero-image");
   if (!heroImageEl) return;
   const fallbackUrl = heroImageEl.getAttribute("src");
-  try {
-    const data = await request("/api/public/branding/hero-image");
+  const roleSelect = document.getElementById("loginPortalRole");
+  const usernameInput = document.getElementById("username");
+  const institutionCodeInput = document.getElementById("forgotPasswordInstitutionCode");
+  const resolveInstitutionCodeFromUsername = async (usernameValue) => {
+    const trimmed = String(usernameValue || "").trim();
+    if (!trimmed) return null;
+    try {
+      const profile = await request(`/api/public/profile/by-username?username=${encodeURIComponent(trimmed)}`);
+      return profile?.institution_code || null;
+    } catch (_) {
+      return null;
+    }
+  };
+  const loadWithContext = async () => {
+    const institutionCodeHint = String(institutionCodeInput?.value || "").trim();
+    const usernameHint = String(usernameInput?.value || "").trim();
+    const institutionCode =
+      institutionCodeHint ||
+      (await resolveInstitutionCodeFromUsername(usernameHint)) ||
+      "";
+    const params = new URLSearchParams();
+    if (institutionCode) {
+      params.set("institution_code", institutionCode);
+    }
+    const endpoint = `/api/public/branding/hero-image${params.toString() ? `?${params.toString()}` : ""}`;
+    const data = await request(endpoint);
     const staticPriorityUrl = "/assets/imis-hero.jpg";
     const resolvedUrl = data?.hero_image_url || fallbackUrl;
     const resolvedIsDefaultUpload =
@@ -59,9 +83,15 @@ async function loadPublicHeroImage() {
       this.src = fallbackUrl;
     };
     heroImageEl.src = preferredFinalUrl;
+  };
+  try {
+    await loadWithContext();
   } catch (_) {
     heroImageEl.src = fallbackUrl;
   }
+  roleSelect?.addEventListener("change", loadWithContext);
+  usernameInput?.addEventListener("blur", loadWithContext);
+  institutionCodeInput?.addEventListener("blur", loadWithContext);
 }
 
 function setAuthNotice(message, type = "info") {

@@ -106,7 +106,6 @@ const upload = multer({
   })
 });
 
-const HERO_IMAGE_MANIFEST_FILE = path.join(uploadsPath, "index-hero-manifest.json");
 const HERO_IMAGE_MAX_BYTES = Number(process.env.HERO_IMAGE_MAX_BYTES || 6 * 1024 * 1024);
 const HERO_IMAGE_ALLOWED_MIME_TYPES = new Set([
   "image/jpeg",
@@ -126,11 +125,13 @@ const HERO_IMAGE_EXTENSION_BY_MIME = {
 const heroImageUpload = multer({
   storage: multer.diskStorage({
     destination: (_, __, cb) => cb(null, uploadsPath),
-    filename: (_, file, cb) => {
+    filename: (req, file, cb) => {
       const mappedExtension = HERO_IMAGE_EXTENSION_BY_MIME[file.mimetype];
       const sourceExtension = cleanValue(path.extname(file.originalname)).toLowerCase();
       const extension = mappedExtension || sourceExtension || ".jpg";
-      cb(null, `index-hero-${Date.now()}${extension}`);
+      const institutionId = Number(req?.user?.institution_id || 0);
+      const filePrefix = institutionId > 0 ? `index-hero-inst-${institutionId}` : "index-hero-default";
+      cb(null, `${filePrefix}-${Date.now()}${extension}`);
     }
   }),
   limits: {
@@ -158,66 +159,94 @@ function heroImageUploadMiddleware(req, res, next) {
   });
 }
 
-function readHeroImageManifest() {
-  if (!fs.existsSync(HERO_IMAGE_MANIFEST_FILE)) {
-    return null;
-  }
-  try {
-    const raw = fs.readFileSync(HERO_IMAGE_MANIFEST_FILE, "utf8");
-    const parsed = JSON.parse(raw);
-    if (!parsed || typeof parsed !== "object") return null;
-    if (!cleanValue(parsed.file_name)) return null;
-    return parsed;
-  } catch (error) {
-    return null;
-  }
+function normalizeUploadPath(uploadPath) {
+  const cleaned = cleanValue(uploadPath);
+  if (!cleaned.startsWith("/uploads/")) return null;
+  const fileName = cleaned.replace("/uploads/", "");
+  if (!fileName || fileName.includes("..") || fileName.includes("/") || fileName.includes("\\")) return null;
+  return { fileName, uploadPath: `/uploads/${fileName}` };
 }
 
-function writeHeroImageManifest(fileName, actorUserId = null) {
-  const payload = {
-    file_name: fileName,
-    updated_at: new Date().toISOString(),
-    updated_by_user_id: actorUserId || null
+function resolveHeroAssetByUploadPath(uploadPath) {
+  const normalized = normalizeUploadPath(uploadPath);
+  if (!normalized) return null;
+  const absolutePath = path.join(uploadsPath, normalized.fileName);
+  if (!fs.existsSync(absolutePath)) return null;
+  const stats = fs.statSync(absolutePath);
+  return {
+    file_name: normalized.fileName,
+    hero_image_path: normalized.uploadPath,
+    hero_image_url: `${normalized.uploadPath}?v=${Number(stats.mtimeMs || Date.now())}`,
+    updated_at: stats.mtime.toISOString()
   };
-  fs.writeFileSync(HERO_IMAGE_MANIFEST_FILE, JSON.stringify(payload, null, 2), "utf8");
 }
 
-function cleanupOldHeroImages(currentFileName) {
-  const files = fs.readdirSync(uploadsPath);
-  for (const fileName of files) {
-    if (!fileName.startsWith("index-hero-")) continue;
-    if (fileName === currentFileName) continue;
-    const stalePath = path.join(uploadsPath, fileName);
-    if (fs.existsSync(stalePath)) {
-      fs.unlinkSync(stalePath);
-    }
-  }
-}
-
-function resolveHeroImageAsset() {
-  const manifest = readHeroImageManifest();
-  const candidates = [];
-  if (cleanValue(manifest?.file_name)) {
-    candidates.push(manifest.file_name);
-  }
-  candidates.push("index-hero.jpg", "index-hero.jpeg", "index-hero.png", "index-hero.webp", "index-hero.gif", "index-hero.avif");
-  for (const candidate of candidates) {
-    const absolutePath = path.join(uploadsPath, candidate);
-    if (!fs.existsSync(absolutePath)) continue;
-    const stats = fs.statSync(absolutePath);
-    return {
-      file_name: candidate,
-      hero_image_path: `/uploads/${candidate}`,
-      hero_image_url: `/uploads/${candidate}?v=${Number(stats.mtimeMs || Date.now())}`,
-      updated_at: stats.mtime.toISOString()
-    };
+function resolveGenericHeroAsset() {
+  const legacyCandidates = [
+    "index-hero.jpg",
+    "index-hero.jpeg",
+    "index-hero.png",
+    "index-hero.webp",
+    "index-hero.gif",
+    "index-hero.avif"
+  ];
+  for (const candidate of legacyCandidates) {
+    const legacy = resolveHeroAssetByUploadPath(`/uploads/${candidate}`);
+    if (legacy) return legacy;
   }
   return {
-    file_name: null,
-    hero_image_path: null,
-    hero_image_url: null,
+    file_name: "imis-hero.jpg",
+    hero_image_path: "/assets/imis-hero.jpg",
+    hero_image_url: "/assets/imis-hero.jpg",
     updated_at: null
   };
+}
+
+async function resolveHeroImageAsset({ institutionId = null } = {}) {
+  if (Number(institutionId || 0) > 0) {
+    const rows = await query(
+      `SELECT login_hero_image_path
+       FROM institutions
+       WHERE id = ?
+       LIMIT 1`,
+      [Number(institutionId)]
+    );
+    const scopedAsset = resolveHeroAssetByUploadPath(rows[0]?.login_hero_image_path);
+    if (scopedAsset) {
+      return {
+        ...scopedAsset,
+        institution_id: Number(institutionId)
+      };
+    }
+  }
+  return {
+    ...resolveGenericHeroAsset(),
+    institution_id: Number(institutionId || 0) || null
+  };
+}
+
+async function cleanupOldInstitutionHeroImage({ institutionId, currentUploadPath }) {
+  const rows = await query(
+    `SELECT login_hero_image_path
+     FROM institutions
+     WHERE id = ?
+     LIMIT 1`,
+    [Number(institutionId || 0)]
+  );
+  const oldPath = rows[0]?.login_hero_image_path;
+  const normalizedOld = normalizeUploadPath(oldPath);
+  const normalizedCurrent = normalizeUploadPath(currentUploadPath);
+  if (!normalizedOld || !normalizedCurrent) return;
+  if (normalizedOld.uploadPath === normalizedCurrent.uploadPath) return;
+  const expectedPrefix = `index-hero-inst-${Number(institutionId)}-`;
+  if (!normalizedOld.fileName.startsWith(expectedPrefix)) return;
+  const absolutePath = path.join(uploadsPath, normalizedOld.fileName);
+  if (!fs.existsSync(absolutePath)) return;
+  try {
+    fs.unlinkSync(absolutePath);
+  } catch (_) {
+    // Ignore stale image cleanup failures.
+  }
 }
 
 function asyncHandler(handler) {
@@ -371,6 +400,31 @@ function cleanOptionalValue(value) {
   return cleaned || null;
 }
 
+function normalizePhoneInput(value) {
+  const cleaned = cleanValue(value);
+  if (!cleaned) return null;
+  const compact = cleaned.replace(/\s+/g, "");
+  if (!/^[0-9+]+$/.test(compact)) {
+    return null;
+  }
+  const acceptedPrefixes = ["07", "01", "+254", "+"];
+  if (!acceptedPrefixes.some((prefix) => compact.startsWith(prefix))) {
+    return null;
+  }
+  return compact;
+}
+
+function hasAllowedPhonePrefix(value) {
+  const normalized = normalizePhoneInput(value);
+  if (!normalized) return true;
+  return (
+    normalized.startsWith("07") ||
+    normalized.startsWith("01") ||
+    normalized.startsWith("+254") ||
+    normalized.startsWith("+")
+  );
+}
+
 const PUBLIC_ROLE_OPTIONS = [
   ROLES.SYSTEM_DEVELOPER,
   ROLES.MOD,
@@ -456,6 +510,21 @@ function buildAuthAuditDetails(req, username, extra = {}) {
     machine_name: getClientMachineName(req),
     user_agent: cleanValue(req.headers["user-agent"]),
     request_time: dayjs().format("YYYY-MM-DD HH:mm:ss"),
+    ...extra
+  };
+}
+
+function buildRecycleDeleteDetails(req, user, description = "", extra = {}) {
+  return {
+    deleted_by_user_id: Number(user?.id || 0) || null,
+    deleted_by_username: cleanValue(user?.username) || null,
+    deleted_by_full_name: cleanValue(user?.full_name) || null,
+    deleted_by_role: normalizeRole(user?.role) || null,
+    deleted_ip_address: getClientIp(req),
+    deleted_machine_name: getClientMachineName(req),
+    deleted_user_agent: cleanValue(req.headers["user-agent"]),
+    description: cleanValue(description) || null,
+    deleted_at: dayjs().format("YYYY-MM-DD HH:mm:ss"),
     ...extra
   };
 }
@@ -671,8 +740,54 @@ async function purgeExpiredRecycleBinItems() {
      SET status = 'DELETED',
          permanently_deleted_at = NOW()
      WHERE status = 'TRASHED'
-       AND deleted_at <= DATE_SUB(NOW(), INTERVAL 12 YEAR)`
+       AND deleted_at <= DATE_SUB(NOW(), INTERVAL ${RECYCLE_BIN_RETENTION_YEARS} YEAR)`
   );
+  await query(
+    `DELETE FROM recycle_bin_items
+     WHERE status = 'DELETED'
+       AND hidden_for_roles_json IS NOT NULL
+       AND permanently_deleted_at IS NOT NULL
+       AND permanently_deleted_at <= DATE_SUB(NOW(), INTERVAL 10 YEAR)`
+  );
+}
+
+async function normalizeLegacyRecycleBinVisibility() {
+  await query(
+    `UPDATE recycle_bin_items
+     SET hidden_for_roles_json = JSON_ARRAY('ADMIN', 'HEAD_OF_INSTITUTION')
+     WHERE status = 'DELETED'
+       AND hidden_for_roles_json IS NULL`
+  );
+}
+
+function parseHiddenRoles(value) {
+  const parsed = parseStoredJson(value);
+  if (!Array.isArray(parsed)) return [];
+  return parsed
+    .map((item) => normalizeRole(item))
+    .filter(Boolean);
+}
+
+function parseArchivedRecycleMeta(value) {
+  const payload = parseStoredJson(value);
+  if (!payload || typeof payload !== "object") return {};
+  const meta = payload.__recycle_meta;
+  if (!meta || typeof meta !== "object") return {};
+  return meta;
+}
+
+function roleHiddenFromItem(role, recycleItem) {
+  const normalizedRole = normalizeRole(role);
+  const hiddenRoles = parseHiddenRoles(recycleItem?.hidden_for_roles_json);
+  return hiddenRoles.includes(normalizedRole);
+}
+
+function verifyThreeStepDeleteConfirm(confirmations = []) {
+  if (!Array.isArray(confirmations) || confirmations.length < 3) {
+    return false;
+  }
+  const expected = ["YES", "CONFIRM", "DELETE"];
+  return expected.every((step, index) => cleanValue(confirmations[index]).toUpperCase() === step);
 }
 
 async function recordOtpFailure(identity) {
@@ -827,7 +942,11 @@ function getAssignableRolesForActor(user) {
     return [...PUBLIC_ROLE_OPTIONS];
   }
   if ([ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION].includes(role)) {
-    return PUBLIC_ROLE_OPTIONS.filter((item) => !HIGH_PRIVILEGE_REGISTRATION_ROLES.has(item));
+    return PUBLIC_ROLE_OPTIONS.filter(
+      (item) =>
+        !HIGH_PRIVILEGE_REGISTRATION_ROLES.has(item) &&
+        ![ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION].includes(item)
+    );
   }
   return [];
 }
@@ -950,6 +1069,8 @@ const DEFAULT_MODULE_ACCESS_BY_ROLE = {
   [ROLES.MOD]: [],
   [ROLES.TSC]: [],
   [ROLES.TEACHER]: [],
+  [ROLES.SENIOR_TEACHER]: [],
+  [ROLES.HEAD_OF_DEPARTMENT]: [],
   [ROLES.NON_TEACHING_STAFF]: [],
   [ROLES.BOM]: [],
   [ROLES.PARENT]: [],
@@ -999,7 +1120,7 @@ function enforceModuleAccess(moduleKey) {
     const allowed = await hasModuleAccess(req.user, moduleKey);
     if (!allowed) {
       return res.status(403).json({
-        error: "Module access denied for this role. Request access from System Developer."
+        error: buildModuleRightsErrorMessage(moduleKey, req.user)
       });
     }
     return next();
@@ -1008,6 +1129,31 @@ function enforceModuleAccess(moduleKey) {
 
 function canManageAcrossInstitutions(user) {
   return normalizeRole(user?.role) === ROLES.SYSTEM_DEVELOPER;
+}
+
+function buildModuleRightsErrorMessage(moduleKey, user) {
+  const role = normalizeRole(user?.role);
+  if (role === ROLES.SYSTEM_DEVELOPER) return null;
+  return `Access denied for ${moduleKey}. Request rights from the System Developer.`;
+}
+
+function determineRecycleVisibilityScope(user) {
+  const role = normalizeRole(user?.role);
+  if (role === ROLES.SYSTEM_DEVELOPER) {
+    return { includeAllInstitutions: true, scopeInstitutionId: null };
+  }
+  return { includeAllInstitutions: false, scopeInstitutionId: Number(user?.institution_id || 0) || null };
+}
+
+function canPurgeRecycleItem(requestUser, recycleItem) {
+  const actorRole = normalizeRole(requestUser?.role);
+  if (actorRole === ROLES.SYSTEM_DEVELOPER) {
+    return { allowed: true, mode: "SYSTEM_DEVELOPER_PURGE" };
+  }
+  if (Number(recycleItem?.institution_id || 0) !== Number(requestUser?.institution_id || 0)) {
+    return { allowed: false, mode: "OUT_OF_SCOPE" };
+  }
+  return { allowed: true, mode: "INSTITUTION_SOFT_PURGE" };
 }
 
 async function loadInstitutionAgreementContext(institutionId) {
@@ -1041,8 +1187,20 @@ async function archiveRecycleBinItem({
   entityName,
   entityId = null,
   payload = {},
-  deletedByUserId = null
+  deletedByUserId = null,
+  recycleContext = null
 }) {
+  const parsedPayload = payload && typeof payload === "object" ? { ...payload } : {};
+  const existingMeta = parsedPayload.__recycle_meta && typeof parsedPayload.__recycle_meta === "object"
+    ? parsedPayload.__recycle_meta
+    : {};
+  const mergedMeta = {
+    ...existingMeta,
+    ...(recycleContext && typeof recycleContext === "object" ? recycleContext : {}),
+    deleted_by_user_id: Number(deletedByUserId) || null,
+    deleted_at: dayjs().format("YYYY-MM-DD HH:mm:ss")
+  };
+  parsedPayload.__recycle_meta = mergedMeta;
   await query(
     `INSERT INTO recycle_bin_items
       (institution_id, entity_name, entity_id, archived_payload_json, deleted_by_user_id, status)
@@ -1051,7 +1209,7 @@ async function archiveRecycleBinItem({
       institutionId,
       cleanValue(entityName),
       Number(entityId) || null,
-      JSON.stringify(payload || {}),
+      JSON.stringify(parsedPayload),
       Number(deletedByUserId) || null
     ]
   );
@@ -1059,6 +1217,21 @@ async function archiveRecycleBinItem({
 
 function canManageInstitutionUser(reqUser, targetInstitutionId) {
   return canManageAcrossInstitutions(reqUser) || Number(reqUser?.institution_id) === Number(targetInstitutionId || 0);
+}
+
+function buildRecycleContextFromRequest(req, extra = {}) {
+  const authDetails = buildAuthAuditDetails(req, req?.user?.username || "", {});
+  return {
+    deleted_by_username: cleanValue(req?.user?.username || null) || null,
+    deleted_by_full_name: cleanValue(req?.user?.full_name || null) || null,
+    deleted_by_role: normalizeRole(req?.user?.role || ""),
+    ip_address: cleanValue(authDetails?.ip_address || null) || null,
+    machine_name: cleanValue(authDetails?.machine_name || null) || null,
+    deleted_ip_address: cleanValue(authDetails?.ip_address || null) || null,
+    deleted_machine_name: cleanValue(authDetails?.machine_name || null) || null,
+    user_agent: cleanValue(authDetails?.user_agent || null) || null,
+    ...extra
+  };
 }
 
 function isSafeTableIdentifier(name) {
@@ -2567,10 +2740,10 @@ app.post("/api/public/recovery/password", publicWriteRateLimit, enforcePublicSec
 }));
 
 app.get("/api/portal/current", auth, asyncHandler(async (req, res) => {
-  const defaultModules = DEFAULT_MODULE_ACCESS_BY_ROLE[req.user.role] || [];
+  const candidateModules = Object.values(MODULE_KEYS);
   const allowedModules = [];
-  for (const moduleKey of defaultModules) {
-    // Apply optional per-user overrides while keeping role defaults.
+  for (const moduleKey of candidateModules) {
+    // Apply per-user overrides on top of deny-by-default role setup.
     // eslint-disable-next-line no-await-in-loop
     if (await hasModuleAccess(req.user, moduleKey)) {
       allowedModules.push(moduleKey);
@@ -2606,14 +2779,14 @@ app.get(
       : Number(req.user.institution_id || 0) || null;
     const institutions = canSeeAllInstitutions
       ? await query(
-        `SELECT id, institution_name, institution_code, county, email, phone
+        `SELECT id, institution_name, institution_code, county, email, phone, created_at
          FROM institutions
          ${institutionScopeId ? "WHERE id = ?" : ""}
          ORDER BY institution_name ASC`,
         institutionScopeId ? [institutionScopeId] : []
       )
       : await query(
-        `SELECT id, institution_name, institution_code, county, email, phone
+        `SELECT id, institution_name, institution_code, county, email, phone, created_at
          FROM institutions
          WHERE id = ?
          LIMIT 1`,
@@ -2630,6 +2803,7 @@ app.get(
       requester_role: normalizeRole(req.user.role),
       can_manage_all_institutions: canSeeAllInstitutions,
       institution_scope_id: institutionScopeId,
+      can_view_registry_institutions: canSeeAllInstitutions,
       assignable_roles: getAssignableRolesForActor(req.user),
       can_register_institution: canRegisterInstitution(req.user),
       can_register_users: canRegisterInstitutionUsers(req.user),
@@ -2685,7 +2859,7 @@ app.post(
   asyncHandler(async (req, res) => {
     const institutionName = cleanValue(req.body?.institution_name);
     const institutionEmail = cleanOptionalValue(req.body?.email);
-    const institutionPhone = cleanOptionalValue(req.body?.phone);
+    const institutionPhone = normalizePhoneInput(req.body?.phone);
     const countyInput = cleanOptionalValue(req.body?.county);
     const countyCodeInput = cleanOptionalValue(req.body?.county_code);
     const categoryInput = cleanOptionalValue(req.body?.category);
@@ -2693,10 +2867,12 @@ app.post(
     const location = cleanOptionalValue(req.body?.location);
     const village = cleanOptionalValue(req.body?.village);
     const postalAddress = cleanOptionalValue(req.body?.postal_address);
-    const postalCodeInput = cleanOptionalValue(req.body?.postal_code);
+    const postalCodeInputRaw = cleanOptionalValue(req.body?.postal_code);
+    const postalCodeInput = postalCodeInputRaw === "__manual__"
+      ? cleanOptionalValue(req.body?.postal_code_manual)
+      : postalCodeInputRaw;
     const townInput = cleanOptionalValue(req.body?.town);
     const sendAgreementEmail = parseTruthy(req.body?.send_agreement_email);
-    const autoGeneratePassword = parseTruthy(req.body?.auto_generate_password);
 
     const adminFullName = cleanValue(req.body?.admin_full_name);
     const adminUsername = cleanValue(req.body?.admin_username);
@@ -2728,12 +2904,15 @@ app.post(
 
     const postalDetails = getPostalDetails(postalCodeInput);
     const normalizedTown = townInput || postalDetails?.town || null;
-    const adminPassword = autoGeneratePassword
-      ? generateStrongPassword(12)
-      : adminPasswordInput;
+    const adminPassword = adminPasswordInput;
     const weakAdminPasswordError = requireStrongPassword(adminPassword, "admin_password");
     if (weakAdminPasswordError) {
       return res.status(400).json({ error: weakAdminPasswordError });
+    }
+    if (institutionPhone && !hasAllowedPhonePrefix(institutionPhone)) {
+      return res.status(400).json({
+        error: "Institution phone must start with 07, 01, +254, or +."
+      });
     }
 
     if (!institutionName || !adminFullName || !adminUsername || !adminPassword) {
@@ -2753,14 +2932,15 @@ app.post(
       try {
         institutionInsert = await query(
           `INSERT INTO institutions
-            (institution_name, institution_code, email, phone, county, sub_county, location, village, postal_address)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            (institution_name, institution_code, email, phone, county, category, sub_county, location, village, postal_address)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             institutionName,
             institutionCode,
             institutionEmail,
             institutionPhone,
             countyRecord.name,
+            categoryRecord.label,
             subCounty,
             location,
             normalizedTown || village,
@@ -2819,6 +2999,7 @@ app.post(
       institution_name: institutionName,
       institution_code: institutionCode,
       county: countyRecord.name,
+      category: categoryRecord.label,
       email: institutionEmail,
       phone: institutionPhone
     };
@@ -2853,7 +3034,7 @@ app.post(
       institution_id: institutionId,
       institution_code: institutionCode,
       admin_username: adminUsername,
-      admin_password: adminPassword,
+      admin_password: null,
       county: countyRecord.name,
       county_code: countyRecord.code,
       category: categoryRecord.label,
@@ -2954,10 +3135,50 @@ app.post(
 
 app.get(
   "/api/public/branding/hero-image",
-  asyncHandler(async (_, res) => {
+  asyncHandler(async (req, res) => {
     res.set("Cache-Control", "no-store");
-    const heroImage = resolveHeroImageAsset();
+    const institutionIdFromQuery = Number(req.query?.institution_id || 0) || null;
+    let institutionId = institutionIdFromQuery;
+    if (!institutionId && cleanValue(req.query?.institution_code)) {
+      const institutionRows = await query(
+        `SELECT id
+         FROM institutions
+         WHERE institution_code = ?
+         LIMIT 1`,
+        [cleanValue(req.query?.institution_code).toUpperCase()]
+      );
+      institutionId = Number(institutionRows[0]?.id || 0) || null;
+    }
+    const heroImage = await resolveHeroImageAsset({ institutionId });
     res.json(heroImage);
+  })
+);
+
+app.get(
+  "/api/public/profile/by-username",
+  publicWriteRateLimit,
+  enforcePublicSecurity,
+  asyncHandler(async (req, res) => {
+    const username = cleanValue(req.query?.username);
+    if (!username) {
+      return res.status(400).json({ error: "username query parameter is required." });
+    }
+    const rows = await query(
+      `SELECT u.id, u.username, i.id AS institution_id, i.institution_code
+       FROM users u
+       INNER JOIN institutions i ON i.id = u.institution_id
+       WHERE u.username = ?
+       LIMIT 1`,
+      [username]
+    );
+    if (!rows.length) {
+      return res.status(404).json({ error: "User account not found." });
+    }
+    res.json({
+      username: rows[0].username,
+      institution_id: rows[0].institution_id,
+      institution_code: rows[0].institution_code
+    });
   })
 );
 
@@ -2971,10 +3192,21 @@ app.post(
     if (!req.file) {
       return res.status(400).json({ error: "Hero image file is required." });
     }
-    cleanupOldHeroImages(req.file.filename);
-    writeHeroImageManifest(req.file.filename, req.user.id);
-    const heroImage = resolveHeroImageAsset();
+    const institutionId = Number(req.user?.institution_id || 0);
+    if (!institutionId) {
+      return res.status(400).json({ error: "Institution scope is required for hero image upload." });
+    }
+    const uploadPath = `/uploads/${req.file.filename}`;
+    await cleanupOldInstitutionHeroImage({ institutionId, currentUploadPath: uploadPath });
+    await query(
+      `UPDATE institutions
+       SET login_hero_image_path = ?
+       WHERE id = ?`,
+      [uploadPath, institutionId]
+    );
+    const heroImage = await resolveHeroImageAsset({ institutionId });
     await auditLog(req.user, "UPLOAD_LOGIN_HERO_IMAGE", "branding", null, {
+      institution_id: institutionId,
       file_name: req.file.filename,
       hero_image_path: heroImage.hero_image_path
     });
@@ -3370,7 +3602,7 @@ app.get(
 app.post(
   "/api/finance/session-sync",
   auth,
-  enforceModuleAccess(MODULE_KEYS.FINANCE),
+  enforceModuleAccess(MODULE_KEYS.FINANCE_FEE_PAYMENTS),
   enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
   enforcePermission(PERMISSIONS.CREATE),
   asyncHandler(async (req, res) => {
@@ -3718,15 +3950,22 @@ app.get(
   asyncHandler(async (req, res) => {
     if (normalizeRole(req.user.role) === ROLES.SYSTEM_DEVELOPER) {
       const users = await query(
-        `SELECT id, institution_id, full_name, username, role, email, phone, is_active, created_at
-         FROM users
+        `SELECT u.id, u.institution_id, u.full_name, u.username, u.role, u.email, u.phone, u.is_active, u.created_at,
+                u.is_suspended, u.suspended_reason, u.status_reason,
+                i.institution_name, i.institution_code
+         FROM users u
+         INNER JOIN institutions i ON i.id = u.institution_id
          ORDER BY institution_id ASC, id DESC`
       );
       return res.json(users);
     }
     const users = await query(
-      `SELECT id, institution_id, full_name, username, role, email, phone, is_active, created_at
-       FROM users WHERE institution_id = ? ORDER BY id DESC`,
+      `SELECT u.id, u.institution_id, u.full_name, u.username, u.role, u.email, u.phone, u.is_active, u.created_at,
+              u.is_suspended, u.suspended_reason, u.status_reason,
+              i.institution_name, i.institution_code
+       FROM users u
+       INNER JOIN institutions i ON i.id = u.institution_id
+       WHERE u.institution_id = ? ORDER BY u.id DESC`,
       [req.user.institution_id]
     );
     res.json(users);
@@ -3748,7 +3987,9 @@ app.post(
     if (!cleanOptionalValue(email) && !cleanOptionalValue(phone)) {
       return res.status(400).json({ error: "Either email or phone is required." });
     }
-    const password = generateStrongPassword(12);
+    const requestedPassword = cleanOptionalValue(req.body?.password);
+    const shouldAutoGeneratePassword = parseTruthy(req.body?.auto_generate_password) || !requestedPassword;
+    const password = shouldAutoGeneratePassword ? generateStrongPassword(12) : requestedPassword;
     const weakPasswordError = requireStrongPassword(password, "password");
     if (weakPasswordError) {
       return res.status(400).json({ error: weakPasswordError });
@@ -3810,22 +4051,48 @@ app.post(
         req.user.id
       ]
     );
+    const institutionRows = await query(
+      `SELECT institution_name, institution_code
+       FROM institutions
+       WHERE id = ?
+       LIMIT 1`,
+      [targetInstitutionId]
+    );
+    const institutionName = cleanValue(institutionRows[0]?.institution_name) || "Institution";
+    const institutionCode = cleanValue(institutionRows[0]?.institution_code) || "-";
     await auditLog(req.user, "CREATE_USER", "users", result.insertId, {
       username,
       role: normalizedRole,
       institution_id: targetInstitutionId
     });
+    const welcomeDispatchMode = cleanValue(req.body?.send_welcome_via).toUpperCase() || "BOTH";
+    const welcomeDestination = {
+      email: cleanOptionalValue(email),
+      phone: cleanOptionalValue(phone)
+    };
+    if (welcomeDispatchMode === "EMAIL") {
+      welcomeDestination.phone = null;
+    } else if (welcomeDispatchMode === "SMS") {
+      welcomeDestination.email = null;
+    } else if (welcomeDispatchMode === "NONE") {
+      welcomeDestination.email = null;
+      welcomeDestination.phone = null;
+    }
     const credentialMessage = [
-      "WELCOME TO INTEGRATED MANAGEMENT INFORMATION SYSTEM (IMIS).",
-      "Your user account has been created.",
+      "WELCOME TO IMIS SYSTEM FOR BASIC EDUCATION LEARNING INSTITUTIONS.",
+      "This account is issued under institutional digital-governance and data-protection obligations.",
+      `Institution: ${institutionName}`,
+      `Institution Code: ${institutionCode}`,
       `Username: ${username}`,
       `Temporary Password: ${password}`,
+      `Role: ${normalizedRole}`,
       "",
+      "By accessing this account, you agree to authorized use, confidentiality, and compliance policies.",
       "Please change this password immediately after first login."
     ].join("\n");
     const credentialDispatch = await dispatchCredentialNotice({
-      email: cleanOptionalValue(email),
-      phone: cleanOptionalValue(phone),
+      email: welcomeDestination.email,
+      phone: welcomeDestination.phone,
       subject: "IMIS User Account Credentials",
       message: credentialMessage
     });
@@ -3833,6 +4100,7 @@ app.post(
       id: result.insertId,
       message: "User created successfully.",
       credential_dispatch: credentialDispatch,
+      welcome_dispatch_mode: welcomeDispatchMode,
       generated_password: normalizeRole(req.user.role) === ROLES.SYSTEM_DEVELOPER ? password : null
     });
   })
@@ -4066,7 +4334,7 @@ app.delete(
   auth,
   accountMutationRateLimit,
   accountMutationCooldown,
-  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN]),
+  enforceRole([ROLES.SYSTEM_DEVELOPER]),
   asyncHandler(async (req, res) => {
     const userId = Number(req.params.id);
     if (!userId) {
@@ -4098,7 +4366,10 @@ app.delete(
       entityName: "users",
       entityId: targetUser.id,
       payload: targetUser,
-      deletedByUserId: req.user.id
+      deletedByUserId: req.user.id,
+      recycleContext: buildRecycleContextFromRequest(req, {
+        description: `User account ${targetUser.username} deleted from registry.`
+      })
     });
     await query("DELETE FROM users WHERE id = ?", [userId]);
     await auditLog(req.user, "DELETE_USER", "users", userId, {
@@ -4462,33 +4733,36 @@ app.get(
   enforceModuleAccess(MODULE_KEYS.INSTITUTIONS_USERS_REGISTRY),
   enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
   asyncHandler(async (req, res) => {
-    const institutions = canManageAcrossInstitutions(req.user)
+    const includeInstitutionRegistry = canManageAcrossInstitutions(req.user);
+    const institutions = includeInstitutionRegistry
       ? await query(
         `SELECT id, institution_name, institution_code, email, phone, county, created_at
          FROM institutions
          ORDER BY id DESC`
       )
-      : await query(
-        `SELECT id, institution_name, institution_code, email, phone, county, created_at
-         FROM institutions
-         WHERE id = ?
-         ORDER BY id DESC`,
-        [req.user.institution_id]
-      );
+      : [];
     const users = canManageAcrossInstitutions(req.user)
       ? await query(
-        `SELECT id, institution_id, full_name, username, role, email, phone, is_active, created_at
-         FROM users
-         ORDER BY id DESC`
+        `SELECT u.id, u.institution_id, u.full_name, u.username, u.role, u.email, u.phone, u.is_active, u.created_at,
+                i.institution_name, i.institution_code
+         FROM users u
+         INNER JOIN institutions i ON i.id = u.institution_id
+         ORDER BY u.id DESC`
       )
       : await query(
-        `SELECT id, institution_id, full_name, username, role, email, phone, is_active, created_at
-         FROM users
-         WHERE institution_id = ?
-         ORDER BY id DESC`,
+        `SELECT u.id, u.institution_id, u.full_name, u.username, u.role, u.email, u.phone, u.is_active, u.created_at,
+                i.institution_name, i.institution_code
+         FROM users u
+         INNER JOIN institutions i ON i.id = u.institution_id
+         WHERE u.institution_id = ?
+         ORDER BY u.id DESC`,
         [req.user.institution_id]
       );
-    res.json({ institutions, users });
+    res.json({
+      include_institution_registry: includeInstitutionRegistry,
+      institutions,
+      users
+    });
   })
 );
 
@@ -4759,13 +5033,18 @@ app.get(
   enforceModuleAccess(MODULE_KEYS.RECYCLE_BIN),
   enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
   asyncHandler(async (req, res) => {
+    await purgeExpiredRecycleBinItems();
+    await normalizeLegacyRecycleBinVisibility();
     const limit = Math.min(Math.max(Number(req.query?.limit || 200), 1), 1000);
     const statusFilter = cleanValue(req.query?.status).toUpperCase();
-    const institutionScope = canManageAcrossInstitutions(req.user)
-      ? Number(req.query?.institution_id || 0)
-      : req.user.institution_id;
+    const visibilityScope = determineRecycleVisibilityScope(req.user);
+    const requestedScope = Number(req.query?.institution_id || 0) || null;
+    const institutionScope = visibilityScope.includeAllInstitutions
+      ? requestedScope
+      : visibilityScope.scopeInstitutionId;
     let sql = `SELECT id, institution_id, entity_name, entity_id, archived_payload_json, deleted_by_user_id, deleted_at,
-                      restored_at, restored_by_user_id, permanently_deleted_at, permanently_deleted_by_user_id, status
+                      restored_at, restored_by_user_id, permanently_deleted_at, permanently_deleted_by_user_id,
+                      status, hidden_for_roles_json
                FROM recycle_bin_items
                WHERE 1=1`;
     const params = [];
@@ -4779,8 +5058,41 @@ app.get(
     }
     sql += " ORDER BY id DESC LIMIT ?";
     params.push(limit);
-    const items = await query(sql, params);
-    res.json({ items });
+    const rows = await query(sql, params);
+    const normalizedRows = rows
+      .filter((row) => !roleHiddenFromItem(req.user.role, row))
+      .map((row) => {
+        const payload = parseStoredJson(row.archived_payload_json) || {};
+        const recycleMeta = parseArchivedRecycleMeta(row.archived_payload_json);
+        return {
+          ...row,
+          deleted_by_name:
+            cleanValue(recycleMeta.deleted_by_full_name) ||
+            cleanValue(payload.deleted_by_name) ||
+            null,
+          deleted_by_username:
+            cleanValue(recycleMeta.deleted_by_username) ||
+            cleanValue(payload.deleted_by_username) ||
+            null,
+          deleted_ip_address:
+            cleanValue(recycleMeta.deleted_ip_address) ||
+            cleanValue(payload.deleted_ip_address) ||
+            null,
+          deleted_machine_name:
+            cleanValue(recycleMeta.deleted_machine_name) ||
+            cleanValue(payload.deleted_machine_name) ||
+            null,
+          delete_description:
+            cleanValue(recycleMeta.description) ||
+            cleanValue(payload.description) ||
+            cleanValue(payload.entity_description) ||
+            null
+        };
+      });
+    res.json({
+      items: normalizedRows,
+      retention_years: RECYCLE_BIN_RETENTION_YEARS
+    });
   })
 );
 
@@ -4886,22 +5198,54 @@ app.delete(
       return res.status(404).json({ error: "Recycle bin item not found." });
     }
     const item = rows[0];
-    if (!canManageAcrossInstitutions(req.user) && item.institution_id !== req.user.institution_id) {
-      return res.status(403).json({ error: "You can only purge items from your institution." });
+    const purgeDecision = canPurgeRecycleItem(req.user, item);
+    if (!purgeDecision.allowed) {
+      return res.status(403).json({ error: "You can only purge items from your institution scope." });
     }
-    await query(
-      `UPDATE recycle_bin_items
-       SET status = 'DELETED',
-           permanently_deleted_at = NOW(),
-           permanently_deleted_by_user_id = ?
-       WHERE id = ?`,
-      [req.user.id, recycleId]
-    );
+    const confirmations = Array.isArray(req.body?.confirmations) ? req.body.confirmations : [];
+    if (!verifyThreeStepDeleteConfirm(confirmations)) {
+      return res.status(400).json({
+        error:
+          "Three-step confirmation required. Send confirmations: ['YES','CONFIRM','DELETE'] in the request body."
+      });
+    }
+    const normalizedRole = normalizeRole(req.user.role);
+    if (normalizedRole === ROLES.SYSTEM_DEVELOPER) {
+      await query(
+        `UPDATE recycle_bin_items
+         SET status = 'DELETED',
+             hidden_for_roles_json = NULL,
+             permanently_deleted_at = NOW(),
+             permanently_deleted_by_user_id = ?
+         WHERE id = ?`,
+        [req.user.id, recycleId]
+      );
+    } else {
+      const hiddenRoles = new Set(parseHiddenRoles(item.hidden_for_roles_json));
+      hiddenRoles.add(normalizedRole);
+      await query(
+        `UPDATE recycle_bin_items
+         SET status = CASE WHEN status = 'TRASHED' THEN 'DELETED' ELSE status END,
+             hidden_for_roles_json = ?,
+             permanently_deleted_at = COALESCE(permanently_deleted_at, NOW()),
+             permanently_deleted_by_user_id = COALESCE(permanently_deleted_by_user_id, ?)
+         WHERE id = ?`,
+        [JSON.stringify(Array.from(hiddenRoles)), req.user.id, recycleId]
+      );
+    }
     await auditLog(req.user, "PURGE_RECYCLE_BIN_ITEM", "recycle_bin_items", recycleId, {
       entity_name: item.entity_name,
-      entity_id: item.entity_id
+      entity_id: item.entity_id,
+      mode: purgeDecision.mode
     });
-    res.json({ message: "Recycle bin item permanently marked as deleted.", recycle_bin_id: recycleId });
+    const responseMessage = purgeDecision.mode === "SYSTEM_DEVELOPER_PURGE"
+      ? "Recycle bin item permanently deleted."
+      : "Item removed from your recycle bin view. It remains visible to System Developer for retention control.";
+    res.json({
+      message: responseMessage,
+      recycle_bin_id: recycleId,
+      purge_mode: purgeDecision.mode
+    });
   })
 );
 
