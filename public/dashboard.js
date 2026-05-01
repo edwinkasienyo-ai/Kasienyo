@@ -1195,21 +1195,21 @@ async function renderModuleRights() {
             .join("")}
         </select>
       </div>
-      <div class="module-rights-matrix-tools">
-        <button id="moduleAccessMassSelectButton">Select All Access</button>
-        <button id="moduleAccessMassClearButton">Deselect All Access</button>
-        <button id="moduleAccessSelectViewButton">Select All View</button>
-        <button id="moduleAccessSelectEditButton">Select All Edit</button>
-        <button id="moduleAccessSelectDeleteButton">Select All Delete</button>
-        <button id="moduleAccessSelectSaveButton">Select All Save</button>
-        <button id="moduleAccessSelectProcessButton">Select All Process</button>
-        <button id="saveModuleAccessButton">Save</button>
-        <button id="modifyModuleAccessButton">Modify</button>
-        <button id="processModuleAccessButton">Process</button>
-        <button id="resetModuleAccessButton">Reset</button>
-        <button id="deleteModuleAccessButton" class="danger">Delete</button>
-        <button id="refreshModuleAccessButton">Refresh</button>
-        <button id="showRoleDefaultsButton">Show Role Defaults</button>
+      <div class="iim-actions-row module-rights-matrix-tools">
+        <button class="iim-action-btn success" id="moduleAccessMassSelectButton" title="Select All Access">✅ Select All</button>
+        <button class="iim-action-btn muted" id="moduleAccessMassClearButton" title="Deselect All Access">⬜ Deselect All</button>
+        <button class="iim-action-btn" id="moduleAccessSelectViewButton" title="Select All View">👁 View</button>
+        <button class="iim-action-btn" id="moduleAccessSelectEditButton" title="Select All Edit">✎ Edit</button>
+        <button class="iim-action-btn delete" id="moduleAccessSelectDeleteButton" title="Select All Delete">🗑 Delete</button>
+        <button class="iim-action-btn success" id="moduleAccessSelectSaveButton" title="Select All Save">💾 Save</button>
+        <button class="iim-action-btn warn" id="moduleAccessSelectProcessButton" title="Select All Process">⚙ Process</button>
+        <button class="iim-action-btn success" id="saveModuleAccessButton" title="Save">💾 Save</button>
+        <button class="iim-action-btn" id="modifyModuleAccessButton" title="Modify">✎ Modify</button>
+        <button class="iim-action-btn warn" id="processModuleAccessButton" title="Process">⚙ Process</button>
+        <button class="iim-action-btn muted" id="resetModuleAccessButton" title="Reset">↺ Reset</button>
+        <button class="iim-action-btn delete" id="deleteModuleAccessButton" title="Delete">🗑 Delete</button>
+        <button class="iim-action-btn" id="refreshModuleAccessButton" title="Refresh">🔄 Refresh</button>
+        <button class="iim-action-btn gold" id="showRoleDefaultsButton" title="Show Role Defaults">⭐ Defaults</button>
       </div>
       <div id="moduleAccessInfo" class="small-note"></div>
       <div class="module-rights-matrix-wrap">
@@ -1752,15 +1752,15 @@ function renderExamGenerationPanel() {
         <option value="per_learner">Per Learner (distinct serial per learner)</option>
       </select>
     </div>
-    <div class="actions-row">
-      <button id="examGenGenerateButton">Generate Exam (AI)</button>
-      <button id="examGenSaveButton">Save</button>
-      <button id="examGenEditButton">Edit</button>
-      <button id="examGenSubmitButton">Submit</button>
-      <button id="examGenViewButton">View</button>
-      <button id="examGenDownloadButton">Download</button>
-      <button id="examGenBulkDownloadButton">Bulk Download</button>
-      <button id="examGenAnswerSheetButton">Generate Answer Sheet</button>
+    <div class="iim-actions-row">
+      <button class="iim-action-btn gold" id="examGenGenerateButton" title="Generate Exam (AI)">⚡ Generate</button>
+      <button class="iim-action-btn success" id="examGenSaveButton" title="Save">💾 Save</button>
+      <button class="iim-action-btn" id="examGenEditButton" title="Edit">✎ Edit</button>
+      <button class="iim-action-btn success" id="examGenSubmitButton" title="Submit">✅ Submit</button>
+      <button class="iim-action-btn" id="examGenViewButton" title="View">👁 View</button>
+      <button class="iim-action-btn warn" id="examGenDownloadButton" title="Download">📄 Download</button>
+      <button class="iim-action-btn warn" id="examGenBulkDownloadButton" title="Bulk Download">📦 Bulk PDF</button>
+      <button class="iim-action-btn muted" id="examGenAnswerSheetButton" title="Generate Answer Sheet">🗒 Answer Sheet</button>
     </div>
     <div id="examGenPreview" class="small-note">Configure the selections above, then press <em>Generate Exam (AI)</em>. Each exam carries a distinct serial number.</div>
   `;
@@ -1855,16 +1855,16 @@ function renderExamMarksEntryPanel() {
         <option value="BELOW">Below Expectation</option>
       </select>
     </div>
-    <div class="actions-row">
-      <button id="marksEntryViewButton">View</button>
-      <button id="marksEntrySaveButton">Save</button>
-      <button id="marksEntryEditButton">Edit</button>
-      <button id="marksEntryDeleteButton" class="danger">Delete</button>
-      <button id="marksEntryDownloadPdfButton">Download PDF</button>
-      <button id="marksEntryDownloadExcelButton">Download Excel</button>
-      <button id="marksEntryPrintButton">Print</button>
-      <button id="marksEntryDownloadSampleButton">Download Sample</button>
-      <button id="marksEntryUploadAmendedButton">Upload Amended Sample</button>
+    <div class="iim-actions-row">
+      <button class="iim-action-btn" id="marksEntryViewButton" title="View">👁 View</button>
+      <button class="iim-action-btn success" id="marksEntrySaveButton" title="Save">💾 Save</button>
+      <button class="iim-action-btn" id="marksEntryEditButton" title="Edit">✎ Edit</button>
+      <button class="iim-action-btn delete" id="marksEntryDeleteButton" title="Delete">🗑 Delete</button>
+      <button class="iim-action-btn warn" id="marksEntryDownloadPdfButton" title="Download PDF">📄 PDF</button>
+      <button class="iim-action-btn warn" id="marksEntryDownloadExcelButton" title="Download Excel">📊 Excel</button>
+      <button class="iim-action-btn muted" id="marksEntryPrintButton" title="Print">🖨 Print</button>
+      <button class="iim-action-btn gold" id="marksEntryDownloadSampleButton" title="Download Sample">⬇ Sample</button>
+      <button class="iim-action-btn" id="marksEntryUploadAmendedButton" title="Upload Amended Sample">⬆ Upload</button>
       <input id="marksEntryUploadInput" type="file" accept=".xlsx,.csv" style="display:none;" />
     </div>
   `;
@@ -1916,15 +1916,15 @@ function renderExamResultScriptsPanel() {
       <label>Year</label>
       <select id="resultYear"><option value="">Select year</option>${years}</select>
     </div>
-    <div class="actions-row">
-      <button id="resultGenerateButton">Generate Result Script</button>
-      <button id="resultViewButton">View</button>
-      <button id="resultEditButton">Edit/Amend</button>
-      <button id="resultPrintButton">Print</button>
-      <button id="resultDownloadPdfButton">Download PDF</button>
-      <button id="resultDownloadExcelButton">Download Excel</button>
-      <button id="resultDownloadSampleButton">Download Sample</button>
-      <button id="resultUploadAmendedButton">Upload Amended Sample</button>
+    <div class="iim-actions-row">
+      <button class="iim-action-btn gold" id="resultGenerateButton" title="Generate Result Script">⚡ Generate</button>
+      <button class="iim-action-btn" id="resultViewButton" title="View">👁 View</button>
+      <button class="iim-action-btn" id="resultEditButton" title="Edit/Amend">✎ Edit</button>
+      <button class="iim-action-btn muted" id="resultPrintButton" title="Print">🖨 Print</button>
+      <button class="iim-action-btn warn" id="resultDownloadPdfButton" title="Download PDF">📄 PDF</button>
+      <button class="iim-action-btn warn" id="resultDownloadExcelButton" title="Download Excel">📊 Excel</button>
+      <button class="iim-action-btn gold" id="resultDownloadSampleButton" title="Download Sample">⬇ Sample</button>
+      <button class="iim-action-btn" id="resultUploadAmendedButton" title="Upload Amended Sample">⬆ Upload</button>
       <input id="resultUploadInput" type="file" accept=".xlsx,.csv" style="display:none;" />
     </div>
   `;
@@ -1966,13 +1966,13 @@ function renderExamAssessmentReportPanel() {
       <label>Year</label>
       <select id="assessYear"><option value="">Select year</option>${years}</select>
     </div>
-    <div class="actions-row">
-      <button id="assessGenerateButton">Generate Assessment Report</button>
-      <button id="assessTrendButton">Show Performance Trend</button>
-      <button id="assessPrintButton">Print</button>
-      <button id="assessDownloadPdfButton">Download PDF</button>
-      <button id="assessDownloadSampleButton">Download Sample</button>
-      <button id="assessUploadAmendedButton">Upload Amended Sample</button>
+    <div class="iim-actions-row">
+      <button class="iim-action-btn gold" id="assessGenerateButton" title="Generate Assessment Report">⚡ Generate</button>
+      <button class="iim-action-btn" id="assessTrendButton" title="Show Performance Trend">📈 Trend</button>
+      <button class="iim-action-btn muted" id="assessPrintButton" title="Print">🖨 Print</button>
+      <button class="iim-action-btn warn" id="assessDownloadPdfButton" title="Download PDF">📄 PDF</button>
+      <button class="iim-action-btn gold" id="assessDownloadSampleButton" title="Download Sample">⬇ Sample</button>
+      <button class="iim-action-btn" id="assessUploadAmendedButton" title="Upload Amended Sample">⬆ Upload</button>
       <input id="assessUploadInput" type="file" accept=".xlsx,.csv,.pdf,.docx" style="display:none;" />
     </div>
   `;
@@ -3807,16 +3807,31 @@ function buildSearchScopeSection(title, headers, rows) {
 function renderSearchActionButtons(scope, row = {}) {
   const rowId = Number(row?.id || 0);
   if (!rowId) return "-";
+  const safeScope = escapeHtmlAttribute(scope);
   return `
-    <div class="search-inline-actions">
-      <button class="search-action-icon view" title="View" onclick="handleSearchRowAction('${escapeHtmlAttribute(scope)}', ${rowId}, 'view')">👁</button>
-      <button class="search-action-icon edit" title="Edit" onclick="handleSearchRowAction('${escapeHtmlAttribute(scope)}', ${rowId}, 'edit')">✎</button>
-      <button class="search-action-icon save" title="Save" onclick="handleSearchRowAction('${escapeHtmlAttribute(scope)}', ${rowId}, 'save')">💾</button>
-      <button class="search-action-icon pdf" title="Download PDF" onclick="handleSearchRowAction('${escapeHtmlAttribute(scope)}', ${rowId}, 'pdf')">📄</button>
-      <button class="search-action-icon print" title="Print" onclick="handleSearchRowAction('${escapeHtmlAttribute(scope)}', ${rowId}, 'print')">🖨</button>
-      <button class="search-action-icon delete" title="Delete" onclick="handleSearchRowAction('${escapeHtmlAttribute(scope)}', ${rowId}, 'delete')">🗑</button>
+    <div class="iim-actions-row search-inline-actions">
+      <button class="iim-action-btn" title="View" onclick="handleSearchRowAction('${safeScope}', ${rowId}, 'view')">👁 View</button>
+      <button class="iim-action-btn" title="Edit" onclick="handleSearchRowAction('${safeScope}', ${rowId}, 'edit')">✎ Edit</button>
+      <button class="iim-action-btn success" title="Save" onclick="handleSearchRowAction('${safeScope}', ${rowId}, 'save')">💾 Save</button>
+      <button class="iim-action-btn warn" title="Download PDF" onclick="handleSearchRowAction('${safeScope}', ${rowId}, 'pdf')">📄 PDF</button>
+      <button class="iim-action-btn muted" title="Print" onclick="handleSearchRowAction('${safeScope}', ${rowId}, 'print')">🖨 Print</button>
+      <button class="iim-action-btn delete" title="Delete" onclick="handleSearchRowAction('${safeScope}', ${rowId}, 'delete')">🗑 Delete</button>
     </div>
   `;
+}
+
+function buildIimsActionsRow(buttons = []) {
+  const html = buttons
+    .filter(Boolean)
+    .map((btn) => {
+      const cls = ["iim-action-btn", btn.className || ""].filter(Boolean).join(" ");
+      const onclick = btn.onclick ? ` onclick="${btn.onclick}"` : "";
+      const id = btn.id ? ` id="${escapeHtmlAttribute(btn.id)}"` : "";
+      const title = ` title="${escapeHtmlAttribute(btn.title || btn.label || "")}"`;
+      return `<button${id} class="${cls}"${title}${onclick}>${btn.label}</button>`;
+    })
+    .join("");
+  return `<div class="iim-actions-row">${html}</div>`;
 }
 
 const SEARCH_SCOPE_UPDATE_CONFIG = {

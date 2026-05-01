@@ -4250,7 +4250,7 @@ app.delete(
   accountMutationRateLimit,
   accountMutationCooldown,
   enforceModuleAccess(MODULE_KEYS.REGISTRATION),
-  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
+  enforceRole([ROLES.SYSTEM_DEVELOPER]),
   asyncHandler(async (req, res) => {
     const institutionId = Number(req.params.id);
     const institution = await loadInstitutionAgreementContext(institutionId);

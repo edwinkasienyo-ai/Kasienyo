@@ -189,14 +189,14 @@ select:disabled {
   flex: 1 1 auto;
   display: flex;
   flex-direction: column;
-  justify-content: flex-start;
-  gap: 5px;
-  padding: 7px 10px 8px;
+  justify-content: space-between;
+  gap: 4px;
+  padding: 6px 10px 6px;
 }
 
 .left-narrative {
   display: grid;
-  gap: 4px;
+  gap: 3px;
 }
 
 .info-strip {
@@ -283,19 +283,23 @@ select:disabled {
 }
 
 .credit-strip {
-  margin-top: 3px;
-  margin-bottom: 4px;
+  margin-top: 6px;
+  margin-bottom: 6px;
   text-align: center;
-  color: #fff6d8;
-  font-size: clamp(9px, 0.82vw, 11px);
-  font-weight: 800;
+  color: #1f2937;
+  font-size: clamp(11px, 0.96vw, 13px);
+  font-weight: 900;
   text-transform: uppercase;
-  letter-spacing: 0.04em;
-  padding: 5px 9px;
-  border-radius: 8px;
-  background: rgba(8, 32, 54, 0.62);
-  border: 1px solid rgba(255, 223, 134, 0.35);
+  letter-spacing: 0.05em;
+  padding: 7px 10px;
+  border-radius: 10px;
+  background: linear-gradient(90deg, #ffd76d, #f5c84b);
+  border: 1px solid rgba(255, 200, 80, 0.7);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.18);
   flex-shrink: 0;
+  order: 99;
+  position: relative;
+  z-index: 5;
 }
 
 .production-footer {
@@ -2387,31 +2391,75 @@ tbody tr:hover {
   box-shadow: none;
 }
 
-.search-inline-actions {
+.search-inline-actions,
+.iim-actions-row {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  flex-wrap: nowrap;
+  flex-wrap: wrap;
 }
 
-.search-action-icon {
+.search-action-icon,
+.iim-action-btn {
   width: auto;
-  min-height: 20px;
-  min-width: 22px;
-  padding: 2px 5px;
+  min-height: 22px;
+  min-width: 24px;
+  padding: 3px 8px;
   border-radius: 6px;
-  font-size: 10px;
+  font-size: 11px;
   line-height: 1;
   box-shadow: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: linear-gradient(140deg, #1d4ed8, #3b82f6);
+  color: #fff;
+  border: none;
+  cursor: pointer;
 }
 
-.search-action-icon:hover {
+.search-action-icon:hover,
+.iim-action-btn:hover {
   transform: none;
   box-shadow: none;
+  filter: brightness(1.05);
 }
 
-.search-action-icon.delete {
+.search-action-icon.delete,
+.iim-action-btn.danger,
+.iim-action-btn.delete {
   background: linear-gradient(140deg, #991b1b, #ef4444);
+}
+
+.iim-action-btn.warn {
+  background: linear-gradient(140deg, #b45309, #f59e0b);
+}
+
+.iim-action-btn.success {
+  background: linear-gradient(140deg, #065f46, #10b981);
+}
+
+.iim-action-btn.muted {
+  background: linear-gradient(140deg, #475569, #94a3b8);
+}
+
+.iim-action-btn.gold {
+  background: linear-gradient(140deg, #b8860b, #f5c84b);
+  color: #1f2937;
+}
+
+/* Apply compact action style globally to action toolbars */
+.actions-row > button,
+.module-rights-matrix-tools > button,
+.exam-mgmt-nav button {
+  min-height: 22px;
+  padding: 3px 9px;
+  font-size: 11px;
+  line-height: 1;
+  border-radius: 6px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
 }
 
 .search-results-separate {
