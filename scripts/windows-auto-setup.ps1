@@ -232,14 +232,14 @@ function Resolve-PortConflict {
 
 function Test-TcpPortOpen {
   param(
-    [string]$Host,
+    [string]$HostAddress,
     [int]$Port,
     [int]$TimeoutMs = 1500
   )
 
   try {
     $client = New-Object System.Net.Sockets.TcpClient
-    $async = $client.BeginConnect($Host, $Port, $null, $null)
+    $async = $client.BeginConnect($HostAddress, $Port, $null, $null)
     $connected = $async.AsyncWaitHandle.WaitOne($TimeoutMs, $false)
     if (!$connected) {
       $client.Close()
@@ -292,7 +292,7 @@ function Start-MySqlServiceIfAvailable {
 
 function Resolve-ReachableDbPort {
   param(
-    [string]$Host,
+    [string]$HostAddress,
     [int]$PreferredPort
   )
 
@@ -305,7 +305,7 @@ function Resolve-ReachableDbPort {
   $portsToTry = $portsToTry | Select-Object -Unique
 
   foreach ($candidatePort in $portsToTry) {
-    if (Test-TcpPortOpen -Host $Host -Port ([int]$candidatePort)) {
+    if (Test-TcpPortOpen -HostAddress $HostAddress -Port ([int]$candidatePort)) {
       return [int]$candidatePort
     }
   }
@@ -374,10 +374,10 @@ npm install
 
 Write-Host "[IIMS] Checking database service and reachable port..." -ForegroundColor Yellow
 $dbServiceSeen = Start-MySqlServiceIfAvailable
-$reachableDbPort = Resolve-ReachableDbPort -Host $DbHost -PreferredPort ([int]$DbPort)
+$reachableDbPort = Resolve-ReachableDbPort -HostAddress $DbHost -PreferredPort ([int]$DbPort)
 if (!$reachableDbPort -and $dbServiceSeen) {
   Start-Sleep -Seconds 2
-  $reachableDbPort = Resolve-ReachableDbPort -Host $DbHost -PreferredPort ([int]$DbPort)
+  $reachableDbPort = Resolve-ReachableDbPort -HostAddress $DbHost -PreferredPort ([int]$DbPort)
 }
 
 if ($reachableDbPort) {
