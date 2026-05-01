@@ -1741,7 +1741,17 @@ function buildDashboardTable(headers, rows) {
         </thead>
         <tbody>
           ${rows
-            .map((row) => `<tr>${row.map((cell) => `<td>${escapeHtml(cell)}</td>`).join("")}</tr>`)
+            .map((row) =>
+              `<tr>${row
+                .map((cell) => {
+                  const value = String(cell ?? "");
+                  const isTrustedHtml =
+                    value.includes('class="search-inline-actions"') ||
+                    value.includes("class='search-inline-actions'");
+                  return `<td>${isTrustedHtml ? value : escapeHtml(value)}</td>`;
+                })
+                .join("")}</tr>`
+            )
             .join("")}
         </tbody>
       </table>
@@ -2838,6 +2848,14 @@ async function globalSearch() {
                           ];
       const searchPanels = document.getElementById("searchResultsPanels");
       if (!searchPanels) return;
+      window.__latestSearchScopeRows = {
+        learners: learnersFiltered,
+        teachers: teachersFiltered,
+        parents: parentsFiltered,
+        bom: bomFiltered,
+        institutions: institutionsFiltered,
+        users: usersFiltered
+      };
       const sections = [];
       if (scope === "all" || scope === "learners") {
         sections.push(buildSearchScopeSection(
