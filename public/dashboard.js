@@ -9,7 +9,8 @@ let currentEditId = null;
 let allowedModules = [];
 let portalContext = null;
 let searchRowDrafts = {};
-const CLIENT_UI_BUNDLE_ID = "dash-bundle-rev36";
+let dashboardAutoRefreshHandle = null;
+const CLIENT_UI_BUNDLE_ID = "dash-bundle-rev37";
 const DASHBOARD_STAT_LABELS = {
   totalLearners: "Total Learners Population",
   totalActiveLearners: "Active Learners",

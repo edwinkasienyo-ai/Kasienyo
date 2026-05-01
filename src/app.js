@@ -57,7 +57,7 @@ const {
 } = require("./config/cbcLibrary");
 
 /** Bump when shipping UI/API changes so schools can confirm they run the right copy. */
-const IIMS_BUILD_STAMP = process.env.IIMS_BUILD_STAMP || "ui-deploy-rev36";
+const IIMS_BUILD_STAMP = process.env.IIMS_BUILD_STAMP || "ui-deploy-rev37";
 
 const app = express();
 
@@ -2319,8 +2319,6 @@ app.post("/api/auth/login", authLoginRateLimit, asyncHandler(async (req, res) =>
     otp_channel_requested: requestedChannel,
     otp_channel_used: effectiveChannel,
     otp_delivery_log: otpSession.sendResults || [],
-    otp_preview: exposeOtpPreview ? otpSession.code : null,
-    otp_expires_at: exposeOtpPreview ? otpSession.expiresAt : null,
     otp_resend_available_after_seconds: OTP_RESEND_COOLDOWN_SECONDS
   });
 }));
