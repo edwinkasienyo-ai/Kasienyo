@@ -1,5 +1,5 @@
 param(
-  [string]$Branch = "cursor/dashboard-welcome-alerts-layout-2a2b",
+  [string]$Branch = "cursor/tenant-ops-hardening-2a2b",
   [string]$RepoZipBase = "https://github.com/edwinkasienyo-ai/Kasienyo/archive/refs/heads",
   [string]$DbPort = "3307",
   [string]$DbHost = "127.0.0.1",
@@ -230,6 +230,89 @@ function Resolve-PortConflict {
   return $fallbackPort
 }
 
+function Test-TcpPortOpen {
+  param(
+    [string]$Host,
+    [int]$Port,
+    [int]$TimeoutMs = 1500
+  )
+
+  try {
+    $client = New-Object System.Net.Sockets.TcpClient
+    $async = $client.BeginConnect($Host, $Port, $null, $null)
+    $connected = $async.AsyncWaitHandle.WaitOne($TimeoutMs, $false)
+    if (!$connected) {
+      $client.Close()
+      return $false
+    }
+    $null = $client.EndConnect($async)
+    $client.Close()
+    return $true
+  } catch {
+    return $false
+  }
+}
+
+function Start-MySqlServiceIfAvailable {
+  $serviceCandidates = @("MySQL80", "MySQL", "mysql", "MariaDB", "mariadb", "xamppmysql")
+  foreach ($serviceName in $serviceCandidates) {
+    $svc = Get-Service -Name $serviceName -ErrorAction SilentlyContinue
+    if ($svc) {
+      if ($svc.Status -ne "Running") {
+        try {
+          Write-Host "[IIMS] Starting database service: $($svc.Name)" -ForegroundColor Yellow
+          Start-Service -Name $svc.Name -ErrorAction Stop
+          Start-Sleep -Seconds 2
+        } catch {
+          Write-Host "[IIMS] Could not start service $($svc.Name): $($_.Exception.Message)" -ForegroundColor DarkYellow
+        }
+      }
+      return $true
+    }
+  }
+
+  try {
+    $patternMatch = Get-Service | Where-Object {
+      $_.Name -match "mysql|maria" -or $_.DisplayName -match "mysql|maria"
+    } | Select-Object -First 1
+    if ($patternMatch) {
+      if ($patternMatch.Status -ne "Running") {
+        Write-Host "[IIMS] Starting detected database service: $($patternMatch.Name)" -ForegroundColor Yellow
+        Start-Service -Name $patternMatch.Name -ErrorAction Stop
+        Start-Sleep -Seconds 2
+      }
+      return $true
+    }
+  } catch {
+    Write-Host "[IIMS] Unable to enumerate/start database services: $($_.Exception.Message)" -ForegroundColor DarkYellow
+  }
+
+  return $false
+}
+
+function Resolve-ReachableDbPort {
+  param(
+    [string]$Host,
+    [int]$PreferredPort
+  )
+
+  $portsToTry = @()
+  if ($PreferredPort -gt 0) {
+    $portsToTry += $PreferredPort
+  }
+  $portsToTry += 3306
+  $portsToTry += 3307
+  $portsToTry = $portsToTry | Select-Object -Unique
+
+  foreach ($candidatePort in $portsToTry) {
+    if (Test-TcpPortOpen -Host $Host -Port ([int]$candidatePort)) {
+      return [int]$candidatePort
+    }
+  }
+
+  return $null
+}
+
 $projectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 Set-Location $projectRoot
 
@@ -288,6 +371,28 @@ if ($HeroImagePath -and (Test-Path $HeroImagePath)) {
 
 Write-Host "[IIMS] Installing dependencies..." -ForegroundColor Yellow
 npm install
+
+Write-Host "[IIMS] Checking database service and reachable port..." -ForegroundColor Yellow
+$dbServiceSeen = Start-MySqlServiceIfAvailable
+$reachableDbPort = Resolve-ReachableDbPort -Host $DbHost -PreferredPort ([int]$DbPort)
+if (!$reachableDbPort -and $dbServiceSeen) {
+  Start-Sleep -Seconds 2
+  $reachableDbPort = Resolve-ReachableDbPort -Host $DbHost -PreferredPort ([int]$DbPort)
+}
+
+if ($reachableDbPort) {
+  if ("$reachableDbPort" -ne "$DbPort") {
+    Write-Host "[IIMS] DB port $DbPort is not reachable. Switching to detected DB port $reachableDbPort." -ForegroundColor Yellow
+    $DbPort = "$reachableDbPort"
+    Set-Or-AppendEnvValue -FilePath ".env" -Key "DB_PORT" -Value $DbPort
+  } else {
+    Write-Host "[IIMS] Database is reachable on $DbHost`:$DbPort." -ForegroundColor Green
+  }
+} else {
+  Write-Host "[IIMS] Database is not reachable on $DbHost:3306 or 3307." -ForegroundColor Red
+  Write-Host "[IIMS] Start MySQL/MariaDB service (e.g., MySQL80) then re-run this script." -ForegroundColor Red
+  exit 1
+}
 
 $mysqlCmd = Get-Command mysql -ErrorAction SilentlyContinue
 if ($mysqlCmd) {
