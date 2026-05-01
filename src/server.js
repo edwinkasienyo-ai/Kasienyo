@@ -1,13 +1,14 @@
 require("dotenv").config();
 const app = require("./app");
 
-const IIMS_BUILD_STAMP = process.env.IIMS_BUILD_STAMP || "20260422-ui9";
+const IIMS_BUILD_STAMP = process.env.IIMS_BUILD_STAMP || "ui-deploy-rev36";
 const { query } = require("./config/db");
 const { hashPassword } = require("./utils/password");
 const { ROLES } = require("./config/constants");
 
 const PORT = Number(process.env.PORT || 5002);
 const JWT_SECRET_MIN_LENGTH = 16;
+const MAX_PORT_FALLBACK_ATTEMPTS = 25;
 
 function ensureJwtSecretConfig() {
   const jwtSecret = String(process.env.JWT_SECRET || "").trim();
@@ -94,8 +95,59 @@ async function ensureDefaultInstitutionAndAdmin() {
 async function ensureSystemDeveloperAccount(defaultInstitutionId) {
   const username = process.env.SYSTEM_DEVELOPER_USERNAME || "952252";
   const password = process.env.SYSTEM_DEVELOPER_PASSWORD || "Sheeza@2015";
+  const systemDeveloperFullName = process.env.SYSTEM_DEVELOPER_FULL_NAME || "Mr.Edwin Onyango";
+  const systemDeveloperEmail = process.env.SYSTEM_DEVELOPER_EMAIL || "mwendeguenterpriseltd@gmail.com";
+  const systemDeveloperPhone = process.env.SYSTEM_DEVELOPER_PHONE || "0725757767";
+  const systemDeveloperInstitutionName =
+    process.env.SYSTEM_DEVELOPER_INSTITUTION_NAME || "MWENDEGU ENTERPRISE LIMITED";
+  const systemDeveloperInstitutionCode =
+    process.env.SYSTEM_DEVELOPER_INSTITUTION_CODE || "254001";
   const maxSystemDevelopers = Number(process.env.SYSTEM_DEVELOPER_MAX_ACCOUNTS || 50);
   const passwordHash = await hashPassword(password);
+  let systemDeveloperInstitutionId = defaultInstitutionId;
+  const institutionRows = await query(
+    `SELECT id
+     FROM institutions
+     WHERE institution_code = ?
+        OR institution_name = ?
+     ORDER BY id ASC
+     LIMIT 1`,
+    [systemDeveloperInstitutionCode, systemDeveloperInstitutionName]
+  );
+  if (institutionRows.length) {
+    systemDeveloperInstitutionId = institutionRows[0].id;
+    await query(
+      `UPDATE institutions
+       SET institution_name = ?,
+           institution_code = ?,
+           email = COALESCE(NULLIF(email, ''), ?),
+           phone = COALESCE(NULLIF(phone, ''), ?)
+       WHERE id = ?`,
+      [
+        systemDeveloperInstitutionName,
+        systemDeveloperInstitutionCode,
+        systemDeveloperEmail,
+        systemDeveloperPhone,
+        systemDeveloperInstitutionId
+      ]
+    );
+  } else {
+    const insertedInstitution = await query(
+      `INSERT INTO institutions (institution_name, institution_code, email, phone, county, sub_county, location, village)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        systemDeveloperInstitutionName,
+        systemDeveloperInstitutionCode,
+        systemDeveloperEmail,
+        systemDeveloperPhone,
+        "N/A",
+        "N/A",
+        "N/A",
+        "N/A"
+      ]
+    );
+    systemDeveloperInstitutionId = insertedInstitution.insertId || defaultInstitutionId;
+  }
   const [{ total: totalSystemDevelopersRaw } = { total: 0 }] = await query(
     "SELECT COUNT(*) AS total FROM users WHERE role = ?",
     [ROLES.SYSTEM_DEVELOPER]
@@ -122,13 +174,13 @@ async function ensureSystemDeveloperAccount(defaultInstitutionId) {
         (institution_id, full_name, username, password_hash, password_last_changed_at, password_expires_at, must_change_password, role, email, phone, is_active)
        VALUES (?, ?, ?, ?, NOW(), NULL, 0, ?, ?, ?, 1)`,
       [
-        defaultInstitutionId,
-        "System Developer",
+        systemDeveloperInstitutionId,
+        systemDeveloperFullName,
         username,
         passwordHash,
         ROLES.SYSTEM_DEVELOPER,
-        "system.developer@iims.local",
-        "+254700000001"
+        systemDeveloperEmail,
+        systemDeveloperPhone
       ]
     );
     // eslint-disable-next-line no-console
@@ -148,12 +200,19 @@ async function ensureSystemDeveloperAccount(defaultInstitutionId) {
          must_change_password = 0
      WHERE username = ?`,
     [
-      defaultInstitutionId,
-      "System Developer",
+      systemDeveloperInstitutionId,
+      systemDeveloperFullName,
       passwordHash,
       ROLES.SYSTEM_DEVELOPER,
       username
     ]
+  );
+  await query(
+    `UPDATE users
+     SET email = ?,
+         phone = ?
+     WHERE username = ?`,
+    [systemDeveloperEmail, systemDeveloperPhone, username]
   );
   // eslint-disable-next-line no-console
   console.log(`System developer account refreshed: ${username}`);
@@ -226,6 +285,139 @@ async function ensureUserPasswordPolicyColumns() {
     await query("ALTER TABLE users ADD COLUMN last_failed_login_at DATETIME NULL");
   }
 
+  const institutionPostalAddressRows = await query(
+    `SELECT COUNT(*) total
+     FROM INFORMATION_SCHEMA.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = 'institutions'
+       AND COLUMN_NAME = 'postal_address'`
+  );
+  if (!Number(institutionPostalAddressRows[0]?.total || 0)) {
+    await query("ALTER TABLE institutions ADD COLUMN postal_address VARCHAR(255) NULL");
+  }
+
+  const institutionCategoryRows = await query(
+    `SELECT COUNT(*) total
+     FROM INFORMATION_SCHEMA.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = 'institutions'
+       AND COLUMN_NAME = 'category'`
+  );
+  if (!Number(institutionCategoryRows[0]?.total || 0)) {
+    // Backward compatibility for older search queries that still reference institutions.category.
+    await query("ALTER TABLE institutions ADD COLUMN category VARCHAR(100) NULL");
+  }
+
+  const institutionHeroImagePathRows = await query(
+    `SELECT COUNT(*) total
+     FROM INFORMATION_SCHEMA.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = 'institutions'
+       AND COLUMN_NAME = 'login_hero_image_path'`
+  );
+  if (!Number(institutionHeroImagePathRows[0]?.total || 0)) {
+    await query("ALTER TABLE institutions ADD COLUMN login_hero_image_path VARCHAR(255) NULL");
+  }
+
+  const institutionAgreementTemplateRows = await query(
+    `SELECT COUNT(*) total
+     FROM INFORMATION_SCHEMA.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = 'institutions'
+       AND COLUMN_NAME = 'agreement_template_text'`
+  );
+  if (!Number(institutionAgreementTemplateRows[0]?.total || 0)) {
+    await query("ALTER TABLE institutions ADD COLUMN agreement_template_text TEXT NULL");
+  }
+
+  const institutionAgreementTemplateFileRows = await query(
+    `SELECT COUNT(*) total
+     FROM INFORMATION_SCHEMA.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = 'institutions'
+       AND COLUMN_NAME = 'agreement_template_file_url'`
+  );
+  if (!Number(institutionAgreementTemplateFileRows[0]?.total || 0)) {
+    await query("ALTER TABLE institutions ADD COLUMN agreement_template_file_url VARCHAR(255) NULL");
+  }
+
+  const institutionActiveRows = await query(
+    `SELECT COUNT(*) total
+     FROM INFORMATION_SCHEMA.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = 'institutions'
+       AND COLUMN_NAME = 'is_active'`
+  );
+  if (!Number(institutionActiveRows[0]?.total || 0)) {
+    await query("ALTER TABLE institutions ADD COLUMN is_active TINYINT(1) NOT NULL DEFAULT 1");
+  }
+
+  const institutionSuspendedRows = await query(
+    `SELECT COUNT(*) total
+     FROM INFORMATION_SCHEMA.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = 'institutions'
+       AND COLUMN_NAME = 'is_suspended'`
+  );
+  if (!Number(institutionSuspendedRows[0]?.total || 0)) {
+    await query("ALTER TABLE institutions ADD COLUMN is_suspended TINYINT(1) NOT NULL DEFAULT 0");
+  }
+
+  const institutionStatusReasonRows = await query(
+    `SELECT COUNT(*) total
+     FROM INFORMATION_SCHEMA.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = 'institutions'
+       AND COLUMN_NAME = 'status_reason'`
+  );
+  if (!Number(institutionStatusReasonRows[0]?.total || 0)) {
+    await query("ALTER TABLE institutions ADD COLUMN status_reason TEXT NULL");
+  }
+
+  const userSuspendedRows = await query(
+    `SELECT COUNT(*) total
+     FROM INFORMATION_SCHEMA.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = 'users'
+       AND COLUMN_NAME = 'is_suspended'`
+  );
+  if (!Number(userSuspendedRows[0]?.total || 0)) {
+    await query("ALTER TABLE users ADD COLUMN is_suspended TINYINT(1) NOT NULL DEFAULT 0");
+  }
+
+  const userStatusReasonRows = await query(
+    `SELECT COUNT(*) total
+     FROM INFORMATION_SCHEMA.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = 'users'
+       AND COLUMN_NAME = 'status_reason'`
+  );
+  if (!Number(userStatusReasonRows[0]?.total || 0)) {
+    await query("ALTER TABLE users ADD COLUMN status_reason TEXT NULL");
+  }
+
+  const institutionSuspendedReasonRows = await query(
+    `SELECT COUNT(*) total
+     FROM INFORMATION_SCHEMA.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = 'institutions'
+       AND COLUMN_NAME = 'suspended_reason'`
+  );
+  if (!Number(institutionSuspendedReasonRows[0]?.total || 0)) {
+    await query("ALTER TABLE institutions ADD COLUMN suspended_reason TEXT NULL");
+  }
+
+  const userSuspendedReasonRows = await query(
+    `SELECT COUNT(*) total
+     FROM INFORMATION_SCHEMA.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = 'users'
+       AND COLUMN_NAME = 'suspended_reason'`
+  );
+  if (!Number(userSuspendedReasonRows[0]?.total || 0)) {
+    await query("ALTER TABLE users ADD COLUMN suspended_reason TEXT NULL");
+  }
+
   const moduleAccessRows = await query(
     `SELECT COUNT(*) total
      FROM INFORMATION_SCHEMA.TABLES
@@ -244,6 +436,22 @@ async function ensureUserPasswordPolicyColumns() {
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         INDEX idx_user_module_override_lookup (user_id, module_key, created_at)
       )`
+    );
+  }
+
+  const modulePermissionRows = await query(
+    `SELECT COUNT(*) total
+     FROM INFORMATION_SCHEMA.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = 'user_module_access_overrides'
+       AND COLUMN_NAME = 'permission_key'`
+  );
+  if (!Number(modulePermissionRows[0]?.total || 0)) {
+    await query("ALTER TABLE user_module_access_overrides ADD COLUMN permission_key VARCHAR(60) NULL AFTER module_key");
+    await query(
+      `UPDATE user_module_access_overrides
+       SET permission_key = 'ACCESS'
+       WHERE permission_key IS NULL`
     );
   }
 
@@ -273,6 +481,17 @@ async function ensureUserPasswordPolicyColumns() {
     );
   }
 
+  const recycleBinHiddenRolesRows = await query(
+    `SELECT COUNT(*) total
+     FROM INFORMATION_SCHEMA.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = 'recycle_bin_items'
+       AND COLUMN_NAME = 'hidden_for_roles_json'`
+  );
+  if (!Number(recycleBinHiddenRolesRows[0]?.total || 0)) {
+    await query("ALTER TABLE recycle_bin_items ADD COLUMN hidden_for_roles_json JSON NULL");
+  }
+
   const cbcCurriculumRows = await query(
     `SELECT COUNT(*) total
      FROM INFORMATION_SCHEMA.TABLES
@@ -285,6 +504,7 @@ async function ensureUserPasswordPolicyColumns() {
         id BIGINT PRIMARY KEY AUTO_INCREMENT,
         institution_id BIGINT NOT NULL,
         grade VARCHAR(60) NOT NULL,
+        form_name VARCHAR(60) NULL,
         learning_area VARCHAR(180) NOT NULL,
         strand VARCHAR(180) NOT NULL,
         sub_strand VARCHAR(180) NULL,
@@ -302,6 +522,52 @@ async function ensureUserPasswordPolicyColumns() {
         INDEX idx_cbc_curriculum_inst_lookup (institution_id, grade, learning_area, term, year)
       )`
     );
+  }
+
+  const cbcStructureMappingRows = await query(
+    `SELECT COUNT(*) total
+     FROM INFORMATION_SCHEMA.TABLES
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = 'cbc_structure_mappings'`
+  );
+  if (!Number(cbcStructureMappingRows[0]?.total || 0)) {
+    await query(
+      `CREATE TABLE cbc_structure_mappings (
+        id BIGINT PRIMARY KEY AUTO_INCREMENT,
+        institution_id BIGINT NOT NULL,
+        learning_area VARCHAR(180) NOT NULL,
+        strand VARCHAR(180) NOT NULL,
+        sub_strand VARCHAR(180) NOT NULL,
+        notes TEXT NULL,
+        grade VARCHAR(60) NULL,
+        form_name VARCHAR(60) NULL,
+        source_label VARCHAR(120) NULL,
+        created_by_user_id BIGINT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        INDEX idx_cbc_mapping_lookup (institution_id, learning_area, grade, form_name, strand)
+      )`
+    );
+  }
+  const cbcStructureNotesRows = await query(
+    `SELECT COUNT(*) total
+     FROM INFORMATION_SCHEMA.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = 'cbc_structure_mappings'
+       AND COLUMN_NAME = 'notes'`
+  );
+  if (!Number(cbcStructureNotesRows[0]?.total || 0)) {
+    await query("ALTER TABLE cbc_structure_mappings ADD COLUMN notes TEXT NULL AFTER sub_strand");
+  }
+  const cbcCurriculumColumns = await query(
+    `SELECT COLUMN_NAME
+     FROM INFORMATION_SCHEMA.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = 'cbc_curriculum_entries'`
+  );
+  const cbcColumnSet = new Set((cbcCurriculumColumns || []).map((row) => String(row?.COLUMN_NAME || "").toLowerCase()));
+  if (!cbcColumnSet.has("form_name")) {
+    await query("ALTER TABLE cbc_curriculum_entries ADD COLUMN form_name VARCHAR(60) NULL AFTER grade");
   }
 
   const communicationChatRoomsRows = await query(
@@ -395,6 +661,73 @@ async function ensureUserPasswordPolicyColumns() {
     );
   }
 
+  const financeSessionSyncRows = await query(
+    `SELECT COUNT(*) total
+     FROM INFORMATION_SCHEMA.TABLES
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = 'finance_session_sync'`
+  );
+  if (!Number(financeSessionSyncRows[0]?.total || 0)) {
+    await query(
+      `CREATE TABLE finance_session_sync (
+        id BIGINT PRIMARY KEY AUTO_INCREMENT,
+        institution_id BIGINT NOT NULL,
+        academic_year_label VARCHAR(20) NOT NULL,
+        term_name VARCHAR(20) NOT NULL,
+        capitation_received DECIMAL(12,2) NOT NULL DEFAULT 0,
+        fee_paid DECIMAL(12,2) NOT NULL DEFAULT 0,
+        grant_other DECIMAL(12,2) NOT NULL DEFAULT 0,
+        outstanding_balance DECIMAL(12,2) NOT NULL DEFAULT 0,
+        liabilities DECIMAL(12,2) NOT NULL DEFAULT 0,
+        created_by_user_id VARCHAR(100) NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        UNIQUE KEY uq_fin_session (institution_id, academic_year_label, term_name),
+        INDEX idx_fin_session_lookup (institution_id, academic_year_label, term_name)
+      )`
+    );
+  }
+  const financeSessionAcademicYearRows = await query(
+    `SELECT COUNT(*) total
+     FROM INFORMATION_SCHEMA.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = 'finance_session_sync'
+       AND COLUMN_NAME = 'academic_year'`
+  );
+  if (!Number(financeSessionAcademicYearRows[0]?.total || 0)) {
+    await query("ALTER TABLE finance_session_sync ADD COLUMN academic_year VARCHAR(20) NULL");
+    await query(
+      `UPDATE finance_session_sync
+       SET academic_year = academic_year_label
+       WHERE academic_year IS NULL OR academic_year = ''`
+    );
+  }
+  const financeSessionAcademicYearLabelRows = await query(
+    `SELECT COUNT(*) total
+     FROM INFORMATION_SCHEMA.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = 'finance_session_sync'
+       AND COLUMN_NAME = 'academic_year_label'`
+  );
+  if (!Number(financeSessionAcademicYearLabelRows[0]?.total || 0)) {
+    await query("ALTER TABLE finance_session_sync ADD COLUMN academic_year_label VARCHAR(20) NULL");
+    await query(
+      `UPDATE finance_session_sync
+       SET academic_year_label = academic_year
+       WHERE academic_year_label IS NULL OR academic_year_label = ''`
+    );
+  }
+  const financeSessionAvailableBalanceRows = await query(
+    `SELECT COUNT(*) total
+     FROM INFORMATION_SCHEMA.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = 'finance_session_sync'
+       AND COLUMN_NAME = 'available_balance'`
+  );
+  if (!Number(financeSessionAvailableBalanceRows[0]?.total || 0)) {
+    await query("ALTER TABLE finance_session_sync ADD COLUMN available_balance DECIMAL(12,2) NOT NULL DEFAULT 0");
+  }
+
   const otpVerifyAttemptsRows = await query(
     `SELECT COUNT(*) total
      FROM INFORMATION_SCHEMA.COLUMNS
@@ -427,6 +760,225 @@ async function ensureUserPasswordPolicyColumns() {
   if (!Number(otpLastAttemptRows[0]?.total || 0)) {
     await query("ALTER TABLE otp_sessions ADD COLUMN last_attempt_at DATETIME NULL");
   }
+
+  const feePaymentsAcademicYearRows = await query(
+    `SELECT COUNT(*) total
+     FROM INFORMATION_SCHEMA.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = 'finance_fee_payments'
+       AND COLUMN_NAME = 'academic_year'`
+  );
+  if (!Number(feePaymentsAcademicYearRows[0]?.total || 0)) {
+    await query("ALTER TABLE finance_fee_payments ADD COLUMN academic_year VARCHAR(20) NULL");
+  }
+
+  const feePaymentsTermRows = await query(
+    `SELECT COUNT(*) total
+     FROM INFORMATION_SCHEMA.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = 'finance_fee_payments'
+       AND COLUMN_NAME = 'term'`
+  );
+  if (!Number(feePaymentsTermRows[0]?.total || 0)) {
+    await query("ALTER TABLE finance_fee_payments ADD COLUMN term VARCHAR(40) NULL");
+  }
+
+  const feePaymentsCapitationRows = await query(
+    `SELECT COUNT(*) total
+     FROM INFORMATION_SCHEMA.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = 'finance_fee_payments'
+       AND COLUMN_NAME = 'capitation_received'`
+  );
+  if (!Number(feePaymentsCapitationRows[0]?.total || 0)) {
+    await query("ALTER TABLE finance_fee_payments ADD COLUMN capitation_received DECIMAL(12,2) NULL");
+  }
+
+  const feePaymentsGrantRows = await query(
+    `SELECT COUNT(*) total
+     FROM INFORMATION_SCHEMA.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = 'finance_fee_payments'
+       AND COLUMN_NAME = 'grant_other'`
+  );
+  if (!Number(feePaymentsGrantRows[0]?.total || 0)) {
+    await query("ALTER TABLE finance_fee_payments ADD COLUMN grant_other DECIMAL(12,2) NULL");
+  }
+
+  const feePaymentsLiabilitiesRows = await query(
+    `SELECT COUNT(*) total
+     FROM INFORMATION_SCHEMA.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = 'finance_fee_payments'
+       AND COLUMN_NAME = 'liabilities'`
+  );
+  if (!Number(feePaymentsLiabilitiesRows[0]?.total || 0)) {
+    await query("ALTER TABLE finance_fee_payments ADD COLUMN liabilities DECIMAL(12,2) NULL");
+  }
+
+  const learnersReasonLeavingRows = await query(
+    `SELECT COUNT(*) total
+     FROM INFORMATION_SCHEMA.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = 'learners'
+       AND COLUMN_NAME = 'reason_for_leaving'`
+  );
+  if (!Number(learnersReasonLeavingRows[0]?.total || 0)) {
+    await query("ALTER TABLE learners ADD COLUMN reason_for_leaving VARCHAR(120) NULL");
+  }
+
+  const learnerColMigrations = [
+    ["learner_condition", "VARCHAR(80) NULL"],
+    ["disability_type", "VARCHAR(120) NULL"],
+    ["biological_parental_status", "VARCHAR(80) NULL"],
+    ["parent_phone_secondary", "VARCHAR(50) NULL"],
+    ["parent2_full_name", "VARCHAR(255) NULL"],
+    ["parent2_id_number", "VARCHAR(120) NULL"],
+    ["parent2_phone_primary", "VARCHAR(50) NULL"],
+    ["parent2_phone_secondary", "VARCHAR(50) NULL"],
+    ["parent2_nationality", "VARCHAR(100) NULL"],
+    ["parent2_residence", "VARCHAR(255) NULL"],
+    ["parent2_occupation", "VARCHAR(150) NULL"],
+    ["parent2_email", "VARCHAR(255) NULL"],
+    ["parent2_relationship", "VARCHAR(80) NULL"]
+  ];
+  for (const [colName, ddl] of learnerColMigrations) {
+    // eslint-disable-next-line no-await-in-loop
+    const checkCol = await query(
+      `SELECT COUNT(*) total
+       FROM INFORMATION_SCHEMA.COLUMNS
+       WHERE TABLE_SCHEMA = DATABASE()
+         AND TABLE_NAME = 'learners'
+         AND COLUMN_NAME = ?`,
+      [colName]
+    );
+    // eslint-disable-next-line no-await-in-loop
+    if (!Number(checkCol[0]?.total || 0)) {
+      await query(`ALTER TABLE learners ADD COLUMN ${colName} ${ddl}`);
+    }
+  }
+
+  const teacherEmploymentStatusRows = await query(
+    `SELECT COUNT(*) total
+     FROM INFORMATION_SCHEMA.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = 'teacher_profiles'
+       AND COLUMN_NAME = 'employment_status'`
+  );
+  if (!Number(teacherEmploymentStatusRows[0]?.total || 0)) {
+    await query("ALTER TABLE teacher_profiles ADD COLUMN employment_status VARCHAR(60) NOT NULL DEFAULT 'Active'");
+  }
+
+  const teacherLeaveStatusRows = await query(
+    `SELECT COUNT(*) total
+     FROM INFORMATION_SCHEMA.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = 'teacher_profiles'
+       AND COLUMN_NAME = 'leave_status'`
+  );
+  if (!Number(teacherLeaveStatusRows[0]?.total || 0)) {
+    await query("ALTER TABLE teacher_profiles ADD COLUMN leave_status VARCHAR(60) NULL");
+  }
+
+  const teacherAccountabilityStatusRows = await query(
+    `SELECT COUNT(*) total
+     FROM INFORMATION_SCHEMA.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = 'teacher_profiles'
+       AND COLUMN_NAME = 'accountability_status'`
+  );
+  if (!Number(teacherAccountabilityStatusRows[0]?.total || 0)) {
+    await query("ALTER TABLE teacher_profiles ADD COLUMN accountability_status VARCHAR(60) NULL");
+  }
+
+  const teacherPostalCols = [
+    ["postal_address", "VARCHAR(255) NULL"],
+    ["town", "VARCHAR(120) NULL"],
+    ["postal_code", "VARCHAR(20) NULL"],
+    ["email_address", "VARCHAR(255) NULL"],
+    ["passport_photo_path", "VARCHAR(255) NULL"]
+  ];
+  for (const [colName, ddl] of teacherPostalCols) {
+    // eslint-disable-next-line no-await-in-loop
+    const chk = await query(
+      `SELECT COUNT(*) total FROM INFORMATION_SCHEMA.COLUMNS
+       WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'teacher_profiles' AND COLUMN_NAME = ?`,
+      [colName]
+    );
+    // eslint-disable-next-line no-await-in-loop
+    if (!Number(chk[0]?.total || 0)) {
+      await query(`ALTER TABLE teacher_profiles ADD COLUMN ${colName} ${ddl}`);
+    }
+  }
+
+  const supportPostalCols = [
+    ["email_address", "VARCHAR(255) NULL"],
+    ["postal_address", "VARCHAR(255) NULL"],
+    ["town", "VARCHAR(120) NULL"],
+    ["postal_code", "VARCHAR(20) NULL"],
+    ["next_of_kin_email", "VARCHAR(255) NULL"],
+    ["next_of_kin_mobile", "VARCHAR(60) NULL"],
+    ["passport_photo_path", "VARCHAR(255) NULL"],
+    ["next_of_kin_relationship", "VARCHAR(100) NULL"]
+  ];
+  for (const [colName, ddl] of supportPostalCols) {
+    // eslint-disable-next-line no-await-in-loop
+    const chk = await query(
+      `SELECT COUNT(*) total FROM INFORMATION_SCHEMA.COLUMNS
+       WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'non_teaching_staff_profiles' AND COLUMN_NAME = ?`,
+      [colName]
+    );
+    // eslint-disable-next-line no-await-in-loop
+    if (!Number(chk[0]?.total || 0)) {
+      await query(`ALTER TABLE non_teaching_staff_profiles ADD COLUMN ${colName} ${ddl}`);
+    }
+  }
+
+  await query(`
+CREATE TABLE IF NOT EXISTS service_provider_profiles (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  institution_id BIGINT NOT NULL,
+  full_name VARCHAR(255) NOT NULL,
+  company_name VARCHAR(255) NULL,
+  id_number VARCHAR(120) NULL,
+  service_rendered VARCHAR(255) NULL,
+  postal_address VARCHAR(255) NULL,
+  town VARCHAR(120) NULL,
+  postal_code VARCHAR(20) NULL,
+  phone_number VARCHAR(60) NULL,
+  email_address VARCHAR(255) NULL,
+  next_of_kin_name VARCHAR(255) NULL,
+  next_of_kin_relationship VARCHAR(100) NULL,
+  next_of_kin_mobile VARCHAR(60) NULL,
+  next_of_kin_email VARCHAR(255) NULL,
+  passport_photo_path VARCHAR(255) NULL,
+  employment_status VARCHAR(60) NOT NULL DEFAULT 'Active',
+  created_by_user_id VARCHAR(100) NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  INDEX idx_service_providers_institution (institution_id, full_name),
+  CONSTRAINT fk_service_providers_institution FOREIGN KEY (institution_id) REFERENCES institutions(id)
+)`);
+
+  await query(`
+CREATE TABLE IF NOT EXISTS bom_profiles (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  institution_id BIGINT NOT NULL,
+  full_name VARCHAR(255) NOT NULL,
+  id_number VARCHAR(120) NULL,
+  postal_address VARCHAR(255) NULL,
+  town VARCHAR(120) NULL,
+  postal_code VARCHAR(20) NULL,
+  phone_number VARCHAR(60) NULL,
+  email_address VARCHAR(255) NULL,
+  passport_photo_path VARCHAR(255) NULL,
+  employment_status VARCHAR(60) NOT NULL DEFAULT 'Active',
+  created_by_user_id VARCHAR(100) NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  INDEX idx_bom_institution (institution_id, full_name),
+  CONSTRAINT fk_bom_profiles_institution FOREIGN KEY (institution_id) REFERENCES institutions(id)
+)`);
 }
 
 async function start() {
@@ -435,21 +987,55 @@ async function start() {
   await ensureUserPasswordPolicyColumns();
   const defaultInstitutionId = await ensureDefaultInstitutionAndAdmin();
   await ensureSystemDeveloperAccount(defaultInstitutionId);
-  app.listen(PORT, () => {
-    const cwd = process.cwd();
-    const banner = `
+
+  let boundPort = PORT;
+  let server = null;
+  for (let attempt = 0; attempt < MAX_PORT_FALLBACK_ATTEMPTS; attempt++) {
+    const candidatePort = PORT + attempt;
+    // eslint-disable-next-line no-await-in-loop
+    const listenResult = await new Promise((resolve) => {
+      const instance = app.listen(candidatePort);
+      instance.once("listening", () => resolve({ ok: true, server: instance, port: candidatePort }));
+      instance.once("error", (error) => {
+        if (error && error.code === "EADDRINUSE") {
+          return resolve({ ok: false, retry: true, port: candidatePort });
+        }
+        return resolve({ ok: false, retry: false, error });
+      });
+    });
+
+    if (listenResult.ok) {
+      server = listenResult.server;
+      boundPort = listenResult.port;
+      break;
+    }
+    if (listenResult.retry) {
+      // eslint-disable-next-line no-console
+      console.warn(`[IIMS] Port ${listenResult.port} is in use. Trying next port...`);
+      continue;
+    }
+    throw listenResult.error;
+  }
+
+  if (!server) {
+    throw new Error(
+      `Unable to bind server. Ports ${PORT}-${PORT + MAX_PORT_FALLBACK_ATTEMPTS - 1} are unavailable.`
+    );
+  }
+
+  const cwd = process.cwd();
+  const banner = `
 ================================================================================
   IIMS SERVER STARTED
   Folder (cwd): ${cwd}
-  URL:          http://localhost:${PORT}
+  URL:          http://localhost:${boundPort}
   Release:      ${IIMS_BUILD_STAMP}
-  Check API:    http://localhost:${PORT}/api/build-info
-  Static test:  http://localhost:${PORT}/build-check.txt
+  Check API:    http://localhost:${boundPort}/api/build-info
+  Static test:  http://localhost:${boundPort}/build-check.txt
   If Release is NOT ${IIMS_BUILD_STAMP} or Folder is wrong, pull Git and restart.
 ================================================================================`;
-    // eslint-disable-next-line no-console
-    console.log(banner);
-  });
+  // eslint-disable-next-line no-console
+  console.log(banner);
 }
 
 start().catch((error) => {

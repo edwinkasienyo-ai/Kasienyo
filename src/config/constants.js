@@ -5,6 +5,8 @@ const ROLES = {
   MOD: "MOD",
   TSC: "TSC",
   TEACHER: "TEACHER",
+  SENIOR_TEACHER: "SENIOR_TEACHER",
+  HEAD_OF_DEPARTMENT: "HEAD_OF_DEPARTMENT",
   PARENT: "PARENT",
   NON_TEACHING_STAFF: "NON_TEACHING_STAFF",
   BOM: "BOM",
@@ -31,6 +33,18 @@ const ROLE_PERMISSIONS = {
   [ROLES.MOD]: [PERMISSIONS.VIEW, PERMISSIONS.ACCESS],
   [ROLES.TSC]: [PERMISSIONS.VIEW, PERMISSIONS.ACCESS],
   [ROLES.TEACHER]: [
+    PERMISSIONS.VIEW,
+    PERMISSIONS.CREATE,
+    PERMISSIONS.UPDATE,
+    PERMISSIONS.ACCESS
+  ],
+  [ROLES.SENIOR_TEACHER]: [
+    PERMISSIONS.VIEW,
+    PERMISSIONS.CREATE,
+    PERMISSIONS.UPDATE,
+    PERMISSIONS.ACCESS
+  ],
+  [ROLES.HEAD_OF_DEPARTMENT]: [
     PERMISSIONS.VIEW,
     PERMISSIONS.CREATE,
     PERMISSIONS.UPDATE,
@@ -64,8 +78,8 @@ const GRADES = [
 
 const FORMS = ["Form 3", "Form 4"];
 const TERMS = ["Term One", "Term Two", "Term Three"];
-const YEAR_JOINED_OPTIONS = Array.from({ length: 24 }, (_, index) => 2017 + index);
-const GENDER_OPTIONS = ["Male", "Female", "Others"];
+const YEAR_JOINED_OPTIONS = Array.from({ length: 25 }, (_, index) => 1945 + index);
+const GENDER_OPTIONS = ["Male", "Female", "Other"];
 const ADMISSION_STATUS = [
   "In Session",
   "Not in Session",
@@ -73,7 +87,63 @@ const ADMISSION_STATUS = [
   "Alumni",
   "Deceased"
 ];
-const ORPHAN_STATUS = ["Both Parent Alive", "Partial Orphan", "Total Orphan", "Others"];
+const ORPHAN_STATUS = ["Both parents alive", "Partial orphan", "Total orphan", "Others"];
+
+const YEAR_JOINED_WIDE_OPTIONS = Array.from({ length: 2145 - 1945 + 1 }, (_, index) => 1945 + index);
+
+const WORLD_COUNTRY_OPTIONS = [
+  "Kenya",
+  "Uganda",
+  "Tanzania",
+  "Rwanda",
+  "Ethiopia",
+  "Somalia",
+  "South Sudan",
+  "Sudan",
+  "Egypt",
+  "Morocco",
+  "South Africa",
+  "Nigeria",
+  "Ghana",
+  "United States",
+  "United Kingdom",
+  "Germany",
+  "France",
+  "Spain",
+  "Italy",
+  "India",
+  "China",
+  "Japan",
+  "Brazil",
+  "Canada",
+  "Australia",
+  "Others"
+];
+
+const RELIGION_OPTIONS = [
+  "Christianity",
+  "Islam",
+  "Hinduism",
+  "Buddhism",
+  "Judaism",
+  "Baháʼí Faith",
+  "Traditional / Indigenous",
+  "No religious affiliation",
+  "Others"
+];
+
+const DISABILITY_TYPE_OPTIONS = [
+  "Visual impairment",
+  "Hearing impairment",
+  "Mobility / physical impairment",
+  "Intellectual disability",
+  "Autism spectrum",
+  "ADHD",
+  "Speech / language disorder",
+  "Chronic illness",
+  "Psychosocial / mental health",
+  "Others"
+];
 const RELATIONSHIP_OPTIONS = ["Mother", "Father", "Guardian", "Sponsor", "Others"];
 const STAFF_CATEGORY = ["Primary", "Junior Secondary", "Senior Secondary"];
 
@@ -172,6 +242,10 @@ module.exports = {
   FORMS,
   TERMS,
   YEAR_JOINED_OPTIONS,
+  YEAR_JOINED_WIDE_OPTIONS,
+  WORLD_COUNTRY_OPTIONS,
+  RELIGION_OPTIONS,
+  DISABILITY_TYPE_OPTIONS,
   GENDER_OPTIONS,
   ADMISSION_STATUS,
   ORPHAN_STATUS,

@@ -1,5 +1,5 @@
 param(
-  [string]$Branch = "cursor/iims-full-system-2a2b",
+  [string]$Branch = "cursor/tenant-ops-hardening-2a2b",
   [string]$RepoZipBase = "https://github.com/edwinkasienyo-ai/Kasienyo/archive/refs/heads",
   [string]$DbPort = "3307",
   [string]$DbHost = "127.0.0.1",
@@ -11,6 +11,58 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+
+function Download-FileWithFallbacks {
+  param(
+    [string]$Url,
+    [string]$OutFile,
+    [int]$MaxAttempts = 4
+  )
+
+  $attempt = 1
+  while ($attempt -le $MaxAttempts) {
+    try {
+      Write-Host "[IIMS] Download attempt $attempt/$MaxAttempts via Invoke-WebRequest..." -ForegroundColor DarkGray
+      Invoke-WebRequest -Uri $Url -OutFile $OutFile -UseBasicParsing
+      if ((Test-Path $OutFile) -and ((Get-Item $OutFile).Length -gt 0)) {
+        return
+      }
+      throw "Downloaded file is empty."
+    } catch {
+      Write-Host ("[IIMS] Invoke-WebRequest failed on attempt {0}: {1}" -f $attempt, $_.Exception.Message) -ForegroundColor DarkYellow
+      if ($attempt -lt $MaxAttempts) {
+        Start-Sleep -Seconds ([Math]::Pow(2, $attempt))
+      }
+      $attempt++
+    }
+  }
+
+  if (Get-Command curl.exe -ErrorAction SilentlyContinue) {
+    try {
+      Write-Host "[IIMS] Trying curl.exe fallback download..." -ForegroundColor Yellow
+      & curl.exe -L --fail --retry 3 --retry-delay 2 -o $OutFile $Url
+      if ((Test-Path $OutFile) -and ((Get-Item $OutFile).Length -gt 0)) {
+        return
+      }
+    } catch {
+      Write-Host "[IIMS] curl.exe fallback failed: $($_.Exception.Message)" -ForegroundColor DarkYellow
+    }
+  }
+
+  if (Get-Command Start-BitsTransfer -ErrorAction SilentlyContinue) {
+    try {
+      Write-Host "[IIMS] Trying BITS fallback download..." -ForegroundColor Yellow
+      Start-BitsTransfer -Source $Url -Destination $OutFile -ErrorAction Stop
+      if ((Test-Path $OutFile) -and ((Get-Item $OutFile).Length -gt 0)) {
+        return
+      }
+    } catch {
+      Write-Host "[IIMS] BITS fallback failed: $($_.Exception.Message)" -ForegroundColor DarkYellow
+    }
+  }
+
+  throw "Could not download branch ZIP from $Url. Check internet/firewall/proxy settings, then rerun."
+}
 
 function Sync-ProjectFromZip {
   param(
@@ -32,7 +84,7 @@ function Sync-ProjectFromZip {
 
   Write-Host "[IIMS] Git unavailable or failed. Downloading latest branch ZIP..." -ForegroundColor Yellow
   Write-Host "[IIMS] Source: $zipUrl" -ForegroundColor DarkGray
-  Invoke-WebRequest -Uri $zipUrl -OutFile $zipPath
+  Download-FileWithFallbacks -Url $zipUrl -OutFile $zipPath
   Expand-Archive -Path $zipPath -DestinationPath $extractPath -Force
 
   $sourceRoot = Get-ChildItem -Path $extractPath -Directory | Select-Object -First 1
@@ -115,15 +167,39 @@ function Get-PortOwnerProcessId {
   return $ownerPid
 }
 
-function Resolve-PortConflict {
+function Test-PortIsFree {
   param(
     [int]$TargetPort
+  )
+  $ownerPid = Get-PortOwnerProcessId -TargetPort $TargetPort
+  return -not [bool]$ownerPid
+}
+
+function Find-NextFreePort {
+  param(
+    [int]$StartingPort,
+    [int]$MaxAttempts = 25
+  )
+  $candidate = $StartingPort
+  for ($i = 0; $i -lt $MaxAttempts; $i++) {
+    if (Test-PortIsFree -TargetPort $candidate) {
+      return $candidate
+    }
+    $candidate++
+  }
+  throw "Could not find a free port in range $StartingPort-$candidate."
+}
+
+function Resolve-PortConflict {
+  param(
+    [int]$TargetPort,
+    [string]$EnvFilePath
   )
 
   $ownerPid = Get-PortOwnerProcessId -TargetPort $TargetPort
   if (!$ownerPid) {
     Write-Host "[IIMS] Port $TargetPort is free." -ForegroundColor Green
-    return
+    return $TargetPort
   }
 
   $procName = "unknown"
@@ -138,11 +214,103 @@ function Resolve-PortConflict {
   try {
     Stop-Process -Id $ownerPid -Force -ErrorAction Stop
     Start-Sleep -Milliseconds 600
-    Write-Host "[IIMS] Stopped PID $ownerPid to free port $TargetPort." -ForegroundColor Green
+    if (Test-PortIsFree -TargetPort $TargetPort) {
+      Write-Host "[IIMS] Stopped PID $ownerPid to free port $TargetPort." -ForegroundColor Green
+      return $TargetPort
+    }
+    Write-Host "[IIMS] PID $ownerPid stopped, but port $TargetPort is still occupied." -ForegroundColor DarkYellow
   } catch {
-    Write-Host "[IIMS] Could not stop PID $ownerPid automatically. Close the process and rerun script." -ForegroundColor Red
-    throw
+    Write-Host "[IIMS] Could not stop PID $ownerPid automatically. Trying next available port..." -ForegroundColor DarkYellow
   }
+
+  $fallbackPort = Find-NextFreePort -StartingPort ($TargetPort + 1)
+  Write-Host "[IIMS] Switching app port from $TargetPort to $fallbackPort." -ForegroundColor Yellow
+  Set-Or-AppendEnvValue -FilePath $EnvFilePath -Key "PORT" -Value "$fallbackPort"
+  Set-Or-AppendEnvValue -FilePath $EnvFilePath -Key "FRONTEND_ORIGIN" -Value "http://localhost:$fallbackPort"
+  return $fallbackPort
+}
+
+function Test-TcpPortOpen {
+  param(
+    [string]$HostAddress,
+    [int]$Port,
+    [int]$TimeoutMs = 1500
+  )
+
+  try {
+    $client = New-Object System.Net.Sockets.TcpClient
+    $async = $client.BeginConnect($HostAddress, $Port, $null, $null)
+    $connected = $async.AsyncWaitHandle.WaitOne($TimeoutMs, $false)
+    if (!$connected) {
+      $client.Close()
+      return $false
+    }
+    $null = $client.EndConnect($async)
+    $client.Close()
+    return $true
+  } catch {
+    return $false
+  }
+}
+
+function Start-MySqlServiceIfAvailable {
+  $serviceCandidates = @("MySQL80", "MySQL", "mysql", "MariaDB", "mariadb", "xamppmysql")
+  foreach ($serviceName in $serviceCandidates) {
+    $svc = Get-Service -Name $serviceName -ErrorAction SilentlyContinue
+    if ($svc) {
+      if ($svc.Status -ne "Running") {
+        try {
+          Write-Host "[IIMS] Starting database service: $($svc.Name)" -ForegroundColor Yellow
+          Start-Service -Name $svc.Name -ErrorAction Stop
+          Start-Sleep -Seconds 2
+        } catch {
+          Write-Host "[IIMS] Could not start service $($svc.Name): $($_.Exception.Message)" -ForegroundColor DarkYellow
+        }
+      }
+      return $true
+    }
+  }
+
+  try {
+    $patternMatch = Get-Service | Where-Object {
+      $_.Name -match "mysql|maria" -or $_.DisplayName -match "mysql|maria"
+    } | Select-Object -First 1
+    if ($patternMatch) {
+      if ($patternMatch.Status -ne "Running") {
+        Write-Host "[IIMS] Starting detected database service: $($patternMatch.Name)" -ForegroundColor Yellow
+        Start-Service -Name $patternMatch.Name -ErrorAction Stop
+        Start-Sleep -Seconds 2
+      }
+      return $true
+    }
+  } catch {
+    Write-Host "[IIMS] Unable to enumerate/start database services: $($_.Exception.Message)" -ForegroundColor DarkYellow
+  }
+
+  return $false
+}
+
+function Resolve-ReachableDbPort {
+  param(
+    [string]$HostAddress,
+    [int]$PreferredPort
+  )
+
+  $portsToTry = @()
+  if ($PreferredPort -gt 0) {
+    $portsToTry += $PreferredPort
+  }
+  $portsToTry += 3306
+  $portsToTry += 3307
+  $portsToTry = $portsToTry | Select-Object -Unique
+
+  foreach ($candidatePort in $portsToTry) {
+    if (Test-TcpPortOpen -HostAddress $HostAddress -Port ([int]$candidatePort)) {
+      return [int]$candidatePort
+    }
+  }
+
+  return $null
 }
 
 $projectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
@@ -204,6 +372,28 @@ if ($HeroImagePath -and (Test-Path $HeroImagePath)) {
 Write-Host "[IIMS] Installing dependencies..." -ForegroundColor Yellow
 npm install
 
+Write-Host "[IIMS] Checking database service and reachable port..." -ForegroundColor Yellow
+$dbServiceSeen = Start-MySqlServiceIfAvailable
+$reachableDbPort = Resolve-ReachableDbPort -HostAddress $DbHost -PreferredPort ([int]$DbPort)
+if (!$reachableDbPort -and $dbServiceSeen) {
+  Start-Sleep -Seconds 2
+  $reachableDbPort = Resolve-ReachableDbPort -HostAddress $DbHost -PreferredPort ([int]$DbPort)
+}
+
+if ($reachableDbPort) {
+  if ("$reachableDbPort" -ne "$DbPort") {
+    Write-Host "[IIMS] DB port $DbPort is not reachable. Switching to detected DB port $reachableDbPort." -ForegroundColor Yellow
+    $DbPort = "$reachableDbPort"
+    Set-Or-AppendEnvValue -FilePath ".env" -Key "DB_PORT" -Value $DbPort
+  } else {
+    Write-Host "[IIMS] Database is reachable on $DbHost`:$DbPort." -ForegroundColor Green
+  }
+} else {
+  Write-Host "[IIMS] Database is not reachable on $DbHost:3306 or 3307." -ForegroundColor Red
+  Write-Host "[IIMS] Start MySQL/MariaDB service (e.g., MySQL80) then re-run this script." -ForegroundColor Red
+  exit 1
+}
+
 $mysqlCmd = Get-Command mysql -ErrorAction SilentlyContinue
 if ($mysqlCmd) {
   Write-Host "[IIMS] mysql client detected, applying schema + seed..." -ForegroundColor Yellow
@@ -215,7 +405,10 @@ if ($mysqlCmd) {
   Write-Host "       If DB is empty, import sql/schema.sql and sql/seed.sql manually." -ForegroundColor DarkYellow
 }
 
-Resolve-PortConflict -TargetPort ([int]$Port)
+$resolvedPort = Resolve-PortConflict -TargetPort ([int]$Port) -EnvFilePath ".env"
+if ($resolvedPort -ne [int]$Port) {
+  Write-Host "[IIMS] Updated .env to PORT=$resolvedPort and FRONTEND_ORIGIN=http://localhost:$resolvedPort" -ForegroundColor Green
+}
 
 Write-Host "\n[IIMS] Setup complete. Starting dev server..." -ForegroundColor Green
 npm run dev
