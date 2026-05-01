@@ -3705,56 +3705,103 @@ app.get(
       });
     }
 
+    const safeSearchRows = async (loader) => {
+      try {
+        return await loader();
+      } catch (error) {
+        if (["ER_BAD_FIELD_ERROR", "ER_NO_SUCH_TABLE", "ER_PARSE_ERROR"].includes(error?.code)) {
+          return [];
+        }
+        throw error;
+      }
+    };
+
+    const learnerColumns =
+      includeLearners || includeParents
+        ? await getTableColumns("learners")
+        : [];
+    const learnerColumnSet = new Set(learnerColumns);
+    const hasLearnerColumn = (columnName) => learnerColumnSet.has(columnName);
+    const learnerSearchFields = (await getExistingColumns("learners", [
+      "full_name",
+      "admission_number",
+      "upi_number",
+      "assessment_number",
+      "birth_certificate_number"
+    ])).filter(Boolean);
+    const parentSearchFields = (await getExistingColumns("learners", [
+      "parent_full_name",
+      "parent_phone",
+      "parent_email",
+      "full_name",
+      "upi_number",
+      "assessment_number",
+      "birth_certificate_number"
+    ])).filter(Boolean);
+
     const learnerExtraWhereParts = [];
     const learnerExtraParams = [];
-    if (cleanValue(grade)) {
+    if (cleanValue(grade) && hasLearnerColumn("grade")) {
       learnerExtraWhereParts.push(" AND grade = ?");
       learnerExtraParams.push(cleanValue(grade));
     }
     if (cleanValue(class_form)) {
-      learnerExtraWhereParts.push(" AND (grade = ? OR form_name = ?)");
-      learnerExtraParams.push(cleanValue(class_form), cleanValue(class_form));
+      const classFormParts = [];
+      if (hasLearnerColumn("grade")) {
+        classFormParts.push("grade = ?");
+        learnerExtraParams.push(cleanValue(class_form));
+      }
+      if (hasLearnerColumn("form_name")) {
+        classFormParts.push("form_name = ?");
+        learnerExtraParams.push(cleanValue(class_form));
+      }
+      if (classFormParts.length) {
+        learnerExtraWhereParts.push(` AND (${classFormParts.join(" OR ")})`);
+      }
     }
-    if (cleanValue(stream)) {
+    if (cleanValue(stream) && hasLearnerColumn("stream")) {
       learnerExtraWhereParts.push(" AND stream = ?");
       learnerExtraParams.push(cleanValue(stream));
     }
-    if (cleanValue(learner_status)) {
+    if (cleanValue(learner_status) && hasLearnerColumn("status")) {
       learnerExtraWhereParts.push(" AND status = ?");
       learnerExtraParams.push(cleanValue(learner_status));
     }
     const learnerExtraWhere = learnerExtraWhereParts.join("");
 
+    const teacherColumns = includeTeachers ? await getTableColumns("teacher_profiles") : [];
+    const teacherColumnSet = new Set(teacherColumns);
     const teacherExtraWhereParts = [];
     const teacherExtraParams = [];
     if (cleanValue(teacher_category)) {
-      teacherExtraWhereParts.push(" AND category = ?");
-      teacherExtraParams.push(cleanValue(teacher_category));
+      const teacherCategoryColumn = teacherColumnSet.has("category")
+        ? "category"
+        : teacherColumnSet.has("employment_status")
+          ? "employment_status"
+          : null;
+      if (teacherCategoryColumn) {
+        teacherExtraWhereParts.push(` AND ${teacherCategoryColumn} = ?`);
+        teacherExtraParams.push(cleanValue(teacher_category));
+      }
     }
     const teacherExtraWhere = teacherExtraWhereParts.join("");
 
     const learnerRows = includeLearners
-      ? await getPaginatedRows({
+      ? await safeSearchRows(() => getPaginatedRows({
         table: "learners",
         institutionId,
-        searchFields: [
-          "full_name",
-          "admission_number",
-          "upi_number",
-          "assessment_number",
-          "birth_certificate_number"
-        ],
+        searchFields: learnerSearchFields,
         q,
         extraWhere: learnerExtraWhere,
         extraParams: learnerExtraParams,
         limit: rowLimit
-      })
+      }))
       : [];
     const sortedLearnerRows = learnerRows
       .slice()
       .sort((a, b) => String(a.full_name || "").localeCompare(String(b.full_name || "")));
     const teacherRows = includeTeachers
-      ? await (async () => {
+      ? await safeSearchRows(async () => {
         const teacherSearchFields = await getExistingColumns("teacher_profiles", [
           "full_name",
           "id_number",
@@ -3774,102 +3821,147 @@ app.get(
           extraParams: teacherExtraParams,
           limit: rowLimit
         });
-      })()
+      })
       : [];
     const sortedTeacherRows = teacherRows
       .slice()
       .sort((a, b) => String(a.full_name || "").localeCompare(String(b.full_name || "")));
     const parentRows = includeParents
-      ? await getPaginatedRows({
+      ? await safeSearchRows(() => getPaginatedRows({
         table: "learners",
         institutionId,
-        searchFields: [
-          "parent_full_name",
-          "parent_phone",
-          "parent_email",
-          "upi_number",
-          "assessment_number",
-          "birth_certificate_number"
-        ],
+        searchFields: parentSearchFields,
         q,
         extraWhere: learnerExtraWhere,
         extraParams: learnerExtraParams,
         limit: rowLimit
-      })
+      }))
       : [];
     const sortedParentRows = parentRows
       .slice()
       .sort((a, b) => String(a.parent_full_name || "").localeCompare(String(b.parent_full_name || "")));
+    const usersColumns = includeBom || (includeUsers && isSystemDeveloper)
+      ? await getTableColumns("users")
+      : [];
+    const usersColumnSet = new Set(usersColumns);
     const bomRows = includeBom
-      ? await query(
-        `SELECT id, full_name, username, role, email, phone, is_active, created_at
-         FROM users
-         WHERE institution_id = ?
-           AND UPPER(REPLACE(role, ' ', '_')) IN (?, ?)
-           AND (
-             ? = ''
-             OR full_name LIKE CONCAT('%', ?, '%')
-             OR username LIKE CONCAT('%', ?, '%')
-             OR email LIKE CONCAT('%', ?, '%')
-             OR phone LIKE CONCAT('%', ?, '%')
-           )
-         ORDER BY full_name ASC
-         LIMIT ?`,
-        [institutionId, ROLES.BOM, "BOARD_OF_MANAGEMENT", cleanValue(q), cleanValue(q), cleanValue(q), cleanValue(q), cleanValue(q), rowLimit]
-      )
+      ? await safeSearchRows(async () => {
+        if (!usersColumnSet.has("institution_id") || !usersColumnSet.has("role")) {
+          return [];
+        }
+        const selectColumns = [
+          usersColumnSet.has("id") ? "id" : "NULL AS id",
+          usersColumnSet.has("full_name") ? "full_name" : "NULL AS full_name",
+          usersColumnSet.has("username") ? "username" : "NULL AS username",
+          usersColumnSet.has("role") ? "role" : "NULL AS role",
+          usersColumnSet.has("email") ? "email" : "NULL AS email",
+          usersColumnSet.has("phone") ? "phone" : "NULL AS phone",
+          usersColumnSet.has("is_active") ? "is_active" : "1 AS is_active",
+          usersColumnSet.has("created_at") ? "created_at" : "NULL AS created_at"
+        ];
+        const searchable = ["full_name", "username", "email", "phone"].filter((column) => usersColumnSet.has(column));
+        const bomFilterParts = searchable.map((column) => `${column} LIKE CONCAT('%', ?, '%')`);
+        const bomWhereClause = bomFilterParts.length
+          ? `? = '' OR ${bomFilterParts.join(" OR ")}`
+          : "? = ''";
+        const orderColumn = usersColumnSet.has("full_name")
+          ? "full_name"
+          : usersColumnSet.has("username")
+            ? "username"
+            : "id";
+        return query(
+          `SELECT ${selectColumns.join(", ")}
+           FROM users
+           WHERE institution_id = ?
+             AND UPPER(REPLACE(role, ' ', '_')) IN (?, ?)
+             AND (${bomWhereClause})
+           ORDER BY ${orderColumn} ASC
+           LIMIT ?`,
+          [
+            institutionId,
+            ROLES.BOM,
+            "BOARD_OF_MANAGEMENT",
+            cleanValue(q),
+            ...searchable.map(() => cleanValue(q)),
+            rowLimit
+          ]
+        );
+      })
       : [];
     let institutionRows = [];
     if (includeInstitutions && isSystemDeveloper) {
-      try {
-        institutionRows = await query(
-          `SELECT id, institution_name, institution_code, county, sub_county AS category, email, phone, is_active, created_at
+      institutionRows = await safeSearchRows(async () => {
+        const institutionColumns = await getTableColumns("institutions");
+        const institutionColumnSet = new Set(institutionColumns);
+        const categorySelect = institutionColumnSet.has("category")
+          ? "category"
+          : institutionColumnSet.has("sub_county")
+            ? "sub_county AS category"
+            : "NULL AS category";
+        const selectColumns = [
+          institutionColumnSet.has("id") ? "id" : "NULL AS id",
+          institutionColumnSet.has("institution_name") ? "institution_name" : "NULL AS institution_name",
+          institutionColumnSet.has("institution_code") ? "institution_code" : "NULL AS institution_code",
+          institutionColumnSet.has("county") ? "county" : "NULL AS county",
+          categorySelect,
+          institutionColumnSet.has("email") ? "email" : "NULL AS email",
+          institutionColumnSet.has("phone") ? "phone" : "NULL AS phone",
+          institutionColumnSet.has("is_active") ? "is_active" : "1 AS is_active",
+          institutionColumnSet.has("created_at") ? "created_at" : "NULL AS created_at"
+        ];
+        const searchable = ["institution_name", "institution_code", "county", "sub_county", "category", "email", "phone"]
+          .filter((column) => institutionColumnSet.has(column));
+        const searchClause = searchable.length
+          ? `? = '' OR ${searchable.map((column) => `${column} LIKE CONCAT('%', ?, '%')`).join(" OR ")}`
+          : "? = ''";
+        const orderColumn = institutionColumnSet.has("institution_name")
+          ? "institution_name"
+          : institutionColumnSet.has("institution_code")
+            ? "institution_code"
+            : "id";
+        return query(
+          `SELECT ${selectColumns.join(", ")}
            FROM institutions
-           WHERE ? = ''
-             OR institution_name LIKE CONCAT('%', ?, '%')
-             OR institution_code LIKE CONCAT('%', ?, '%')
-             OR county LIKE CONCAT('%', ?, '%')
-             OR sub_county LIKE CONCAT('%', ?, '%')
-             OR email LIKE CONCAT('%', ?, '%')
-             OR phone LIKE CONCAT('%', ?, '%')
-           ORDER BY institution_name ASC
+           WHERE ${searchClause}
+           ORDER BY ${orderColumn} ASC
            LIMIT ?`,
-          [cleanValue(q), cleanValue(q), cleanValue(q), cleanValue(q), cleanValue(q), cleanValue(q), cleanValue(q), rowLimit]
+          [cleanValue(q), ...searchable.map(() => cleanValue(q)), rowLimit]
         );
-      } catch (error) {
-        // Compatibility fallback for legacy schemas where sub_county/category may be absent.
-        if (error?.code !== "ER_BAD_FIELD_ERROR") {
-          throw error;
-        }
-        institutionRows = await query(
-          `SELECT id, institution_name, institution_code, county, NULL AS category, email, phone, is_active, created_at
-           FROM institutions
-           WHERE ? = ''
-             OR institution_name LIKE CONCAT('%', ?, '%')
-             OR institution_code LIKE CONCAT('%', ?, '%')
-             OR county LIKE CONCAT('%', ?, '%')
-             OR email LIKE CONCAT('%', ?, '%')
-             OR phone LIKE CONCAT('%', ?, '%')
-           ORDER BY institution_name ASC
-           LIMIT ?`,
-          [cleanValue(q), cleanValue(q), cleanValue(q), cleanValue(q), cleanValue(q), cleanValue(q), rowLimit]
-        );
-      }
+      });
     }
     const userRows = includeUsers
       ? (isSystemDeveloper
-        ? await query(
-          `SELECT id, institution_id, full_name, username, role, email, phone, is_active, created_at
-           FROM users
-           WHERE ? = ''
-             OR full_name LIKE CONCAT('%', ?, '%')
-             OR username LIKE CONCAT('%', ?, '%')
-             OR role LIKE CONCAT('%', ?, '%')
-             OR email LIKE CONCAT('%', ?, '%')
-             OR phone LIKE CONCAT('%', ?, '%')
-           ORDER BY full_name ASC
-           LIMIT ?`,
-          [cleanValue(q), cleanValue(q), cleanValue(q), cleanValue(q), cleanValue(q), cleanValue(q), rowLimit]
-        )
+        ? await safeSearchRows(async () => {
+          const selectable = [
+            usersColumnSet.has("id") ? "id" : "NULL AS id",
+            usersColumnSet.has("institution_id") ? "institution_id" : "NULL AS institution_id",
+            usersColumnSet.has("full_name") ? "full_name" : "NULL AS full_name",
+            usersColumnSet.has("username") ? "username" : "NULL AS username",
+            usersColumnSet.has("role") ? "role" : "NULL AS role",
+            usersColumnSet.has("email") ? "email" : "NULL AS email",
+            usersColumnSet.has("phone") ? "phone" : "NULL AS phone",
+            usersColumnSet.has("is_active") ? "is_active" : "1 AS is_active",
+            usersColumnSet.has("created_at") ? "created_at" : "NULL AS created_at"
+          ];
+          const searchable = ["full_name", "username", "role", "email", "phone"]
+            .filter((column) => usersColumnSet.has(column));
+          const whereClause = searchable.length
+            ? `? = '' OR ${searchable.map((column) => `${column} LIKE CONCAT('%', ?, '%')`).join(" OR ")}`
+            : "? = ''";
+          const orderColumn = usersColumnSet.has("full_name")
+            ? "full_name"
+            : usersColumnSet.has("username")
+              ? "username"
+              : "id";
+          return query(
+            `SELECT ${selectable.join(", ")}
+             FROM users
+             WHERE ${whereClause}
+             ORDER BY ${orderColumn} ASC
+             LIMIT ?`,
+            [cleanValue(q), ...searchable.map(() => cleanValue(q)), rowLimit]
+          );
+        })
         : [])
       : [];
     const filteredLearnerRows = normalizedTarget === "grade"
