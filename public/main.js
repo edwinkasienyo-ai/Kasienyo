@@ -35,7 +35,7 @@ async function loadBuildStampLogin() {
     }
     const data = response.ok ? await response.json() : null;
     const stamp = data?.build_stamp || "unknown";
-    el.textContent = `Release: ${stamp} · UI v20 — production-ready index and legal/public pages synchronized.`;
+    el.textContent = `Release: ${stamp} · UI bundle rev36 — match /api/build-info after deploy.`;
   } catch (_) {
     el.textContent =
       "Could not load release info. Ensure Node is running from your updated project (e.g. BASIC EDUCATION) and try again.";
@@ -230,7 +230,17 @@ async function login() {
     }
     localStorage.setItem("pendingUsername", username);
     const deliveredBy = data?.otp_channel_used ? ` via ${data.otp_channel_used}` : "";
-    setAuthNotice(`${data.message}${deliveredBy}. Portal: ${data.portal}.`, "success");
+    const channelSummary = Array.isArray(data?.otp_delivery_log)
+      ? ` Delivery: ${data.otp_delivery_log.join(", ")}.`
+      : "";
+    const preview =
+      typeof data?.otp_preview === "string" && data.otp_preview
+        ? ` System Developer preview OTP: ${data.otp_preview}.`
+        : "";
+    setAuthNotice(
+      `${data.message || ""}${deliveredBy}.${channelSummary}${preview} Portal: ${data.portal}.`.trim(),
+      "success"
+    );
   } catch (error) {
     setAuthNotice(error.message, "error");
   }
@@ -331,7 +341,10 @@ async function requestForgotPasswordOtp() {
         phone
       })
     });
-    setAuthNotice(data.message || "OTP sent for password reset.", "success");
+    const logLine = Array.isArray(data?.otp_delivery_log)
+      ? ` Details: ${data.otp_delivery_log.join(", ")}.`
+      : "";
+    setAuthNotice(`${data.message || "OTP requested."}${logLine}`, "success");
   } catch (error) {
     setAuthNotice(error.message, "error");
   }
@@ -376,12 +389,6 @@ async function resetPassword() {
   }
 }
 
-document.getElementById("loginButton").addEventListener("click", login);
-document.getElementById("verifyButton").addEventListener("click", verifyOtp);
-document.getElementById("forgotUsernameButton")?.addEventListener("click", recoverUsername);
-document.getElementById("forgotPasswordSendOtpButton")?.addEventListener("click", requestForgotPasswordOtp);
-document.getElementById("forgotPasswordButton")?.addEventListener("click", resetPassword);
-
 function bindAuthSectionLinks() {
   document.querySelectorAll("[data-auth-panel], .auth-link-btn[data-target]").forEach((button) => {
     button.addEventListener("click", () => {
@@ -413,9 +420,254 @@ function initializeAuthPanels() {
   });
 }
 
+const INDEX_PAGE_DETAILS = {
+  about: {
+    title: "About IMIS",
+    path: "/about.html",
+    html: `
+      <p>The <strong>Integrated Management Information System (IMIS)</strong> is a secure, multi-tenant platform for basic education institutions.
+      It brings together admissions, attendance, assessments, finance, compliance, and institutional registers in one audited environment.</p>
+      <h3>What IMIS delivers</h3>
+      <ul>
+        <li>Role-based portals for System Developer, administrators, teachers, parents, learners, and service providers.</li>
+        <li>Institution-scoped data isolation with optional institution letterhead on reports and dashboards.</li>
+        <li>Strong authentication with one-time passwords (OTP) where required, plus detailed security audit trails.</li>
+        <li>CBC/CBE-aligned workflows for curriculum, examinations, and learner progress tracking.</li>
+      </ul>
+      <h3>Developed by</h3>
+      <p><strong>MWENDEGU ENTERPRISE LIMITED</strong> — contact: +254725757767 · mwendeguenterpriseltd@gmail.com</p>
+    `
+  },
+  contact: {
+    title: "Contact",
+    path: "/contact.html",
+    html: `
+      <p>For implementation, training, or hosting support, use the channels below. Include your institution name and code where applicable.</p>
+      <h3>Primary contact</h3>
+      <ul>
+        <li>Phone: <strong>+254725757767</strong></li>
+        <li>Email: <strong>mwendeguenterpriseltd@gmail.com</strong></li>
+      </ul>
+      <h3>Response expectations</h3>
+      <p>For production incidents, escalate through your Head of Institution first; the System Developer retains platform-wide oversight for security and tenancy issues.</p>
+    `
+  },
+  privacy: {
+    title: "Privacy Policy",
+    path: "/privacy.html",
+    html: `
+      <p>IMIS processes institutional and personal data strictly for education administration, compliance, and agreed service delivery.</p>
+      <h3>Key practices</h3>
+      <ul>
+        <li>Authentication events and OTP flows are logged for security; access is limited by role.</li>
+        <li>Personal data is segmented by institution tenant so each school only sees its authorised scope.</li>
+        <li>Retention for deleted records follows the platform recycle-bin policy (extended supervisory retention for authorised roles).</li>
+      </ul>
+      <p>For the full legal text, open the complete policy in a new tab.</p>
+    `
+  },
+  terms: {
+    title: "Terms of Service",
+    path: "/terms.html",
+    html: `
+      <p>Use of IMIS is governed by your institution&apos;s licence or agreement with the platform operator.</p>
+      <h3>Acceptable use</h3>
+      <ul>
+        <li>Use accounts only for authorised education and administration purposes.</li>
+        <li>Do not share OTPs or credentials; report suspected compromise immediately.</li>
+        <li>Respect Kenyan education regulations and institutional policies when entering data.</li>
+      </ul>
+    `
+  },
+  compliance: {
+    title: "Compliance",
+    path: "/compliance.html",
+    html: `
+      <p>IMIS is engineered to align with <strong>Kenya Basic Education Regulations, 2015</strong> and related ICT guidance for learner registers and oversight.</p>
+      <h3>Operational readiness</h3>
+      <ul>
+        <li>Configurable registers for learners, staff, BOM, and service providers.</li>
+        <li>Audit logs for authentication and privileged actions visible to authorised roles.</li>
+        <li>Document workflows for procurement, policies, and institution-specific agreements.</li>
+      </ul>
+    `
+  },
+  support: {
+    title: "Support",
+    path: "/support.html",
+    html: `
+      <p>Operational support covers account access, onboarding, integrations, and best practices for CBC/CBE data capture.</p>
+      <h3>Before opening a ticket</h3>
+      <ul>
+        <li>Confirm browser cache is refreshed and you are using a supported Chromium or Firefox-class browser.</li>
+        <li>Verify OTP email/SMS settings with your administrator if codes do not arrive.</li>
+      </ul>
+    `
+  },
+  "support-compliance": {
+    title: "Support &amp; Compliance",
+    path: "/support-compliance.html",
+    html: `
+      <p>Combined reference for statutory alignment and escalation paths within IMIS deployments.</p>
+      <ul>
+        <li>Institution Heads coordinate day-to-day user access; System Developer retains tenancy and security sovereignty.</li>
+        <li>Accessibility and security disclosures are maintained as separate public artefacts for transparency.</li>
+      </ul>
+    `
+  },
+  cookies: {
+    title: "Cookie Notice",
+    path: "/cookies.html",
+    html: `
+      <p>IMIS may use strictly necessary cookies and local storage tokens (for example session and build stamps) needed for secure login and UI stability.</p>
+      <p>Analytics cookies, if introduced, would be disclosed in your deployment&apos;s configuration and institutional agreement.</p>
+    `
+  },
+  security: {
+    title: "Security",
+    path: "/security.html",
+    html: `
+      <p>Security controls include OTP-backed authentication where configured, hashed passwords, rate limits on sensitive endpoints,
+      structured audit trails, and role-scoped APIs.</p>
+      <p>Deployments should follow <strong>security.txt</strong> disclosures for coordinated vulnerability reporting.</p>
+    `
+  },
+  humans: {
+    title: "Humans.txt",
+    path: "/humans.txt",
+    html: `
+      <p>A plain-text index of the team and technology stack powering IMIS.</p>
+      <pre style="white-space:pre-wrap;font-size:12px;background:#fff;border-radius:8px;padding:12px;border:1px solid #dce6ef;">/* TEAM */
+Organization: MWENDEGU ENTERPRISE LIMITED
+Product: INTEGRATED MANAGEMENT INFORMATION SYSTEM (IMIS)
+Contact: mwendeguenterpriseltd@gmail.com
+Phone: +254725757767
+
+/* SITE */
+Standards: HTML5, CSS3, JavaScript, Node.js, Express, MySQL
+Security: /security.txt and /.well-known/security.txt</pre>
+      <p><a href="/humans.txt" target="_blank" rel="noopener">View raw humans.txt</a></p>
+    `
+  },
+  llms: {
+    title: "LLMs.txt",
+    path: "/llms.txt",
+    html: `
+      <p>Machine-oriented summary of public documentation URLs for assistants and tooling.</p>
+      <pre style="white-space:pre-wrap;font-size:11px;background:#fff;border-radius:8px;padding:12px;border:1px solid #dce6ef;">Primary public URLs include /about.html, /contact.html, policies, accessibility, cookies, security, status, sitemap.xml, robots.txt, and site.webmanifest.</pre>
+      <p><a href="/llms.txt" target="_blank" rel="noopener">View raw llms.txt</a></p>
+    `
+  },
+  status: {
+    title: "Service Status",
+    path: "/status.html",
+    html: `
+      <p>Operational status for hosted IMIS deployments. Use this page during maintenance windows or incident communication.</p>
+      <ul>
+        <li>Healthy: API heartbeat at <code>/api/health</code> responds with service acknowledgement.</li>
+        <li>Degraded: database or SMTP/SMS relays may delay OTP—check delivery logs.</li>
+      </ul>
+    `
+  },
+  accessibility: {
+    title: "Accessibility Statement",
+    path: "/accessibility.html",
+    html: `
+      <p>IMIS aims for perceptible contrast, scalable typography, meaningful focus order on forms (including OTP steps), and coherent labels on interactive controls.</p>
+      <h3>Continuing improvement</h3>
+      <ul>
+        <li>Report accessibility barriers to your administrator with screenshots and browser version.</li>
+        <li>Keyboard users: use Tab/Shift+Tab through role selection, credential fields, and recovery panels.</li>
+      </ul>
+    `
+  }
+};
+
+function attachModalEscapeHandler(container, handler) {
+  container.addEventListener("keydown", handler);
+  const focusables = container.querySelectorAll(
+    'a[href]:not([hidden]), button:not([disabled]):not([hidden]), textarea, input, select, [tabindex]:not([tabindex="-1"])'
+  );
+  const list = [...focusables].filter((el) => el.offsetParent !== null);
+  if (list.length) list[0].focus({ preventScroll: true });
+  return () => container.removeEventListener("keydown", handler);
+}
+
+function openIndexLegalModal(pageKey) {
+  const modal = document.getElementById("indexPageModal");
+  const titleEl = document.getElementById("indexPageModalTitle");
+  const bodyEl = document.getElementById("indexPageModalBody");
+  const linkEl = document.getElementById("indexPageModalOpenNew");
+  const config = INDEX_PAGE_DETAILS[pageKey];
+  if (!modal || !titleEl || !bodyEl || !linkEl || !config) return;
+
+  titleEl.textContent = config.title;
+  bodyEl.innerHTML = config.html;
+  linkEl.href = config.path;
+  modal.hidden = false;
+  document.body.style.overflow = "hidden";
+
+  const modalPanel = modal.querySelector(".index-modal__panel");
+
+  const onKeyDown = (ev) => {
+    if (ev.key === "Escape") {
+      ev.preventDefault();
+      closeIndexLegalModal();
+      return;
+    }
+    if (ev.key !== "Tab" || !modalPanel) return;
+    const seq = [...modalPanel.querySelectorAll(
+      'a[href]:not([hidden]), button:not([disabled]):not([hidden]), textarea, input, select, [tabindex]:not([tabindex="-1"])'
+    )].filter((el) => el.offsetParent !== null);
+    if (seq.length <= 1) return;
+    const first = seq[0];
+    const last = seq[seq.length - 1];
+    if (!ev.shiftKey && document.activeElement === last) {
+      ev.preventDefault();
+      first.focus();
+    } else if (ev.shiftKey && document.activeElement === first) {
+      ev.preventDefault();
+      last.focus();
+    }
+  };
+
+  if (modal._indexModalCleanup) modal._indexModalCleanup();
+  modal._indexModalCleanup = attachModalEscapeHandler(modal, onKeyDown);
+}
+
+function closeIndexLegalModal() {
+  const modal = document.getElementById("indexPageModal");
+  if (!modal || modal.hidden) return;
+  if (modal._indexModalCleanup) {
+    modal._indexModalCleanup();
+    modal._indexModalCleanup = null;
+  }
+  modal.hidden = true;
+  document.body.style.overflow = "";
+}
+
+function bindIndexLegalFooters() {
+  document.querySelectorAll(".legal-link-btn[data-index-page]").forEach((btn) =>
+    btn.addEventListener("click", () => {
+      openIndexLegalModal(btn.getAttribute("data-index-page"));
+    })
+  );
+
+  document.getElementById("indexPageModal")?.addEventListener("click", (ev) => {
+    if (ev.target?.closest("[data-index-modal-close]")) closeIndexLegalModal();
+  });
+}
+
 document.getElementById("loginPortalRole")?.addEventListener("change", updateLoginFieldState);
 initializeAuthPanels();
 bindAuthSectionLinks();
+bindIndexLegalFooters();
 loadPublicHeroImage();
 loadBuildStampLogin();
 updateLoginFieldState();
+
+document.getElementById("loginButton").addEventListener("click", login);
+document.getElementById("verifyButton").addEventListener("click", verifyOtp);
+document.getElementById("forgotUsernameButton")?.addEventListener("click", recoverUsername);
+document.getElementById("forgotPasswordSendOtpButton")?.addEventListener("click", requestForgotPasswordOtp);
+document.getElementById("forgotPasswordButton")?.addEventListener("click", resetPassword);

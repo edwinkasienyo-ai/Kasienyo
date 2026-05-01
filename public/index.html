@@ -1,8 +1,9 @@
 <!DOCTYPE html>
-<!-- IIMS_RELEASE=20260422-ui11 — if this comment is missing, you are not using the updated public folder -->
+<!-- STEP1_IDX_REV=36 — MWENDEGU credit top; legal pills; otp log — if missing, CDN/host is serving old HTML -->
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
+    <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate, private" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>INTEGRATED MANAGEMENT INFORMATION SYSTEM (IMIS) | BASIC EDUCATION DIGITAL PLATFORM</title>
     <meta
@@ -42,10 +43,16 @@
     <link rel="apple-touch-icon" href="/uploads/index-hero.jpg?v=20260411" />
     <link rel="manifest" href="/site.webmanifest" />
     <link rel="preload" as="image" href="/uploads/index-hero.jpg?v=20260411" />
-    <link rel="stylesheet" href="/styles.css?v=30" />
+    <link rel="stylesheet" href="/styles.css?v=36" />
   </head>
   <body class="login-page">
     <div class="login-left">
+      <div class="credit-strip credit-strip--top" role="note" aria-label="System credit">
+        THIS SYSTEM WAS DEVELOPED BY MWENDEGU ENTERPRISE LIMITED © 2017
+      </div>
+      <div class="left-hero-title">
+        <p class="hero-title hero-title--left">IMIS FOR BASIC EDUCATION LEARNING INSTITUTIONS</p>
+      </div>
       <div class="hero-panel">
         <img
           class="hero-image"
@@ -81,16 +88,30 @@
           <span class="contact-phone">+254725757767</span>
           <span class="contact-email">mwendeguenterpriseltd@gmail.com</span>
         </div>
-        <div class="credit-strip">THIS SYSTEM WAS DEVELOPED BY MWENDEGU ENTERPRISE LIMITED C 2017</div>
       </div>
+      <nav class="left-legal-footer index-legal-links" aria-label="Legal and information">
+        <button type="button" class="legal-link-btn" data-index-page="about">About</button>
+        <button type="button" class="legal-link-btn" data-index-page="contact">Contact</button>
+        <button type="button" class="legal-link-btn" data-index-page="privacy">Privacy Policy</button>
+        <button type="button" class="legal-link-btn" data-index-page="terms">Terms of Service</button>
+        <button type="button" class="legal-link-btn" data-index-page="compliance">Compliance</button>
+        <button type="button" class="legal-link-btn" data-index-page="support">Support</button>
+        <button type="button" class="legal-link-btn" data-index-page="support-compliance">Support &amp; Compliance</button>
+        <button type="button" class="legal-link-btn" data-index-page="cookies">Cookie Notice</button>
+        <button type="button" class="legal-link-btn" data-index-page="security">Security</button>
+        <button type="button" class="legal-link-btn" data-index-page="humans">Humans.txt</button>
+        <button type="button" class="legal-link-btn" data-index-page="llms">LLMs.txt</button>
+        <button type="button" class="legal-link-btn" data-index-page="status">Service Status</button>
+        <button type="button" class="legal-link-btn" data-index-page="accessibility">Accessibility</button>
+      </nav>
     </div>
 
     <div class="login-right">
       <div class="card auth-card animated-panel glass-card">
-        <div class="auth-card-header">
-          <p class="hero-title">IMIS FOR BASIC EDUCATION LEARNING INSTITUTIONS</p>
-        </div>
-        <h3>Welcome back</h3>
+        <h3 class="auth-welcome-heading">Welcome back</h3>
+        <p id="step1IndexFingerprint" class="step1-index-fingerprint" aria-live="polite">
+          STEP 1 index revision 36 · look for MWENDEGU strip at top of blue panel &amp; legal pills below narratives
+        </p>
         <p class="small-note">Sign in to IMIS with your credentials, then verify with OTP.</p>
         <p id="authNotice" class="small-note auth-notice" aria-live="polite"></p>
 
@@ -206,24 +227,36 @@
           <button id="forgotUsernameButton" type="button">Show guidance</button>
           <div id="forgotUsernameGuidance" class="forgot-username-guidance" hidden aria-live="polite"></div>
         </section>
-        <footer class="index-legal-footer">
-          <a href="/about.html">About</a>
-          <a href="/contact.html">Contact</a>
-          <a href="/privacy.html">Privacy Policy</a>
-          <a href="/terms.html">Terms of Service</a>
-          <a href="/compliance.html">Compliance</a>
-          <a href="/support.html">Support</a>
-          <a href="/support-compliance.html">Support & Compliance</a>
-          <a href="/cookies.html">Cookie Notice</a>
-          <a href="/security.html">Security</a>
-          <a href="/humans.txt">Humans.txt</a>
-          <a href="/llms.txt">LLMs.txt</a>
-          <a href="/status.html">Service Status</a>
-          <a href="/accessibility.html">Accessibility</a>
+        <p class="small-note auth-legal-hint">
+          Legal and information pages (About through Accessibility) open from the blue panel on the left.
+        </p>
+      </div>
+    </div>
+
+    <div
+      id="indexPageModal"
+      class="index-modal"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="indexPageModalTitle"
+      hidden
+    >
+      <div class="index-modal__backdrop" data-index-modal-close tabindex="-1"></div>
+      <div class="index-modal__panel">
+        <header class="index-modal__header">
+          <h2 id="indexPageModalTitle" class="index-modal__title"></h2>
+          <button type="button" class="index-modal__close" data-index-modal-close aria-label="Close dialog">×</button>
+        </header>
+        <div id="indexPageModalBody" class="index-modal__body"></div>
+        <footer class="index-modal__footer">
+          <a id="indexPageModalOpenNew" class="index-modal__open-tab" href="#" target="_blank" rel="noopener noreferrer"
+            >Open full page in new tab</a
+          >
+          <button type="button" class="primary-btn index-modal__done" data-index-modal-close>Close</button>
         </footer>
       </div>
     </div>
 
-    <script src="/main.js?v=21"></script>
+    <script src="/main.js?v=36"></script>
   </body>
 </html>

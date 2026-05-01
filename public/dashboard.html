@@ -2,6 +2,7 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
+    <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate, private" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>IMIS Dashboard | Institutional Operations Console</title>
     <meta
@@ -24,7 +25,7 @@
     <link rel="icon" type="image/jpeg" href="/uploads/index-hero.jpg?v=20260411" />
     <link rel="apple-touch-icon" href="/uploads/index-hero.jpg?v=20260411" />
     <link rel="manifest" href="/site.webmanifest" />
-    <link rel="stylesheet" href="/styles.css?v=30" />
+    <link rel="stylesheet" href="/styles.css?v=36" />
   </head>
   <body class="dashboard-page">
     <div class="app-shell">
@@ -35,6 +36,7 @@
             <p>Integrated Management Information System For Basic Education Learning Institutions</p>
           </div>
           <p id="portalLabel" class="portal-label">Portal</p>
+          <p id="dashUiFingerprint" class="dash-ui-fingerprint" aria-live="polite">Loading dashboard bundle…</p>
         </div>
         <div class="sidebar-scroll">
           <div class="nav-group-label">Core</div>
@@ -48,8 +50,7 @@
           <div class="nav-group-label">Management & Academics</div>
           <button data-module="admission">Admission</button>
           <button data-module="attendance">Attendance Management</button>
-          <button data-module="management-teachers">Teachers Profile</button>
-          <button data-module="management-non-teaching">Support Staff Profile</button>
+          <button data-module="management-staff-service">Staff & Service Providers</button>
           <button data-module="system-cbc-editor">Examination Management</button>
           <button data-module="management-teacher-resources">Teacher Resources</button>
           <button data-module="academic-exams">Exam Management</button>
@@ -116,6 +117,6 @@
       </main>
     </div>
 
-    <script src="/dashboard.js?v=30"></script>
+    <script src="/dashboard.js?v=36"></script>
   </body>
 </html>

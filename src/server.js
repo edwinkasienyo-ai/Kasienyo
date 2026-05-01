@@ -1,7 +1,7 @@
 require("dotenv").config();
 const app = require("./app");
 
-const IIMS_BUILD_STAMP = process.env.IIMS_BUILD_STAMP || "20260422-ui9";
+const IIMS_BUILD_STAMP = process.env.IIMS_BUILD_STAMP || "ui-deploy-rev36";
 const { query } = require("./config/db");
 const { hashPassword } = require("./utils/password");
 const { ROLES } = require("./config/constants");
@@ -827,6 +827,37 @@ async function ensureUserPasswordPolicyColumns() {
     await query("ALTER TABLE learners ADD COLUMN reason_for_leaving VARCHAR(120) NULL");
   }
 
+  const learnerColMigrations = [
+    ["learner_condition", "VARCHAR(80) NULL"],
+    ["disability_type", "VARCHAR(120) NULL"],
+    ["biological_parental_status", "VARCHAR(80) NULL"],
+    ["parent_phone_secondary", "VARCHAR(50) NULL"],
+    ["parent2_full_name", "VARCHAR(255) NULL"],
+    ["parent2_id_number", "VARCHAR(120) NULL"],
+    ["parent2_phone_primary", "VARCHAR(50) NULL"],
+    ["parent2_phone_secondary", "VARCHAR(50) NULL"],
+    ["parent2_nationality", "VARCHAR(100) NULL"],
+    ["parent2_residence", "VARCHAR(255) NULL"],
+    ["parent2_occupation", "VARCHAR(150) NULL"],
+    ["parent2_email", "VARCHAR(255) NULL"],
+    ["parent2_relationship", "VARCHAR(80) NULL"]
+  ];
+  for (const [colName, ddl] of learnerColMigrations) {
+    // eslint-disable-next-line no-await-in-loop
+    const checkCol = await query(
+      `SELECT COUNT(*) total
+       FROM INFORMATION_SCHEMA.COLUMNS
+       WHERE TABLE_SCHEMA = DATABASE()
+         AND TABLE_NAME = 'learners'
+         AND COLUMN_NAME = ?`,
+      [colName]
+    );
+    // eslint-disable-next-line no-await-in-loop
+    if (!Number(checkCol[0]?.total || 0)) {
+      await query(`ALTER TABLE learners ADD COLUMN ${colName} ${ddl}`);
+    }
+  }
+
   const teacherEmploymentStatusRows = await query(
     `SELECT COUNT(*) total
      FROM INFORMATION_SCHEMA.COLUMNS
@@ -859,6 +890,95 @@ async function ensureUserPasswordPolicyColumns() {
   if (!Number(teacherAccountabilityStatusRows[0]?.total || 0)) {
     await query("ALTER TABLE teacher_profiles ADD COLUMN accountability_status VARCHAR(60) NULL");
   }
+
+  const teacherPostalCols = [
+    ["postal_address", "VARCHAR(255) NULL"],
+    ["town", "VARCHAR(120) NULL"],
+    ["postal_code", "VARCHAR(20) NULL"],
+    ["email_address", "VARCHAR(255) NULL"],
+    ["passport_photo_path", "VARCHAR(255) NULL"]
+  ];
+  for (const [colName, ddl] of teacherPostalCols) {
+    // eslint-disable-next-line no-await-in-loop
+    const chk = await query(
+      `SELECT COUNT(*) total FROM INFORMATION_SCHEMA.COLUMNS
+       WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'teacher_profiles' AND COLUMN_NAME = ?`,
+      [colName]
+    );
+    // eslint-disable-next-line no-await-in-loop
+    if (!Number(chk[0]?.total || 0)) {
+      await query(`ALTER TABLE teacher_profiles ADD COLUMN ${colName} ${ddl}`);
+    }
+  }
+
+  const supportPostalCols = [
+    ["email_address", "VARCHAR(255) NULL"],
+    ["postal_address", "VARCHAR(255) NULL"],
+    ["town", "VARCHAR(120) NULL"],
+    ["postal_code", "VARCHAR(20) NULL"],
+    ["next_of_kin_email", "VARCHAR(255) NULL"],
+    ["next_of_kin_mobile", "VARCHAR(60) NULL"],
+    ["passport_photo_path", "VARCHAR(255) NULL"],
+    ["next_of_kin_relationship", "VARCHAR(100) NULL"]
+  ];
+  for (const [colName, ddl] of supportPostalCols) {
+    // eslint-disable-next-line no-await-in-loop
+    const chk = await query(
+      `SELECT COUNT(*) total FROM INFORMATION_SCHEMA.COLUMNS
+       WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'non_teaching_staff_profiles' AND COLUMN_NAME = ?`,
+      [colName]
+    );
+    // eslint-disable-next-line no-await-in-loop
+    if (!Number(chk[0]?.total || 0)) {
+      await query(`ALTER TABLE non_teaching_staff_profiles ADD COLUMN ${colName} ${ddl}`);
+    }
+  }
+
+  await query(`
+CREATE TABLE IF NOT EXISTS service_provider_profiles (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  institution_id BIGINT NOT NULL,
+  full_name VARCHAR(255) NOT NULL,
+  company_name VARCHAR(255) NULL,
+  id_number VARCHAR(120) NULL,
+  service_rendered VARCHAR(255) NULL,
+  postal_address VARCHAR(255) NULL,
+  town VARCHAR(120) NULL,
+  postal_code VARCHAR(20) NULL,
+  phone_number VARCHAR(60) NULL,
+  email_address VARCHAR(255) NULL,
+  next_of_kin_name VARCHAR(255) NULL,
+  next_of_kin_relationship VARCHAR(100) NULL,
+  next_of_kin_mobile VARCHAR(60) NULL,
+  next_of_kin_email VARCHAR(255) NULL,
+  passport_photo_path VARCHAR(255) NULL,
+  employment_status VARCHAR(60) NOT NULL DEFAULT 'Active',
+  created_by_user_id VARCHAR(100) NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  INDEX idx_service_providers_institution (institution_id, full_name),
+  CONSTRAINT fk_service_providers_institution FOREIGN KEY (institution_id) REFERENCES institutions(id)
+)`);
+
+  await query(`
+CREATE TABLE IF NOT EXISTS bom_profiles (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  institution_id BIGINT NOT NULL,
+  full_name VARCHAR(255) NOT NULL,
+  id_number VARCHAR(120) NULL,
+  postal_address VARCHAR(255) NULL,
+  town VARCHAR(120) NULL,
+  postal_code VARCHAR(20) NULL,
+  phone_number VARCHAR(60) NULL,
+  email_address VARCHAR(255) NULL,
+  passport_photo_path VARCHAR(255) NULL,
+  employment_status VARCHAR(60) NOT NULL DEFAULT 'Active',
+  created_by_user_id VARCHAR(100) NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  INDEX idx_bom_institution (institution_id, full_name),
+  CONSTRAINT fk_bom_profiles_institution FOREIGN KEY (institution_id) REFERENCES institutions(id)
+)`);
 }
 
 async function start() {
