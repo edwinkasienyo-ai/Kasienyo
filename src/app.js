@@ -20,6 +20,10 @@ const {
   FORMS,
   TERMS,
   YEAR_JOINED_OPTIONS,
+  YEAR_JOINED_WIDE_OPTIONS,
+  WORLD_COUNTRY_OPTIONS,
+  RELIGION_OPTIONS,
+  DISABILITY_TYPE_OPTIONS,
   GENDER_OPTIONS,
   ADMISSION_STATUS,
   ORPHAN_STATUS,
@@ -447,7 +451,7 @@ const AGREEMENT_COMPANY = {
   email: "mwendeguenterpriseltd@gmail.com",
   phone: "+254 725 757 767"
 };
-const RECYCLE_BIN_RETENTION_YEARS = Number(process.env.RECYCLE_BIN_RETENTION_YEARS || 12);
+const RECYCLE_BIN_RETENTION_YEARS = Number(process.env.RECYCLE_BIN_RETENTION_YEARS || 15);
 
 const PASSWORD_ROTATION_DAYS = Number(process.env.PASSWORD_ROTATION_DAYS || 30);
 const PASSWORD_ROTATION_EXEMPT_ROLES = new Set([ROLES.SYSTEM_DEVELOPER]);
@@ -501,6 +505,32 @@ function getClientMachineName(req) {
     cleanValue(req.headers.host) ||
     "unknown-machine"
   );
+}
+
+async function augmentAuthAuditDetailsWithInstitution(authDetails, institutionId = null, institutionCodeFallback = null) {
+  let code = institutionCodeFallback;
+  let name = null;
+  const nid = Number(institutionId || 0);
+  if (!code && nid) {
+    try {
+      const rows = await query(
+        `SELECT institution_code, institution_name FROM institutions WHERE id = ? LIMIT 1`,
+        [nid]
+      );
+      if (rows.length) {
+        code = cleanValue(rows[0]?.institution_code) || code;
+        name = cleanValue(rows[0]?.institution_name) || null;
+      }
+    } catch (_) {
+      code = institutionCodeFallback;
+    }
+  }
+  return {
+    ...authDetails,
+    institution_id: nid || authDetails.institution_id || null,
+    institution_code: cleanValue(authDetails.institution_code) || cleanValue(code) || null,
+    institution_name: cleanValue(authDetails.institution_name) || name || null
+  };
 }
 
 function buildAuthAuditDetails(req, username, extra = {}) {
@@ -747,7 +777,7 @@ async function purgeExpiredRecycleBinItems() {
      WHERE status = 'DELETED'
        AND hidden_for_roles_json IS NOT NULL
        AND permanently_deleted_at IS NOT NULL
-       AND permanently_deleted_at <= DATE_SUB(NOW(), INTERVAL 10 YEAR)`
+       AND permanently_deleted_at <= DATE_SUB(NOW(), INTERVAL 7 YEAR)`
   );
 }
 
@@ -1038,6 +1068,9 @@ const MODULE_KEYS = {
   CBC_CURRICULUM_EDITOR: "cbc-curriculum-editor",
   MANAGEMENT_TEACHERS: "management-teachers",
   MANAGEMENT_NON_TEACHING: "management-non-teaching",
+  STAFF_SERVICE_PROVIDERS: "staff-service-providers",
+  MANAGEMENT_BOM: "management-bom",
+  MANAGEMENT_SERVICE_PROVIDERS: "management-service-providers",
   MANAGEMENT_TEACHER_RESOURCES: "management-teacher-resources",
   ATTENDANCE: "attendance",
   ACADEMIC_EXAMS: "academic-exams",
@@ -1057,6 +1090,12 @@ const MODULE_KEYS = {
   WELFARE_LOANS: "welfare-loans",
   LAWS: "laws",
   DASHBOARD: "dashboard",
+  /** Dashboard cockpit tiles (fine-grained; default-gated HoI/Dev can widen per user overrides) */
+  DASHBOARD_ALERTS_ANNOUNCEMENTS: "dashboard-alerts-announcements",
+  DASHBOARD_ATTENDANCE_LIST: "dashboard-attendance-list",
+  DASHBOARD_PERFORMANCE: "dashboard-performance",
+  DASHBOARD_FEE_COLLECTION: "dashboard-fee-collection",
+  DASHBOARD_OUTSTANDING_BALANCES: "dashboard-outstanding-balances",
   SEARCH: "search",
   PARENT_RESULTS: "parent-results",
   LEARNER_MATERIALS: "learner-materials"
@@ -1064,8 +1103,10 @@ const MODULE_KEYS = {
 
 const DEFAULT_MODULE_ACCESS_BY_ROLE = {
   [ROLES.SYSTEM_DEVELOPER]: Object.values(MODULE_KEYS),
-  [ROLES.ADMIN]: [],
-  [ROLES.HEAD_OF_INSTITUTION]: [],
+  [ROLES.ADMIN]: Object.values(MODULE_KEYS).filter((key) => key !== MODULE_KEYS.SECURITY_AUDIT),
+  [ROLES.HEAD_OF_INSTITUTION]: Object.values(MODULE_KEYS).filter(
+    (key) => key !== MODULE_KEYS.SECURITY_AUDIT
+  ),
   [ROLES.MOD]: [],
   [ROLES.TSC]: [],
   [ROLES.TEACHER]: [],
@@ -1079,14 +1120,7 @@ const DEFAULT_MODULE_ACCESS_BY_ROLE = {
   [ROLES.CONTRACTOR]: []
 };
 
-async function hasModuleAccess(user, moduleKey) {
-  if (!moduleKey || !user?.id) {
-    return true;
-  }
-  const normalizedRole = normalizeRole(user.role);
-  if (normalizedRole === ROLES.SYSTEM_DEVELOPER) {
-    return true;
-  }
+async function hasModuleAccessSingle(user, normalizedRole, moduleKey) {
   const defaultModules = DEFAULT_MODULE_ACCESS_BY_ROLE[normalizedRole] || [];
   const defaultAllowed = defaultModules.includes(moduleKey);
   const overrides = await query(
@@ -1102,6 +1136,63 @@ async function hasModuleAccess(user, moduleKey) {
     return Number(overrides[0].can_access) === 1;
   }
   return defaultAllowed;
+}
+
+async function hasModuleAccess(user, moduleKey) {
+  if (!moduleKey || !user?.id) {
+    return true;
+  }
+  const normalizedRole = normalizeRole(user.role);
+  if (normalizedRole === ROLES.SYSTEM_DEVELOPER) {
+    return true;
+  }
+  const staffBundleKeys = [
+    MODULE_KEYS.STAFF_SERVICE_PROVIDERS,
+    MODULE_KEYS.MANAGEMENT_TEACHERS,
+    MODULE_KEYS.MANAGEMENT_NON_TEACHING
+  ];
+  if (staffBundleKeys.includes(moduleKey)) {
+    for (const bundledKey of staffBundleKeys) {
+      // eslint-disable-next-line no-await-in-loop
+      if (await hasModuleAccessSingle(user, normalizedRole, bundledKey)) {
+        return true;
+      }
+    }
+    return false;
+  }
+  return hasModuleAccessSingle(user, normalizedRole, moduleKey);
+}
+
+async function userHasDelegatedAccessControl(user) {
+  if (!user?.id) return false;
+  const overrides = await query(
+    `SELECT can_access
+     FROM user_module_access_overrides
+     WHERE user_id = ?
+       AND module_key = ?
+       AND (permission_key = 'ACCESS' OR permission_key IS NULL OR permission_key = '')
+     ORDER BY id DESC
+     LIMIT 1`,
+    [user.id, MODULE_KEYS.ACCESS_CONTROL]
+  );
+  return overrides.length ? Number(overrides[0].can_access) === 1 : false;
+}
+
+function enforceAccessControlActors() {
+  return asyncHandler(async (req, res, next) => {
+    const role = normalizeRole(req.user.role);
+    if (role === ROLES.SYSTEM_DEVELOPER || role === ROLES.HEAD_OF_INSTITUTION) {
+      return next();
+    }
+    const delegated = await userHasDelegatedAccessControl(req.user);
+    if (!delegated) {
+      return res.status(403).json({
+        error:
+          "Access Control is reserved for System Developer / Head of Institution unless the System Developer has granted you delegated access."
+      });
+    }
+    return next();
+  });
 }
 
 function enforceModuleAccess(moduleKey) {
@@ -1680,7 +1771,78 @@ async function saveChatMessage({
   return insert.insertId;
 }
 
-async function createOtpSession({ identity, role, institutionId, payload, destination, channel }) {
+function buildParallelOtpDeliveries(requestedChannel, account) {
+  const emailAddr = cleanValue(account?.otp_email || "");
+  const phoneAddr = cleanValue(account?.otp_phone || "");
+  const normalized = cleanValue(requestedChannel).toLowerCase();
+  const smtpReady = Boolean(process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS);
+  const smsReady = Boolean(
+    process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN && process.env.TWILIO_FROM
+  );
+  const channels = [];
+  if (normalized === "sms_email") {
+    if (smtpReady && emailAddr) channels.push({ channel: "email", destination: emailAddr });
+    if (smsReady && phoneAddr) channels.push({ channel: "sms", destination: phoneAddr });
+    if (!channels.length) return null;
+    return { parallel: true, channels, primaryChannel: "sms_email", primaryDestination: `${emailAddr}|${phoneAddr}` };
+  }
+  if (normalized === "email") {
+    if (smtpReady && emailAddr) channels.push({ channel: "email", destination: emailAddr });
+    else if (!smtpReady && phoneAddr && smsReady) channels.push({ channel: "sms", destination: phoneAddr });
+    else if (!smtpReady && emailAddr) channels.push({ channel: "console", destination: emailAddr });
+    else return null;
+  } else if (normalized === "sms") {
+    if (smsReady && phoneAddr) channels.push({ channel: "sms", destination: phoneAddr });
+    else if (!smsReady && emailAddr && smtpReady) channels.push({ channel: "email", destination: emailAddr });
+    else if (!smsReady && phoneAddr) channels.push({ channel: "console", destination: phoneAddr });
+    else return null;
+  } else if (normalized === "console") {
+    channels.push({ channel: "console", destination: cleanValue(account?.destination || account?.identity || "console") });
+  } else {
+    return null;
+  }
+  if (!channels.length) return null;
+  const primary = channels[0];
+  return {
+    parallel: normalized === "sms_email",
+    channels,
+    primaryChannel: primary.channel,
+    primaryDestination: primary.destination
+  };
+}
+
+function buildForgotPasswordOtpDeliveryPlan(requestedChannel, contactDestination) {
+  const dest = cleanValue(contactDestination);
+  if (!dest) return null;
+  const normalized = cleanValue(requestedChannel).toLowerCase();
+  const smtpReady = Boolean(process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS);
+  const smsReady = Boolean(
+    process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN && process.env.TWILIO_FROM
+  );
+  if (normalized === "email") {
+    if (smtpReady) {
+      return { parallel: false, channels: [{ channel: "email", destination: dest }], primaryChannel: "email", primaryDestination: dest };
+    }
+    return { parallel: false, channels: [{ channel: "console", destination: dest }], primaryChannel: "console", primaryDestination: dest };
+  }
+  if (normalized === "sms") {
+    if (smsReady) {
+      return { parallel: false, channels: [{ channel: "sms", destination: dest }], primaryChannel: "sms", primaryDestination: dest };
+    }
+    return { parallel: false, channels: [{ channel: "console", destination: dest }], primaryChannel: "console", primaryDestination: dest };
+  }
+  return null;
+}
+
+async function createOtpSession({
+  identity,
+  role,
+  institutionId,
+  payload,
+  destination,
+  channel,
+  deliveryPlan = null
+}) {
   const code = generateOtpCode();
   const expiresAt = buildOtpExpiry();
   await query(
@@ -1700,8 +1862,28 @@ async function createOtpSession({ identity, role, institutionId, payload, destin
       OTP_MAX_VERIFY_ATTEMPTS
     ]
   );
-  await sendOtp({ channel, destination, code });
-  return { code, expiresAt };
+  const sendResults = [];
+  if (deliveryPlan && Array.isArray(deliveryPlan.channels) && deliveryPlan.channels.length) {
+    await Promise.all(
+      deliveryPlan.channels.map(async (entry) => {
+        try {
+          await sendOtp({
+            channel: entry.channel,
+            destination: entry.destination,
+            code
+          });
+          sendResults.push(`${entry.channel}:ok`);
+        } catch (err) {
+          sendResults.push(`${entry.channel}:fail:${err?.message || "error"}`);
+        }
+      })
+    );
+  }
+  if (!sendResults.length) {
+    await sendOtp({ channel, destination, code });
+    sendResults.push(`${channel}:${destination}`);
+  }
+  return { code, expiresAt, sendResults };
 }
 
 async function authenticateByUserTable(username, password) {
@@ -1750,6 +1932,8 @@ async function authenticateByUserTable(username, password) {
     identity: user.username,
     role: normalizedRole,
     institution_id: user.institution_id,
+    otp_email: cleanValue(user.email) || null,
+    otp_phone: cleanValue(user.phone) || null,
     destination: user.email || user.phone || user.username,
     payload: {
       id: user.id,
@@ -1783,6 +1967,8 @@ async function authenticateParentByLearner(username, password) {
     identity: username,
     role: ROLES.PARENT,
     institution_id: learner.institution_id,
+    otp_email: cleanValue(learner.parent_email) || null,
+    otp_phone: cleanValue(learner.parent_phone) || null,
     destination: learner.parent_email || learner.parent_phone || username,
     payload: {
       id: `PARENT-${learner.id}`,
@@ -1822,6 +2008,8 @@ async function authenticateLearner(username, password) {
     identity: username,
     role: ROLES.LEARNER,
     institution_id: learner.institution_id,
+    otp_email: cleanValue(learner.parent_email) || null,
+    otp_phone: cleanValue(learner.parent_phone) || null,
     destination: learner.parent_email || learner.parent_phone || username,
     payload: {
       id: `LEARNER-${learner.id}`,
@@ -1882,9 +2070,18 @@ app.get("/api/meta", (_, res) => {
     rolePermissions: ROLE_PERMISSIONS,
     gradeOptions: GRADES,
     yearJoinedOptions: YEAR_JOINED_OPTIONS,
+    yearJoinedWideOptions: YEAR_JOINED_WIDE_OPTIONS,
     formOptions: FORMS,
     termOptions: TERMS,
     genderOptions: GENDER_OPTIONS,
+    nationalityOptions: WORLD_COUNTRY_OPTIONS,
+    religionOptions: RELIGION_OPTIONS,
+    disabilityTypes: DISABILITY_TYPE_OPTIONS,
+    kenyaCountyOptions: COUNTIES.map((c) => `${c.name} (${c.code})`).concat(["Others"]),
+    postalCodeTownOptions: Array.from(new Set(Object.entries(KENYA_POSTAL_CODES || {}).map(([code, meta]) => {
+      const town = typeof meta === "object" ? cleanValue(meta.town || meta.area || "") : cleanValue(meta);
+      return `${code} — ${town || "Town"}`;
+    }))).slice(0, 800),
     admissionStatus: ADMISSION_STATUS,
     orphanStatus: ORPHAN_STATUS,
     relationshipOptions: RELATIONSHIP_OPTIONS,
@@ -2050,18 +2247,39 @@ app.post("/api/auth/login", authLoginRateLimit, asyncHandler(async (req, res) =>
     });
   }
 
-  const requestedChannel = cleanValue(otpChannel || process.env.OTP_CHANNEL || "console").toLowerCase() || "console";
-  const channel = isOtpChannelConfigured(requestedChannel) ? requestedChannel : "console";
+  const requestedChannel =
+    cleanValue(otpChannel || process.env.OTP_CHANNEL || "sms_email").toLowerCase() || "sms_email";
+  const deliveryPlan =
+    buildParallelOtpDeliveries(requestedChannel, account) ||
+    buildParallelOtpDeliveries("sms_email", account) ||
+    buildParallelOtpDeliveries("console", account);
+  const effectiveChannel = deliveryPlan?.primaryChannel || "console";
+  const effectiveDestination =
+    deliveryPlan?.primaryDestination || cleanValue(account.destination) || cleanValue(account.identity) || "console";
   const otpSession = await createOtpSession({
     identity: account.identity,
     role: account.role,
     institutionId: account.institution_id,
     payload: account.payload,
-    destination: account.destination,
-    channel
+    destination: effectiveDestination,
+    channel: effectiveChannel,
+    deliveryPlan
   });
+  const isSystemDeveloperLogin = normalizeRole(account.role) === ROLES.SYSTEM_DEVELOPER;
   const exposeOtpPreview =
-    process.env.NODE_ENV !== "production" || parseTruthy(process.env.EXPOSE_OTP_PREVIEW);
+    isSystemDeveloperLogin && (process.env.NODE_ENV !== "production" || parseTruthy(process.env.EXPOSE_OTP_PREVIEW));
+  const loggedOtpDetails = await augmentAuthAuditDetailsWithInstitution(
+    buildAuthAuditDetails(req, username, {
+      password_correct: true,
+      otp_correct: false,
+      otp_channel_requested: requestedChannel,
+      otp_channel_used: effectiveChannel,
+      otp_channels_delivered: otpSession.sendResults || [],
+      otp_expires_at: otpSession.expiresAt,
+      otp_code: exposeOtpPreview ? otpSession.code : undefined
+    }),
+    account.institution_id
+  );
   await auditLog(
     {
       institution_id: account?.institution_id || null,
@@ -2071,25 +2289,36 @@ app.post("/api/auth/login", authLoginRateLimit, asyncHandler(async (req, res) =>
     "OTP_REQUESTED",
     "otp_sessions",
     null,
-    {
-      ...buildAuthAuditDetails(req, username, {
-        password_correct: true,
-        otp_correct: false,
-        otp_channel: channel,
-        otp_expires_at: otpSession.expiresAt
-      })
-    }
+    loggedOtpDetails
   );
 
+  const sendLog = otpSession.sendResults || [];
+  const okSteps = sendLog.filter((line) => typeof line === "string" && line.endsWith(":ok"));
+  const usedFallbackFromLogin = requestedChannel !== effectiveChannel && effectiveChannel === "console";
+  const smsEmailPartial =
+    requestedChannel === "sms_email" &&
+    okSteps.length > 0 &&
+    deliveryPlan?.channels?.length &&
+    okSteps.length < deliveryPlan.channels.length;
+  let messageBody = "OTP dispatched immediately. Check SMS and Email.";
+  if (effectiveChannel === "console" || (sendLog.length && !okSteps.length)) {
+    messageBody =
+      "OTP queued for console fallback: configure SMTP/Twilio and ensure profile email/mobile; check server logs for the code.";
+  } else if (smsEmailPartial) {
+    messageBody =
+      `OTP sent on ${okSteps.length} channel(s); another channel failed or is not configured — see delivery log below.`;
+  } else if (usedFallbackFromLogin) {
+    messageBody = `OTP delivered via console fallback. Configure SMTP (${process.env.SMTP_HOST ? "ok" : "missing"}) and Twilio (${process.env.TWILIO_ACCOUNT_SID ? "ok" : "missing"}) for instant email/SMS; ensure your profile has both email and mobile.`;
+  }
+
   return res.json({
-    message:
-      channel === requestedChannel
-        ? "OTP sent successfully."
-        : `OTP sent successfully using console fallback because '${requestedChannel}' is not configured.`,
+    message: messageBody,
     role: account.role,
     portal: toPortal(account.role),
-    otp_channel: channel,
-    otp_channel_used: channel,
+    otp_channel: effectiveChannel,
+    otp_channel_requested: requestedChannel,
+    otp_channel_used: effectiveChannel,
+    otp_delivery_log: otpSession.sendResults || [],
     otp_preview: exposeOtpPreview ? otpSession.code : null,
     otp_expires_at: exposeOtpPreview ? otpSession.expiresAt : null,
     otp_resend_available_after_seconds: OTP_RESEND_COOLDOWN_SECONDS
@@ -2174,14 +2403,17 @@ app.post("/api/auth/verify-otp", otpVerifyRateLimit, asyncHandler(async (req, re
   payload.role = normalizeRole(payload.role);
   payload.login_session_started_at = dayjs().format("YYYY-MM-DD HH:mm:ss");
   const token = issueToken(payload);
-  await auditLog(payload, "LOGIN_SUCCESS", "auth", payload.id, {
-    ...buildAuthAuditDetails(req, payload.username || username, {
+  const loginAuditDetails = await augmentAuthAuditDetailsWithInstitution(
+    buildAuthAuditDetails(req, payload.username || username, {
       password_correct: true,
       otp_correct: true,
       login_time: payload.login_session_started_at,
+      activity_done: "LOGIN_SUCCESS",
       role: payload.role
-    })
-  });
+    }),
+    payload.institution_id
+  );
+  await auditLog(payload, "LOGIN_SUCCESS", "auth", payload.id, loginAuditDetails);
 
   res.json({
     token,
@@ -2243,15 +2475,18 @@ app.get("/api/auth/me", auth, asyncHandler(async (req, res) => {
 }));
 
 app.post("/api/auth/logout", auth, asyncHandler(async (req, res) => {
-  await auditLog(req.user, "LOGOUT", "auth", req.user?.id || null, {
-    ...buildAuthAuditDetails(req, req.user?.username, {
+  const logoutDetails = await augmentAuthAuditDetailsWithInstitution(
+    buildAuthAuditDetails(req, req.user?.username, {
       password_correct: true,
       otp_correct: true,
       login_time: req.user?.login_session_started_at || null,
       logout_time: dayjs().format("YYYY-MM-DD HH:mm:ss"),
-      activity_done: "LOGOUT"
-    })
-  });
+      activity_done: "LOGOUT",
+      logging_status: "SUCCESSFUL"
+    }),
+    req.user?.institution_id
+  );
+  await auditLog(req.user, "LOGOUT", "auth", req.user?.id || null, logoutDetails);
   res.json({ message: "Logged out successfully." });
 }));
 
@@ -2517,13 +2752,16 @@ app.post("/api/public/forgot-password", publicWriteRateLimit, enforcePublicSecur
       phone: cleanValue(phone) || null,
       contact_method: contactMethod
     };
+    const recoveryDeliveryPlan = buildForgotPasswordOtpDeliveryPlan(channel, contactDestination);
+    const effectiveRecoveryChannel = recoveryDeliveryPlan?.primaryChannel || channel;
     const otpSession = await createOtpSession({
       identity,
       role: "PUBLIC_PASSWORD_RESET",
       institutionId: user.institution_id,
       payload,
-      destination: contactDestination,
-      channel
+      destination: recoveryDeliveryPlan?.primaryDestination || contactDestination,
+      channel: effectiveRecoveryChannel,
+      deliveryPlan: recoveryDeliveryPlan
     });
     await auditLog(
       { institution_id: user.institution_id || null, id: user.id || null, role: "PUBLIC" },
@@ -2533,8 +2771,9 @@ app.post("/api/public/forgot-password", publicWriteRateLimit, enforcePublicSecur
       { username, otp_channel: channel, otp_expires_at: otpSession.expiresAt }
     );
     return res.json({
-      message: `OTP sent to your ${channel === "sms" ? "phone" : "email"}.`,
+      message: `OTP delivered (see delivery log if a channel failed).`,
       otp_channel_used: channel,
+      otp_delivery_log: otpSession.sendResults || [],
       otp_resend_available_after_seconds: OTP_RESEND_COOLDOWN_SECONDS
     });
   }
@@ -3185,6 +3424,7 @@ app.get(
 app.post(
   "/api/system/branding/hero-image",
   auth,
+  enforceModuleAccess(MODULE_KEYS.DASHBOARD),
   enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
   enforcePermission(PERMISSIONS.UPDATE),
   heroImageUploadMiddleware,
@@ -4198,6 +4438,108 @@ app.post(
   })
 );
 
+app.post(
+  "/api/management/staff-portal-account",
+  auth,
+  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
+  asyncHandler(async (req, res) => {
+    const allowedStaffModule =
+      (await hasModuleAccess(req.user, MODULE_KEYS.STAFF_SERVICE_PROVIDERS)) ||
+      (await hasModuleAccess(req.user, MODULE_KEYS.MANAGEMENT_TEACHERS)) ||
+      (await hasModuleAccess(req.user, MODULE_KEYS.MANAGEMENT_NON_TEACHING)) ||
+      (await hasModuleAccess(req.user, MODULE_KEYS.MANAGEMENT_SERVICE_PROVIDERS)) ||
+      (await hasModuleAccess(req.user, MODULE_KEYS.MANAGEMENT_BOM));
+    if (!allowedStaffModule) {
+      return res.status(403).json({ error: "Staff & Service Providers module access is required." });
+    }
+    const role = normalizeRole(req.body?.role || ROLES.TEACHER);
+    const eligibleRoles = [ROLES.TEACHER, ROLES.NON_TEACHING_STAFF, ROLES.BOM, ROLES.SUPPLIER, ROLES.CONTRACTOR];
+    if (!eligibleRoles.includes(role)) {
+      return res.status(400).json({ error: `role must be one of: ${eligibleRoles.join(", ")}` });
+    }
+    const assignableRoles = getAssignableRolesForActor(req.user);
+    if (!assignableRoles.includes(role)) {
+      return res.status(403).json({ error: "You are not allowed to register this portal role." });
+    }
+    const full_name = cleanValue(req.body?.full_name);
+    const usernameRaw = cleanValue(req.body?.username || "");
+    const email = cleanOptionalValue(req.body?.email);
+    const phone = cleanOptionalValue(req.body?.phone);
+    let username = usernameRaw;
+    if (!username && email) {
+      username = email.split("@")[0].replace(/[^a-z0-9]+/gi, "").slice(0, 40) || `user_${Date.now()}`;
+    }
+    if (!username && phone) {
+      username = phone.replace(/\D/g, "").slice(-10) || `user_${Date.now()}`;
+    }
+    if (!full_name || !username) {
+      return res.status(400).json({ error: "full_name and username (or email/phone to derive username) are required." });
+    }
+    if (!email && !phone) {
+      return res.status(400).json({ error: "Either email or phone is required for welcome dispatch." });
+    }
+    const password = generateStrongPassword(12);
+    const passwordHash = await hashPassword(password);
+    const isRotationExempt = PASSWORD_ROTATION_EXEMPT_ROLES.has(role);
+    const targetInstitutionId = Number(req.user.institution_id);
+    const existingUser = await query(
+      "SELECT id FROM users WHERE institution_id = ? AND username = ? LIMIT 1",
+      [targetInstitutionId, username]
+    );
+    if (existingUser.length) {
+      return res.status(409).json({ error: "Username already exists for this institution." });
+    }
+    const result = await query(
+      `INSERT INTO users
+        (institution_id, full_name, username, password_hash, password_last_changed_at, password_expires_at, role, email, phone, is_active, created_by)
+       VALUES (?, ?, ?, ?, NOW(), ?, ?, ?, ?, 1, ?)`,
+      [
+        targetInstitutionId,
+        full_name,
+        username,
+        passwordHash,
+        isRotationExempt ? null : dayjs().add(PASSWORD_ROTATION_DAYS, "day").format("YYYY-MM-DD HH:mm:ss"),
+        role,
+        email || null,
+        phone || null,
+        req.user.id
+      ]
+    );
+    const institutionRows = await query(`SELECT institution_name, institution_code FROM institutions WHERE id = ? LIMIT 1`, [
+      targetInstitutionId
+    ]);
+    const institutionName = cleanValue(institutionRows[0]?.institution_name) || "Institution";
+    const institutionCode = cleanValue(institutionRows[0]?.institution_code) || "-";
+    await auditLog(req.user, "CREATE_STAFF_PORTAL_USER", "users", result.insertId, {
+      username,
+      role,
+      institution_id: targetInstitutionId
+    });
+    const credentialMessage = [
+      "WELCOME TO IMIS — Staff & Service Providers portal access.",
+      `Institution: ${institutionName}`,
+      `Institution Code: ${institutionCode}`,
+      `Username: ${username}`,
+      `Temporary Password: ${password}`,
+      `Role: ${role}`,
+      "",
+      "Please sign in at your institution portal, complete OTP verification, and change this password immediately."
+    ].join("\n");
+    const credentialDispatch = await dispatchCredentialNotice({
+      email: email || null,
+      phone: phone || null,
+      subject: "IMIS Staff Portal Login Instructions",
+      message: credentialMessage
+    });
+    res.status(201).json({
+      id: result.insertId,
+      message: "Portal user registered; login instructions dispatched via email/SMS where configured.",
+      credential_dispatch: credentialDispatch,
+      username
+    });
+  })
+);
+
 app.get(
   "/api/institutions/:id/agreement-template",
   auth,
@@ -4626,7 +4968,8 @@ app.post(
 app.post(
   "/api/users/module-access",
   auth,
-  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
+  enforceModuleAccess(MODULE_KEYS.ACCESS_CONTROL),
+  enforceAccessControlActors(),
   asyncHandler(async (req, res) => {
     const userId = Number(req.body?.user_id);
     const moduleKey = cleanValue(req.body?.module_key);
@@ -4677,7 +5020,8 @@ app.post(
 app.post(
   "/api/users/module-access/bulk",
   auth,
-  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
+  enforceModuleAccess(MODULE_KEYS.ACCESS_CONTROL),
+  enforceAccessControlActors(),
   asyncHandler(async (req, res) => {
     const userId = Number(req.body?.user_id);
     const entries = Array.isArray(req.body?.entries) ? req.body.entries : [];
@@ -4728,7 +5072,7 @@ app.get(
   "/api/system/module-access/overrides",
   auth,
   enforceModuleAccess(MODULE_KEYS.ACCESS_CONTROL),
-  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
+  enforceAccessControlActors(),
   asyncHandler(async (req, res) => {
     const userId = Number(req.query?.user_id || 0);
     if (!userId) {
@@ -4763,19 +5107,21 @@ app.get(
   "/api/system/audit-logs",
   auth,
   enforceModuleAccess(MODULE_KEYS.SECURITY_AUDIT),
-  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
+  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.HEAD_OF_INSTITUTION]),
   asyncHandler(async (req, res) => {
     const limit = Math.min(Math.max(Number(req.query?.limit || 200), 1), 1000);
     const institutionScope = canManageAcrossInstitutions(req.user)
       ? Number(req.query?.institution_id || 0)
       : req.user.institution_id;
-    const whereClause = institutionScope ? "WHERE institution_id = ?" : "";
+    const whereClause = institutionScope ? "WHERE a.institution_id = ?" : "";
     const params = institutionScope ? [institutionScope] : [];
     const logs = await query(
-      `SELECT id, institution_id, actor_user_id, actor_role, action, entity_name, entity_id, details_json, created_at
-       FROM activity_logs
+      `SELECT a.id, a.institution_id, i.institution_code AS joined_institution_code,
+              a.actor_user_id, a.actor_role, a.action, a.entity_name, a.entity_id, a.details_json, a.created_at
+       FROM activity_logs a
+       LEFT JOIN institutions i ON i.id = a.institution_id
        ${whereClause}
-       ORDER BY id DESC
+       ORDER BY a.id DESC
        LIMIT ?`,
       [...params, limit]
     );
@@ -4783,6 +5129,7 @@ app.get(
       const details = parseStoredJson(row.details_json) || {};
       return {
         ...row,
+        institution_code: cleanValue(details.institution_code || row.joined_institution_code) || null,
         username: cleanValue(details.username || details.user_name) || null,
         password_correct: parseTruthy(details.password_correct),
         otp_correct: parseTruthy(details.otp_correct),
@@ -4797,16 +5144,16 @@ app.get(
     });
     const [failedLoginsRow] = await query(
       `SELECT COUNT(*) total
-       FROM activity_logs
-       ${whereClause ? `${whereClause} AND` : "WHERE"} action IN ('LOGIN_FAILED', 'ACCOUNT_LOCKED')
-       AND created_at >= DATE_SUB(NOW(), INTERVAL 1 DAY)`,
+       FROM activity_logs a
+       ${whereClause ? `${whereClause} AND` : "WHERE"} a.action IN ('LOGIN_FAILED', 'ACCOUNT_LOCKED')
+       AND a.created_at >= DATE_SUB(NOW(), INTERVAL 1 DAY)`,
       params
     );
     const [otpFailuresRow] = await query(
       `SELECT COUNT(*) total
-       FROM activity_logs
-       ${whereClause ? `${whereClause} AND` : "WHERE"} action IN ('OTP_VERIFY_FAILED', 'OTP_EXHAUSTED')
-       AND created_at >= DATE_SUB(NOW(), INTERVAL 1 DAY)`,
+       FROM activity_logs a
+       ${whereClause ? `${whereClause} AND` : "WHERE"} a.action IN ('OTP_VERIFY_FAILED', 'OTP_EXHAUSTED')
+       AND a.created_at >= DATE_SUB(NOW(), INTERVAL 1 DAY)`,
       params
     );
     res.json({
@@ -6222,8 +6569,8 @@ app.post(
       });
     }
     const requestedChannelRaw = cleanValue(req.body?.otp_channel || "email").toLowerCase();
-    const requestedChannel = ["both", "sms_email", "email_sms"].includes(requestedChannelRaw)
-      ? "both"
+    const requestedProfileChannel = ["both", "sms_email", "email_sms"].includes(requestedChannelRaw)
+      ? "sms_email"
       : requestedChannelRaw;
     const meRows = await query(
       `SELECT id, institution_id, username, email, phone
@@ -6236,39 +6583,46 @@ app.post(
       return res.status(404).json({ error: "Profile user not found." });
     }
     const me = meRows[0];
-    const channelsToUse = requestedChannel === "both"
-      ? ["email", "sms"].filter((channel) => isOtpChannelConfigured(channel))
-      : [isOtpChannelConfigured(requestedChannel) ? requestedChannel : "console"];
-    const identity = `profile-update:${me.username}`;
-    const channelsSent = [];
-    for (const channel of channelsToUse) {
-      const destination = channel === "sms" ? cleanValue(me.phone) : cleanValue(me.email);
-      if (!destination) continue;
-      const otpSession = await createOtpSession({
-        identity,
-        role: "PROFILE_UPDATE",
-        institutionId: me.institution_id,
-        payload: { user_id: me.id, update_type: updateType },
-        destination,
-        channel
+    const deliveryPlan =
+      buildParallelOtpDeliveries(requestedProfileChannel, {
+        otp_email: me.email,
+        otp_phone: me.phone,
+        destination: `${me.username}@profile`
+      }) ||
+      buildParallelOtpDeliveries("console", {
+        otp_email: me.email,
+        otp_phone: me.phone,
+        destination: me.username
       });
-      channelsSent.push({ channel, expires_at: otpSession.expiresAt });
-    }
-    if (!channelsSent.length) {
+    if (!deliveryPlan?.channels?.length) {
       return res.status(400).json({
-        error: "OTP could not be dispatched. Add an email or phone to your profile."
+        error: "OTP could not be dispatched. Add email and mobile to your profile and configure SMTP/SMS."
       });
     }
+    const identity = `profile-update:${me.username}`;
+    const otpSession = await createOtpSession({
+      identity,
+      role: "PROFILE_UPDATE",
+      institutionId: me.institution_id,
+      payload: { user_id: me.id, update_type: updateType },
+      destination: deliveryPlan.primaryDestination,
+      channel: deliveryPlan.primaryChannel,
+      deliveryPlan
+    });
     await auditLog(req.user, "PROFILE_UPDATE_OTP_REQUESTED", "otp_sessions", null, {
       update_type: updateType,
-      otp_channels: channelsSent.map((c) => c.channel)
+      otp_channels: otpSession.sendResults || []
     });
-    const exposeOtp = normalizeRole(req.user.role) === ROLES.SYSTEM_DEVELOPER;
+    const exposeOtp =
+      normalizeRole(req.user.role) === ROLES.SYSTEM_DEVELOPER &&
+      (process.env.NODE_ENV !== "production" || parseTruthy(process.env.EXPOSE_OTP_PREVIEW));
     res.json({
-      message: `OTP sent via ${channelsSent.map((c) => c.channel).join(", ")}.`,
+      message: `OTP dispatched (${(otpSession.sendResults || []).join(", ")}).`,
       otp_required: true,
-      otp_channels_used: channelsSent.map((c) => c.channel),
-      otp_preview: exposeOtp ? "OTP visible in console/audit logs to System Developer." : null
+      otp_channels_used: deliveryPlan.channels.map((c) => c.channel),
+      otp_delivery_log: otpSession.sendResults || [],
+      otp_preview: exposeOtp ? otpSession.code : null,
+      otp_expires_at: exposeOtp ? otpSession.expiresAt : null
     });
   })
 );
@@ -6284,9 +6638,12 @@ app.post(
     const phone = cleanOptionalValue(req.body?.phone);
     const newPassword = cleanOptionalValue(req.body?.new_password);
     const otpCode = cleanOptionalValue(req.body?.otp_code);
-    const requireOtp = newPassword
-      ? true
-      : ![ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN].includes(requesterRole);
+    const phoneChanged =
+      phone !== undefined &&
+      phone !== null &&
+      String(phone).trim() !== String(user.phone || "").trim();
+    const requireOtp =
+      Boolean(newPassword) || phoneChanged || ![ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN].includes(requesterRole);
 
     const users = await query(
       `SELECT id, institution_id, username, password_hash, email, phone
@@ -6407,7 +6764,23 @@ const moduleConfigs = [
       "parent_relationship",
       "parent_id_number",
       "parent_phone",
+      "parent_phone_secondary",
       "parent_email",
+      "parent_nationality",
+      "parent_residence",
+      "parent_occupation",
+      "biological_parental_status",
+      "parent2_full_name",
+      "parent2_id_number",
+      "parent2_phone_primary",
+      "parent2_phone_secondary",
+      "parent2_nationality",
+      "parent2_residence",
+      "parent2_occupation",
+      "parent2_email",
+      "parent2_relationship",
+      "learner_condition",
+      "disability_type",
       "learner_password_hash"
     ]
   },
@@ -6431,7 +6804,12 @@ const moduleConfigs = [
       "next_of_kin_name",
       "next_of_kin_relationship",
       "next_of_kin_mobile",
-      "next_of_kin_email"
+      "next_of_kin_email",
+      "postal_address",
+      "town",
+      "postal_code",
+      "email_address",
+      "passport_photo_path"
     ]
   },
   {
@@ -6447,7 +6825,57 @@ const moduleConfigs = [
       "phone_number",
       "position_department",
       "next_of_kin_name",
-      "next_of_kin_contact"
+      "next_of_kin_contact",
+      "next_of_kin_relationship",
+      "next_of_kin_mobile",
+      "next_of_kin_email",
+      "postal_address",
+      "town",
+      "postal_code",
+      "email_address",
+      "passport_photo_path"
+    ]
+  },
+  {
+    route: "/api/management/service-providers",
+    table: "service_provider_profiles",
+    moduleKey: MODULE_KEYS.MANAGEMENT_SERVICE_PROVIDERS,
+    searchFields: ["full_name", "company_name", "service_rendered", "id_number"],
+    allowedRoles: [ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION],
+    fields: [
+      "full_name",
+      "company_name",
+      "id_number",
+      "service_rendered",
+      "postal_address",
+      "town",
+      "postal_code",
+      "phone_number",
+      "email_address",
+      "next_of_kin_name",
+      "next_of_kin_relationship",
+      "next_of_kin_mobile",
+      "next_of_kin_email",
+      "passport_photo_path",
+      "employment_status"
+    ]
+  },
+  {
+    route: "/api/management/bom",
+    table: "bom_profiles",
+    moduleKey: MODULE_KEYS.MANAGEMENT_BOM,
+    searchFields: ["full_name", "id_number"],
+    allowedRoles: [ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION],
+    fields: [
+      "full_name",
+      "id_number",
+      "postal_address",
+      "town",
+      "postal_code",
+      "phone_number",
+      "email_address",
+      "passport_photo_path",
+      "employment_status"
     ]
   },
   {
