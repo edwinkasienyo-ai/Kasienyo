@@ -6210,14 +6210,21 @@ app.post(
   accountMutationCooldown,
   asyncHandler(async (req, res) => {
     const requesterRole = normalizeRole(req.user.role);
-    if ([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN].includes(requesterRole)) {
+    const updateType = cleanValue(req.body?.update_type || "profile_update");
+    const passwordChange = updateType === "password_change" || Boolean(req.body?.password_change);
+    if (
+      !passwordChange &&
+      [ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN].includes(requesterRole)
+    ) {
       return res.json({
-        message: "OTP is optional for your role. Proceed with profile update directly.",
+        message: "OTP is optional for your role for non-password changes. Proceed directly.",
         otp_required: false
       });
     }
-    const updateType = cleanValue(req.body?.update_type || "profile_update");
-    const requestedChannel = cleanValue(req.body?.otp_channel || "email").toLowerCase();
+    const requestedChannelRaw = cleanValue(req.body?.otp_channel || "email").toLowerCase();
+    const requestedChannel = ["both", "sms_email", "email_sms"].includes(requestedChannelRaw)
+      ? "both"
+      : requestedChannelRaw;
     const meRows = await query(
       `SELECT id, institution_id, username, email, phone
        FROM users
@@ -6229,33 +6236,39 @@ app.post(
       return res.status(404).json({ error: "Profile user not found." });
     }
     const me = meRows[0];
-    const channel = isOtpChannelConfigured(requestedChannel) ? requestedChannel : "console";
-    const destination = channel === "sms" ? cleanValue(me.phone) : cleanValue(me.email);
-    if (!destination) {
+    const channelsToUse = requestedChannel === "both"
+      ? ["email", "sms"].filter((channel) => isOtpChannelConfigured(channel))
+      : [isOtpChannelConfigured(requestedChannel) ? requestedChannel : "console"];
+    const identity = `profile-update:${me.username}`;
+    const channelsSent = [];
+    for (const channel of channelsToUse) {
+      const destination = channel === "sms" ? cleanValue(me.phone) : cleanValue(me.email);
+      if (!destination) continue;
+      const otpSession = await createOtpSession({
+        identity,
+        role: "PROFILE_UPDATE",
+        institutionId: me.institution_id,
+        payload: { user_id: me.id, update_type: updateType },
+        destination,
+        channel
+      });
+      channelsSent.push({ channel, expires_at: otpSession.expiresAt });
+    }
+    if (!channelsSent.length) {
       return res.status(400).json({
-        error: channel === "sms"
-          ? "No phone number found for SMS OTP."
-          : "No email address found for email OTP."
+        error: "OTP could not be dispatched. Add an email or phone to your profile."
       });
     }
-    const identity = `profile-update:${me.username}`;
-    const otpSession = await createOtpSession({
-      identity,
-      role: "PROFILE_UPDATE",
-      institutionId: me.institution_id,
-      payload: { user_id: me.id, update_type: updateType },
-      destination,
-      channel
-    });
     await auditLog(req.user, "PROFILE_UPDATE_OTP_REQUESTED", "otp_sessions", null, {
       update_type: updateType,
-      otp_channel: channel,
-      otp_expires_at: otpSession.expiresAt
+      otp_channels: channelsSent.map((c) => c.channel)
     });
+    const exposeOtp = normalizeRole(req.user.role) === ROLES.SYSTEM_DEVELOPER;
     res.json({
-      message: `OTP sent via ${channel}.`,
+      message: `OTP sent via ${channelsSent.map((c) => c.channel).join(", ")}.`,
       otp_required: true,
-      otp_channel_used: channel
+      otp_channels_used: channelsSent.map((c) => c.channel),
+      otp_preview: exposeOtp ? "OTP visible in console/audit logs to System Developer." : null
     });
   })
 );
@@ -6271,7 +6284,9 @@ app.post(
     const phone = cleanOptionalValue(req.body?.phone);
     const newPassword = cleanOptionalValue(req.body?.new_password);
     const otpCode = cleanOptionalValue(req.body?.otp_code);
-    const requireOtp = ![ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN].includes(requesterRole);
+    const requireOtp = newPassword
+      ? true
+      : ![ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN].includes(requesterRole);
 
     const users = await query(
       `SELECT id, institution_id, username, password_hash, email, phone

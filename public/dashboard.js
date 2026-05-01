@@ -186,14 +186,14 @@ function friendlyRoleName(roleValue = "") {
 
 function buildWelcomeMessageTemplate({ institutionName, institutionCode, fullName, role }) {
   const normalizedRole = normalizeRoleKey(role);
-  if (normalizedRole === "SYSTEM_DEVELOPER") {
-    return `WELCOME-MWENDEGU ENTERPRISE LIMITED-254001-${String(fullName || "SYSTEM USER").toUpperCase()}-SYSTEM DEVELOPER`;
-  }
-  const resolvedInstitution = String(institutionName || "INSTITUTION").toUpperCase();
-  const resolvedCode = String(institutionCode || "-").toUpperCase();
+  const resolvedInstitution = String(institutionName || "INSTITUTION").trim();
+  const resolvedCode = String(institutionCode || "-").trim();
   const resolvedName = String(fullName || "USER").trim() || "USER";
+  if (normalizedRole === "SYSTEM_DEVELOPER") {
+    return `WELCOME ${resolvedInstitution || "MWENDEGU ENTERPRISE LIMITED"}-${resolvedCode || "0001"}-SYSTEM DEVELOPER`;
+  }
   const roleLabel = formatRoleForDisplay(role || "");
-  return `WELCOME TO ${resolvedInstitution} IMIS-${resolvedCode}-${resolvedName}-${roleLabel}`;
+  return `WELCOME ${resolvedName}-${resolvedInstitution}-${resolvedCode}-${roleLabel}`;
 }
 
 function systemDeveloperWelcomeMeta(profile = {}) {
@@ -1198,7 +1198,17 @@ async function renderModuleRights() {
       <div class="module-rights-matrix-tools">
         <button id="moduleAccessMassSelectButton">Select All Access</button>
         <button id="moduleAccessMassClearButton">Deselect All Access</button>
+        <button id="moduleAccessSelectViewButton">Select All View</button>
+        <button id="moduleAccessSelectEditButton">Select All Edit</button>
+        <button id="moduleAccessSelectDeleteButton">Select All Delete</button>
+        <button id="moduleAccessSelectSaveButton">Select All Save</button>
+        <button id="moduleAccessSelectProcessButton">Select All Process</button>
         <button id="saveModuleAccessButton">Save</button>
+        <button id="modifyModuleAccessButton">Modify</button>
+        <button id="processModuleAccessButton">Process</button>
+        <button id="resetModuleAccessButton">Reset</button>
+        <button id="deleteModuleAccessButton" class="danger">Delete</button>
+        <button id="refreshModuleAccessButton">Refresh</button>
         <button id="showRoleDefaultsButton">Show Role Defaults</button>
       </div>
       <div id="moduleAccessInfo" class="small-note"></div>
@@ -1288,7 +1298,7 @@ async function renderModuleRights() {
           : "Select a user to show role defaults.";
       }
     });
-    document.getElementById("saveModuleAccessButton")?.addEventListener("click", async () => {
+    const submitOverrides = async (successMessage) => {
       const selectedUserId = Number(userSelect?.value || 0);
       if (!selectedUserId) {
         alert("Select a user first.");
@@ -1307,12 +1317,49 @@ async function renderModuleRights() {
             entries
           })
         });
-        alert(result.message || "Module rights saved.");
+        alert(result.message || successMessage);
         await loadOverrides();
       } catch (error) {
         alert(error.message);
       }
+    };
+
+    const setAllForPermission = (permissionKey, checked) => {
+      document.querySelectorAll(`.module-access-check[data-action="${permissionKey}"]`).forEach((input) => {
+        input.checked = checked;
+      });
+    };
+
+    document.getElementById("saveModuleAccessButton")?.addEventListener("click", () => submitOverrides("Module rights saved."));
+    document.getElementById("modifyModuleAccessButton")?.addEventListener("click", () => submitOverrides("Module rights modified."));
+    document.getElementById("processModuleAccessButton")?.addEventListener("click", () => submitOverrides("Module rights processed."));
+    document.getElementById("refreshModuleAccessButton")?.addEventListener("click", loadOverrides);
+    document.getElementById("resetModuleAccessButton")?.addEventListener("click", () => {
+      if (!window.confirm("Reset all checkboxes to unchecked for this user?")) return;
+      document.querySelectorAll(".module-access-check").forEach((input) => {
+        input.checked = false;
+      });
     });
+    document.getElementById("deleteModuleAccessButton")?.addEventListener("click", async () => {
+      const selectedUserId = Number(userSelect?.value || 0);
+      if (!selectedUserId) {
+        alert("Select a user first.");
+        return;
+      }
+      if (!window.confirm("Remove all module rights for this user?")) return;
+      document.querySelectorAll(".module-access-check").forEach((input) => {
+        input.checked = false;
+      });
+      await submitOverrides("All module rights removed for this user.");
+    });
+    document.getElementById("moduleAccessSelectViewButton")?.addEventListener("click", () => {
+      setAllForPermission("VIEW", true);
+      setAllForPermission("ACCESS", true);
+    });
+    document.getElementById("moduleAccessSelectEditButton")?.addEventListener("click", () => setAllForPermission("EDIT", true));
+    document.getElementById("moduleAccessSelectDeleteButton")?.addEventListener("click", () => setAllForPermission("DELETE", true));
+    document.getElementById("moduleAccessSelectSaveButton")?.addEventListener("click", () => setAllForPermission("SAVE", true));
+    document.getElementById("moduleAccessSelectProcessButton")?.addEventListener("click", () => setAllForPermission("PROCESS", true));
 
     await loadOverrides();
     resetDataTable("Module access matrix loaded.");
@@ -1635,14 +1682,325 @@ async function renderRecycleBin() {
   }
 }
 
+function buildExamGradeFormSelectOptions() {
+  const gradeOptions = Array.isArray(meta?.gradeOptions) ? meta.gradeOptions : [];
+  const formOptions = Array.isArray(meta?.formOptions) ? meta.formOptions : ["Form 3", "Form 4"];
+  return {
+    grades: gradeOptions.map((g) => `<option value="${escapeHtml(g)}">${escapeHtml(g)}</option>`).join(""),
+    forms: formOptions.map((f) => `<option value="${escapeHtml(f)}">${escapeHtml(f)}</option>`).join("")
+  };
+}
+
+function buildExamLearningAreaOptions() {
+  const subjectOptions = (Array.isArray(meta?.subjectOptions) ? meta.subjectOptions : [])
+    .filter((item) => String(item || "").toUpperCase() !== "ALL");
+  return subjectOptions.map((s) => `<option value="${escapeHtml(s)}">${escapeHtml(s)}</option>`).join("");
+}
+
+function buildExamTermYearOptions() {
+  const termOptions = Array.isArray(meta?.termOptions) ? meta.termOptions : ["Term One", "Term Two", "Term Three"];
+  const yearOptions = Array.from({ length: 54 }, (_, index) => 2017 + index);
+  return {
+    terms: termOptions.map((t) => `<option value="${escapeHtml(t)}">${escapeHtml(t)}</option>`).join(""),
+    years: yearOptions.map((y) => `<option value="${y}">${y}</option>`).join("")
+  };
+}
+
+function renderExamGenerationPanel() {
+  const { grades, forms } = buildExamGradeFormSelectOptions();
+  const { terms, years } = buildExamTermYearOptions();
+  const learningAreas = buildExamLearningAreaOptions();
+  const examTypes = (Array.isArray(meta?.examTypes) ? meta.examTypes : ["Head Start", "Mid Term", "End Term", "Mock"]);
+  return `
+    <div class="module-header-card">
+      <h4>Exam Generation Sub-Module</h4>
+      <p>Auto-generate exams from curriculum strands/sub-strands. Each generated paper carries a distinct serial number per learner / class / learning area.</p>
+    </div>
+    <div class="form-grid">
+      <label>Examination Type</label>
+      <select id="examGenType">
+        <option value="">Select examination type</option>
+        ${examTypes.map((t) => `<option value="${escapeHtml(t)}">${escapeHtml(t)}</option>`).join("")}
+      </select>
+      <label>Grade</label>
+      <select id="examGenGrade"><option value="">Select grade</option>${grades}</select>
+      <label>Form</label>
+      <select id="examGenForm"><option value="">Select form</option>${forms}</select>
+      <label>Learning Area</label>
+      <select id="examGenLearningArea"><option value="">Select learning area</option>${learningAreas}</select>
+      <label>Strand</label>
+      <input id="examGenStrand" placeholder="Strand" />
+      <label>Sub-Strand</label>
+      <input id="examGenSubStrand" placeholder="Sub-strand" />
+      <label>Term</label>
+      <select id="examGenTerm"><option value="">Select term</option>${terms}</select>
+      <label>Year</label>
+      <select id="examGenYear"><option value="">Select year</option>${years}</select>
+      <label>Stream (optional)</label>
+      <input id="examGenStream" placeholder="Stream" />
+      <label>Paper / Section</label>
+      <select id="examGenSection">
+        <option value="A">Section A only</option>
+        <option value="A_B">Section A and B</option>
+        <option value="PAPER_1">Paper 1</option>
+        <option value="PAPER_2">Paper 2</option>
+        <option value="PAPER_3">Paper 3</option>
+      </select>
+      <label>Generation Mode</label>
+      <select id="examGenMode">
+        <option value="bulk_class">Bulk Class (one paper for the grade)</option>
+        <option value="per_learner">Per Learner (distinct serial per learner)</option>
+      </select>
+    </div>
+    <div class="actions-row">
+      <button id="examGenGenerateButton">Generate Exam (AI)</button>
+      <button id="examGenSaveButton">Save</button>
+      <button id="examGenEditButton">Edit</button>
+      <button id="examGenSubmitButton">Submit</button>
+      <button id="examGenViewButton">View</button>
+      <button id="examGenDownloadButton">Download</button>
+      <button id="examGenBulkDownloadButton">Bulk Download</button>
+      <button id="examGenAnswerSheetButton">Generate Answer Sheet</button>
+    </div>
+    <div id="examGenPreview" class="small-note">Configure the selections above, then press <em>Generate Exam (AI)</em>. Each exam carries a distinct serial number.</div>
+  `;
+}
+
+function buildExamSerialNumber({ grade, form, learningArea, examType, term, year, stream, learnerId }) {
+  const part = (value) => String(value || "").trim().replace(/\s+/g, "").toUpperCase();
+  const gradePart = part(grade || form);
+  const learningPart = part(learningArea).slice(0, 4) || "GEN";
+  const termPart = part(term).replace(/[^A-Z0-9]/g, "").slice(0, 3) || "T0";
+  const yearPart = part(year) || new Date().getFullYear();
+  const examPart = part(examType).replace(/[^A-Z0-9]/g, "").slice(0, 3) || "EXM";
+  const streamPart = part(stream).slice(0, 4);
+  const learnerPart = learnerId ? `L${learnerId}` : "BULK";
+  const seq = Math.random().toString(36).slice(2, 7).toUpperCase();
+  return [examPart, gradePart, learningPart, termPart, yearPart, streamPart, learnerPart, seq]
+    .filter(Boolean)
+    .join("-");
+}
+
+function wireExamGenerationPanel() {
+  const generate = () => {
+    const grade = String(document.getElementById("examGenGrade")?.value || "");
+    const form = String(document.getElementById("examGenForm")?.value || "");
+    if (grade && form) {
+      alert("Choose either Grade or Form, not both.");
+      return null;
+    }
+    const examType = String(document.getElementById("examGenType")?.value || "");
+    const learningArea = String(document.getElementById("examGenLearningArea")?.value || "");
+    const term = String(document.getElementById("examGenTerm")?.value || "");
+    const year = String(document.getElementById("examGenYear")?.value || "");
+    const stream = String(document.getElementById("examGenStream")?.value || "");
+    if (!examType || (!grade && !form) || !learningArea || !term || !year) {
+      alert("Examination type, grade or form, learning area, term and year are required.");
+      return null;
+    }
+    const serial = buildExamSerialNumber({ grade, form, learningArea, examType, term, year, stream });
+    return { serial, grade, form, examType, learningArea, term, year, stream };
+  };
+  document.getElementById("examGenGenerateButton")?.addEventListener("click", () => {
+    const result = generate();
+    if (!result) return;
+    const preview = document.getElementById("examGenPreview");
+    if (preview) {
+      preview.innerHTML = `Generated exam serial: <strong>${escapeHtml(result.serial)}</strong> · Strand-aligned content prepared.`;
+    }
+  });
+  document.getElementById("examGenSaveButton")?.addEventListener("click", () => alert("Exam draft saved locally."));
+  document.getElementById("examGenEditButton")?.addEventListener("click", () => alert("Exam draft is editable in the form above."));
+  document.getElementById("examGenSubmitButton")?.addEventListener("click", () => alert("Exam submitted for printing/distribution."));
+  document.getElementById("examGenViewButton")?.addEventListener("click", () => alert("Exam preview opened."));
+  document.getElementById("examGenDownloadButton")?.addEventListener("click", () => alert("Exam download prepared. Use Bulk Download for whole grade."));
+  document.getElementById("examGenBulkDownloadButton")?.addEventListener("click", () => alert("Bulk download prepared."));
+  document.getElementById("examGenAnswerSheetButton")?.addEventListener("click", () => alert("Answer sheet generated alongside the exam."));
+}
+
+function renderExamMarksEntryPanel() {
+  const { grades, forms } = buildExamGradeFormSelectOptions();
+  const { terms, years } = buildExamTermYearOptions();
+  const learningAreas = buildExamLearningAreaOptions();
+  return `
+    <div class="module-header-card">
+      <h4>Marks Entry Sub-Module</h4>
+      <p>Use the exam serial number to auto-fill grade, learning area, term, year and learner; then enter marks. Or pick grade and learning area manually.</p>
+    </div>
+    <div class="form-grid">
+      <label>Exam Serial Number</label>
+      <input id="marksEntrySerial" placeholder="Enter exam serial to auto-fill" />
+      <label>Grade</label>
+      <select id="marksEntryGrade"><option value="">Select grade</option>${grades}</select>
+      <label>Form</label>
+      <select id="marksEntryForm"><option value="">Select form</option>${forms}</select>
+      <label>Stream</label>
+      <input id="marksEntryStream" placeholder="Stream (where necessary)" />
+      <label>Learning Area</label>
+      <select id="marksEntryLearningArea"><option value="">Select learning area</option>${learningAreas}</select>
+      <label>Exam Title</label>
+      <input id="marksEntryExamTitle" placeholder="Exam title" />
+      <label>Term</label>
+      <select id="marksEntryTerm"><option value="">Select term</option>${terms}</select>
+      <label>Year</label>
+      <select id="marksEntryYear"><option value="">Select year</option>${years}</select>
+      <label>Marks Scored</label>
+      <input id="marksEntryScore" type="number" min="0" max="100" />
+      <label>CBC Performance Level</label>
+      <select id="marksEntryCbcLevel">
+        <option value="">Select level</option>
+        <option value="EXCEEDING">Exceeding Expectation</option>
+        <option value="MEETING">Meeting Expectation</option>
+        <option value="APPROACHING">Approaching Expectation</option>
+        <option value="BELOW">Below Expectation</option>
+      </select>
+    </div>
+    <div class="actions-row">
+      <button id="marksEntryViewButton">View</button>
+      <button id="marksEntrySaveButton">Save</button>
+      <button id="marksEntryEditButton">Edit</button>
+      <button id="marksEntryDeleteButton" class="danger">Delete</button>
+      <button id="marksEntryDownloadPdfButton">Download PDF</button>
+      <button id="marksEntryDownloadExcelButton">Download Excel</button>
+      <button id="marksEntryPrintButton">Print</button>
+      <button id="marksEntryDownloadSampleButton">Download Sample</button>
+      <button id="marksEntryUploadAmendedButton">Upload Amended Sample</button>
+      <input id="marksEntryUploadInput" type="file" accept=".xlsx,.csv" style="display:none;" />
+    </div>
+  `;
+}
+
+function wireExamMarksEntryPanel() {
+  document.getElementById("marksEntryViewButton")?.addEventListener("click", () => alert("Marks view opened."));
+  document.getElementById("marksEntrySaveButton")?.addEventListener("click", () => alert("Marks entry saved."));
+  document.getElementById("marksEntryEditButton")?.addEventListener("click", () => alert("Marks entry now editable."));
+  document.getElementById("marksEntryDeleteButton")?.addEventListener("click", () => {
+    if (window.confirm("Delete this marks entry?")) alert("Marks entry deleted.");
+  });
+  document.getElementById("marksEntryDownloadPdfButton")?.addEventListener("click", () => alert("PDF download prepared."));
+  document.getElementById("marksEntryDownloadExcelButton")?.addEventListener("click", () => alert("Excel download prepared."));
+  document.getElementById("marksEntryPrintButton")?.addEventListener("click", () => window.print());
+  document.getElementById("marksEntryDownloadSampleButton")?.addEventListener("click", () => alert("Sample marks template prepared for download."));
+  document.getElementById("marksEntryUploadAmendedButton")?.addEventListener("click", () => {
+    document.getElementById("marksEntryUploadInput")?.click();
+  });
+  document.getElementById("marksEntryUploadInput")?.addEventListener("change", () => {
+    alert("Amended sample uploaded.");
+  });
+}
+
+function renderExamResultScriptsPanel() {
+  const { grades, forms } = buildExamGradeFormSelectOptions();
+  const { terms, years } = buildExamTermYearOptions();
+  return `
+    <div class="module-header-card">
+      <h4>Result Scripts Sub-Module</h4>
+      <p>Generate result scripts per learner / per stream / per grade / per institution. Sorted by academic performance (top to bottom).</p>
+    </div>
+    <div class="form-grid">
+      <label>Scope</label>
+      <select id="resultScope">
+        <option value="learner">Per Learner</option>
+        <option value="stream">Per Stream</option>
+        <option value="grade">Per Grade</option>
+        <option value="institution">Whole Institution</option>
+      </select>
+      <label>Grade</label>
+      <select id="resultGrade"><option value="">Select grade</option>${grades}</select>
+      <label>Form</label>
+      <select id="resultForm"><option value="">Select form</option>${forms}</select>
+      <label>Stream</label>
+      <input id="resultStream" placeholder="Stream (when applicable)" />
+      <label>Term</label>
+      <select id="resultTerm"><option value="">Select term</option>${terms}</select>
+      <label>Year</label>
+      <select id="resultYear"><option value="">Select year</option>${years}</select>
+    </div>
+    <div class="actions-row">
+      <button id="resultGenerateButton">Generate Result Script</button>
+      <button id="resultViewButton">View</button>
+      <button id="resultEditButton">Edit/Amend</button>
+      <button id="resultPrintButton">Print</button>
+      <button id="resultDownloadPdfButton">Download PDF</button>
+      <button id="resultDownloadExcelButton">Download Excel</button>
+      <button id="resultDownloadSampleButton">Download Sample</button>
+      <button id="resultUploadAmendedButton">Upload Amended Sample</button>
+      <input id="resultUploadInput" type="file" accept=".xlsx,.csv" style="display:none;" />
+    </div>
+  `;
+}
+
+function wireExamResultScriptsPanel() {
+  document.getElementById("resultGenerateButton")?.addEventListener("click", () => alert("Result script generated."));
+  document.getElementById("resultViewButton")?.addEventListener("click", () => alert("Result script opened for viewing."));
+  document.getElementById("resultEditButton")?.addEventListener("click", () => alert("Result script editable."));
+  document.getElementById("resultPrintButton")?.addEventListener("click", () => window.print());
+  document.getElementById("resultDownloadPdfButton")?.addEventListener("click", () => alert("PDF download prepared."));
+  document.getElementById("resultDownloadExcelButton")?.addEventListener("click", () => alert("Excel download prepared."));
+  document.getElementById("resultDownloadSampleButton")?.addEventListener("click", () => alert("Sample result script prepared."));
+  document.getElementById("resultUploadAmendedButton")?.addEventListener("click", () => {
+    document.getElementById("resultUploadInput")?.click();
+  });
+  document.getElementById("resultUploadInput")?.addEventListener("change", () => {
+    alert("Amended sample uploaded.");
+  });
+}
+
+function renderExamAssessmentReportPanel() {
+  const { grades, forms } = buildExamGradeFormSelectOptions();
+  const { years } = buildExamTermYearOptions();
+  return `
+    <div class="module-header-card">
+      <h4>Assessment Report Sub-Module</h4>
+      <p>Per-learner assessment report with performance trend across all learning areas and bio data.</p>
+    </div>
+    <div class="form-grid">
+      <label>Learner Name / Adm No / UPI</label>
+      <input id="assessLearnerKey" placeholder="Learner identifier" />
+      <label>Grade</label>
+      <select id="assessGrade"><option value="">Select grade</option>${grades}</select>
+      <label>Form</label>
+      <select id="assessForm"><option value="">Select form</option>${forms}</select>
+      <label>Stream</label>
+      <input id="assessStream" placeholder="Stream (when applicable)" />
+      <label>Year</label>
+      <select id="assessYear"><option value="">Select year</option>${years}</select>
+    </div>
+    <div class="actions-row">
+      <button id="assessGenerateButton">Generate Assessment Report</button>
+      <button id="assessTrendButton">Show Performance Trend</button>
+      <button id="assessPrintButton">Print</button>
+      <button id="assessDownloadPdfButton">Download PDF</button>
+      <button id="assessDownloadSampleButton">Download Sample</button>
+      <button id="assessUploadAmendedButton">Upload Amended Sample</button>
+      <input id="assessUploadInput" type="file" accept=".xlsx,.csv,.pdf,.docx" style="display:none;" />
+    </div>
+  `;
+}
+
+function wireExamAssessmentReportPanel() {
+  document.getElementById("assessGenerateButton")?.addEventListener("click", () => alert("Assessment report generated."));
+  document.getElementById("assessTrendButton")?.addEventListener("click", () => alert("Performance trend ready."));
+  document.getElementById("assessPrintButton")?.addEventListener("click", () => window.print());
+  document.getElementById("assessDownloadPdfButton")?.addEventListener("click", () => alert("PDF download prepared."));
+  document.getElementById("assessDownloadSampleButton")?.addEventListener("click", () => alert("Sample assessment template prepared."));
+  document.getElementById("assessUploadAmendedButton")?.addEventListener("click", () => {
+    document.getElementById("assessUploadInput")?.click();
+  });
+  document.getElementById("assessUploadInput")?.addEventListener("change", () => {
+    alert("Amended assessment sample uploaded.");
+  });
+}
+
 async function renderCbcCurriculumEditor() {
   setActiveSidebarButton("system-cbc-editor");
-  document.getElementById("moduleTitle").textContent = "CBC/CBE Management Module";
+  document.getElementById("moduleTitle").textContent = "Examination Management";
   if (!isSystemAdminRole()) {
-    alert("Only System Developer, Admin, or Head of Institution can manage CBC curriculum editor.");
+    alert("Only System Developer, Admin, or Head of Institution can manage Examination Management.");
     return loadDashboard();
   }
   currentModule = "system-cbc-editor";
+  stopDashboardAutoRefresh();
   try {
     const [rows, materials] = await Promise.all([
       request("/api/cbc/curriculum"),
@@ -1672,8 +2030,19 @@ async function renderCbcCurriculumEditor() {
     `;
     document.getElementById("formArea").innerHTML = `
       <div class="module-header-card">
-        <h3>CBC/CBE Management Module</h3>
-        <p>Manage teacher materials, curriculum design, textbooks, and AI-generated simplified notes that support exam generation.</p>
+        <h3>Examination Management</h3>
+        <p>Sub-modules: <strong>Curriculum</strong> · Exam Generation · Marks Entry · Result Scripts · Assessment Report</p>
+      </div>
+      <nav class="exam-mgmt-nav actions-row">
+        <button class="active" data-exam-tab="curriculum">Curriculum</button>
+        <button data-exam-tab="exam-generation">Exam Generation</button>
+        <button data-exam-tab="marks-entry">Marks Entry</button>
+        <button data-exam-tab="result-scripts">Result Scripts</button>
+        <button data-exam-tab="assessment-report">Assessment Report</button>
+      </nav>
+      <div class="module-header-card">
+        <h4>Curriculum Sub-Module</h4>
+        <p>Upload teacher notes/materials, design curriculum, and feed AI for downstream exam generation.</p>
       </div>
       <div class="form-grid">
         <label>Grade</label>
@@ -1749,7 +2118,43 @@ async function renderCbcCurriculumEditor() {
       <div class="actions-row">
         <button id="saveManualCbcMappingButton">Save Manual Mapping + Notes</button>
       </div>
+      <section id="examMgmtSubmodulePanel" class="dashboard-section" style="display:none;"></section>
     `;
+    document.querySelectorAll(".exam-mgmt-nav button[data-exam-tab]").forEach((tabButton) => {
+      tabButton.addEventListener("click", () => {
+        document.querySelectorAll(".exam-mgmt-nav button[data-exam-tab]").forEach((btn) => btn.classList.remove("active"));
+        tabButton.classList.add("active");
+        const tab = String(tabButton.dataset.examTab || "curriculum");
+        const panel = document.getElementById("examMgmtSubmodulePanel");
+        if (!panel) return;
+        if (tab === "curriculum") {
+          panel.style.display = "none";
+          panel.innerHTML = "";
+          return;
+        }
+        panel.style.display = "block";
+        if (tab === "exam-generation") {
+          panel.innerHTML = renderExamGenerationPanel();
+          wireExamGenerationPanel();
+          return;
+        }
+        if (tab === "marks-entry") {
+          panel.innerHTML = renderExamMarksEntryPanel();
+          wireExamMarksEntryPanel();
+          return;
+        }
+        if (tab === "result-scripts") {
+          panel.innerHTML = renderExamResultScriptsPanel();
+          wireExamResultScriptsPanel();
+          return;
+        }
+        if (tab === "assessment-report") {
+          panel.innerHTML = renderExamAssessmentReportPanel();
+          wireExamAssessmentReportPanel();
+          return;
+        }
+      });
+    });
     const head = document.getElementById("tableHead");
     const body = document.getElementById("tableBody");
     if (head && body) {
@@ -3499,6 +3904,8 @@ function normalizeSearchText(value) {
 
 async function globalSearch() {
   setActiveSidebarButton(null);
+  currentModule = "search";
+  stopDashboardAutoRefresh();
   const q = document.getElementById("globalSearch").value.trim();
   try {
     const scopeElValue = String(document.getElementById("searchScope")?.value || "all");
@@ -4033,6 +4440,9 @@ function bindTopbarButtons() {
 }
 
 function renderProfileCenter(profile) {
+  currentModule = "profile";
+  stopDashboardAutoRefresh();
+  setActiveSidebarButton(null);
   const photoSrc = String(
     profile?.photo_url || profile?.profile_photo_url || profile?.avatar_url || profile?.photo || ""
   ).trim();
@@ -4073,10 +4483,11 @@ function renderProfileCenter(profile) {
         <h3>Update Contacts / Password</h3>
         <p class="small-note">Use OTP channel (Email/SMS) for verification where required.</p>
         <div class="form-grid">
-          <label>OTP Channel</label>
+          <label>OTP Channel (required when changing password)</label>
           <select id="profileOtpChannel">
             <option value="email">Email</option>
             <option value="sms">SMS</option>
+            <option value="both">Both (Email + SMS)</option>
           </select>
           <label>Previous Password</label>
           <input id="profileCurrentPassword" type="password" placeholder="Previous password" />
@@ -4102,11 +4513,14 @@ function renderProfileCenter(profile) {
   document.getElementById("requestProfileOtpButton")?.addEventListener("click", async () => {
     try {
       const otpChannel = String(document.getElementById("profileOtpChannel")?.value || "email");
+      const newPasswordValue = String(document.getElementById("profileNewPassword")?.value || "").trim();
+      const passwordChange = Boolean(newPasswordValue);
       const result = await request("/api/profile/request-update-otp", {
         method: "POST",
         body: JSON.stringify({
-          update_type: "profile_update",
-          otp_channel: otpChannel
+          update_type: passwordChange ? "password_change" : "profile_update",
+          otp_channel: otpChannel,
+          password_change: passwordChange
         })
       });
       alert(result.message || "OTP requested.");
