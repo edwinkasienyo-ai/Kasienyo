@@ -115,6 +115,12 @@ function normalizeRoleValue(role) {
   if (normalized === "SYSTEMDEVELOPER") {
     return "SYSTEM_DEVELOPER";
   }
+  if (normalized === "SENIOR_TEACHER") {
+    return "SENIOR_TEACHER";
+  }
+  if (normalized === "HEAD_OF_DEPARTMENT" || normalized === "HOD") {
+    return "HEAD_OF_DEPARTMENT";
+  }
   return normalized;
 }
 
@@ -174,10 +180,6 @@ async function login() {
     setAuthNotice(usernameValidationError, "error");
     return;
   }
-  if (selectedPortalRole === "SYSTEM_DEVELOPER" && username && username !== "952252") {
-    setAuthNotice("System Developer default username is 952252 (unless amended).", "error");
-    return;
-  }
   if (!username || !password) {
     alert("Username and password are required.");
     return;
@@ -198,10 +200,7 @@ async function login() {
     }
     localStorage.setItem("pendingUsername", username);
     const deliveredBy = data?.otp_channel_used ? ` via ${data.otp_channel_used}` : "";
-    const otpPreviewMessage = data?.otp_preview
-      ? ` OTP (for testing): ${data.otp_preview}`
-      : "";
-    setAuthNotice(`${data.message}${deliveredBy}. Portal: ${data.portal}.${otpPreviewMessage}`, "success");
+    setAuthNotice(`${data.message}${deliveredBy}. Portal: ${data.portal}.`, "success");
   } catch (error) {
     setAuthNotice(error.message, "error");
   }
@@ -231,56 +230,117 @@ async function verifyOtp() {
 }
 
 async function recoverUsername() {
-  const institution_code = document.getElementById("forgotUsernameInstitutionCode").value.trim();
-  const email = document.getElementById("forgotUsernameEmail").value.trim();
-  const phone = document.getElementById("forgotUsernamePhone").value.trim();
-  if (!institution_code || (!email && !phone)) {
-    setAuthNotice("Institution code and email or mobile are required.", "error");
+  const guidance = document.getElementById("forgotUsernameGuidance");
+  if (guidance) {
+    guidance.hidden = false;
+    guidance.textContent =
+      "For username recovery, contact your Institution Administrator or the System Developer.";
+  }
+  setAuthNotice("Username recovery guidance is shown below.", "info");
+}
+
+function collectForgotPasswordInputs() {
+  const institution_code = document.getElementById("forgotPasswordInstitutionCode")?.value.trim();
+  const username = document.getElementById("forgotPasswordUsername")?.value.trim();
+  const contact_method = document.getElementById("forgotPasswordContactMethod")?.value || "email";
+  const otp_channel = document.getElementById("forgotPasswordOtpChannel")?.value || "email";
+  const email = document.getElementById("forgotPasswordEmail")?.value.trim();
+  const phone = document.getElementById("forgotPasswordPhone")?.value.trim();
+  const otp = document.getElementById("forgotPasswordOtp")?.value.trim();
+  const new_password = document.getElementById("forgotPasswordNewPassword")?.value;
+  const confirm_new_password = document.getElementById("forgotPasswordConfirmNewPassword")?.value;
+  return {
+    institution_code,
+    username,
+    contact_method,
+    otp_channel,
+    email,
+    phone,
+    otp,
+    new_password,
+    confirm_new_password
+  };
+}
+
+async function requestForgotPasswordOtp() {
+  const { institution_code, username, contact_method, otp_channel, email, phone } = collectForgotPasswordInputs();
+  if (!institution_code) {
+    setAuthNotice("Institution code is required.", "error");
     return;
   }
+  if (!username) {
+    setAuthNotice("Username is required.", "error");
+    return;
+  }
+  if (contact_method === "email" && !email) {
+    setAuthNotice("Email is required when contact method is Email.", "error");
+    return;
+  }
+  if (contact_method === "phone" && !phone) {
+    setAuthNotice("Mobile number is required when contact method is Mobile.", "error");
+    return;
+  }
+  if (otp_channel === "email" && !email) {
+    setAuthNotice("Provide email to receive OTP by email.", "error");
+    return;
+  }
+  if (otp_channel === "sms" && !phone) {
+    setAuthNotice("Provide mobile number to receive OTP by SMS.", "error");
+    return;
+  }
+
   try {
-    const data = await request("/api/public/forgot-username", {
+    const data = await request("/api/public/forgot-password", {
       method: "POST",
       body: JSON.stringify({
         institution_code,
+        username,
+        contact_method,
+        otp_channel,
         email,
         phone
       })
     });
-    const list = Array.isArray(data.usernames) ? data.usernames : [];
-    if (!list.length) {
-      setAuthNotice("No username found for the supplied details.", "error");
-      return;
-    }
-    const usernames = list.map((item) => item.username).join(", ");
-    setAuthNotice(`Recovered username(s): ${usernames}`, "success");
+    setAuthNotice(data.message || "OTP sent for password reset.", "success");
   } catch (error) {
     setAuthNotice(error.message, "error");
   }
 }
 
 async function resetPassword() {
-  const institution_code = document.getElementById("forgotPasswordInstitutionCode").value.trim();
-  const username = document.getElementById("forgotPasswordUsername").value.trim();
-  const new_password = document.getElementById("forgotPasswordNewPassword").value;
-  const email = document.getElementById("forgotPasswordEmail").value.trim();
-  const phone = document.getElementById("forgotPasswordPhone").value.trim();
-  if (!institution_code || !username || !new_password || (!email && !phone)) {
-    setAuthNotice("Institution code, username, new password and email or mobile are required.", "error");
+  const { institution_code, username, contact_method, otp_channel, email, phone, otp, new_password, confirm_new_password } =
+    collectForgotPasswordInputs();
+  if (!institution_code || !username) {
+    setAuthNotice("Institution code and username are required.", "error");
+    return;
+  }
+  if (!otp || !new_password) {
+    setAuthNotice("Enter OTP code and new password to complete reset.", "error");
+    return;
+  }
+  if (!confirm_new_password) {
+    setAuthNotice("Confirm your new password to continue.", "error");
+    return;
+  }
+  if (new_password !== confirm_new_password) {
+    setAuthNotice("New password and confirm new password must match.", "error");
     return;
   }
   try {
-    await request("/api/public/forgot-password", {
+    const data = await request("/api/public/forgot-password", {
       method: "POST",
       body: JSON.stringify({
         institution_code,
         username,
-        new_password,
+        contact_method,
+        otp_channel,
         email,
-        phone
+        phone,
+        otp,
+        new_password
       })
     });
-    setAuthNotice("Password reset successful. Login with new password.", "success");
+    setAuthNotice(data.message || "Password reset successful. Login with new password.", "success");
   } catch (error) {
     setAuthNotice(error.message, "error");
   }
@@ -289,6 +349,7 @@ async function resetPassword() {
 document.getElementById("loginButton").addEventListener("click", login);
 document.getElementById("verifyButton").addEventListener("click", verifyOtp);
 document.getElementById("forgotUsernameButton")?.addEventListener("click", recoverUsername);
+document.getElementById("forgotPasswordSendOtpButton")?.addEventListener("click", requestForgotPasswordOtp);
 document.getElementById("forgotPasswordButton")?.addEventListener("click", resetPassword);
 
 function bindAuthSectionLinks() {

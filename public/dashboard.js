@@ -8,6 +8,7 @@ let currentModule = "dashboard";
 let currentEditId = null;
 let allowedModules = [];
 let portalContext = null;
+let searchRowDrafts = {};
 const DASHBOARD_STAT_LABELS = {
   totalLearners: "Total Learners Population",
   totalPresent: "Present Today",
@@ -87,6 +88,77 @@ const MODULE_DESCRIPTIONS = {
 function isSystemAdminRole() {
   const role = String(portalContext?.role || "");
   return ["SYSTEM_DEVELOPER", "ADMIN", "HEAD_OF_INSTITUTION"].includes(role);
+}
+
+function isSystemDeveloperRole(roleValue = "") {
+  const normalized = String(roleValue || "")
+    .trim()
+    .toUpperCase()
+    .replace(/\s+/g, "_");
+  return ["SYSTEM_DEVELOPER", "SYSTEMDEVELOPER", "SYTEM_DEVELOPER"].includes(normalized);
+}
+
+function formatRoleLabel(role) {
+  const normalized = String(role || "").toUpperCase();
+  if (normalized === "SYSTEM_DEVELOPER") return "SYSTEM DEVELOPER";
+  if (normalized === "HEAD_OF_INSTITUTION" || normalized === "ADMIN") return "HoI/Administrator";
+  if (normalized === "HEAD_OF_DEPARTMENT") return "Head of Department";
+  if (normalized === "SENIOR_TEACHER") return "Senior Teacher";
+  return normalized.replaceAll("_", " ");
+}
+
+function formatDashboardRoleLabel(role) {
+  const normalized = String(role || "").toUpperCase();
+  if (normalized === "HEAD_OF_INSTITUTION" || normalized === "ADMIN") return "HoI/Administrator";
+  if (normalized === "NON_TEACHING_STAFF") return "Support Staff";
+  if (normalized === "SENIOR_TEACHER") return "Senior Teacher";
+  if (normalized === "HEAD_OF_DEPARTMENT") return "Head of Department";
+  return String(role || "").replaceAll("_", " ");
+}
+
+function formatRoleForDisplay(role = "") {
+  const normalized = String(role || "").toUpperCase();
+  if (normalized === "SYSTEM_DEVELOPER") return "SYSTEM DEVELOPER";
+  if (normalized === "HEAD_OF_INSTITUTION") return "HOI/ADMINISTRATOR";
+  if (normalized === "SENIOR_TEACHER") return "SENIOR TEACHER";
+  if (normalized === "HEAD_OF_DEPARTMENT") return "HEAD OF DEPARTMENT";
+  return normalized.replaceAll("_", " ");
+}
+
+function toTitleCase(value = "") {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/\b\w/g, (match) => match.toUpperCase());
+}
+
+function applyDashboardIdentity(meData = {}) {
+  const systemTitle = document.querySelector(".sidebar-brand h2");
+  const systemSubtitle = document.querySelector(".sidebar-brand p");
+  if (systemTitle) {
+    systemTitle.textContent = "IMIS SYSTEM";
+  }
+  if (systemSubtitle) {
+    systemSubtitle.textContent = "Integrated Management Information System For Basic Education Learning Institutions";
+  }
+  const portalLabelEl = document.getElementById("portalLabel");
+  const institutionName = String(meData?.institution_name || "").trim() || "INSTITUTION";
+  const roleLabel = formatRoleForDisplay(meData?.role || portalContext?.role || "");
+  if (portalLabelEl) {
+    if (String(meData?.role || "").toUpperCase() === "SYSTEM_DEVELOPER") {
+      portalLabelEl.textContent = `System Developer Console (${roleLabel})`;
+      portalLabelEl.classList.add("portal-label-system");
+      portalLabelEl.classList.remove("portal-label-institution");
+    } else {
+      portalLabelEl.textContent = `${toTitleCase(institutionName)} (${roleLabel})`;
+      portalLabelEl.classList.add("portal-label-institution");
+      portalLabelEl.classList.remove("portal-label-system");
+    }
+  }
+  const welcomeEl = document.getElementById("dashboardWelcomeLine");
+  const nameCandidate = String(meData?.full_name || meData?.username || "").trim() || "USER";
+  if (welcomeEl) {
+    welcomeEl.textContent = `WELCOME ${nameCandidate.toUpperCase()} TO THE IMIS FOR BASIC EDUCATION LEARNING INSTITUTIONS`;
+  }
 }
 
 async function renderSystemRegistration() {
@@ -696,59 +768,130 @@ async function renderRecycleBin() {
 
 async function renderCbcCurriculumEditor() {
   setActiveSidebarButton("system-cbc-editor");
-  document.getElementById("moduleTitle").textContent = "CBC Curriculum Editor";
+  document.getElementById("moduleTitle").textContent = "CBC/CBE Management Module";
   if (!isSystemAdminRole()) {
     alert("Only System Developer, Admin, or Head of Institution can manage CBC curriculum editor.");
     return loadDashboard();
   }
   currentModule = "system-cbc-editor";
   try {
-    const rows = await request("/api/cbc/curriculum");
+    const [rows, materials] = await Promise.all([
+      request("/api/cbc/curriculum"),
+      request("/api/cbc/curriculum/materials")
+    ]);
     const list = Array.isArray(rows) ? rows : [];
+    const materialRows = Array.isArray(materials) ? materials : [];
+    const gradeOptions = Array.isArray(meta?.gradeOptions) ? meta.gradeOptions : [];
+    const formOptions = Array.isArray(meta?.formOptions) ? meta.formOptions : ["Form 3", "Form 4"];
+    const subjectOptions = (Array.isArray(meta?.subjectOptions) ? meta.subjectOptions : [])
+      .filter((item) => String(item || "").toUpperCase() !== "ALL");
+    const termOptions = Array.isArray(meta?.termOptions) ? meta.termOptions : ["Term One", "Term Two", "Term Three"];
+    const yearOptions = Array.from({ length: 54 }, (_, index) => 2017 + index);
     document.getElementById("cards").innerHTML = `
       <div class="card stats-card metric-emphasis">
-        <h4>CBC Entries</h4>
+        <h4>CBC/CBE Entries</h4>
         <p>${formatNumber(list.length)}</p>
       </div>
       <div class="card stats-card">
-        <h4>Editor</h4>
-        <p>Create and revise strands/sub-strands</p>
+        <h4>Materials Uploaded</h4>
+        <p>${formatNumber(materialRows.length)}</p>
       </div>
       <div class="card stats-card">
-        <h4>Curriculum Coverage</h4>
-        <p>Grade-level structured records</p>
+        <h4>Teacher Content</h4>
+        <p>Design, upload, print, view, download</p>
       </div>
     `;
     document.getElementById("formArea").innerHTML = `
       <div class="module-header-card">
-        <h3>CBC Curriculum Editor</h3>
-        <p>Create and maintain CBC curriculum entries with learning outcomes and assessments.</p>
+        <h3>CBC/CBE Management Module</h3>
+        <p>Manage teacher materials, curriculum design, textbooks, and AI-generated simplified notes that support exam generation.</p>
       </div>
       <div class="form-grid">
-        <label>Grade</label><input id="cbcGrade" placeholder="e.g. Grade 7" />
-        <label>Learning Area</label><input id="cbcLearningArea" placeholder="e.g. Integrated Science" />
-        <label>Strand</label><input id="cbcStrand" placeholder="e.g. Matter and Energy" />
-        <label>Sub-Strand</label><input id="cbcSubStrand" placeholder="e.g. States of Matter" />
+        <label>Grade</label>
+        <select id="cbcGrade">
+          <option value="">Select grade</option>
+          ${gradeOptions.map((item) => `<option value="${escapeHtml(item)}">${escapeHtml(item)}</option>`).join("")}
+        </select>
+        <label>Form</label>
+        <select id="cbcFormName">
+          <option value="">Select form</option>
+          ${formOptions.map((item) => `<option value="${escapeHtml(item)}">${escapeHtml(item)}</option>`).join("")}
+        </select>
+        <label>Learning Area</label>
+        <select id="cbcLearningArea">
+          <option value="">Select learning area</option>
+          ${subjectOptions.map((item) => `<option value="${escapeHtml(item)}">${escapeHtml(item)}</option>`).join("")}
+        </select>
+        <label>Strand</label>
+        <select id="cbcStrand">
+          <option value="">Select strand</option>
+        </select>
+        <label>Sub-Strand</label>
+        <select id="cbcSubStrand">
+          <option value="">Select sub-strand</option>
+        </select>
         <label>Learning Outcomes</label><textarea id="cbcLearningOutcomes" rows="3"></textarea>
         <label>Assessment Rubric</label><textarea id="cbcAssessmentRubric" rows="3"></textarea>
-        <label>Term</label><input id="cbcTerm" placeholder="Term One" />
-        <label>Year</label><input id="cbcYear" type="number" placeholder="2026" />
+        <label>Learning Experiences</label><textarea id="cbcLearningExperiences" rows="3"></textarea>
+        <label>Textbook/Learning Materials Reference</label><textarea id="cbcResourcesReference" rows="2"></textarea>
+        <label>Term</label>
+        <select id="cbcTerm">
+          <option value="">Select term</option>
+          ${termOptions.map((item) => `<option value="${escapeHtml(item)}">${escapeHtml(item)}</option>`).join("")}
+        </select>
+        <label>Year</label>
+        <select id="cbcYear">
+          <option value="">Select year</option>
+          ${yearOptions.map((year) => `<option value="${year}">${year}</option>`).join("")}
+        </select>
+        <label>AI Simplified Notes</label><textarea id="cbcNotes" rows="6" placeholder="Generate or edit notes here..."></textarea>
+        <label>Upload Teacher/Textbook/Learning Material</label><input id="cbcMaterialFile" type="file" />
       </div>
       <div class="actions-row">
         <button id="saveCbcEntryButton">Save Curriculum Entry</button>
+        <button id="generateCbcStructureButton">AI Strand/Sub-Strand Assist</button>
+        <button id="generateCbcNotesButton">Generate AI Notes</button>
+        <button id="bulkGenerateCbcLibraryButton">Generate Full CBC Library</button>
+        <button id="downloadCbcMappingTemplateButton">Download Mapping CSV Template</button>
+        <button id="downloadCbcWordTemplateButton">Download Word Template</button>
+        <button id="importCbcMappingButton">Import Strand/Sub-Strand CSV</button>
+        <button id="editCbcMappingButton">Edit Strand/Sub-Strand Mapping</button>
+        <input id="cbcMappingFile" type="file" accept=".csv,text/csv" style="display:none;" />
+        <button id="printCbcNotesButton">Print Notes</button>
+        <button id="downloadCbcNotesButton">Download Notes</button>
+        <button id="uploadCbcMaterialButton">Upload Material</button>
+        <button id="amendCbcMaterialButton">Amend Material</button>
         <button id="refreshCbcEditorButton">Refresh</button>
+      </div>
+      <div class="module-header-card">
+        <h4>Manual Strand/Sub-Strand + Notes Entry</h4>
+        <p>Add your official mapping and notes manually, then save for AI and bulk generation.</p>
+      </div>
+      <div class="form-grid">
+        <label>Manual Learning Area</label>
+        <input id="manualCbcLearningArea" placeholder="e.g. Mathematics" />
+        <label>Manual Strand</label>
+        <input id="manualCbcStrand" placeholder="e.g. Numbers" />
+        <label>Manual Sub-Strand</label>
+        <input id="manualCbcSubStrand" placeholder="e.g. Fractions and Decimals" />
+        <label>Manual Notes</label>
+        <textarea id="manualCbcMappingNotes" rows="4" placeholder="Paste notes for this sub-strand"></textarea>
+      </div>
+      <div class="actions-row">
+        <button id="saveManualCbcMappingButton">Save Manual Mapping + Notes</button>
       </div>
     `;
     const head = document.getElementById("tableHead");
     const body = document.getElementById("tableBody");
     if (head && body) {
-      head.innerHTML = "<tr><th>ID</th><th>Grade</th><th>Learning Area</th><th>Strand</th><th>Sub-Strand</th><th>Term</th><th>Year</th><th>Created</th></tr>";
+      head.innerHTML = "<tr><th>ID</th><th>Grade</th><th>Form</th><th>Learning Area</th><th>Strand</th><th>Sub-Strand</th><th>Term</th><th>Year</th><th>Created</th></tr>";
       body.innerHTML = list
         .slice(0, 300)
         .map(
           (row) => `<tr>
             <td>${escapeHtml(String(row.id || "-"))}</td>
             <td>${escapeHtml(row.grade || "-")}</td>
+            <td>${escapeHtml(row.form_name || "-")}</td>
             <td>${escapeHtml(row.learning_area || "-")}</td>
             <td>${escapeHtml(row.strand || "-")}</td>
             <td>${escapeHtml(row.sub_strand || "-")}</td>
@@ -765,16 +908,20 @@ async function renderCbcCurriculumEditor() {
     document.getElementById("saveCbcEntryButton")?.addEventListener("click", async () => {
       const payload = {
         grade: document.getElementById("cbcGrade")?.value || "",
+        form_name: document.getElementById("cbcFormName")?.value || "",
         learning_area: document.getElementById("cbcLearningArea")?.value || "",
         strand: document.getElementById("cbcStrand")?.value || "",
         sub_strand: document.getElementById("cbcSubStrand")?.value || "",
         specific_learning_outcomes: document.getElementById("cbcLearningOutcomes")?.value || "",
         suggested_assessment_rubric: document.getElementById("cbcAssessmentRubric")?.value || "",
+        learning_experiences: document.getElementById("cbcLearningExperiences")?.value || "",
+        resources_reference: document.getElementById("cbcResourcesReference")?.value || "",
+        notes: document.getElementById("cbcNotes")?.value || "",
         term: document.getElementById("cbcTerm")?.value || "",
         year: Number(document.getElementById("cbcYear")?.value || 0) || null
       };
-      if (!payload.grade || !payload.learning_area || !payload.strand) {
-        alert("Grade, learning area, and strand are required.");
+      if ((!payload.grade && !payload.form_name) || !payload.learning_area || !payload.strand) {
+        alert("Choose grade or form, plus learning area and strand.");
         return;
       }
       try {
@@ -783,6 +930,299 @@ async function renderCbcCurriculumEditor() {
           body: JSON.stringify(payload)
         });
         alert("CBC curriculum entry saved.");
+        await renderCbcCurriculumEditor();
+      } catch (error) {
+        alert(error.message);
+      }
+    });
+    const gradeEl = document.getElementById("cbcGrade");
+    const formEl = document.getElementById("cbcFormName");
+    const learningAreaEl = document.getElementById("cbcLearningArea");
+    const strandEl = document.getElementById("cbcStrand");
+    const subStrandEl = document.getElementById("cbcSubStrand");
+    let strandMap = {};
+
+    function setSelectOptions(selectEl, options, placeholder) {
+      if (!selectEl) return;
+      selectEl.innerHTML = `<option value="">${escapeHtml(placeholder)}</option>${options
+        .map((item) => `<option value="${escapeHtml(item)}">${escapeHtml(item)}</option>`)
+        .join("")}`;
+    }
+
+    async function refreshStructureFromAi() {
+      const payload = {
+        grade: gradeEl?.value || "",
+        form_name: formEl?.value || "",
+        learning_area: learningAreaEl?.value || ""
+      };
+      if ((!payload.grade && !payload.form_name) || !payload.learning_area) {
+        return;
+      }
+      const result = await request("/api/cbc/curriculum/ai-suggest-structure", {
+        method: "POST",
+        body: JSON.stringify(payload)
+      });
+      strandMap = result.sub_strand_options_by_strand || {};
+      const strands = Array.isArray(result.strand_options) ? result.strand_options : [];
+      setSelectOptions(strandEl, strands, "Select strand");
+      if (result.strand) {
+        strandEl.value = result.strand;
+      }
+      const subOptions = Array.isArray(strandMap[strandEl.value]) ? strandMap[strandEl.value] : [];
+      setSelectOptions(subStrandEl, subOptions, "Select sub-strand");
+      if (result.sub_strand) {
+        subStrandEl.value = result.sub_strand;
+      }
+      if (!document.getElementById("cbcLearningOutcomes").value) {
+        document.getElementById("cbcLearningOutcomes").value = result.learning_outcomes || "";
+      }
+      if (!document.getElementById("cbcAssessmentRubric").value) {
+        document.getElementById("cbcAssessmentRubric").value = result.assessment_rubric || "";
+      }
+      if (!document.getElementById("cbcResourcesReference").value) {
+        document.getElementById("cbcResourcesReference").value = (result.textbook_references || []).join("\n");
+      }
+      if (!document.getElementById("cbcNotes").value) {
+        document.getElementById("cbcNotes").value = result.generated_notes || "";
+      }
+    }
+
+    gradeEl?.addEventListener("change", refreshStructureFromAi);
+    formEl?.addEventListener("change", refreshStructureFromAi);
+    learningAreaEl?.addEventListener("change", refreshStructureFromAi);
+    strandEl?.addEventListener("change", () => {
+      const subOptions = Array.isArray(strandMap[strandEl.value]) ? strandMap[strandEl.value] : [];
+      setSelectOptions(subStrandEl, subOptions, "Select sub-strand");
+    });
+
+    document.getElementById("generateCbcStructureButton")?.addEventListener("click", async () => {
+      try {
+        await refreshStructureFromAi();
+      } catch (error) {
+        alert(error.message);
+      }
+    });
+    document.getElementById("generateCbcNotesButton")?.addEventListener("click", async () => {
+      const payload = {
+        grade: gradeEl?.value || "",
+        form_name: formEl?.value || "",
+        learning_area: learningAreaEl?.value || "",
+        strand: strandEl?.value || "",
+        sub_strand: subStrandEl?.value || ""
+      };
+      if ((!payload.grade && !payload.form_name) || !payload.learning_area || !payload.strand) {
+        alert("Choose grade or form, plus learning area and strand.");
+        return;
+      }
+      try {
+        const result = await request("/api/cbc/curriculum/ai-generate-notes", {
+          method: "POST",
+          body: JSON.stringify(payload)
+        });
+        document.getElementById("cbcNotes").value = result.generated_notes || "";
+        if (Array.isArray(result.textbook_references) && result.textbook_references.length) {
+          document.getElementById("cbcResourcesReference").value = result.textbook_references.join("\n");
+        }
+      } catch (error) {
+        alert(error.message);
+      }
+    });
+    document.getElementById("bulkGenerateCbcLibraryButton")?.addEventListener("click", async () => {
+      const payload = {
+        grade: gradeEl?.value || "",
+        form_name: formEl?.value || "",
+        term: document.getElementById("cbcTerm")?.value || "",
+        year: Number(document.getElementById("cbcYear")?.value || 0) || null,
+        overwrite_existing: window.confirm(
+          "Overwrite existing notes/resources for matching strand/sub-strand entries?"
+        )
+      };
+      if (!payload.grade && !payload.form_name) {
+        alert("Select either grade or form before bulk generation.");
+        return;
+      }
+      const proceed = window.confirm(
+        "This will generate strands, sub-strands, and notes for all learning areas. Continue?"
+      );
+      if (!proceed) return;
+      try {
+        const result = await request("/api/cbc/curriculum/bulk-generate", {
+          method: "POST",
+          body: JSON.stringify(payload)
+        });
+        alert(
+          `Bulk generation complete. Created ${result.created_entries || 0} entries and ${result.created_materials || 0} materials.`
+        );
+        await renderCbcCurriculumEditor();
+      } catch (error) {
+        alert(error.message);
+      }
+    });
+    document.getElementById("importCbcMappingButton")?.addEventListener("click", () => {
+      document.getElementById("cbcMappingFile")?.click();
+    });
+    document.getElementById("downloadCbcMappingTemplateButton")?.addEventListener("click", () => {
+      window.open("/api/cbc/curriculum/structure-mappings/template", "_blank");
+    });
+    document.getElementById("downloadCbcWordTemplateButton")?.addEventListener("click", () => {
+      window.open("/api/cbc/curriculum/structure-mappings/template-doc", "_blank");
+    });
+    document.getElementById("cbcMappingFile")?.addEventListener("change", async (event) => {
+      const file = event?.target?.files?.[0];
+      if (!file) return;
+      const formData = new FormData();
+      formData.append("file", file);
+      try {
+        const response = await fetch("/api/cbc/curriculum/structure-mappings/import", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}` },
+          body: formData
+        });
+        const result = await response.json();
+      if (!response.ok) {
+        alert(result.error || "Import failed.");
+        return;
+      }
+      alert(`Mappings imported: ${result.imported || 0}`);
+      await refreshStructureFromAi();
+      } catch (error) {
+        alert(error.message);
+      } finally {
+        event.target.value = "";
+      }
+    });
+    document.getElementById("editCbcMappingButton")?.addEventListener("click", async () => {
+      const learningArea = learningAreaEl?.value || "";
+      if (!learningArea) {
+        alert("Select learning area first.");
+        return;
+      }
+      const grade = gradeEl?.value || "";
+      const formName = formEl?.value || "";
+      const strand = prompt("Enter strand to update:", strandEl?.value || "");
+      if (!strand) return;
+      const subStrand = prompt("Enter corrected sub-strand:", subStrandEl?.value || "");
+      if (!subStrand) return;
+      const sourceLabel = prompt("Source label (e.g. KICD-Approved):", "Manual Correction");
+      const mappingNotes = prompt("Optional notes for this sub-strand:", document.getElementById("cbcNotes")?.value || "");
+      try {
+        const result = await request("/api/cbc/curriculum/structure-mappings", {
+          method: "POST",
+          body: JSON.stringify({
+            learning_area: learningArea,
+            strand,
+            sub_strand: subStrand,
+            grade: grade || null,
+            form_name: formName || null,
+            source_label: sourceLabel,
+            notes: mappingNotes || null
+          })
+        });
+        alert(result.message || "Structure mapping saved.");
+        await refreshStructureFromAi();
+      } catch (error) {
+        alert(error.message);
+      }
+    });
+    document.getElementById("saveManualCbcMappingButton")?.addEventListener("click", async () => {
+      const learningArea = String(
+        document.getElementById("manualCbcLearningArea")?.value || learningAreaEl?.value || ""
+      ).trim();
+      const strand = String(document.getElementById("manualCbcStrand")?.value || strandEl?.value || "").trim();
+      const subStrand = String(
+        document.getElementById("manualCbcSubStrand")?.value || subStrandEl?.value || ""
+      ).trim();
+      const notes = String(document.getElementById("manualCbcMappingNotes")?.value || "").trim();
+      if (!learningArea || !strand || !subStrand) {
+        alert("Learning area, strand and sub-strand are required.");
+        return;
+      }
+      try {
+        const result = await request("/api/cbc/curriculum/structure-mappings", {
+          method: "POST",
+          body: JSON.stringify({
+            learning_area: learningArea,
+            strand,
+            sub_strand: subStrand,
+            notes: notes || null,
+            grade: gradeEl?.value || null,
+            form_name: formEl?.value || null,
+            source_label: "Manual Entry"
+          })
+        });
+        alert(result.message || "Manual mapping saved.");
+        await refreshStructureFromAi();
+      } catch (error) {
+        alert(error.message);
+      }
+    });
+    document.getElementById("printCbcNotesButton")?.addEventListener("click", () => {
+      const notes = document.getElementById("cbcNotes")?.value || "";
+      if (!notes.trim()) {
+        alert("No notes to print.");
+        return;
+      }
+      const popup = window.open("", "_blank");
+      popup.document.write(`<pre>${escapeHtml(notes)}</pre>`);
+      popup.document.close();
+      popup.print();
+    });
+    document.getElementById("downloadCbcNotesButton")?.addEventListener("click", () => {
+      const notes = document.getElementById("cbcNotes")?.value || "";
+      if (!notes.trim()) {
+        alert("No notes to download.");
+        return;
+      }
+      const blob = new Blob([notes], { type: "text/plain;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "cbc-cbe-simplified-notes.txt";
+      a.click();
+      URL.revokeObjectURL(url);
+    });
+    document.getElementById("uploadCbcMaterialButton")?.addEventListener("click", async () => {
+      const file = document.getElementById("cbcMaterialFile")?.files?.[0];
+      if (!file) {
+        alert("Select a material file first.");
+        return;
+      }
+      const formData = new FormData();
+      formData.append("file", file);
+      formData.append("grade", gradeEl?.value || "");
+      formData.append("form_name", formEl?.value || "");
+      formData.append("learning_area", learningAreaEl?.value || "");
+      formData.append("strand", strandEl?.value || "");
+      formData.append("sub_strand", subStrandEl?.value || "");
+      formData.append("term", document.getElementById("cbcTerm")?.value || "");
+      formData.append("year", document.getElementById("cbcYear")?.value || "");
+      formData.append("title", file.name);
+      formData.append("description", "Uploaded from CBC/CBE Management Module");
+      formData.append("resource_type", "CBC_CBE_MATERIAL_UPLOAD");
+      const response = await fetch("/api/cbc/curriculum/materials/upload", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+        body: formData
+      });
+      const result = await response.json();
+      if (!response.ok) {
+        alert(result.error || "Upload failed.");
+        return;
+      }
+      alert(result.message || "Material uploaded.");
+      await renderCbcCurriculumEditor();
+    });
+    document.getElementById("amendCbcMaterialButton")?.addEventListener("click", async () => {
+      const materialId = Number(prompt("Enter material ID to amend:") || 0);
+      if (!materialId) return;
+      const title = prompt("New title (leave blank to keep):", "");
+      const description = prompt("New description (leave blank to keep):", "");
+      try {
+        const result = await request(`/api/cbc/curriculum/materials/${materialId}`, {
+          method: "PATCH",
+          body: JSON.stringify({ title, description })
+        });
+        alert(result.message || "Material updated.");
         await renderCbcCurriculumEditor();
       } catch (error) {
         alert(error.message);
@@ -1301,7 +1741,17 @@ function buildDashboardTable(headers, rows) {
         </thead>
         <tbody>
           ${rows
-            .map((row) => `<tr>${row.map((cell) => `<td>${escapeHtml(cell)}</td>`).join("")}</tr>`)
+            .map((row) =>
+              `<tr>${row
+                .map((cell) => {
+                  const value = String(cell ?? "");
+                  const isTrustedHtml =
+                    value.includes('class="search-inline-actions"') ||
+                    value.includes("class='search-inline-actions'");
+                  return `<td>${isTrustedHtml ? value : escapeHtml(value)}</td>`;
+                })
+                .join("")}</tr>`
+            )
             .join("")}
         </tbody>
       </table>
@@ -1835,7 +2285,7 @@ function renderDashboardCards(stats) {
 
 async function loadDashboard() {
   setActiveSidebarButton("dashboard");
-  document.getElementById("moduleTitle").textContent = "Dashboard";
+  document.getElementById("moduleTitle").textContent = "DASHBOARD";
   try {
     const data = await request("/api/dashboard/summary");
     renderDashboardCards(data.stats || {});
@@ -1901,6 +2351,28 @@ async function loadDashboard() {
       `
       )
       .join("");
+    const topAreaEl = document.getElementById("dashboardTopArea");
+    if (topAreaEl) {
+      topAreaEl.innerHTML = `
+        <section class="dashboard-section dashboard-alerts-priority alerts-top-slot">
+          <h3>Alerts & Announcements</h3>
+          <div class="dashboard-alerts-priority-grid">
+            <div class="dashboard-alerts-priority-col">
+              <h4>System Alerts</h4>
+              <div class="dashboard-alerts">
+                ${alertsMarkup || '<p class="small-note">No Active Announcements</p><p class="small-note">There are no active announcements scheduled for today.</p>'}
+              </div>
+            </div>
+            <div class="dashboard-alerts-priority-col">
+              <h4>Active Announcements</h4>
+              <div class="dashboard-announcements">
+                ${announcementMarkup || '<p class="small-note">No active announcements.</p>'}
+              </div>
+            </div>
+          </div>
+        </section>
+      `;
+    }
     const logRows = (data.systemActivityLogs || []).map((row) => [
       formatDateTime(row.created_at),
       row.actor_role || "-",
@@ -1954,17 +2426,6 @@ async function loadDashboard() {
           )}
           <h4>Learners with Outstanding Balances</h4>
           ${buildDashboardTable(["Learner", "Adm No", "Grade", "Stream", "Balance"], outstandingRows)}
-        </section>
-        <section class="dashboard-section">
-          <h3>Alerts & Announcements</h3>
-          <h4>System Alerts</h4>
-          <div class="dashboard-alerts">
-            ${alertsMarkup || '<p class="small-note">No alerts for today.</p>'}
-          </div>
-          <h4>Active Announcements</h4>
-          <div class="dashboard-announcements">
-            ${announcementMarkup || '<p class="small-note">No active announcements.</p>'}
-          </div>
         </section>
         <section class="dashboard-section">
           <h3>System Activity Logs</h3>
@@ -2040,17 +2501,146 @@ async function loadLearnerMaterials() {
   }
 }
 
+function normalizeStatusLabel(value) {
+  return Number(value) === 1 || String(value).toLowerCase() === "active" ? "Active" : "Inactive";
+}
+
+function buildSearchScopeSection(title, headers, rows) {
+  return `
+    <section class="dashboard-section search-scope-table">
+      <h4>${escapeHtml(title)}</h4>
+      ${buildDashboardTable(headers, rows)}
+    </section>
+  `;
+}
+
+function renderSearchActionButtons(scope, row = {}) {
+  const rowId = Number(row?.id || 0);
+  if (!rowId) return "-";
+  return `
+    <div class="search-inline-actions">
+      <button class="search-action-icon view" title="View" onclick="handleSearchRowAction('${escapeHtmlAttribute(scope)}', ${rowId}, 'view')">👁</button>
+      <button class="search-action-icon edit" title="Edit" onclick="handleSearchRowAction('${escapeHtmlAttribute(scope)}', ${rowId}, 'edit')">✎</button>
+      <button class="search-action-icon save" title="Save" onclick="handleSearchRowAction('${escapeHtmlAttribute(scope)}', ${rowId}, 'save')">💾</button>
+      <button class="search-action-icon pdf" title="Download PDF" onclick="handleSearchRowAction('${escapeHtmlAttribute(scope)}', ${rowId}, 'pdf')">📄</button>
+      <button class="search-action-icon print" title="Print" onclick="handleSearchRowAction('${escapeHtmlAttribute(scope)}', ${rowId}, 'print')">🖨</button>
+      <button class="search-action-icon delete" title="Delete" onclick="handleSearchRowAction('${escapeHtmlAttribute(scope)}', ${rowId}, 'delete')">🗑</button>
+    </div>
+  `;
+}
+
+const SEARCH_SCOPE_UPDATE_CONFIG = {
+  learners: { endpoint: "/api/admission/learners" },
+  teachers: { endpoint: "/api/management/teachers" },
+  users: { endpoint: "/api/users" },
+  institutions: { endpoint: "/api/institutions" }
+};
+
+window.handleSearchRowAction = async (scope, rowId, action) => {
+  const numericId = Number(rowId || 0);
+  if (!numericId) {
+    alert("Invalid record id.");
+    return;
+  }
+  const scopeKey = String(scope || "").toLowerCase();
+  try {
+    if (action === "view") {
+      alert(`View ${scopeKey} record #${numericId}`);
+      return;
+    }
+    if (action === "edit") {
+      const value = prompt("Quick edit: enter a display name/full name value", "");
+      if (value === null) return;
+      const config = SEARCH_SCOPE_UPDATE_CONFIG[scopeKey];
+      if (!config) {
+        alert("Edit is not supported for this scope.");
+        return;
+      }
+      const body = scopeKey === "institutions"
+        ? { institution_name: value }
+        : { full_name: value };
+      await request(`${config.endpoint}/${numericId}`, {
+        method: "PUT",
+        body: JSON.stringify(body)
+      });
+      alert("Record updated.");
+      return;
+    }
+    if (action === "save") {
+      alert("Save completed.");
+      return;
+    }
+    if (action === "pdf") {
+      const endpointByScope = {
+        learners: "/api/admission/learners/export/pdf",
+        teachers: "/api/management/teachers/export/pdf",
+        institutions: "/api/system/registry/export/pdf",
+        users: "/api/system/registry/export/pdf",
+        parents: "/api/admission/learners/export/pdf",
+        bom: "/api/users/export/pdf"
+      };
+      const exportUrl = endpointByScope[scopeKey];
+      if (exportUrl) {
+        window.open(exportUrl, "_blank");
+      } else {
+        alert("PDF export is not configured for this scope.");
+      }
+      return;
+    }
+    if (action === "print") {
+      window.print();
+      return;
+    }
+    if (action === "delete") {
+      const ok = window.confirm("Delete selected record?");
+      if (!ok) return;
+      const config = SEARCH_SCOPE_UPDATE_CONFIG[scopeKey];
+      if (!config) {
+        alert("Delete is not supported for this scope.");
+        return;
+      }
+      await request(`${config.endpoint}/${numericId}`, { method: "DELETE" });
+      alert("Record deleted.");
+      return;
+    }
+  } catch (error) {
+    alert(error.message || "Action failed.");
+  }
+};
+
+function normalizeSearchText(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
 async function globalSearch() {
   setActiveSidebarButton(null);
   const q = document.getElementById("globalSearch").value.trim();
-  if (!q) return;
   try {
-    const result = await request(`/api/search/global?q=${encodeURIComponent(q)}`);
-    document.getElementById("moduleTitle").textContent = `Search Results: ${q}`;
+    const scopeElValue = String(document.getElementById("searchScope")?.value || "all");
+    const gradeFilterValue = String(document.getElementById("searchGradeFilter")?.value || "");
+    const classFormFilterValue = String(document.getElementById("searchClassFormFilter")?.value || "");
+    const streamFilterValue = String(document.getElementById("searchStreamFilter")?.value || "");
+    const nameFilterValue = String(document.getElementById("searchNameFilter")?.value || "");
+    const detailsFilterValue = String(document.getElementById("searchDetailsFilter")?.value || "");
+    const params = new URLSearchParams({
+      q,
+      target: scopeElValue,
+      grade: gradeFilterValue,
+      class_form: classFormFilterValue,
+      stream: streamFilterValue,
+      learner_status: "",
+      teacher_category: "",
+      limit: "200"
+    });
+    const result = await request(`/api/search/global?${params.toString()}`);
+    document.getElementById("moduleTitle").textContent = `SEARCH RESULTS: ${q || "ALL"}`;
     const summaryDescription =
-      portalContext?.role === "SYSTEM_DEVELOPER"
+      isSystemDeveloperRole(portalContext?.role)
         ? "Cross-portal search intelligence view."
         : "Search intelligence view for your institution.";
+    const gradeOptions = Array.isArray(meta?.gradeOptions) ? meta.gradeOptions : [];
+    const formOptions = Array.isArray(meta?.formOptions) ? meta.formOptions : [];
+    const classOrFormOptions = Array.from(new Set([...gradeOptions, ...formOptions].filter(Boolean)));
     document.getElementById("cards").innerHTML = `
       <div class="card stats-card">
         <h4>Learners Found</h4>
@@ -2065,6 +2655,7 @@ async function globalSearch() {
         <p>${formatNumber(result.parentsAndBom?.length || 0)}</p>
       </div>
     `;
+    const showInstitutionUserScope = isSystemDeveloperRole(portalContext?.role);
     document.getElementById("formArea").innerHTML = `
       <div class="module-header-card">
         <h3>Global Search Intelligence</h3>
@@ -2086,25 +2677,40 @@ async function globalSearch() {
             <select id="searchScope">
               <option value="all">All</option>
               <option value="learners">Learners</option>
+              <option value="grade">Grade</option>
+              <option value="stream">Stream</option>
               <option value="teachers">Teachers</option>
-              <option value="parents-bom">Parents/BOM</option>
+              <option value="parents">Parents/Guardians</option>
+              <option value="bom">BoM Members</option>
+              ${showInstitutionUserScope ? '<option value="institutions">Institutions</option>' : ""}
+              ${showInstitutionUserScope ? '<option value="users">Users</option>' : ""}
             </select>
           </div>
-          <div>
+          <div id="searchGradeFilterWrap">
             <label for="searchGradeFilter">Grade</label>
-            <input id="searchGradeFilter" placeholder="e.g. Grade 7" />
+            <select id="searchGradeFilter">
+              <option value="">All Grades/Forms</option>
+              ${classOrFormOptions.map((item) => `<option value="${escapeHtml(item)}">${escapeHtml(item)}</option>`).join("")}
+            </select>
           </div>
-          <div>
+          <div id="searchClassFormFilterWrap">
+            <label for="searchClassFormFilter">Class/Form</label>
+            <select id="searchClassFormFilter">
+              <option value="">All Classes/Forms</option>
+              ${classOrFormOptions.map((item) => `<option value="${escapeHtml(item)}">${escapeHtml(item)}</option>`).join("")}
+            </select>
+          </div>
+          <div id="searchStreamFilterWrap">
             <label for="searchStreamFilter">Stream</label>
             <input id="searchStreamFilter" placeholder="e.g. Blue" />
           </div>
           <div>
-            <label for="searchStatusFilter">Status</label>
-            <input id="searchStatusFilter" placeholder="e.g. In Session, Active" />
+            <label for="searchNameFilter">Name</label>
+            <input id="searchNameFilter" placeholder="Search by name" />
           </div>
           <div>
-            <label for="searchRoleFilter">Role</label>
-            <input id="searchRoleFilter" placeholder="e.g. TEACHER, BOM, PARENT" />
+            <label for="searchDetailsFilter">Grade/Form/TSC/ID No</label>
+            <input id="searchDetailsFilter" placeholder="Grade, Form, TSC No, ID No, Admission No" />
           </div>
         </div>
         <div class="actions-row">
@@ -2112,75 +2718,315 @@ async function globalSearch() {
           <button id="clearSearchFiltersButton">Clear Filters</button>
         </div>
       </div>
+      <div id="searchResultsPanels" class="search-results-panels"></div>
     `;
-    const learnersData = Array.isArray(result.learners) ? result.learners : [];
-    const teachersData = Array.isArray(result.teachers) ? result.teachers : [];
-    const parentsBomData = Array.isArray(result.parentsAndBom) ? result.parentsAndBom : [];
-    let combinedRows = [...learnersData, ...teachersData, ...parentsBomData];
-    renderTable(combinedRows);
+    const byNameAsc = (rows = []) =>
+      [...rows].sort((a, b) => {
+        const aKey = String(
+          a.full_name || a.parent_full_name || a.institution_name || a.username || a.learner_name || ""
+        ).toLowerCase();
+        const bKey = String(
+          b.full_name || b.parent_full_name || b.institution_name || b.username || b.learner_name || ""
+        ).toLowerCase();
+        return aKey.localeCompare(bKey);
+      });
+    const learnersData = byNameAsc(Array.isArray(result.learners) ? result.learners : []);
+    const teachersData = byNameAsc(Array.isArray(result.teachers) ? result.teachers : []);
+    const parentsData = byNameAsc(Array.isArray(result.parents) ? result.parents : []);
+    const bomData = byNameAsc(Array.isArray(result.bom) ? result.bom : []);
+    const institutionsData = byNameAsc(Array.isArray(result.institutions) ? result.institutions : []);
+    const usersData = byNameAsc(Array.isArray(result.users) ? result.users : []);
+    resetDataTable("Search results are shown above in separate scope tables.");
+
+    const toggleScopedFilters = () => {
+      const scope = (document.getElementById("searchScope")?.value || "all").toLowerCase();
+      const gradeWrap = document.getElementById("searchGradeFilterWrap");
+      const classFormWrap = document.getElementById("searchClassFormFilterWrap");
+      const streamWrap = document.getElementById("searchStreamFilterWrap");
+      if (gradeWrap) {
+        gradeWrap.style.display = scope === "grade" ? "block" : "none";
+      }
+      if (classFormWrap) {
+        classFormWrap.style.display = scope === "stream" ? "block" : "none";
+      }
+      if (streamWrap) {
+        streamWrap.style.display = scope === "stream" ? "block" : "none";
+      }
+    };
 
     const applyFilters = () => {
       const scope = (document.getElementById("searchScope")?.value || "all").toLowerCase();
       const gradeFilter = (document.getElementById("searchGradeFilter")?.value || "").trim().toLowerCase();
+      const classFormFilter = (document.getElementById("searchClassFormFilter")?.value || "").trim().toLowerCase();
       const streamFilter = (document.getElementById("searchStreamFilter")?.value || "").trim().toLowerCase();
-      const statusFilter = (document.getElementById("searchStatusFilter")?.value || "").trim().toLowerCase();
-      const roleFilter = (document.getElementById("searchRoleFilter")?.value || "").trim().toLowerCase();
-
-      const sourceRows =
-        scope === "learners"
-          ? learnersData
-          : scope === "teachers"
-            ? teachersData
-            : scope === "parents-bom"
-              ? parentsBomData
-              : combinedRows;
-      const filteredRows = sourceRows.filter((row) => {
-        const rowRole = String(row.role || "").toLowerCase();
+      const nameFilter = normalizeSearchText(document.getElementById("searchNameFilter")?.value || "");
+      const detailsFilter = normalizeSearchText(document.getElementById("searchDetailsFilter")?.value || "");
+      const learnersFiltered = learnersData.filter((row) => {
         const rowGrade = String(row.grade || "").toLowerCase();
+        const rowForm = String(row.form_name || "").toLowerCase();
         const rowStream = String(row.stream || "").toLowerCase();
-        const rowStatus = String(row.status || "").toLowerCase();
-        if (gradeFilter && !rowGrade.includes(gradeFilter)) return false;
+        const rowName = normalizeSearchText(row.full_name || "");
+        const rowNumbers = normalizeSearchText(
+          [row.admission_number, row.upi_number, row.assessment_number, row.birth_certificate_number, row.id_number].join(" ")
+        );
+        if (gradeFilter && !rowGrade.includes(gradeFilter) && !rowForm.includes(gradeFilter)) return false;
+        if (classFormFilter && !rowGrade.includes(classFormFilter) && !rowForm.includes(classFormFilter)) return false;
         if (streamFilter && !rowStream.includes(streamFilter)) return false;
-        if (statusFilter && !rowStatus.includes(statusFilter)) return false;
-        if (roleFilter && !rowRole.includes(roleFilter)) return false;
+        if (nameFilter && !rowName.includes(nameFilter)) return false;
+        if (detailsFilter && !`${rowGrade} ${rowForm} ${rowStream} ${rowNumbers}`.includes(detailsFilter)) return false;
         return true;
       });
-      renderTable(filteredRows);
-      if (!filteredRows.length) {
+      const teachersFiltered = teachersData.filter((row) => {
+        const rowName = normalizeSearchText(row.full_name || "");
+        const rowDetails = normalizeSearchText(
+          [row.grade, row.form_name, row.stream, row.tsc_number, row.id_number, row.category].join(" ")
+        );
+        if (nameFilter && !rowName.includes(nameFilter)) return false;
+        if (detailsFilter && !rowDetails.includes(detailsFilter)) return false;
+        return true;
+      });
+      const parentsFiltered = parentsData.filter((row) => {
+        const rowGrade = String(row.grade || "").toLowerCase();
+        const rowForm = String(row.form_name || "").toLowerCase();
+        const rowStream = String(row.stream || "").toLowerCase();
+        const rowName = normalizeSearchText(row.parent_full_name || row.full_name || "");
+        const rowDetails = normalizeSearchText(
+          [row.grade, row.form_name, row.stream, row.parent_phone, row.parent_email].join(" ")
+        );
+        if (gradeFilter && !rowGrade.includes(gradeFilter) && !rowForm.includes(gradeFilter)) return false;
+        if (classFormFilter && !rowGrade.includes(classFormFilter) && !rowForm.includes(classFormFilter)) return false;
+        if (streamFilter && !rowStream.includes(streamFilter)) return false;
+        if (nameFilter && !rowName.includes(nameFilter)) return false;
+        if (detailsFilter && !rowDetails.includes(detailsFilter)) return false;
+        return true;
+      });
+      const bomFiltered = bomData.filter((row) => {
+        const rowName = normalizeSearchText(row.full_name || "");
+        const rowDetails = normalizeSearchText([row.role, row.id_number, row.phone, row.email].join(" "));
+        if (nameFilter && !rowName.includes(nameFilter)) return false;
+        if (detailsFilter && !rowDetails.includes(detailsFilter)) return false;
+        return true;
+      });
+      const institutionsFiltered = institutionsData.filter((row) => {
+        const rowName = normalizeSearchText(row.institution_name || "");
+        const rowDetails = normalizeSearchText([row.institution_code, row.county, row.category].join(" "));
+        if (nameFilter && !rowName.includes(nameFilter)) return false;
+        if (detailsFilter && !rowDetails.includes(detailsFilter)) return false;
+        return true;
+      });
+      const usersFiltered = usersData.filter((row) => {
+        const rowName = normalizeSearchText(row.full_name || row.username || "");
+        const rowDetails = normalizeSearchText([row.role, row.id_number, row.tsc_number, row.institution_id].join(" "));
+        if (nameFilter && !rowName.includes(nameFilter)) return false;
+        if (detailsFilter && !rowDetails.includes(detailsFilter)) return false;
+        return true;
+      });
+      const scopedRows =
+        scope === "learners"
+          ? learnersFiltered
+          : scope === "grade"
+            ? learnersFiltered
+            : scope === "stream"
+              ? learnersFiltered
+              : scope === "teachers"
+                ? teachersFiltered
+                : scope === "parents"
+                  ? parentsFiltered
+                  : scope === "bom"
+                    ? bomFiltered
+                    : scope === "institutions"
+                      ? institutionsFiltered
+                      : scope === "users"
+                        ? usersFiltered
+                        : [
+                            ...learnersFiltered,
+                            ...teachersFiltered,
+                            ...parentsFiltered,
+                            ...bomFiltered,
+                            ...institutionsFiltered,
+                            ...usersFiltered
+                          ];
+      const searchPanels = document.getElementById("searchResultsPanels");
+      if (!searchPanels) return;
+      window.__latestSearchScopeRows = {
+        learners: learnersFiltered,
+        teachers: teachersFiltered,
+        parents: parentsFiltered,
+        bom: bomFiltered,
+        institutions: institutionsFiltered,
+        users: usersFiltered
+      };
+      const sections = [];
+      if (scope === "all" || scope === "learners") {
+        sections.push(buildSearchScopeSection(
+          "Learners",
+          ["Learner Name", "Adm No", "Grade/Form", "Stream", "Status", "Parent/Guardian", "Actions"],
+          learnersFiltered.map((row) => [
+            row.full_name || "-",
+            row.admission_number || "-",
+            row.grade || row.form_name || "-",
+            row.stream || "-",
+            row.status || "-",
+            row.parent_full_name || "-",
+            renderSearchActionButtons("learners", row)
+          ])
+        ));
+      }
+      if (scope === "grade") {
+        sections.push(buildSearchScopeSection(
+          `Learners By Grade${gradeFilter ? ` (${gradeFilterValue})` : ""}`,
+          ["Learner Name", "Adm No", "Grade/Form", "Stream", "Status", "Actions"],
+          learnersFiltered.map((row) => [
+            row.full_name || "-",
+            row.admission_number || "-",
+            row.grade || row.form_name || "-",
+            row.stream || "-",
+            row.status || "-",
+            renderSearchActionButtons("learners", row)
+          ])
+        ));
+      }
+      if (scope === "stream") {
+        sections.push(buildSearchScopeSection(
+          "Learners By Stream",
+          ["Learner Name", "Adm No", "Class/Form", "Stream", "Status", "Actions"],
+          learnersFiltered.map((row) => [
+            row.full_name || "-",
+            row.admission_number || "-",
+            row.grade || row.form_name || "-",
+            row.stream || "-",
+            row.status || "-",
+            renderSearchActionButtons("learners", row)
+          ])
+        ));
+      }
+      if (scope === "all" || scope === "teachers") {
+        sections.push(buildSearchScopeSection(
+          "Teachers",
+          ["Teacher Name", "TSC/ID", "Learning Area", "Category", "Contact", "Status", "Actions"],
+          teachersFiltered.map((row) => [
+            row.full_name || "-",
+            row.tsc_number || row.id_number || "-",
+            row.major_subject || row.other_subject || "-",
+            row.category || row.employment_status || "-",
+            row.phone_number || row.phone || "-",
+            row.status || row.accountability_status || "-",
+            renderSearchActionButtons("teachers", row)
+          ])
+        ));
+      }
+      if (scope === "all" || scope === "parents") {
+        sections.push(buildSearchScopeSection(
+          "Parents/Guardians",
+          ["Parent/Guardian", "Phone", "Email", "Learner", "Grade/Form", "Stream", "Actions"],
+          parentsFiltered.map((row) => [
+            row.parent_full_name || "-",
+            row.parent_phone || "-",
+            row.parent_email || "-",
+            row.full_name || "-",
+            row.grade || row.form_name || "-",
+            row.stream || "-",
+            renderSearchActionButtons("parents", row)
+          ])
+        ));
+      }
+      if (scope === "all" || scope === "bom") {
+        sections.push(buildSearchScopeSection(
+          "BoM Members",
+          ["Name", "Username", "Role", "Phone", "Email", "Status", "Actions"],
+          bomFiltered.map((row) => [
+            row.full_name || "-",
+            row.username || "-",
+            formatRoleDisplay(row.role || ""),
+            row.phone || "-",
+            row.email || "-",
+            normalizeStatusLabel(row.is_active),
+            renderSearchActionButtons("bom", row)
+          ])
+        ));
+      }
+      if (showInstitutionUserScope && (scope === "all" || scope === "institutions")) {
+        sections.push(buildSearchScopeSection(
+          "Institutions",
+          ["Institution Name", "Code", "County", "Category", "Email", "Phone", "Status", "Actions"],
+          institutionsFiltered.map((row) => [
+            row.institution_name || "-",
+            row.institution_code || "-",
+            row.county || "-",
+            row.category || "-",
+            row.email || "-",
+            row.phone || "-",
+            normalizeStatusLabel(row.is_active),
+            renderSearchActionButtons("institutions", row)
+          ])
+        ));
+      }
+      if (showInstitutionUserScope && (scope === "all" || scope === "users")) {
+        sections.push(buildSearchScopeSection(
+          "Users",
+          ["Full Name", "Username", "Role", "Institution ID", "Email", "Phone", "Status", "Actions"],
+          usersFiltered.map((row) => [
+            row.full_name || "-",
+            row.username || "-",
+            formatRoleDisplay(row.role || ""),
+            row.institution_id || "-",
+            row.email || "-",
+            row.phone || "-",
+            normalizeStatusLabel(row.is_active),
+            renderSearchActionButtons("users", row)
+          ])
+        ));
+      }
+      if (!showInstitutionUserScope && (scope === "institutions" || scope === "users")) {
+        sections.push('<section class="dashboard-section search-scope-table"><h4>Access Denied</h4><p class="small-note">Institutions and Users search scopes are available to the System Developer only.</p></section>');
+      }
+      searchPanels.innerHTML = sections.length
+        ? sections.join("")
+        : '<section class="dashboard-section search-scope-table"><h4>No Results</h4><p class="small-note">No records match your selected filters.</p></section>';
+      if (!scopedRows.length) {
         resetDataTable("No records match your selected filters.");
       }
     };
 
+    const scopeEl = document.getElementById("searchScope");
+    if (scopeEl) {
+      scopeEl.value = scopeElValue || "all";
+      scopeEl.addEventListener("change", toggleScopedFilters);
+    }
+    const gradeFilterEl = document.getElementById("searchGradeFilter");
+    if (gradeFilterEl) gradeFilterEl.value = gradeFilterValue;
+    const classFormFilterEl = document.getElementById("searchClassFormFilter");
+    if (classFormFilterEl) classFormFilterEl.value = classFormFilterValue;
+    const streamFilterEl = document.getElementById("searchStreamFilter");
+    if (streamFilterEl) streamFilterEl.value = streamFilterValue;
+    const nameFilterEl = document.getElementById("searchNameFilter");
+    if (nameFilterEl) nameFilterEl.value = nameFilterValue;
+    const detailsFilterEl = document.getElementById("searchDetailsFilter");
+    if (detailsFilterEl) detailsFilterEl.value = detailsFilterValue;
+    toggleScopedFilters();
+
     document.getElementById("applySearchFiltersButton")?.addEventListener("click", applyFilters);
     document.getElementById("clearSearchFiltersButton")?.addEventListener("click", () => {
-      ["searchGradeFilter", "searchStreamFilter", "searchStatusFilter", "searchRoleFilter"].forEach((id) => {
+      ["searchGradeFilter", "searchClassFormFilter", "searchStreamFilter", "searchNameFilter", "searchDetailsFilter"].forEach((id) => {
         const el = document.getElementById(id);
         if (el) el.value = "";
       });
       const scopeEl = document.getElementById("searchScope");
       if (scopeEl) scopeEl.value = "all";
-      renderTable(combinedRows);
+      resetDataTable("Search results are shown above in separate scope tables.");
+      toggleScopedFilters();
+      applyFilters();
     });
+    applyFilters();
   } catch (error) {
     alert(error.message);
   }
 }
 
 async function changeCredentials() {
-  const currentPassword = prompt("Enter current password:");
-  if (!currentPassword) return;
-  const newUsername = prompt("Enter new username (optional):") || null;
-  const newPassword = prompt("Enter new password (optional):") || null;
   try {
-    await request("/api/profile/change-credentials", {
-      method: "POST",
-      body: JSON.stringify({
-        current_password: currentPassword,
-        new_username: newUsername,
-        new_password: newPassword
-      })
-    });
-    alert("Credentials updated successfully.");
+    const profile = await request("/api/profile");
+    renderProfileCenter(profile || {});
   } catch (error) {
     alert(error.message);
   }
@@ -2258,7 +3104,14 @@ function bindTopbarButtons() {
   });
   document
     .getElementById("changeCredentialsButton")
-    .addEventListener("click", changeCredentials);
+    .addEventListener("click", async () => {
+      try {
+        const profile = await request("/api/profile");
+        renderProfileCenter(profile || {});
+      } catch (error) {
+        alert(error.message);
+      }
+    });
   const heroButton = document.getElementById("updateHeroImageButton");
   const heroInput = document.getElementById("heroImageInput");
   const canManageHeroImage = ["SYSTEM_DEVELOPER", "ADMIN", "HEAD_OF_INSTITUTION"].includes(
@@ -2292,6 +3145,105 @@ function bindTopbarButtons() {
       }
     });
   }
+}
+
+function renderProfileCenter(profile) {
+  const roleLabel = formatDashboardRoleLabel(profile?.role || "");
+  document.getElementById("moduleTitle").textContent = "Profile";
+  document.getElementById("cards").innerHTML = `
+    <div class="card stats-card metric-emphasis">
+      <h4>Profile Center</h4>
+      <p>Manage your account securely</p>
+    </div>
+    <div class="card stats-card">
+      <h4>Institution</h4>
+      <p>${escapeHtml(profile?.institution_name || "-")}</p>
+    </div>
+    <div class="card stats-card">
+      <h4>Role</h4>
+      <p>${escapeHtml(roleLabel || "-")}</p>
+    </div>
+  `;
+  document.getElementById("formArea").innerHTML = `
+    <div class="profile-center-grid">
+      <div class="profile-card">
+        <h3>${escapeHtml(profile?.full_name || "-")}</h3>
+        <p><strong>Email:</strong> ${escapeHtml(profile?.email || "-")}</p>
+        <p><strong>Mobile:</strong> ${escapeHtml(profile?.phone || "-")}</p>
+        <p><strong>Institution:</strong> ${escapeHtml(profile?.institution_name || "-")}</p>
+        <p><strong>Role:</strong> ${escapeHtml(roleLabel || "-")}</p>
+      </div>
+      <div class="profile-edit-card">
+        <h3>Update Contacts / Password</h3>
+        <p class="small-note">Use OTP channel (Email/SMS) for verification where required.</p>
+        <div class="form-grid">
+          <label>OTP Channel</label>
+          <select id="profileOtpChannel">
+            <option value="email">Email</option>
+            <option value="sms">SMS</option>
+          </select>
+          <label>Previous Password</label>
+          <input id="profileCurrentPassword" type="password" placeholder="Previous password" />
+          <label>Current Password</label>
+          <input id="profileNewPassword" type="password" placeholder="Current password" />
+          <label>Confirm Current Password</label>
+          <input id="profileConfirmPassword" type="password" placeholder="Confirm current password" />
+          <label>New Email</label>
+          <input id="profileNewEmail" type="email" placeholder="Email" value="${escapeHtmlAttribute(profile?.email || "")}" />
+          <label>New Mobile Number</label>
+          <input id="profileNewPhone" placeholder="Mobile number" value="${escapeHtmlAttribute(profile?.phone || "")}" />
+          <label>OTP Code</label>
+          <input id="profileOtpCode" placeholder="Enter OTP when requested" />
+        </div>
+        <div class="actions-row">
+          <button id="requestProfileOtpButton">Request OTP</button>
+          <button id="saveProfileButton">Save Profile Updates</button>
+        </div>
+      </div>
+    </div>
+  `;
+  resetDataTable("Profile information is shown above.");
+  document.getElementById("requestProfileOtpButton")?.addEventListener("click", async () => {
+    try {
+      const otpChannel = String(document.getElementById("profileOtpChannel")?.value || "email");
+      const result = await request("/api/profile/request-update-otp", {
+        method: "POST",
+        body: JSON.stringify({
+          update_type: "profile_update",
+          otp_channel: otpChannel
+        })
+      });
+      alert(result.message || "OTP requested.");
+    } catch (error) {
+      alert(error.message);
+    }
+  });
+  document.getElementById("saveProfileButton")?.addEventListener("click", async () => {
+    const currentPassword = String(document.getElementById("profileCurrentPassword")?.value || "");
+    const newPassword = String(document.getElementById("profileNewPassword")?.value || "");
+    const confirmPassword = String(document.getElementById("profileConfirmPassword")?.value || "");
+    if (newPassword && newPassword !== confirmPassword) {
+      alert("Password confirmation does not match.");
+      return;
+    }
+    try {
+      const result = await request("/api/profile/update", {
+        method: "POST",
+        body: JSON.stringify({
+          current_password: currentPassword || null,
+          new_password: newPassword || null,
+          email: String(document.getElementById("profileNewEmail")?.value || "").trim() || null,
+          phone: String(document.getElementById("profileNewPhone")?.value || "").trim() || null,
+          otp_code: String(document.getElementById("profileOtpCode")?.value || "").trim() || null
+        })
+      });
+      alert(result.message || "Profile updated successfully.");
+      const refreshed = await request("/api/profile");
+      renderProfileCenter(refreshed || profile);
+    } catch (error) {
+      alert(error.message);
+    }
+  });
 }
 
 function bindQuickActionCards() {
@@ -2344,6 +3296,31 @@ function bindQuickActionCards() {
   });
 }
 
+function formatRoleDisplay(role) {
+  const value = String(role || "").trim().toUpperCase();
+  const map = {
+    SYSTEM_DEVELOPER: "SYSTEM DEVELOPER",
+    ADMIN: "HoI/Administrator",
+    HEAD_OF_INSTITUTION: "HoI/Administrator",
+    TEACHER: "Teacher",
+    SENIOR_TEACHER: "Senior Teacher",
+    HEAD_OF_DEPARTMENT: "Head of Department",
+    BOM: "BoM Member",
+    PARENT: "Parent/Guardian",
+    NON_TEACHING_STAFF: "Support Staff",
+    SUPPLIER: "Supplier",
+    CONTRACTOR: "Contractor",
+    MOD: "MoE",
+    TSC: "TSC"
+  };
+  return map[value] || String(role || "-");
+}
+
+// Backward compatibility for older cached dashboard bundles.
+function toRoleLabel(role) {
+  return formatRoleDisplay(role);
+}
+
 async function init() {
   try {
     [meta] = await Promise.all([request("/api/meta")]);
@@ -2351,7 +3328,11 @@ async function init() {
     portalContext = portalData || null;
     allowedModules = Array.isArray(portalData?.allowed_modules) ? portalData.allowed_modules : [];
     const meData = await request("/api/auth/me");
-    document.getElementById("portalLabel").textContent = `${portalData.portal} (${portalData.role})`;
+    const institutionName = String(
+      meData?.institution_name || portalData?.institution_name || "Institution"
+    ).trim();
+    const roleLabel = formatRoleDisplay(portalData?.role || meData?.role || "");
+    document.getElementById("portalLabel").textContent = `${institutionName} (${roleLabel})`;
     const buildLineEl = document.getElementById("iimsBuildLineDash");
     if (buildLineEl) {
       fetch("/api/build-info")

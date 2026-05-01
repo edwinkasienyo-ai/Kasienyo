@@ -24,19 +24,17 @@
     <link rel="icon" type="image/jpeg" href="/uploads/index-hero.jpg?v=20260411" />
     <link rel="apple-touch-icon" href="/uploads/index-hero.jpg?v=20260411" />
     <link rel="manifest" href="/site.webmanifest" />
-    <link rel="stylesheet" href="/styles.css?v=20" />
+    <link rel="stylesheet" href="/styles.css?v=29" />
   </head>
   <body class="dashboard-page">
     <div class="app-shell">
       <aside class="sidebar">
         <div class="sidebar-header">
           <div class="sidebar-brand">
-            <h2>IIMS SYSTEM</h2>
-            <p>Integrated Management Information System</p>
+            <h2>IMIS SYSTEM</h2>
+            <p>Integrated Management Information System For Basic Education Learning Institutions</p>
           </div>
           <p id="portalLabel" class="portal-label">Portal</p>
-          <p id="iimsBuildLineDash" class="iims-build-line" aria-live="polite"></p>
-          <p class="sidebar-static-version">Static UI v20 — System Admin is directly under Dashboard</p>
         </div>
         <div class="sidebar-scroll">
           <div class="nav-group-label">Core</div>
@@ -47,7 +45,7 @@
           <button data-module="system-audit">Security & Logging Audit</button>
           <button data-module="system-registry">Institutions & Users Registry</button>
           <button data-module="system-recycle-bin">Recycle Bin</button>
-          <button data-module="system-cbc-editor">CBC Curriculum Editor</button>
+          <button data-module="system-cbc-editor">CBC/CBE Management Module</button>
           <div class="nav-group-label">Management & Academics</div>
           <button data-module="admission">Admission</button>
           <button data-module="attendance">Attendance Management</button>
@@ -78,58 +76,38 @@
       </aside>
 
       <main class="main-content">
-        <header class="topbar">
-          <div class="topbar-left">
-            <h1 id="moduleTitle">Dashboard</h1>
-            <p id="passwordExpiryNotice" class="small-note"></p>
-          </div>
-          <div class="topbar-right">
-            <input id="globalSearch" placeholder="Global search by learner/teacher/parent..." />
-            <button id="searchButton">Search</button>
-            <button id="updateHeroImageButton">Update Login Hero Image</button>
-            <button id="changeCredentialsButton">Change Credentials</button>
-            <input
-              id="heroImageInput"
-              type="file"
-              accept="image/jpeg,image/png,image/webp,image/gif,image/avif"
-              hidden
-            />
-          </div>
-        </header>
+        <div id="dashboardFixedHeader" class="dashboard-fixed-header">
+          <section id="dashboardWelcomeTop" class="dashboard-hero dashboard-welcome-top">
+            <div>
+              <h3 id="dashboardWelcomeLine">WELCOME</h3>
+              <p class="small-note">Monitor academics, attendance, finance, alerts, and activity in one place.</p>
+            </div>
+            <div id="dashboardWelcomeMeta" class="dashboard-hero-meta"></div>
+          </section>
 
-        <section class="dashboard-toolbar">
-          <div class="quick-action-grid">
-            <button class="quick-action-card" data-module="dashboard" type="button">
-              <h4>Overview</h4>
-              <p>Monitor live institution insights</p>
-            </button>
-            <button class="quick-action-card" data-module="admission" type="button">
-              <h4>Admissions</h4>
-              <p>Manage learner onboarding records</p>
-            </button>
-            <button class="quick-action-card" data-module="attendance" type="button">
-              <h4>Attendance</h4>
-              <p>Track daily class and staff presence</p>
-            </button>
-            <button class="quick-action-card" data-module="finance-fee-payments" type="button">
-              <h4>Finance</h4>
-              <p>Review fee collection and balances</p>
-            </button>
-            <button class="quick-action-card" data-module="communication-messages" type="button">
-              <h4>Communication</h4>
-              <p>Dispatch messages and open chat</p>
-            </button>
-            <button class="quick-action-card" data-module="laws" type="button">
-              <h4>Policies</h4>
-              <p>Access laws and governance files</p>
-            </button>
-          </div>
-        </section>
-
+          <header class="topbar">
+            <div class="topbar-left">
+              <h1 id="moduleTitle">Dashboard</h1>
+              <p id="passwordExpiryNotice" class="small-note"></p>
+            </div>
+            <div class="topbar-right">
+              <input id="globalSearch" placeholder="Global search by learner/teacher/parent..." />
+              <button id="searchButton">Search</button>
+              <button id="updateHeroImageButton">Update Login Hero Image</button>
+              <button id="changeCredentialsButton">Profile</button>
+              <input
+                id="heroImageInput"
+                type="file"
+                accept="image/jpeg,image/png,image/webp,image/gif,image/avif"
+                hidden
+              />
+            </div>
+          </header>
+        </div>
+        <section id="dashboardTopArea"></section>
         <section id="cards" class="cards"></section>
         <section id="formArea" class="form-area"></section>
         <section class="table-area">
-          <p class="table-hint">Module records are displayed below with quick edit and export actions.</p>
           <table id="dataTable">
             <thead id="tableHead"></thead>
             <tbody id="tableBody"></tbody>
@@ -138,6 +116,6 @@
       </main>
     </div>
 
-    <script src="/dashboard.js?v=20"></script>
+    <script src="/dashboard.js?v=29"></script>
   </body>
 </html>

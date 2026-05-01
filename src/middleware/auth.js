@@ -41,7 +41,7 @@ function auth(req, res, next) {
     }
 
     return query(
-      `SELECT password_last_changed_at, password_expires_at, must_change_password,
+      `SELECT password_last_changed_at, password_expires_at, must_change_password, is_suspended, suspension_reason,
               DATEDIFF(password_expires_at, NOW()) AS days_remaining
        FROM users
        WHERE id = ? AND institution_id = ?
@@ -49,8 +49,20 @@ function auth(req, res, next) {
       [payload.id, payload.institution_id]
     )
       .then((rows) => {
-        if (!rows.length) return next();
+        if (!rows.length) {
+          return res.status(403).json({ error: "Account is not active. Kindly contact the System Developer." });
+        }
         const row = rows[0];
+        if (Number(row.is_suspended || 0) === 1) {
+          return res.status(403).json({
+            error: "You are suspended. Kindly contact the System Developer.",
+            suspension_reason: row.suspension_reason || null,
+            support: {
+              email: process.env.SYSTEM_DEVELOPER_EMAIL || null,
+              phone: process.env.SYSTEM_DEVELOPER_PHONE || null
+            }
+          });
+        }
         const expiry = row.password_expires_at ? dayjs(row.password_expires_at) : null;
         const daysRemaining = Number(row.days_remaining ?? NaN);
         if (expiry && expiry.isValid() && expiry.isBefore(dayjs())) {

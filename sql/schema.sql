@@ -7,12 +7,34 @@ CREATE TABLE IF NOT EXISTS institutions (
   institution_code VARCHAR(100) NOT NULL UNIQUE,
   email VARCHAR(255) NULL,
   phone VARCHAR(50) NULL,
+  is_active TINYINT(1) NOT NULL DEFAULT 1,
+  is_suspended TINYINT(1) NOT NULL DEFAULT 0,
+  deactivation_reason VARCHAR(255) NULL,
+  suspension_reason VARCHAR(255) NULL,
   county VARCHAR(100) NULL,
   sub_county VARCHAR(100) NULL,
   location VARCHAR(100) NULL,
+  postal_address VARCHAR(255) NULL,
+  agreement_template_text TEXT NULL,
+  agreement_template_file_url VARCHAR(255) NULL,
   village VARCHAR(100) NULL,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS institution_agreement_templates (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  institution_id BIGINT NULL,
+  template_name VARCHAR(180) NOT NULL,
+  file_name VARCHAR(255) NULL,
+  file_path VARCHAR(255) NULL,
+  mime_type VARCHAR(120) NULL,
+  template_text LONGTEXT NULL,
+  is_active TINYINT(1) NOT NULL DEFAULT 1,
+  created_by_user_id BIGINT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  CONSTRAINT fk_agreement_template_institution FOREIGN KEY (institution_id) REFERENCES institutions(id)
 );
 
 CREATE TABLE IF NOT EXISTS users (
@@ -27,6 +49,9 @@ CREATE TABLE IF NOT EXISTS users (
   role VARCHAR(60) NOT NULL,
   email VARCHAR(255) NULL,
   phone VARCHAR(50) NULL,
+  is_suspended TINYINT(1) NOT NULL DEFAULT 0,
+  deactivation_reason VARCHAR(255) NULL,
+  suspension_reason VARCHAR(255) NULL,
   failed_login_attempts INT NOT NULL DEFAULT 0,
   locked_until DATETIME NULL,
   last_failed_login_at DATETIME NULL,
@@ -43,10 +68,11 @@ CREATE TABLE IF NOT EXISTS user_module_access_overrides (
   institution_id BIGINT NOT NULL,
   user_id BIGINT NOT NULL,
   module_key VARCHAR(120) NOT NULL,
+  permission_key VARCHAR(60) NOT NULL DEFAULT 'ACCESS',
   can_access TINYINT(1) NOT NULL DEFAULT 1,
   created_by_user_id BIGINT NULL,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  INDEX idx_user_module_override_lookup (user_id, module_key, created_at),
+  INDEX idx_user_module_override_lookup (user_id, module_key, permission_key, created_at),
   CONSTRAINT fk_user_module_overrides_institution FOREIGN KEY (institution_id) REFERENCES institutions(id),
   CONSTRAINT fk_user_module_overrides_user FOREIGN KEY (user_id) REFERENCES users(id)
 );
@@ -72,6 +98,7 @@ CREATE TABLE IF NOT EXISTS cbc_curriculum_entries (
   id BIGINT PRIMARY KEY AUTO_INCREMENT,
   institution_id BIGINT NOT NULL,
   grade VARCHAR(60) NOT NULL,
+  form_name VARCHAR(60) NULL,
   learning_area VARCHAR(180) NOT NULL,
   strand VARCHAR(180) NOT NULL,
   sub_strand VARCHAR(180) NULL,
@@ -88,6 +115,23 @@ CREATE TABLE IF NOT EXISTS cbc_curriculum_entries (
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   INDEX idx_cbc_curriculum_inst_lookup (institution_id, grade, learning_area, term, year),
   CONSTRAINT fk_cbc_curriculum_institution FOREIGN KEY (institution_id) REFERENCES institutions(id)
+);
+
+CREATE TABLE IF NOT EXISTS cbc_structure_mappings (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  institution_id BIGINT NOT NULL,
+  learning_area VARCHAR(180) NOT NULL,
+  strand VARCHAR(180) NOT NULL,
+  sub_strand VARCHAR(180) NOT NULL,
+  notes TEXT NULL,
+  grade VARCHAR(60) NULL,
+  form_name VARCHAR(60) NULL,
+  source_label VARCHAR(120) NULL,
+  created_by_user_id BIGINT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  INDEX idx_cbc_mapping_lookup (institution_id, learning_area, grade, form_name, strand),
+  CONSTRAINT fk_cbc_mapping_institution FOREIGN KEY (institution_id) REFERENCES institutions(id)
 );
 
 CREATE TABLE IF NOT EXISTS otp_sessions (
