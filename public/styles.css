@@ -189,6 +189,18 @@ select:disabled {
   color: #4a6279 !important;
 }
 
+.step1-index-fingerprint {
+  margin: 0 0 6px !important;
+  padding: 5px 8px !important;
+  border-radius: 8px !important;
+  font-size: 11px !important;
+  font-weight: 700 !important;
+  line-height: 1.35 !important;
+  color: #0b3d62 !important;
+  background: linear-gradient(92deg, #e6f7ff 0%, #cceeff 45%, #a8dcf5 100%) !important;
+  border: 1px solid rgba(15, 80, 120, 0.28) !important;
+}
+
 .login-left h1 {
   margin-bottom: 8px;
   color: #ffe082;

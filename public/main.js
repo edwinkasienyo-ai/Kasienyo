@@ -35,7 +35,7 @@ async function loadBuildStampLogin() {
     }
     const data = response.ok ? await response.json() : null;
     const stamp = data?.build_stamp || "unknown";
-    el.textContent = `Release: ${stamp} · UI v32 — index layout, OTP parallel dispatch, inline legal dialogs.`;
+    el.textContent = `Release: ${stamp} · UI v34 STEP1 index — CDN must match / api/build-info.`;
   } catch (_) {
     el.textContent =
       "Could not load release info. Ensure Node is running from your updated project (e.g. BASIC EDUCATION) and try again.";
