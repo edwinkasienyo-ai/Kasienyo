@@ -1,7 +1,7 @@
 require("dotenv").config();
 const app = require("./app");
 
-const IIMS_BUILD_STAMP = process.env.IIMS_BUILD_STAMP || "ui-deploy-rev40";
+const IIMS_BUILD_STAMP = process.env.IIMS_BUILD_STAMP || "ui-deploy-rev41";
 const { query } = require("./config/db");
 const { hashPassword } = require("./utils/password");
 const { ROLES } = require("./config/constants");
@@ -978,6 +978,67 @@ CREATE TABLE IF NOT EXISTS bom_profiles (
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   INDEX idx_bom_institution (institution_id, full_name),
   CONSTRAINT fk_bom_profiles_institution FOREIGN KEY (institution_id) REFERENCES institutions(id)
+)`);
+
+  await query(`
+CREATE TABLE IF NOT EXISTS institution_streams (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  institution_id BIGINT NOT NULL,
+  grade_or_form VARCHAR(60) NULL,
+  stream_name VARCHAR(120) NOT NULL,
+  is_active TINYINT(1) NOT NULL DEFAULT 1,
+  created_by_user_id VARCHAR(100) NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY uq_stream_per_institution (institution_id, grade_or_form, stream_name),
+  INDEX idx_stream_institution (institution_id, is_active),
+  CONSTRAINT fk_stream_institution FOREIGN KEY (institution_id) REFERENCES institutions(id)
+)`);
+
+  await query(`
+CREATE TABLE IF NOT EXISTS teacher_timetable (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  institution_id BIGINT NOT NULL,
+  teacher_profile_id BIGINT NOT NULL,
+  teacher_name VARCHAR(255) NULL,
+  timetable_category VARCHAR(60) NOT NULL DEFAULT 'Normal Lesson',
+  term VARCHAR(30) NULL,
+  grade VARCHAR(60) NULL,
+  stream VARCHAR(60) NULL,
+  learning_area VARCHAR(120) NULL,
+  day_of_week VARCHAR(20) NULL,
+  lesson_order INT NULL,
+  start_time TIME NULL,
+  end_time TIME NULL,
+  lessons_per_week INT NULL,
+  is_manual_time TINYINT(1) NOT NULL DEFAULT 0,
+  notes VARCHAR(255) NULL,
+  generated_by_user_id VARCHAR(100) NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  INDEX idx_timetable_teacher (institution_id, teacher_profile_id),
+  INDEX idx_timetable_day (institution_id, day_of_week, start_time),
+  CONSTRAINT fk_timetable_institution FOREIGN KEY (institution_id) REFERENCES institutions(id)
+)`);
+
+  await query(`
+CREATE TABLE IF NOT EXISTS learner_discipline_records (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  institution_id BIGINT NOT NULL,
+  learner_id BIGINT NULL,
+  learner_name VARCHAR(255) NULL,
+  grade VARCHAR(60) NULL,
+  stream VARCHAR(60) NULL,
+  category VARCHAR(160) NOT NULL,
+  custom_breach VARCHAR(255) NULL,
+  occurred_at DATETIME NULL,
+  other_persons_involved VARCHAR(255) NULL,
+  action_taken TEXT NULL,
+  recorded_by_user_id VARCHAR(100) NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  INDEX idx_discipline_institution (institution_id, grade, stream),
+  CONSTRAINT fk_discipline_institution FOREIGN KEY (institution_id) REFERENCES institutions(id)
 )`);
 }
 

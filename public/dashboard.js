@@ -10,7 +10,7 @@ let allowedModules = [];
 let portalContext = null;
 let searchRowDrafts = {};
 let dashboardAutoRefreshHandle = null;
-const CLIENT_UI_BUNDLE_ID = "dash-bundle-rev40";
+const CLIENT_UI_BUNDLE_ID = "dash-bundle-rev41";
 const DASHBOARD_STAT_LABELS = {
   totalLearners: "Total Learners Population",
   totalActiveLearners: "Active Learners",
@@ -4167,7 +4167,9 @@ const STAFF_HUB_ROLE_BY_MODULE = {
   "management-teachers": "TEACHER",
   "management-non-teaching": "NON_TEACHING_STAFF",
   "management-bom": "BOM",
-  "management-service-providers": "SUPPLIER"
+  "management-service-providers": "SUPPLIER",
+  "management-teacher-timetable": null,
+  "management-learner-discipline": null
 };
 
 function attachPostalCodeTownHelper(scopeEl) {
@@ -4209,10 +4211,12 @@ async function renderStaffServiceHub() {
   `;
 
   const categories = [
-    { key: "management-teachers", label: "Teacher" },
-    { key: "management-non-teaching", label: "Support Staff" },
+    { key: "management-teachers", label: "Teacher Profile" },
+    { key: "management-teacher-timetable", label: "Teacher Timetable" },
+    { key: "management-non-teaching", label: "Support Staff Profile" },
     { key: "management-bom", label: "BoM Member" },
-    { key: "management-service-providers", label: "Service Provider" }
+    { key: "management-learner-discipline", label: "Learners Disciplinary Record" },
+    { key: "management-service-providers", label: "Service Provider Profile" }
   ];
 
   document.getElementById("formArea").innerHTML = `
@@ -4235,11 +4239,19 @@ async function renderStaffServiceHub() {
   const catSelect = document.getElementById("staffHubCategorySelect");
 
   const mountCategory = (key) => {
-    if (!mount || !moduleConfigs[key]) return;
     currentEditId = null;
     document.getElementById("tableHead").innerHTML = "";
     document.getElementById("tableBody").innerHTML = "";
     currentModule = key;
+    if (key === "management-teacher-timetable") {
+      renderTeacherTimetableHub(mount);
+      return;
+    }
+    if (key === "management-learner-discipline") {
+      renderLearnerDisciplineHub(mount);
+      return;
+    }
+    if (!mount || !moduleConfigs[key]) return;
     renderCrudModule(key, { container: mount, preserveCards: true });
     setTimeout(() => {
       attachPostalCodeTownHelper(mount);
@@ -4290,6 +4302,267 @@ async function renderStaffServiceHub() {
 
   catSelect?.addEventListener("change", () => mountCategory(catSelect.value));
   mountCategory(catSelect?.value || "management-teachers");
+}
+
+async function renderTeacherTimetableHub(mount) {
+  if (!mount) return;
+  mount.innerHTML = `
+    <div class="module-header-card">
+      <h3>Teacher Timetable</h3>
+      <p class="small-note">
+        Select a teacher, enter term/grade/learning area and number of lessons. Optionally pin specific lessons to fixed times; the scheduler fills the rest avoiding clashes, distributing across Mon–Fri.
+      </p>
+    </div>
+    <div class="form-grid">
+      <label>Timetable Category</label>
+      <select id="ttCategory">
+        <option>Normal Lesson</option>
+        <option>Remedial</option>
+        <option>Other</option>
+      </select>
+      <label>Teacher Profile ID</label>
+      <input id="ttTeacherId" type="number" placeholder="Numeric teacher_profile id (see Teacher Profile list)" />
+      <label>Teacher Name</label>
+      <input id="ttTeacherName" placeholder="Teacher name" />
+      <label>Term</label>
+      <select id="ttTerm">
+        <option>Term One</option>
+        <option>Term Two</option>
+        <option>Term Three</option>
+      </select>
+      <label>Grade / Form</label>
+      <input id="ttGrade" placeholder="e.g. Grade 7 or Form 3" />
+      <label>Stream</label>
+      <input id="ttStream" placeholder="Optional (e.g. Blue)" />
+      <label>Learning Area</label>
+      <input id="ttLearningArea" placeholder="e.g. Mathematics" />
+      <label>Lessons per Week</label>
+      <input id="ttLessons" type="number" min="1" max="40" value="5" />
+      <label>Default Lesson Start</label>
+      <input id="ttStart" type="time" value="08:00" />
+      <label>Default Lesson End</label>
+      <input id="ttEnd" type="time" value="08:40" />
+      <label>Pin specific lessons?</label>
+      <select id="ttManualToggle">
+        <option value="no">No</option>
+        <option value="yes">Yes</option>
+      </select>
+    </div>
+    <div id="ttManualSection" hidden class="dashboard-section">
+      <h4>Pinned lessons</h4>
+      <p class="small-note">Use <strong>+ Add pinned lesson</strong>. Each pin sets a fixed day and start time.</p>
+      <div id="ttManualRows"></div>
+      <button type="button" id="ttAddManual">+ Add pinned lesson</button>
+    </div>
+    <div class="actions-row">
+      <button id="ttGenerateButton" class="success">Process &amp; Generate Timetable</button>
+      <button id="ttReloadButton">View / Refresh</button>
+    </div>
+    <div id="ttResultHolder"></div>
+  `;
+
+  const manualRows = mount.querySelector("#ttManualRows");
+  const addManualRow = () => {
+    const idx = manualRows.children.length;
+    const row = document.createElement("div");
+    row.className = "form-grid";
+    row.innerHTML = `
+      <label>Pinned #${idx + 1} Day</label>
+      <select class="tt-manual-day">
+        ${["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"].map((d) => `<option>${d}</option>`).join("")}
+      </select>
+      <label>Start</label>
+      <input type="time" class="tt-manual-start" value="08:00" />
+      <label>End</label>
+      <input type="time" class="tt-manual-end" value="08:40" />
+    `;
+    manualRows.appendChild(row);
+  };
+  mount.querySelector("#ttAddManual").onclick = addManualRow;
+  mount.querySelector("#ttManualToggle").onchange = (ev) => {
+    mount.querySelector("#ttManualSection").hidden = ev.target.value !== "yes";
+  };
+
+  const refreshList = async () => {
+    const teacherId = Number(mount.querySelector("#ttTeacherId").value || 0);
+    try {
+      const qs = teacherId ? `?teacher_profile_id=${teacherId}` : "";
+      const data = await request(`/api/staff/teacher-timetable${qs}`);
+      const rows = Array.isArray(data?.rows) ? data.rows : [];
+      const holder = mount.querySelector("#ttResultHolder");
+      if (!rows.length) {
+        holder.innerHTML = `<p class="small-note">No timetable rows yet.</p>`;
+        return;
+      }
+      holder.innerHTML = `
+        <div class="dashboard-section">
+          <h4>Generated timetable (${rows.length} lesson${rows.length === 1 ? "" : "s"})</h4>
+          <table>
+            <thead><tr>
+              <th>Day</th><th>Start</th><th>End</th><th>Grade</th><th>Learning Area</th><th>Category</th><th>Term</th><th>Actions</th>
+            </tr></thead>
+            <tbody>
+              ${rows.map((r) => `
+                <tr>
+                  <td>${escapeHtml(r.day_of_week || "-")}</td>
+                  <td>${escapeHtml(String(r.start_time || "-").slice(0,5))}</td>
+                  <td>${escapeHtml(String(r.end_time || "-").slice(0,5))}</td>
+                  <td>${escapeHtml(r.grade || "-")}</td>
+                  <td>${escapeHtml(r.learning_area || "-")}</td>
+                  <td>${escapeHtml(r.timetable_category || "-")}</td>
+                  <td>${escapeHtml(r.term || "-")}</td>
+                  <td>
+                    <button class="iim-action-btn delete" data-tt-delete="${Number(r.id || 0)}">🗑 Delete</button>
+                  </td>
+                </tr>
+              `).join("")}
+            </tbody>
+          </table>
+        </div>
+      `;
+      holder.querySelectorAll("[data-tt-delete]").forEach((btn) => {
+        btn.onclick = async () => {
+          const id = Number(btn.getAttribute("data-tt-delete") || 0);
+          if (!id) return;
+          if (!window.confirm("Remove this lesson?")) return;
+          try {
+            await request(`/api/staff/teacher-timetable/${id}`, { method: "DELETE" });
+            await refreshList();
+          } catch (err) { alert(err.message); }
+        };
+      });
+    } catch (err) {
+      mount.querySelector("#ttResultHolder").innerHTML = `<p class="small-note error">${escapeHtml(err.message || "Failed to load timetable.")}</p>`;
+    }
+  };
+
+  mount.querySelector("#ttReloadButton").onclick = refreshList;
+  mount.querySelector("#ttGenerateButton").onclick = async () => {
+    const tId = Number(mount.querySelector("#ttTeacherId").value || 0);
+    if (!tId) { alert("Teacher profile id is required. Check the Teacher Profile list for the numeric id."); return; }
+    const manual = [...mount.querySelectorAll("#ttManualRows > div")].map((row) => ({
+      day: row.querySelector(".tt-manual-day")?.value || "Monday",
+      start_time: row.querySelector(".tt-manual-start")?.value || null,
+      end_time: row.querySelector(".tt-manual-end")?.value || null
+    }));
+    const entry = {
+      teacher_profile_id: tId,
+      teacher_name: mount.querySelector("#ttTeacherName").value || null,
+      timetable_category: mount.querySelector("#ttCategory").value || "Normal Lesson",
+      term: mount.querySelector("#ttTerm").value || null,
+      grade: mount.querySelector("#ttGrade").value || null,
+      stream: mount.querySelector("#ttStream").value || null,
+      learning_area: mount.querySelector("#ttLearningArea").value || null,
+      lessons_per_week: Number(mount.querySelector("#ttLessons").value || 1),
+      start_time: mount.querySelector("#ttStart").value || "08:00",
+      end_time: mount.querySelector("#ttEnd").value || "08:40",
+      manual_lessons: manual
+    };
+    try {
+      const result = await request("/api/staff/teacher-timetable/generate", {
+        method: "POST",
+        body: JSON.stringify({ entries: [entry] })
+      });
+      alert(result.message || "Timetable generated.");
+      await refreshList();
+    } catch (err) {
+      alert(err.message || "Failed to generate.");
+    }
+  };
+
+  refreshList().catch(() => {});
+}
+
+async function renderLearnerDisciplineHub(mount) {
+  if (!mount) return;
+  mount.innerHTML = `<div class="module-header-card"><h3>Learners Disciplinary Record</h3></div><div id="disciplineForm"></div><div id="disciplineList"></div>`;
+  let data = { categories: [], rows: [] };
+  try { data = await request("/api/staff/learner-discipline"); } catch (_) {}
+  const categories = Array.isArray(data.categories) ? data.categories : [];
+  const rows = Array.isArray(data.rows) ? data.rows : [];
+  mount.querySelector("#disciplineForm").innerHTML = `
+    <div class="form-grid">
+      <label>Learner Name</label>
+      <input id="dcName" placeholder="Full name" />
+      <label>Learner ID (optional)</label>
+      <input id="dcLearnerId" type="number" placeholder="learners.id" />
+      <label>Grade</label>
+      <input id="dcGrade" placeholder="e.g. Grade 7" />
+      <label>Stream</label>
+      <input id="dcStream" placeholder="Optional" />
+      <label>Category</label>
+      <select id="dcCategory">${categories.map((c) => `<option>${escapeHtml(c)}</option>`).join("")}</select>
+      <label>Custom Breach (only if "Other/Breach of rules")</label>
+      <input id="dcCustom" placeholder="Type the specific breach" />
+      <label>Occurred At</label>
+      <input id="dcOccurred" type="datetime-local" />
+      <label>Others Involved</label>
+      <input id="dcOthers" placeholder="Names, separated by commas" />
+      <label>Action Taken</label>
+      <textarea id="dcAction" rows="3" placeholder="Corrective measures / warnings issued"></textarea>
+    </div>
+    <div class="actions-row">
+      <button id="dcSave" class="success">Save Record</button>
+      <button id="dcReload">Refresh</button>
+    </div>
+  `;
+  const refresh = async () => renderLearnerDisciplineHub(mount);
+  mount.querySelector("#dcReload").onclick = refresh;
+  mount.querySelector("#dcSave").onclick = async () => {
+    const payload = {
+      learner_name: mount.querySelector("#dcName").value || null,
+      learner_id: Number(mount.querySelector("#dcLearnerId").value || 0) || null,
+      grade: mount.querySelector("#dcGrade").value || null,
+      stream: mount.querySelector("#dcStream").value || null,
+      category: mount.querySelector("#dcCategory").value || "Breach of school rules",
+      custom_breach: mount.querySelector("#dcCustom").value || null,
+      occurred_at: mount.querySelector("#dcOccurred").value || null,
+      other_persons_involved: mount.querySelector("#dcOthers").value || null,
+      action_taken: mount.querySelector("#dcAction").value || null
+    };
+    if (!payload.learner_name) { alert("Learner name is required."); return; }
+    try {
+      await request("/api/staff/learner-discipline", {
+        method: "POST",
+        body: JSON.stringify(payload)
+      });
+      await refresh();
+    } catch (err) { alert(err.message); }
+  };
+  const list = mount.querySelector("#disciplineList");
+  if (!rows.length) {
+    list.innerHTML = `<p class="small-note">No discipline records yet.</p>`;
+  } else {
+    list.innerHTML = `
+      <div class="dashboard-section">
+        <h4>Recorded indiscipline cases (${rows.length})</h4>
+        <table>
+          <thead><tr><th>Learner</th><th>Grade</th><th>Stream</th><th>Category</th><th>Occurred</th><th>Action</th><th>Actions</th></tr></thead>
+          <tbody>
+            ${rows.map((r) => `
+              <tr>
+                <td>${escapeHtml(r.resolved_learner_name || r.learner_name || "-")}</td>
+                <td>${escapeHtml(r.grade || "-")}</td>
+                <td>${escapeHtml(r.stream || "-")}</td>
+                <td>${escapeHtml(r.category || "-")}${r.custom_breach ? " / " + escapeHtml(r.custom_breach) : ""}</td>
+                <td>${escapeHtml(r.occurred_at ? String(r.occurred_at).slice(0,16).replace("T"," ") : "-")}</td>
+                <td>${escapeHtml(r.action_taken || "-")}</td>
+                <td><button class="iim-action-btn delete" data-dc-delete="${Number(r.id || 0)}">🗑 Delete</button></td>
+              </tr>
+            `).join("")}
+          </tbody>
+        </table>
+      </div>
+    `;
+    list.querySelectorAll("[data-dc-delete]").forEach((btn) => {
+      btn.onclick = async () => {
+        const id = Number(btn.getAttribute("data-dc-delete") || 0);
+        if (!id) return;
+        if (!window.confirm("Remove this record?")) return;
+        try { await request(`/api/staff/learner-discipline/${id}`, { method: "DELETE" }); await refresh(); } catch (err) { alert(err.message); }
+      };
+    });
+  }
 }
 
 function normalizeStatusLabel(value) {
@@ -5159,6 +5432,17 @@ async function init() {
     ).trim();
     const roleLabel = formatRoleDisplay(portalData?.role || meData?.role || "");
     document.getElementById("portalLabel").textContent = `${institutionName} (${roleLabel})`;
+    // Parents and Learners MUST NOT print/download/screenshot
+    const normalizedUiRole = String(portalData?.role || meData?.role || "").toUpperCase();
+    if (["PARENT", "LEARNER", "BOM"].includes(normalizedUiRole)) {
+      document.body.classList.add("read-only-portal");
+      document.addEventListener("contextmenu", (e) => e.preventDefault());
+      document.addEventListener("keydown", (e) => {
+        const k = (e.key || "").toLowerCase();
+        if (e.ctrlKey && ["p", "s", "c"].includes(k)) e.preventDefault();
+        if (k === "printscreen") e.preventDefault();
+      });
+    }
     try {
       let stamp = "unknown";
       try {

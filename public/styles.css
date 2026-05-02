@@ -2949,3 +2949,51 @@ tbody tr:hover {
     overflow: visible;
   }
 }
+
+/* rev41 read-only portal for Parents / Learners / BOM */
+.read-only-portal {
+  user-select: none;
+  -webkit-user-select: none;
+  -moz-user-select: none;
+}
+.read-only-portal::after {
+  content: "IMIS read-only portal · do not distribute";
+  position: fixed;
+  top: 40%;
+  left: 50%;
+  transform: translate(-50%, -50%) rotate(-22deg);
+  color: rgba(15, 56, 96, 0.14);
+  font-size: 48px;
+  font-weight: 900;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  pointer-events: none;
+  z-index: 900;
+  white-space: nowrap;
+}
+.read-only-portal .iim-action-btn.warn,
+.read-only-portal .iim-action-btn.muted,
+.read-only-portal [data-download],
+.read-only-portal [data-print],
+.read-only-portal button[onclick*="pdf"],
+.read-only-portal button[onclick*="print"],
+.read-only-portal button[onclick*="download"],
+.read-only-portal button[onclick*="export"] {
+  display: none !important;
+}
+
+@media print {
+  .read-only-portal * { visibility: hidden !important; }
+  .read-only-portal::before {
+    content: "Printing is disabled in this portal.";
+    display: block !important;
+    visibility: visible !important;
+    position: fixed;
+    top: 40%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    font-size: 22px;
+    color: #a02020;
+    font-weight: 900;
+  }
+}

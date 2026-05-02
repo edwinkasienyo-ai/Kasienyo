@@ -57,7 +57,7 @@ const {
 } = require("./config/cbcLibrary");
 
 /** Bump when shipping UI/API changes so schools can confirm they run the right copy. */
-const IIMS_BUILD_STAMP = process.env.IIMS_BUILD_STAMP || "ui-deploy-rev40";
+const IIMS_BUILD_STAMP = process.env.IIMS_BUILD_STAMP || "ui-deploy-rev41";
 
 const app = express();
 
@@ -4559,6 +4559,303 @@ app.post(
       credential_dispatch: credentialDispatch,
       username
     });
+  })
+);
+
+// === rev41: Per-institution streams (manual entry) ===
+app.get(
+  "/api/institutions/streams",
+  auth,
+  asyncHandler(async (req, res) => {
+    const institutionId = Number(req.user.institution_id);
+    const grade = cleanValue(req.query?.grade || "");
+    const rows = grade
+      ? await query(
+          `SELECT id, grade_or_form, stream_name, is_active, created_at
+           FROM institution_streams
+           WHERE institution_id = ? AND (grade_or_form = ? OR grade_or_form IS NULL OR grade_or_form = '')
+           ORDER BY stream_name ASC`,
+          [institutionId, grade]
+        )
+      : await query(
+          `SELECT id, grade_or_form, stream_name, is_active, created_at
+           FROM institution_streams
+           WHERE institution_id = ?
+           ORDER BY grade_or_form, stream_name ASC`,
+          [institutionId]
+        );
+    res.json({ streams: rows });
+  })
+);
+
+app.post(
+  "/api/institutions/streams",
+  auth,
+  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER]),
+  asyncHandler(async (req, res) => {
+    const institutionId = Number(req.user.institution_id);
+    const grade = cleanValue(req.body?.grade_or_form || "") || null;
+    const name = cleanValue(req.body?.stream_name || "");
+    if (!name) return res.status(400).json({ error: "stream_name is required." });
+    try {
+      const result = await query(
+        `INSERT INTO institution_streams (institution_id, grade_or_form, stream_name, created_by_user_id)
+         VALUES (?, ?, ?, ?)`,
+        [institutionId, grade, name, String(req.user.id || "")]
+      );
+      await auditLog(req.user, "CREATE_STREAM", "institution_streams", result.insertId, { grade_or_form: grade, stream_name: name });
+      res.status(201).json({ id: result.insertId, message: "Stream added." });
+    } catch (err) {
+      if (err?.code === "ER_DUP_ENTRY") {
+        return res.status(409).json({ error: "Stream already exists for this grade." });
+      }
+      throw err;
+    }
+  })
+);
+
+app.delete(
+  "/api/institutions/streams/:id",
+  auth,
+  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
+  asyncHandler(async (req, res) => {
+    const institutionId = Number(req.user.institution_id);
+    const id = Number(req.params.id || 0);
+    const result = await query(
+      `DELETE FROM institution_streams WHERE id = ? AND institution_id = ?`,
+      [id, institutionId]
+    );
+    if (!result.affectedRows) return res.status(404).json({ error: "Stream not found." });
+    await auditLog(req.user, "DELETE_STREAM", "institution_streams", id, {});
+    res.json({ message: "Stream removed." });
+  })
+);
+
+// === rev41: Teacher timetable (feed + list) ===
+app.get(
+  "/api/staff/teacher-timetable",
+  auth,
+  asyncHandler(async (req, res) => {
+    const institutionId = Number(req.user.institution_id);
+    const teacherProfileId = Number(req.query?.teacher_profile_id || 0);
+    const role = normalizeRole(req.user.role);
+    // A teacher can ONLY see their own timetable; HoI/SysDev can see all in scope
+    let where = `institution_id = ?`;
+    const params = [institutionId];
+    if (teacherProfileId) {
+      where += ` AND teacher_profile_id = ?`;
+      params.push(teacherProfileId);
+    } else if (role === ROLES.TEACHER) {
+      // Look up teacher_profile.id by user_id if email match
+      const teacherLookup = await query(
+        `SELECT id FROM teacher_profiles WHERE institution_id = ? AND (email_address = ? OR phone_number = ?) LIMIT 1`,
+        [institutionId, req.user.email || "", req.user.phone || ""]
+      );
+      const selfId = teacherLookup[0]?.id;
+      if (!selfId) return res.json({ rows: [] });
+      where += ` AND teacher_profile_id = ?`;
+      params.push(selfId);
+    }
+    const rows = await query(
+      `SELECT * FROM teacher_timetable WHERE ${where} ORDER BY day_of_week, start_time, lesson_order`,
+      params
+    );
+    res.json({ rows });
+  })
+);
+
+app.post(
+  "/api/staff/teacher-timetable/generate",
+  auth,
+  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
+  asyncHandler(async (req, res) => {
+    const institutionId = Number(req.user.institution_id);
+    const entries = Array.isArray(req.body?.entries) ? req.body.entries : [];
+    if (!entries.length) return res.status(400).json({ error: "entries[] is required." });
+
+    const DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+    const DEFAULT_SLOTS = [
+      "08:00", "08:40", "09:20", "10:00", "10:40", "11:20", "12:00",
+      "14:00", "14:40", "15:20", "16:00"
+    ];
+
+    const generated = [];
+    for (const entry of entries) {
+      const teacherProfileId = Number(entry?.teacher_profile_id || 0);
+      const teacherName = cleanValue(entry?.teacher_name || "");
+      const category = cleanValue(entry?.timetable_category || "Normal Lesson");
+      const term = cleanValue(entry?.term || "");
+      const grade = cleanValue(entry?.grade || "");
+      const stream = cleanValue(entry?.stream || "");
+      const learningArea = cleanValue(entry?.learning_area || "");
+      const lessonsPerWeek = Math.max(1, Math.min(Number(entry?.lessons_per_week || 1), 40));
+      const startTime = cleanValue(entry?.start_time || "08:00");
+      const endTime = cleanValue(entry?.end_time || "08:40");
+      const manualLessons = Array.isArray(entry?.manual_lessons) ? entry.manual_lessons : [];
+
+      let generatedCount = 0;
+      // First place any manual lessons (fixed times/days)
+      for (const manual of manualLessons) {
+        const day = cleanValue(manual?.day) || DAYS[generatedCount % DAYS.length];
+        const s = cleanValue(manual?.start_time) || startTime;
+        const e = cleanValue(manual?.end_time) || endTime;
+        const clash = await query(
+          `SELECT id FROM teacher_timetable
+           WHERE institution_id = ? AND teacher_profile_id = ?
+             AND day_of_week = ? AND start_time = ?`,
+          [institutionId, teacherProfileId, day, s]
+        );
+        if (clash.length) continue;
+        const insert = await query(
+          `INSERT INTO teacher_timetable
+            (institution_id, teacher_profile_id, teacher_name, timetable_category, term, grade, stream, learning_area,
+             day_of_week, lesson_order, start_time, end_time, lessons_per_week, is_manual_time, generated_by_user_id)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)`,
+          [institutionId, teacherProfileId, teacherName, category, term, grade, stream, learningArea,
+           day, generatedCount + 1, s, e, lessonsPerWeek, String(req.user.id || "")]
+        );
+        generated.push({ id: insert.insertId, day, start_time: s, end_time: e, manual: true });
+        generatedCount += 1;
+      }
+
+      // Fill remaining lessons across days/slots avoiding clashes
+      let slotIdx = 0;
+      let dayIdx = 0;
+      const guard = lessonsPerWeek * DAYS.length * DEFAULT_SLOTS.length;
+      let safety = 0;
+      while (generatedCount < lessonsPerWeek && safety < guard) {
+        safety += 1;
+        const day = DAYS[dayIdx % 5]; // Mon-Fri prioritized
+        const s = DEFAULT_SLOTS[slotIdx % DEFAULT_SLOTS.length];
+        slotIdx += 1;
+        if (slotIdx % DEFAULT_SLOTS.length === 0) dayIdx += 1;
+        const clash = await query(
+          `SELECT id FROM teacher_timetable
+           WHERE institution_id = ? AND teacher_profile_id = ?
+             AND day_of_week = ? AND start_time = ?`,
+          [institutionId, teacherProfileId, day, s]
+        );
+        if (clash.length) continue;
+        const [h, m] = s.split(":").map((n) => Number(n));
+        const endM = (h * 60 + m + 40);
+        const e = `${String(Math.floor(endM / 60)).padStart(2, "0")}:${String(endM % 60).padStart(2, "0")}`;
+        const insert = await query(
+          `INSERT INTO teacher_timetable
+            (institution_id, teacher_profile_id, teacher_name, timetable_category, term, grade, stream, learning_area,
+             day_of_week, lesson_order, start_time, end_time, lessons_per_week, is_manual_time, generated_by_user_id)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)`,
+          [institutionId, teacherProfileId, teacherName, category, term, grade, stream, learningArea,
+           day, generatedCount + 1, s, e, lessonsPerWeek, String(req.user.id || "")]
+        );
+        generated.push({ id: insert.insertId, day, start_time: s, end_time: e, manual: false });
+        generatedCount += 1;
+      }
+    }
+
+    await auditLog(req.user, "GENERATE_TIMETABLE", "teacher_timetable", null, { total_entries: generated.length });
+    res.status(201).json({ message: "Timetable generated.", lessons: generated });
+  })
+);
+
+app.delete(
+  "/api/staff/teacher-timetable/:id",
+  auth,
+  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
+  asyncHandler(async (req, res) => {
+    const institutionId = Number(req.user.institution_id);
+    const id = Number(req.params.id || 0);
+    const result = await query(
+      `DELETE FROM teacher_timetable WHERE id = ? AND institution_id = ?`,
+      [id, institutionId]
+    );
+    if (!result.affectedRows) return res.status(404).json({ error: "Lesson not found." });
+    res.json({ message: "Lesson removed." });
+  })
+);
+
+// === rev41: Learner discipline records ===
+const LEARNER_DISCIPLINE_CATEGORIES = [
+  "Physical fights",
+  "Bullying of other learners",
+  "Stealing",
+  "Playing truancy",
+  "Cheating in examinations",
+  "Abusing teachers or other persons in authority",
+  "Defiance of lawful instructions",
+  "Drug trafficking or substance abuse",
+  "Unlawful demonstration",
+  "Boycott of classes or meals",
+  "Destruction of school property",
+  "Invasion of other institutions, shopping centres or homesteads",
+  "Other conduct categorized as indiscipline by the Board of Management",
+  "Breach of school rules"
+];
+
+app.get(
+  "/api/staff/learner-discipline",
+  auth,
+  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER, ROLES.SENIOR_TEACHER, ROLES.HEAD_OF_DEPARTMENT]),
+  asyncHandler(async (req, res) => {
+    const institutionId = Number(req.user.institution_id);
+    const rows = await query(
+      `SELECT d.*, l.full_name AS resolved_learner_name
+       FROM learner_discipline_records d
+       LEFT JOIN learners l ON l.id = d.learner_id
+       WHERE d.institution_id = ?
+       ORDER BY d.occurred_at DESC, d.id DESC`,
+      [institutionId]
+    );
+    res.json({ categories: LEARNER_DISCIPLINE_CATEGORIES, rows });
+  })
+);
+
+app.post(
+  "/api/staff/learner-discipline",
+  auth,
+  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER, ROLES.SENIOR_TEACHER, ROLES.HEAD_OF_DEPARTMENT]),
+  asyncHandler(async (req, res) => {
+    const institutionId = Number(req.user.institution_id);
+    const body = req.body || {};
+    const category = cleanValue(body.category || "");
+    if (!category) return res.status(400).json({ error: "category is required." });
+    const learnerId = Number(body.learner_id || 0) || null;
+    const result = await query(
+      `INSERT INTO learner_discipline_records
+        (institution_id, learner_id, learner_name, grade, stream, category, custom_breach,
+         occurred_at, other_persons_involved, action_taken, recorded_by_user_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        institutionId,
+        learnerId,
+        cleanValue(body.learner_name || ""),
+        cleanValue(body.grade || ""),
+        cleanValue(body.stream || ""),
+        category,
+        cleanValue(body.custom_breach || ""),
+        cleanValue(body.occurred_at || "") || null,
+        cleanValue(body.other_persons_involved || ""),
+        cleanValue(body.action_taken || ""),
+        String(req.user.id || "")
+      ]
+    );
+    await auditLog(req.user, "CREATE_DISCIPLINE", "learner_discipline_records", result.insertId, { category, learner_id: learnerId });
+    res.status(201).json({ id: result.insertId, message: "Discipline record added." });
+  })
+);
+
+app.delete(
+  "/api/staff/learner-discipline/:id",
+  auth,
+  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
+  asyncHandler(async (req, res) => {
+    const institutionId = Number(req.user.institution_id);
+    const id = Number(req.params.id || 0);
+    const result = await query(
+      `DELETE FROM learner_discipline_records WHERE id = ? AND institution_id = ?`,
+      [id, institutionId]
+    );
+    if (!result.affectedRows) return res.status(404).json({ error: "Record not found." });
+    res.json({ message: "Discipline record removed." });
   })
 );
 
