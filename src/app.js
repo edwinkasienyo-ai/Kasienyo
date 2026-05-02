@@ -57,7 +57,7 @@ const {
 } = require("./config/cbcLibrary");
 
 /** Bump when shipping UI/API changes so schools can confirm they run the right copy. */
-const IIMS_BUILD_STAMP = process.env.IIMS_BUILD_STAMP || "ui-deploy-rev42";
+const IIMS_BUILD_STAMP = process.env.IIMS_BUILD_STAMP || "ui-deploy-rev43";
 
 const app = express();
 
@@ -7999,6 +7999,167 @@ app.get(
       [req.user.institution_id, req.user.learner_id]
     );
     res.json(rows);
+  })
+);
+
+// === rev43: Examination Management — exam serial, result scripts, assessment report ===
+function buildExamSerialSegment({
+  grade,
+  form,
+  learningArea,
+  examType,
+  term,
+  year,
+  stream,
+  learnerId
+}) {
+  const bits = [
+    String(grade || form || "GRADE").slice(0, 8).toUpperCase(),
+    String(learningArea || "LA").slice(0, 3).toUpperCase(),
+    String(examType || "EXM").slice(0, 3).toUpperCase(),
+    String(term || "T").replace(/[^A-Z0-9]/gi, "").slice(0, 2).toUpperCase(),
+    String(year || new Date().getFullYear()),
+    stream ? String(stream).slice(0, 2).toUpperCase() : "XX",
+    learnerId ? `L${learnerId}` : "BULK"
+  ];
+  return bits.join("-");
+}
+
+app.post(
+  "/api/academic/exams/allocate-serials",
+  auth,
+  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER]),
+  asyncHandler(async (req, res) => {
+    const institutionId = Number(req.user.institution_id);
+    const body = req.body || {};
+    const grade = cleanValue(body.grade || "");
+    const form = cleanValue(body.form_name || "");
+    const learningArea = cleanValue(body.learning_area || body.subject || "");
+    const examType = cleanValue(body.exam_type || "");
+    const term = cleanValue(body.term || "");
+    const year = Number(body.year || new Date().getFullYear());
+    const stream = cleanValue(body.stream || "");
+    const mode = (cleanValue(body.mode || "per_learner") || "per_learner").toLowerCase();
+    if (!(grade || form) || !learningArea || !examType) {
+      return res.status(400).json({ error: "grade/form, learning_area/subject and exam_type are required." });
+    }
+    const learners = mode === "per_learner"
+      ? await query(
+          `SELECT id, full_name, admission_number, grade, stream
+           FROM learners
+           WHERE institution_id = ?
+             AND (grade = ? OR grade = ? OR ? = '')
+             AND (stream = ? OR ? = '')
+           ORDER BY full_name ASC`,
+          [institutionId, grade || "", form || "", grade || form || "", stream || "", stream || ""]
+        )
+      : [{ id: null, full_name: "BULK", admission_number: "BULK" }];
+    const serials = learners.map((learner) => ({
+      learner_id: learner.id,
+      learner_name: learner.full_name,
+      admission_number: learner.admission_number,
+      grade: learner.grade || grade || form,
+      stream: learner.stream || stream || null,
+      serial: buildExamSerialSegment({
+        grade, form, learningArea, examType, term, year, stream,
+        learnerId: learner.id
+      })
+    }));
+    res.json({ count: serials.length, mode, serials });
+  })
+);
+
+app.get(
+  "/api/academic/results/ranked",
+  auth,
+  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER]),
+  asyncHandler(async (req, res) => {
+    const institutionId = Number(req.user.institution_id);
+    const grade = cleanValue(req.query?.grade || "");
+    const stream = cleanValue(req.query?.stream || "");
+    const term = cleanValue(req.query?.term || "");
+    const year = Number(req.query?.year || new Date().getFullYear());
+    const rows = await query(
+      `SELECT learner_id, learner_name, grade, stream,
+              AVG(percentage) AS avg_pct,
+              SUM(marks) AS total_marks
+       FROM academic_marks
+       WHERE institution_id = ?
+         AND (? = '' OR grade = ?)
+         AND (? = '' OR stream = ?)
+         AND (? = '' OR term = ?)
+         AND (? = 0 OR year = ?)
+       GROUP BY learner_id, learner_name, grade, stream
+       ORDER BY avg_pct DESC, total_marks DESC`,
+      [institutionId, grade, grade, stream, stream, term, term, year, year]
+    );
+    const ranked = rows.map((r, idx) => ({
+      position: idx + 1,
+      ...r,
+      avg_pct: r.avg_pct == null ? 0 : Number(r.avg_pct).toFixed(2)
+    }));
+    res.json({ filters: { grade, stream, term, year }, ranked });
+  })
+);
+
+app.get(
+  "/api/academic/assessment-report/:learnerId",
+  auth,
+  asyncHandler(async (req, res) => {
+    const institutionId = Number(req.user.institution_id);
+    const learnerId = Number(req.params.learnerId || 0);
+    if (!learnerId) return res.status(400).json({ error: "learner id required." });
+    const role = normalizeRole(req.user.role);
+    if (role === ROLES.PARENT || role === ROLES.LEARNER) {
+      if (Number(req.user.learner_id) !== learnerId) {
+        return res.status(403).json({ error: "You can only view your linked learner's assessment report." });
+      }
+    }
+    const learnerRows = await query(
+      `SELECT l.*, i.institution_name, i.institution_code, i.login_hero_image_path
+       FROM learners l
+       LEFT JOIN institutions i ON i.id = l.institution_id
+       WHERE l.id = ? AND l.institution_id = ? LIMIT 1`,
+      [learnerId, institutionId]
+    );
+    if (!learnerRows.length) return res.status(404).json({ error: "Learner not found." });
+    const learner = learnerRows[0];
+    const marks = await query(
+      `SELECT exam_type, subject, marks, percentage, cbc_grade_band, term, year
+       FROM academic_marks
+       WHERE institution_id = ? AND learner_id = ?
+       ORDER BY year ASC, term ASC`,
+      [institutionId, learnerId]
+    );
+    const byPeriod = {};
+    marks.forEach((m) => {
+      const key = `${m.year || ""}-${m.term || ""}`;
+      if (!byPeriod[key]) byPeriod[key] = { year: m.year, term: m.term, subjects: [] };
+      byPeriod[key].subjects.push(m);
+    });
+    const trend = Object.values(byPeriod)
+      .sort((a, b) => `${a.year}-${a.term}`.localeCompare(`${b.year}-${b.term}`))
+      .map((p) => {
+        const sum = p.subjects.reduce((acc, m) => acc + Number(m.percentage || 0), 0);
+        const avg = p.subjects.length ? Number((sum / p.subjects.length).toFixed(2)) : 0;
+        return { year: p.year, term: p.term, avg, count: p.subjects.length };
+      });
+    res.json({
+      learner: {
+        id: learner.id,
+        full_name: learner.full_name,
+        grade: learner.grade,
+        stream: learner.stream,
+        admission_number: learner.admission_number
+      },
+      institution: {
+        name: learner.institution_name,
+        code: learner.institution_code,
+        logo_url: learner.login_hero_image_path || null
+      },
+      marks,
+      performance_trend: trend
+    });
   })
 );
 
