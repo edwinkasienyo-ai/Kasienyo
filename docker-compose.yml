@@ -1,0 +1,36 @@
+version: "3.9"
+services:
+  imis:
+    build: .
+    image: imis-basic-learning:latest
+    container_name: imis_app
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      NODE_ENV: production
+      PORT: 5002
+      FORCE_HTTPS: "false"   # set true once behind reverse-proxy with TLS
+      ENABLE_CSP: "true"
+      DB_HOST: mysql
+    ports:
+      - "5002:5002"
+    volumes:
+      - ./uploads:/app/uploads
+    depends_on:
+      - mysql
+
+  mysql:
+    image: mysql:8.4
+    container_name: imis_mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_PASS:-change-me}
+      MYSQL_DATABASE: iims_school_system
+    ports:
+      - "3307:3306"
+    volumes:
+      - imis_mysql_data:/var/lib/mysql
+      - ./sql/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+
+volumes:
+  imis_mysql_data:

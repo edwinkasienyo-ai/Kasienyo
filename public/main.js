@@ -49,7 +49,7 @@ async function loadBuildStampLogin() {
     }
     const data = response.ok ? await response.json() : null;
     const stamp = data?.build_stamp || "unknown";
-    el.textContent = `Release: ${stamp} · UI bundle rev44 — Twilio Verify + Gmail SMTP wired, HR Management renamed.`;
+    el.textContent = `Release: ${stamp} · UI bundle rev45 — Twilio Verify + Gmail SMTP wired, HR Management renamed.`;
   } catch (_) {
     el.textContent =
       "Could not load release info. Ensure Node is running from your updated project (e.g. BASIC EDUCATION) and try again.";

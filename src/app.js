@@ -57,7 +57,7 @@ const {
 } = require("./config/cbcLibrary");
 
 /** Bump when shipping UI/API changes so schools can confirm they run the right copy. */
-const IIMS_BUILD_STAMP = process.env.IIMS_BUILD_STAMP || "ui-deploy-rev44";
+const IIMS_BUILD_STAMP = process.env.IIMS_BUILD_STAMP || "ui-deploy-rev45";
 
 const app = express();
 
@@ -75,7 +75,36 @@ app.use(
     credentials: true
   })
 );
-app.use(helmet());
+// rev45: production hardening middleware
+if (String(process.env.NODE_ENV || "").toLowerCase() === "production" && String(process.env.FORCE_HTTPS || "true").toLowerCase() !== "false") {
+  app.set("trust proxy", 1);
+  app.use((req, res, next) => {
+    const xfProto = req.get("x-forwarded-proto") || req.protocol;
+    if (xfProto !== "https") {
+      return res.redirect(301, `https://${req.get("host")}${req.originalUrl}`);
+    }
+    res.setHeader("Strict-Transport-Security", "max-age=63072000; includeSubDomains; preload");
+    next();
+  });
+}
+app.use(helmet({
+  contentSecurityPolicy: String(process.env.ENABLE_CSP || "false").toLowerCase() === "true"
+    ? {
+        useDefaults: true,
+        directives: {
+          "default-src": ["'self'"],
+          "img-src": ["'self'", "data:", "blob:"],
+          "script-src": ["'self'", "'unsafe-inline'"],
+          "style-src": ["'self'", "'unsafe-inline'"],
+          "connect-src": ["'self'"],
+          "frame-ancestors": ["'none'"],
+          "object-src": ["'none'"],
+          "base-uri": ["'self'"]
+        }
+      }
+    : false,
+  crossOriginEmbedderPolicy: false
+}));
 app.use(compression());
 app.use(express.json({ limit: "20mb" }));
 app.use(express.urlencoded({ extended: true }));
