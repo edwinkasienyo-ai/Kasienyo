@@ -1,0 +1,15 @@
+.git
+.gitignore
+.env
+.env.local
+.env.*.local
+node_modules
+npm-debug.log*
+terminals
+*.log
+uploads/*
+!uploads/.gitkeep
+coverage
+.DS_Store
+Thumbs.db
+scripts/windows-auto-setup.ps1
