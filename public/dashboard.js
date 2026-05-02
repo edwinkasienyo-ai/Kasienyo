@@ -10,7 +10,7 @@ let allowedModules = [];
 let portalContext = null;
 let searchRowDrafts = {};
 let dashboardAutoRefreshHandle = null;
-const CLIENT_UI_BUNDLE_ID = "dash-bundle-rev43";
+const CLIENT_UI_BUNDLE_ID = "dash-bundle-rev44";
 const DASHBOARD_STAT_LABELS = {
   totalLearners: "Total Learners Population",
   totalActiveLearners: "Active Learners",
@@ -5388,11 +5388,273 @@ function bindQuickActionCards() {
         await loadLearnerMaterials();
         return;
       }
+      if (targetModule === "hr-institutional-letters") {
+        await renderInstitutionalLettersHub();
+        return;
+      }
+      if (targetModule === "finance-fee-status") {
+        await renderFeeStatusHub();
+        return;
+      }
+      if (targetModule === "institutional-registers") {
+        await renderInstitutionalRegistersHub();
+        return;
+      }
       if (moduleConfigs[targetModule]) {
         renderCrudModule(targetModule);
       }
     });
   });
+}
+
+async function renderInstitutionalLettersHub() {
+  stopDashboardAutoRefresh();
+  currentModule = "hr-institutional-letters";
+  document.getElementById("moduleTitle").textContent = "Institutional Letters";
+  const container = document.getElementById("formArea");
+  document.getElementById("cards").innerHTML = "";
+  document.getElementById("tableHead").innerHTML = "";
+  document.getElementById("tableBody").innerHTML = "";
+  container.innerHTML = `
+    <div class="module-header-card"><h3>Institutional Letters</h3><p class="small-note">HoI and System Developer generate and upload letters (appointment, promotion, suspension, warning, show-cause, dismissal, early retirement, job vacancies, shortlisting). Staff only see letters addressed to them.</p></div>
+    <div class="form-grid">
+      <label>Record Type</label>
+      <select id="letterType">
+        ${["Appointment Letter","Promotion Letter","Suspension Letter","Warning Letter","Show Cause Letter","Dismissal Letter","Early Retirement","Job Vacancy","Shortlisted Candidates","Successful Candidates","Past Advertisement","Other"].map((x)=>`<option>${escapeHtml(x)}</option>`).join("")}
+      </select>
+      <label>Target User ID</label>
+      <input id="letterTargetUserId" type="number" placeholder="users.id (optional)" />
+      <label>Target Staff Name</label>
+      <input id="letterStaffName" placeholder="Recipient full name" />
+      <label>Target Staff Category</label>
+      <select id="letterStaffCategory">
+        <option value="">(select)</option>
+        <option>Teacher</option>
+        <option>Support Staff</option>
+        <option>Service Provider</option>
+        <option>BoM Member</option>
+      </select>
+      <label>ID Number</label>
+      <input id="letterIdNumber" />
+      <label>Mobile</label>
+      <input id="letterMobile" />
+      <label>Email</label>
+      <input id="letterEmail" />
+      <label>Position</label>
+      <input id="letterPosition" />
+      <label>Terms of Service</label>
+      <select id="letterTos">
+        <option value="">(select)</option>
+        <option>Permanent</option>
+        <option>Temporary</option>
+        <option>Contract</option>
+        <option>Casual</option>
+        <option>Other</option>
+      </select>
+      <label>Title / Subject</label>
+      <input id="letterTitle" placeholder="Letter subject line" />
+      <label>Description / Body</label>
+      <textarea id="letterBody" rows="4" placeholder="Typed letter body or reference to uploaded file"></textarea>
+      <label>File path (if uploaded)</label>
+      <input id="letterFilePath" placeholder="/uploads/..." />
+    </div>
+    <div class="actions-row">
+      <button id="letterSaveBtn" class="success">Generate &amp; Save</button>
+      <button id="letterReloadBtn">Refresh</button>
+    </div>
+    <div id="letterList"></div>
+  `;
+  const refresh = async () => {
+    try {
+      const data = await request("/api/hr/institutional-letters");
+      const rows = Array.isArray(data?.rows) ? data.rows : [];
+      const list = document.getElementById("letterList");
+      if (!rows.length) { list.innerHTML = `<p class="small-note">No letters on file.</p>`; return; }
+      list.innerHTML = `
+        <div class="dashboard-section">
+          <h4>Letters (${rows.length})</h4>
+          <table>
+            <thead><tr><th>Type</th><th>Title</th><th>Recipient</th><th>Position</th><th>Terms</th><th>Status</th><th>Issued</th></tr></thead>
+            <tbody>
+              ${rows.map((r) => `
+                <tr>
+                  <td>${escapeHtml(r.record_type || "-")}</td>
+                  <td>${escapeHtml(r.title || "-")}</td>
+                  <td>${escapeHtml(r.target_staff_name || "-")}</td>
+                  <td>${escapeHtml(r.position_name || "-")}</td>
+                  <td>${escapeHtml(r.terms_of_service || "-")}</td>
+                  <td>${escapeHtml(r.status || "-")}</td>
+                  <td>${escapeHtml(String(r.issued_at || r.created_at || "").slice(0,19).replace("T"," "))}</td>
+                </tr>
+              `).join("")}
+            </tbody>
+          </table>
+        </div>`;
+    } catch (err) {
+      document.getElementById("letterList").innerHTML = `<p class="small-note error">${escapeHtml(err.message || "Failed to load.")}</p>`;
+    }
+  };
+  document.getElementById("letterReloadBtn").onclick = refresh;
+  document.getElementById("letterSaveBtn").onclick = async () => {
+    const body = {
+      record_type: document.getElementById("letterType").value,
+      title: document.getElementById("letterTitle").value,
+      target_user_id: Number(document.getElementById("letterTargetUserId").value || 0) || null,
+      target_staff_name: document.getElementById("letterStaffName").value,
+      target_staff_category: document.getElementById("letterStaffCategory").value,
+      target_id_number: document.getElementById("letterIdNumber").value,
+      target_mobile: document.getElementById("letterMobile").value,
+      target_email: document.getElementById("letterEmail").value,
+      position_name: document.getElementById("letterPosition").value,
+      terms_of_service: document.getElementById("letterTos").value,
+      description: document.getElementById("letterBody").value,
+      body_text: document.getElementById("letterBody").value,
+      file_path: document.getElementById("letterFilePath").value
+    };
+    try {
+      await request("/api/hr/institutional-letters", { method: "POST", body: JSON.stringify(body) });
+      await refresh();
+      alert("Letter saved.");
+    } catch (err) { alert(err.message); }
+  };
+  refresh();
+}
+
+async function renderFeeStatusHub() {
+  stopDashboardAutoRefresh();
+  currentModule = "finance-fee-status";
+  document.getElementById("moduleTitle").textContent = "Fee Status";
+  const container = document.getElementById("formArea");
+  document.getElementById("cards").innerHTML = "";
+  container.innerHTML = `
+    <div class="module-header-card"><h3>Fee Status</h3><p class="small-note">Required − Paid per learner. Filter by grade, stream, year.</p></div>
+    <div class="form-grid">
+      <label>Grade</label><input id="fsGrade" placeholder="e.g. Grade 7" />
+      <label>Stream</label><input id="fsStream" placeholder="Optional" />
+      <label>Year</label><input id="fsYear" type="number" value="${new Date().getFullYear()}" />
+    </div>
+    <div class="actions-row">
+      <button id="fsLoadBtn" class="success">Load Fee Status</button>
+    </div>
+    <div id="fsResult"></div>
+  `;
+  document.getElementById("fsLoadBtn").onclick = async () => {
+    const q = new URLSearchParams({
+      grade: document.getElementById("fsGrade").value || "",
+      stream: document.getElementById("fsStream").value || "",
+      year: document.getElementById("fsYear").value || String(new Date().getFullYear())
+    });
+    try {
+      const data = await request(`/api/finance/fee-status?${q.toString()}`);
+      const list = Array.isArray(data?.balance) ? data.balance : [];
+      const holder = document.getElementById("fsResult");
+      if (!list.length) { holder.innerHTML = `<p class="small-note">No records matched.</p>`; return; }
+      holder.innerHTML = `
+        <div class="dashboard-section">
+          <h4>Fee balance (${list.length} learners)</h4>
+          <table>
+            <thead><tr><th>#</th><th>Learner</th><th>Adm. No.</th><th>Grade</th><th>Stream</th><th>Required</th><th>Paid</th><th>Balance</th></tr></thead>
+            <tbody>
+              ${list.map((r, i) => `
+                <tr>
+                  <td>${i+1}</td>
+                  <td>${escapeHtml(r.full_name || "-")}</td>
+                  <td>${escapeHtml(r.admission_number || "-")}</td>
+                  <td>${escapeHtml(r.grade || "-")}</td>
+                  <td>${escapeHtml(r.stream || "-")}</td>
+                  <td>${Number(r.required).toFixed(2)}</td>
+                  <td>${Number(r.paid).toFixed(2)}</td>
+                  <td style="color:${Number(r.balance) > 0 ? "#a02020" : "#1f7a3a"};font-weight:700">${Number(r.balance).toFixed(2)}</td>
+                </tr>
+              `).join("")}
+            </tbody>
+          </table>
+        </div>`;
+    } catch (err) { document.getElementById("fsResult").innerHTML = `<p class="small-note error">${escapeHtml(err.message)}</p>`; }
+  };
+}
+
+async function renderInstitutionalRegistersHub() {
+  stopDashboardAutoRefresh();
+  currentModule = "institutional-registers";
+  document.getElementById("moduleTitle").textContent = "Registers & Records";
+  const container = document.getElementById("formArea");
+  document.getElementById("cards").innerHTML = "";
+  document.getElementById("tableHead").innerHTML = "";
+  document.getElementById("tableBody").innerHTML = "";
+  let types = [];
+  try {
+    const resp = await request("/api/institutional-registers/types");
+    types = Array.isArray(resp?.types) ? resp.types : [];
+  } catch (_) {}
+  container.innerHTML = `
+    <div class="module-header-card"><h3>Registers &amp; Records</h3><p class="small-note">Select the register type FIRST, then upload the correct document for that register.</p></div>
+    <div class="form-grid">
+      <label>Register Type</label>
+      <select id="regType">${types.map((t) => `<option>${escapeHtml(t)}</option>`).join("")}</select>
+      <label>Title / Reference</label>
+      <input id="regTitle" placeholder="Free-text label" />
+      <label>File path (after upload)</label>
+      <input id="regFilePath" placeholder="/uploads/..." />
+      <label>File name</label>
+      <input id="regFileName" placeholder="original filename.pdf" />
+      <label>Description</label>
+      <textarea id="regDesc" rows="2"></textarea>
+    </div>
+    <div class="actions-row">
+      <button id="regSave" class="success">Upload Register Entry</button>
+      <button id="regReload">Refresh</button>
+    </div>
+    <div id="regList"></div>
+  `;
+  const refresh = async () => {
+    try {
+      const data = await request("/api/institutional-registers");
+      const rows = Array.isArray(data?.rows) ? data.rows : [];
+      const list = document.getElementById("regList");
+      if (!rows.length) { list.innerHTML = `<p class="small-note">No registers uploaded.</p>`; return; }
+      list.innerHTML = `
+        <div class="dashboard-section">
+          <h4>Registers on file (${rows.length})</h4>
+          <table>
+            <thead><tr><th>Type</th><th>Title</th><th>File</th><th>Uploaded</th><th>Actions</th></tr></thead>
+            <tbody>
+              ${rows.map((r) => `
+                <tr>
+                  <td>${escapeHtml(r.register_type || "-")}</td>
+                  <td>${escapeHtml(r.title || "-")}</td>
+                  <td>${r.file_path ? `<a target="_blank" href="${escapeHtmlAttribute(r.file_path)}">${escapeHtml(r.file_name || r.file_path)}</a>` : "-"}</td>
+                  <td>${escapeHtml(String(r.created_at || "").slice(0,19).replace("T"," "))}</td>
+                  <td><button class="iim-action-btn delete" data-reg-delete="${Number(r.id || 0)}">🗑 Delete</button></td>
+                </tr>
+              `).join("")}
+            </tbody>
+          </table>
+        </div>`;
+      list.querySelectorAll("[data-reg-delete]").forEach((btn) => {
+        btn.onclick = async () => {
+          const id = Number(btn.getAttribute("data-reg-delete") || 0);
+          if (!id || !window.confirm("Remove this register entry?")) return;
+          try { await request(`/api/institutional-registers/${id}`, { method: "DELETE" }); await refresh(); } catch (err) { alert(err.message); }
+        };
+      });
+    } catch (err) { document.getElementById("regList").innerHTML = `<p class="small-note error">${escapeHtml(err.message)}</p>`; }
+  };
+  document.getElementById("regReload").onclick = refresh;
+  document.getElementById("regSave").onclick = async () => {
+    const body = {
+      register_type: document.getElementById("regType").value,
+      title: document.getElementById("regTitle").value,
+      description: document.getElementById("regDesc").value,
+      file_path: document.getElementById("regFilePath").value,
+      file_name: document.getElementById("regFileName").value
+    };
+    try {
+      await request("/api/institutional-registers", { method: "POST", body: JSON.stringify(body) });
+      await refresh();
+    } catch (err) { alert(err.message); }
+  };
+  refresh();
 }
 
 function formatRoleDisplay(role) {

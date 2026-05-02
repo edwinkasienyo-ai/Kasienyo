@@ -1,7 +1,7 @@
 require("dotenv").config();
 const app = require("./app");
 
-const IIMS_BUILD_STAMP = process.env.IIMS_BUILD_STAMP || "ui-deploy-rev43";
+const IIMS_BUILD_STAMP = process.env.IIMS_BUILD_STAMP || "ui-deploy-rev44";
 const { query } = require("./config/db");
 const { hashPassword } = require("./utils/password");
 const { ROLES } = require("./config/constants");
@@ -1039,6 +1039,68 @@ CREATE TABLE IF NOT EXISTS learner_discipline_records (
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   INDEX idx_discipline_institution (institution_id, grade, stream),
   CONSTRAINT fk_discipline_institution FOREIGN KEY (institution_id) REFERENCES institutions(id)
+)`);
+
+  // Idempotent column additions for rev44 HR leave workflow
+  const leaveCols = [
+    ["amended_days", "INT NULL"],
+    ["approval_comment", "TEXT NULL"],
+    ["approved_by_user_id", "VARCHAR(100) NULL"]
+  ];
+  for (const [colName, ddl] of leaveCols) {
+    // eslint-disable-next-line no-await-in-loop
+    const chk = await query(
+      `SELECT COUNT(*) total FROM INFORMATION_SCHEMA.COLUMNS
+       WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'hr_leave_requests' AND COLUMN_NAME = ?`,
+      [colName]
+    );
+    if (!Number(chk[0]?.total || 0)) {
+      // eslint-disable-next-line no-await-in-loop
+      await query(`ALTER TABLE hr_leave_requests ADD COLUMN ${colName} ${ddl}`);
+    }
+  }
+
+  await query(`
+CREATE TABLE IF NOT EXISTS hr_institutional_letters (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  institution_id BIGINT NOT NULL,
+  record_type VARCHAR(120) NOT NULL,
+  title VARCHAR(255) NULL,
+  target_user_id BIGINT NULL,
+  target_staff_name VARCHAR(255) NULL,
+  target_staff_category VARCHAR(80) NULL,
+  target_id_number VARCHAR(120) NULL,
+  target_mobile VARCHAR(60) NULL,
+  target_email VARCHAR(255) NULL,
+  terms_of_service VARCHAR(80) NULL,
+  position_name VARCHAR(200) NULL,
+  description TEXT NULL,
+  body_text LONGTEXT NULL,
+  file_path VARCHAR(255) NULL,
+  status VARCHAR(40) NOT NULL DEFAULT 'Draft',
+  created_by_user_id VARCHAR(100) NULL,
+  issued_at DATETIME NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  INDEX idx_hr_letters_inst_type (institution_id, record_type),
+  INDEX idx_hr_letters_target (institution_id, target_user_id),
+  CONSTRAINT fk_hr_letters_institution FOREIGN KEY (institution_id) REFERENCES institutions(id)
+)`);
+
+  await query(`
+CREATE TABLE IF NOT EXISTS institutional_registers (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  institution_id BIGINT NOT NULL,
+  register_type VARCHAR(160) NOT NULL,
+  title VARCHAR(255) NULL,
+  description TEXT NULL,
+  file_path VARCHAR(255) NULL,
+  file_name VARCHAR(255) NULL,
+  uploaded_by_user_id VARCHAR(100) NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  INDEX idx_registers_inst_type (institution_id, register_type),
+  CONSTRAINT fk_registers_institution FOREIGN KEY (institution_id) REFERENCES institutions(id)
 )`);
 }
 

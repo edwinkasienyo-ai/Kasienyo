@@ -57,7 +57,7 @@ const {
 } = require("./config/cbcLibrary");
 
 /** Bump when shipping UI/API changes so schools can confirm they run the right copy. */
-const IIMS_BUILD_STAMP = process.env.IIMS_BUILD_STAMP || "ui-deploy-rev43";
+const IIMS_BUILD_STAMP = process.env.IIMS_BUILD_STAMP || "ui-deploy-rev44";
 
 const app = express();
 
@@ -8237,6 +8237,281 @@ app.get(
       [req.user.institution_id, req.user.learner_id]
     );
     res.json(rows);
+  })
+);
+
+// === rev44: Institutional Letters (view + generate) ===
+app.get(
+  "/api/hr/institutional-letters",
+  auth,
+  asyncHandler(async (req, res) => {
+    const institutionId = Number(req.user.institution_id);
+    const role = normalizeRole(req.user.role);
+    const scopeSelf = ![ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION].includes(role);
+    const rows = scopeSelf
+      ? await query(
+          `SELECT id, record_type, title, target_staff_name, terms_of_service, position_name, status, issued_at, created_at
+           FROM hr_institutional_letters
+           WHERE institution_id = ? AND target_user_id = ?
+           ORDER BY COALESCE(issued_at, created_at) DESC`,
+          [institutionId, req.user.id]
+        )
+      : await query(
+          `SELECT id, record_type, title, target_staff_name, target_staff_category, position_name,
+                  terms_of_service, status, issued_at, created_at, target_user_id
+           FROM hr_institutional_letters
+           WHERE institution_id = ?
+           ORDER BY COALESCE(issued_at, created_at) DESC`,
+          [institutionId]
+        );
+    res.json({ rows });
+  })
+);
+
+app.post(
+  "/api/hr/institutional-letters",
+  auth,
+  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
+  asyncHandler(async (req, res) => {
+    const institutionId = Number(req.user.institution_id);
+    const b = req.body || {};
+    const record_type = cleanValue(b.record_type || "");
+    if (!record_type) return res.status(400).json({ error: "record_type is required." });
+    const result = await query(
+      `INSERT INTO hr_institutional_letters
+        (institution_id, record_type, title, target_user_id, target_staff_name, target_staff_category,
+         target_id_number, target_mobile, target_email, terms_of_service, position_name, description, body_text,
+         file_path, status, created_by_user_id, issued_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        institutionId,
+        record_type,
+        cleanValue(b.title || ""),
+        Number(b.target_user_id || 0) || null,
+        cleanValue(b.target_staff_name || ""),
+        cleanValue(b.target_staff_category || ""),
+        cleanValue(b.target_id_number || ""),
+        cleanValue(b.target_mobile || ""),
+        cleanValue(b.target_email || ""),
+        cleanValue(b.terms_of_service || ""),
+        cleanValue(b.position_name || ""),
+        cleanValue(b.description || ""),
+        cleanValue(b.body_text || ""),
+        cleanValue(b.file_path || ""),
+        cleanValue(b.status || "Issued"),
+        String(req.user.id || ""),
+        b.issued_at ? cleanValue(b.issued_at) : dayjs().format("YYYY-MM-DD HH:mm:ss")
+      ]
+    );
+    await auditLog(req.user, "GENERATE_LETTER", "hr_institutional_letters", result.insertId, { record_type });
+    res.status(201).json({ id: result.insertId, message: "Letter saved." });
+  })
+);
+
+// === rev44: Fee Status per learner (roll-up of fee structure vs payments) ===
+app.get(
+  "/api/finance/fee-status",
+  auth,
+  asyncHandler(async (req, res) => {
+    const institutionId = Number(req.user.institution_id);
+    const grade = cleanValue(req.query?.grade || "");
+    const stream = cleanValue(req.query?.stream || "");
+    const year = Number(req.query?.year || new Date().getFullYear());
+    const role = normalizeRole(req.user.role);
+    let learnerFilter = "";
+    const params = [institutionId];
+    if (role === ROLES.PARENT || role === ROLES.LEARNER) {
+      learnerFilter = " AND l.id = ?";
+      params.push(Number(req.user.learner_id || 0));
+    } else {
+      if (grade) { learnerFilter += " AND l.grade = ?"; params.push(grade); }
+      if (stream) { learnerFilter += " AND l.stream = ?"; params.push(stream); }
+    }
+    const rows = await query(
+      `SELECT
+         l.id AS learner_id,
+         l.full_name,
+         l.admission_number,
+         l.grade,
+         l.stream,
+         COALESCE((SELECT SUM(amount_required) FROM finance_fee_structures
+                   WHERE institution_id = l.institution_id
+                     AND grade = l.grade
+                     AND (stream = l.stream OR stream IS NULL OR stream = '')
+                     AND year = ?), 0) AS required,
+         COALESCE((SELECT SUM(amount_paid) FROM finance_fee_payments
+                   WHERE institution_id = l.institution_id
+                     AND learner_id = l.id), 0) AS paid
+       FROM learners l
+       WHERE l.institution_id = ? ${learnerFilter}
+       ORDER BY l.full_name ASC`,
+      [year, ...params]
+    );
+    const balance = rows.map((r) => ({
+      ...r,
+      required: Number(r.required || 0),
+      paid: Number(r.paid || 0),
+      balance: Number(r.required || 0) - Number(r.paid || 0)
+    }));
+    res.json({ year, grade, stream, balance });
+  })
+);
+
+// === rev44: Procurement document QR code (returns data URL PNG) ===
+app.get(
+  "/api/finance/procurement/:id/qr.png",
+  auth,
+  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
+  asyncHandler(async (req, res) => {
+    const institutionId = Number(req.user.institution_id);
+    const id = Number(req.params.id || 0);
+    const rows = await query(
+      `SELECT * FROM finance_procurement_records WHERE id = ? AND institution_id = ? LIMIT 1`,
+      [id, institutionId]
+    );
+    if (!rows.length) return res.status(404).json({ error: "Procurement record not found." });
+    const row = rows[0];
+    const payload = [
+      `IMIS Procurement QR`,
+      `Institution ID: ${institutionId}`,
+      `Document: ${row.document_type || "-"}`,
+      `Reference: ${row.document_number || row.reference_number || row.id}`,
+      `Supplier: ${row.supplier_name || "-"}`,
+      `Amount: ${row.amount || 0}`,
+      `Due: ${row.due_date || "-"}`,
+      `Issued: ${row.issue_date || row.created_at}`
+    ].join("\n");
+    try {
+      const QRCode = require("qrcode");
+      const buf = await QRCode.toBuffer(payload, { type: "png", margin: 1, width: 260 });
+      res.set("Content-Type", "image/png");
+      res.set("Cache-Control", "no-store");
+      return res.send(buf);
+    } catch (err) {
+      return res.status(500).json({ error: "QR generation failed: " + (err?.message || "unknown") });
+    }
+  })
+);
+
+// === rev44: Institutional registers & records (per document type) ===
+const INSTITUTIONAL_REGISTER_TYPES = [
+  "Registration certificate of the institution",
+  "Institutions' books of accounts",
+  "Registers of the institutions' movable and immovable assets",
+  "Admissions registers",
+  "Parents register",
+  "Visitors books",
+  "Daily attendance registers for learners",
+  "Learners progress reports",
+  "Register of learners' transfers, drop-out and completion",
+  "School title deed / land allotment letter",
+  "Register of disciplinary action taken against learners",
+  "Inventory of instructional materials, stationery, equipment and assistive devices",
+  "Syllabi",
+  "Approved list of text books and other instructional material",
+  "Other records recommended by the Education Standards Quality Assurance Council"
+];
+
+app.get(
+  "/api/institutional-registers/types",
+  auth,
+  asyncHandler(async (_req, res) => {
+    res.json({ types: INSTITUTIONAL_REGISTER_TYPES });
+  })
+);
+
+app.get(
+  "/api/institutional-registers",
+  auth,
+  asyncHandler(async (req, res) => {
+    const institutionId = Number(req.user.institution_id);
+    const rows = await query(
+      `SELECT id, register_type, title, description, file_path, file_name, created_at
+       FROM institutional_registers
+       WHERE institution_id = ?
+       ORDER BY register_type ASC, id DESC`,
+      [institutionId]
+    );
+    res.json({ rows });
+  })
+);
+
+app.post(
+  "/api/institutional-registers",
+  auth,
+  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
+  asyncHandler(async (req, res) => {
+    const institutionId = Number(req.user.institution_id);
+    const b = req.body || {};
+    const register_type = cleanValue(b.register_type || "");
+    if (!register_type) return res.status(400).json({ error: "register_type is required (select it FIRST)." });
+    const result = await query(
+      `INSERT INTO institutional_registers
+        (institution_id, register_type, title, description, file_path, file_name, uploaded_by_user_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [
+        institutionId,
+        register_type,
+        cleanValue(b.title || ""),
+        cleanValue(b.description || ""),
+        cleanValue(b.file_path || ""),
+        cleanValue(b.file_name || ""),
+        String(req.user.id || "")
+      ]
+    );
+    await auditLog(req.user, "UPLOAD_REGISTER", "institutional_registers", result.insertId, { register_type });
+    res.status(201).json({ id: result.insertId, message: "Register/record uploaded." });
+  })
+);
+
+app.delete(
+  "/api/institutional-registers/:id",
+  auth,
+  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
+  asyncHandler(async (req, res) => {
+    const institutionId = Number(req.user.institution_id);
+    const id = Number(req.params.id || 0);
+    const result = await query(
+      `DELETE FROM institutional_registers WHERE id = ? AND institution_id = ?`,
+      [id, institutionId]
+    );
+    if (!result.affectedRows) return res.status(404).json({ error: "Record not found." });
+    res.json({ message: "Register entry removed." });
+  })
+);
+
+// === rev44: HR Leave "approved by different officer" guard ===
+app.put(
+  "/api/hr/leave-requests/:id/decide",
+  auth,
+  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
+  asyncHandler(async (req, res) => {
+    const institutionId = Number(req.user.institution_id);
+    const id = Number(req.params.id || 0);
+    const body = req.body || {};
+    const decision = cleanValue(body.decision || "").toLowerCase();
+    if (!["approved", "amended", "rejected"].includes(decision)) {
+      return res.status(400).json({ error: "decision must be approved, amended, or rejected." });
+    }
+    const rows = await query(
+      `SELECT id, created_by FROM hr_leave_requests WHERE id = ? AND institution_id = ? LIMIT 1`,
+      [id, institutionId]
+    );
+    if (!rows.length) return res.status(404).json({ error: "Leave application not found." });
+    if (Number(rows[0].created_by) === Number(req.user.id)) {
+      return res.status(403).json({ error: "A leave request cannot be approved by the same officer who applied." });
+    }
+    const nextStatus = decision === "approved" ? "Approved" : decision === "rejected" ? "Rejected" : "Approved";
+    const amendedDays = decision === "amended" ? Number(body.amended_days || 0) || null : null;
+    const comment = cleanValue(body.comment || "");
+    await query(
+      `UPDATE hr_leave_requests
+       SET status = ?, approval_stage = 'Final', amended_days = ?, approval_comment = ?, approved_by_user_id = ?
+       WHERE id = ? AND institution_id = ?`,
+      [nextStatus, amendedDays, comment, String(req.user.id), id, institutionId]
+    );
+    await auditLog(req.user, "HR_LEAVE_DECIDE", "hr_leave_requests", id, { decision, amended_days: amendedDays });
+    res.json({ message: `Leave ${decision}.`, id });
   })
 );
 
