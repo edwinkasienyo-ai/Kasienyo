@@ -57,7 +57,7 @@ const {
 } = require("./config/cbcLibrary");
 
 /** Bump when shipping UI/API changes so schools can confirm they run the right copy. */
-const IIMS_BUILD_STAMP = process.env.IIMS_BUILD_STAMP || "ui-deploy-rev41";
+const IIMS_BUILD_STAMP = process.env.IIMS_BUILD_STAMP || "ui-deploy-rev42";
 
 const app = express();
 
@@ -2118,6 +2118,16 @@ app.get("/api/health", asyncHandler(async (_, res) => {
   await query("SELECT 1");
   res.json({ status: "ok", service: "IIMS API" });
 }));
+
+app.get("/api/health/messaging", (_, res) => {
+  res.json({
+    smtp_configured: Boolean(process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS),
+    twilio_sms_configured: Boolean(process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN && process.env.TWILIO_FROM),
+    twilio_verify_configured: Boolean(process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN && process.env.TWILIO_VERIFY_SERVICE_SID),
+    otp_channels_supported: ["console", "email", "sms", "sms_email"],
+    build_stamp: IIMS_BUILD_STAMP
+  });
+});
 
 app.post("/api/auth/login", authLoginRateLimit, asyncHandler(async (req, res) => {
   const { username, password, otpChannel } = req.body;
