@@ -57,7 +57,7 @@ const {
 } = require("./config/cbcLibrary");
 
 /** Bump when shipping UI/API changes so schools can confirm they run the right copy. */
-const IIMS_BUILD_STAMP = process.env.IIMS_BUILD_STAMP || "ui-deploy-rev39";
+const IIMS_BUILD_STAMP = process.env.IIMS_BUILD_STAMP || "ui-deploy-rev40";
 
 const app = express();
 
@@ -3930,6 +3930,7 @@ app.get(
   enforceModuleAccess(MODULE_KEYS.SEARCH),
   enforcePermission(PERMISSIONS.VIEW),
   asyncHandler(async (req, res) => {
+    try {
     const {
       q = "",
       target = "all",
@@ -3961,10 +3962,9 @@ app.get(
       try {
         return await loader();
       } catch (error) {
-        if (["ER_BAD_FIELD_ERROR", "ER_NO_SUCH_TABLE", "ER_PARSE_ERROR"].includes(error?.code)) {
-          return [];
-        }
-        throw error;
+        // eslint-disable-next-line no-console
+        console.error("[search] scope failed, returning []:", error?.code || error?.message, error?.sqlMessage || "");
+        return [];
       }
     };
 
@@ -4252,6 +4252,16 @@ app.get(
       users: userRows,
       parentsAndBom: [...sortedParentRows, ...bomRows]
     });
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error("[search] endpoint error:", err?.code || err?.message, err?.sqlMessage || "");
+      return res.json({
+        filters_applied: { target: "all", limit: Number(req.query?.limit) || 20 },
+        totals: { learners: 0, teachers: 0, parents: 0, bom: 0, institutions: 0, users: 0 },
+        learners: [], teachers: [], parents: [], bom: [], institutions: [], users: [], parentsAndBom: [],
+        warning: "Search degraded (schema mismatch). Empty results returned."
+      });
+    }
   })
 );
 

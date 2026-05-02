@@ -49,7 +49,7 @@ async function loadBuildStampLogin() {
     }
     const data = response.ok ? await response.json() : null;
     const stamp = data?.build_stamp || "unknown";
-    el.textContent = `Release: ${stamp} · UI bundle rev39 — flush hero + coloured paragraphs.`;
+    el.textContent = `Release: ${stamp} · UI bundle rev40 — hero loader + safer search.`;
   } catch (_) {
     el.textContent =
       "Could not load release info. Ensure Node is running from your updated project (e.g. BASIC EDUCATION) and try again.";
@@ -85,18 +85,28 @@ async function loadPublicHeroImage() {
       params.set("institution_code", institutionCode);
     }
     const endpoint = `/api/public/branding/hero-image${params.toString() ? `?${params.toString()}` : ""}`;
-    const data = await request(endpoint);
-    const staticPriorityUrl = "/assets/imis-hero.jpg";
-    const resolvedUrl = data?.hero_image_url || fallbackUrl;
-    const resolvedIsDefaultUpload =
-      typeof resolvedUrl === "string" && resolvedUrl.includes("/uploads/index-hero.");
-    const finalUrl = resolvedIsDefaultUpload ? staticPriorityUrl : resolvedUrl;
-    const preferredFinalUrl = finalUrl || staticPriorityUrl || fallbackUrl;
+    let data = null;
+    try {
+      data = await request(endpoint);
+    } catch (_) {
+      data = null;
+    }
+    const resolvedUrl = (data && data.hero_image_url) ? data.hero_image_url : fallbackUrl;
     heroImageEl.onerror = function onHeroLoadError() {
+      if (!this.dataset.fallbackApplied) {
+        this.dataset.fallbackApplied = "1";
+        this.src = "/uploads/index.jpg";
+        return;
+      }
+      if (!this.dataset.fallback2Applied) {
+        this.dataset.fallback2Applied = "1";
+        this.src = "/assets/imis-hero.jpg";
+        return;
+      }
       this.onerror = null;
-      this.src = fallbackUrl;
+      this.style.display = "none";
     };
-    heroImageEl.src = preferredFinalUrl;
+    heroImageEl.src = resolvedUrl || fallbackUrl;
   };
   try {
     await loadWithContext();
