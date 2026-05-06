@@ -840,7 +840,12 @@ async function ensureUserPasswordPolicyColumns() {
     ["parent2_residence", "VARCHAR(255) NULL"],
     ["parent2_occupation", "VARCHAR(150) NULL"],
     ["parent2_email", "VARCHAR(255) NULL"],
-    ["parent2_relationship", "VARCHAR(80) NULL"]
+    ["parent2_relationship", "VARCHAR(80) NULL"],
+    // conduct_status is referenced by the dashboard (Suspended / Expelled / Drop
+    // Out / Completion / Transferred cards) but was never present in
+    // sql/schema.sql nor previously migrated. Add it idempotently here so
+    // existing databases gain the column on next startup.
+    ["conduct_status", "VARCHAR(80) NULL"]
   ];
   for (const [colName, ddl] of learnerColMigrations) {
     // eslint-disable-next-line no-await-in-loop
