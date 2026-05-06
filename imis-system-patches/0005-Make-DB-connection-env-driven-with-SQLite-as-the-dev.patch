@@ -1,0 +1,136 @@
+From a4b69f7fd1512190a6bbf4540c7f24a2da149c1c Mon Sep 17 00:00:00 2001
+From: Cursor Agent <cursor-agent@users.noreply.github.com>
+Date: Wed, 6 May 2026 17:06:10 +0000
+Subject: [PATCH 05/13] Make DB connection env-driven with SQLite as the dev
+ default
+
+Previously backend/src/config/db.js hardcoded:
+    new Sequelize('imis', 'root', '', { host: 'localhost', dialect: 'mysql', port: 3306 })
+
+This meant the backend could only start on a machine that had MySQL
+installed AND a database called 'imis' AND the root user with no
+password. None of those are true on a fresh Windows laptop, so
+sequelize.authenticate() fails immediately and the server never starts.
+
+Changes:
+- Read DB_DIALECT/DB_HOST/DB_PORT/DB_USER/DB_PASSWORD/DB_NAME from .env.
+- Default DB_DIALECT to 'sqlite', which needs zero setup. The DB lives
+  in backend/database.sqlite (gitignored).
+- Add sqlite3 to dependencies so the default works after a single
+  'npm install'.
+- Keep mysql + postgres as opt-in branches.
+- Gitignore backend/database.sqlite and its journal file.
+
+Effect: on a fresh laptop, 'cd backend && npm install && npm run dev'
+will now actually start the API server.
+---
+ .gitignore               |  2 ++
+ backend/package.json     |  1 +
+ backend/src/config/db.js | 68 +++++++++++++++++++++++++++++++++++-----
+ 3 files changed, 64 insertions(+), 7 deletions(-)
+
+diff --git a/.gitignore b/.gitignore
+index fe0c093..0ea3679 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -8,6 +8,8 @@ backend/.env
+ backend/.env.*
+ imis-frontend/.env.local
+ backend/dist/
++backend/database.sqlite
++backend/database.sqlite-journal
+ imis-frontend/build/
+ imis-frontend/dist/
+ *.log
+diff --git a/backend/package.json b/backend/package.json
+index 0ddffd2..39642d2 100644
+--- a/backend/package.json
++++ b/backend/package.json
+@@ -20,6 +20,7 @@
+     "mysql2": "^3.22.3",
+     "recharts": "^3.8.1",
+     "sequelize": "^6.37.8",
++    "sqlite3": "^5.1.7",
+     "uuid": "^14.0.0"
+   }
+ }
+diff --git a/backend/src/config/db.js b/backend/src/config/db.js
+index 4e66e45..1887340 100644
+--- a/backend/src/config/db.js
++++ b/backend/src/config/db.js
+@@ -1,10 +1,64 @@
++const path = require("path");
+ const { Sequelize } = require("sequelize");
+ 
+-const sequelize = new Sequelize("imis", "root", "", {
+-  host: "localhost",
+-  dialect: "mysql",
+-  port: 3306,
+-  logging: false,
+-});
++// =======================
++// DB CONFIG (env-driven, SQLite-by-default)
++// =======================
++//
++// In dev, the backend defaults to SQLite so it can run on any laptop without
++// installing a MySQL/PostgreSQL server. The DB lives in a single file at
++// backend/database.sqlite (gitignored).
++//
++// To use MySQL instead, set in your .env:
++//
++//   DB_DIALECT=mysql
++//   DB_HOST=127.0.0.1
++//   DB_PORT=3306
++//   DB_USER=root
++//   DB_PASSWORD=
++//   DB_NAME=imis
++//
++// =======================
+ 
+-module.exports = sequelize;
+\ No newline at end of file
++const dialect = String(process.env.DB_DIALECT || "sqlite").toLowerCase();
++
++let sequelize;
++
++if (dialect === "mysql") {
++  sequelize = new Sequelize(
++    process.env.DB_NAME || "imis",
++    process.env.DB_USER || "root",
++    process.env.DB_PASSWORD || "",
++    {
++      host: process.env.DB_HOST || "127.0.0.1",
++      port: Number(process.env.DB_PORT || 3306),
++      dialect: "mysql",
++      logging: false,
++    }
++  );
++} else if (dialect === "postgres" || dialect === "postgresql") {
++  sequelize = new Sequelize(
++    process.env.DB_NAME || "imis",
++    process.env.DB_USER || "postgres",
++    process.env.DB_PASSWORD || "",
++    {
++      host: process.env.DB_HOST || "127.0.0.1",
++      port: Number(process.env.DB_PORT || 5432),
++      dialect: "postgres",
++      logging: false,
++    }
++  );
++} else {
++  // Default: SQLite — single file, no external server needed.
++  const storage =
++    process.env.DB_STORAGE ||
++    path.join(__dirname, "..", "..", "database.sqlite");
++
++  sequelize = new Sequelize({
++    dialect: "sqlite",
++    storage,
++    logging: false,
++  });
++}
++
++module.exports = sequelize;
+-- 
+2.43.0
+

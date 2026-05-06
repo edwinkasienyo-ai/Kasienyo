@@ -1,0 +1,50 @@
+From 3c4b81161737ee11672dd8c4ac5fe270a6680d2b Mon Sep 17 00:00:00 2001
+From: Cursor Agent <cursor-agent@users.noreply.github.com>
+Date: Wed, 6 May 2026 17:04:18 +0000
+Subject: [PATCH 02/13] Fix LeftPanel.js compile errors
+
+Two bugs prevented the frontend from compiling:
+
+1. An orphan <img> JSX tag was placed at the top of the file *outside*
+   any function/component, between the import statements and the const
+   declaration. React-Scripts (Webpack + Babel) rejects this.
+
+2. The component referenced an undefined identifier 'schoolImage' as the
+   <img src=> value. There was no import for it anywhere.
+
+Fix: removed the orphan JSX, and reference school.jpg directly from the
+public folder (/school.jpg) which is already shipped in imis-frontend/public/.
+---
+ imis-frontend/src/components/LeftPanel.js | 5 ++---
+ 1 file changed, 2 insertions(+), 3 deletions(-)
+
+diff --git a/imis-frontend/src/components/LeftPanel.js b/imis-frontend/src/components/LeftPanel.js
+index a0d9d11..57439b4 100644
+--- a/imis-frontend/src/components/LeftPanel.js
++++ b/imis-frontend/src/components/LeftPanel.js
+@@ -1,6 +1,5 @@
+ import React from "react";
+ import "./LeftPanel.css";
+-<img src="/school.jpg" alt="Students" className="left-image" />
+ 
+ const LeftPanel = () => {
+   return (
+@@ -8,7 +7,7 @@ const LeftPanel = () => {
+ 
+       {/* IMAGE */}
+       <div className="image-section">
+-        <img src={schoolImage} alt="IMIS" />
++        <img src="/school.jpg" alt="IMIS" className="left-image" />
+       </div>
+ 
+       {/* TITLE */}
+@@ -47,4 +46,4 @@ const LeftPanel = () => {
+   );
+ };
+ 
+-export default LeftPanel;
+\ No newline at end of file
++export default LeftPanel;
+-- 
+2.43.0
+

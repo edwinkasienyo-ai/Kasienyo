@@ -1,0 +1,115 @@
+From 929c9bde346b8cc92edf711f240b465cafd2881f Mon Sep 17 00:00:00 2001
+From: Cursor Agent <cursor-agent@users.noreply.github.com>
+Date: Wed, 6 May 2026 17:05:34 +0000
+Subject: [PATCH 04/13] Harden Dashboard against missing /dashboard/stats
+ endpoint
+
+The dashboard called API.get('/dashboard/stats') with no try/catch and no
+loading state. If that endpoint returns 404/500 (which it currently will,
+because dashboard.controller is still scaffolding), the React component
+throws an unhandled promise rejection and the dashboard appears blank.
+
+Changes:
+- Wrap the fetch in try/catch, store the error in state, render a warning
+  banner instead of crashing.
+- Use ?? so missing stats render '-' rather than 'undefined'.
+- Defend against malformed user JSON in localStorage.
+- Add a Logout button that uses utils/auth.logout (so the user has an
+  obvious way out of /dashboard once they're in).
+---
+ imis-frontend/src/pages/Dashboard.js | 59 ++++++++++++++++++++++------
+ 1 file changed, 47 insertions(+), 12 deletions(-)
+
+diff --git a/imis-frontend/src/pages/Dashboard.js b/imis-frontend/src/pages/Dashboard.js
+index 733c7b1..33b138a 100644
+--- a/imis-frontend/src/pages/Dashboard.js
++++ b/imis-frontend/src/pages/Dashboard.js
+@@ -1,38 +1,73 @@
+ import { useEffect, useState } from "react";
+ import API from "../api/axios";
++import { logout } from "../utils/auth";
+ import "./Dashboard.css";
+ 
+ const Dashboard = () => {
+   const [stats, setStats] = useState({});
+-  const user = JSON.parse(localStorage.getItem("user"));
++  const [statsError, setStatsError] = useState(null);
++
++  let user = null;
++  try {
++    user = JSON.parse(localStorage.getItem("user")) || null;
++  } catch {
++    user = null;
++  }
+ 
+   useEffect(() => {
+-    fetchStats();
++    let cancelled = false;
++    (async () => {
++      try {
++        const res = await API.get("/dashboard/stats");
++        if (!cancelled) setStats(res.data || {});
++      } catch (err) {
++        if (cancelled) return;
++        const msg =
++          err?.response?.data?.message ||
++          err.message ||
++          "Could not load dashboard stats.";
++        setStatsError(msg);
++        setStats({});
++      }
++    })();
++    return () => {
++      cancelled = true;
++    };
+   }, []);
+ 
+-  const fetchStats = async () => {
+-    const res = await API.get("/dashboard/stats");
+-    setStats(res.data);
+-  };
+-
+   return (
+     <div className="dashboard">
+ 
+       <h2>
+-        WELCOME {user?.username} - {user?.role}
++        WELCOME {user?.username || user?.fullName || "user"}
++        {user?.role ? ` - ${user.role}` : ""}
+       </h2>
+ 
++      {statsError && (
++        <div className="dashboard-warning" role="alert">
++          ⚠ {statsError} (dashboard data not available yet)
++        </div>
++      )}
++
+       <div className="cards">
+-        <div>Total Students: {stats.totalStudents}</div>
+-        <div>Teachers: {stats.teachers}</div>
+-        <div>Present: {stats.present}</div>
+-        <div>Absent: {stats.absent}</div>
++        <div>Total Students: {stats.totalStudents ?? "—"}</div>
++        <div>Teachers: {stats.teachers ?? "—"}</div>
++        <div>Present: {stats.present ?? "—"}</div>
++        <div>Absent: {stats.absent ?? "—"}</div>
+       </div>
+ 
+       <div className="announcements">
+         No Active Announcements
+       </div>
+ 
++      <button
++        type="button"
++        onClick={logout}
++        style={{ marginTop: "1rem" }}
++      >
++        Logout
++      </button>
++
+     </div>
+   );
+ };
+-- 
+2.43.0
+
