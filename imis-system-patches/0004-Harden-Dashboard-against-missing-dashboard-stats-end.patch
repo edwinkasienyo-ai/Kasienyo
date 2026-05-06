@@ -1,7 +1,7 @@
 From 929c9bde346b8cc92edf711f240b465cafd2881f Mon Sep 17 00:00:00 2001
 From: Cursor Agent <cursor-agent@users.noreply.github.com>
 Date: Wed, 6 May 2026 17:05:34 +0000
-Subject: [PATCH 04/13] Harden Dashboard against missing /dashboard/stats
+Subject: [PATCH 04/14] Harden Dashboard against missing /dashboard/stats
  endpoint
 
 The dashboard called API.get('/dashboard/stats') with no try/catch and no

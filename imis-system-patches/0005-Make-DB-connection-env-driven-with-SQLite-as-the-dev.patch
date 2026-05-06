@@ -1,7 +1,7 @@
 From a4b69f7fd1512190a6bbf4540c7f24a2da149c1c Mon Sep 17 00:00:00 2001
 From: Cursor Agent <cursor-agent@users.noreply.github.com>
 Date: Wed, 6 May 2026 17:06:10 +0000
-Subject: [PATCH 05/13] Make DB connection env-driven with SQLite as the dev
+Subject: [PATCH 05/14] Make DB connection env-driven with SQLite as the dev
  default
 
 Previously backend/src/config/db.js hardcoded:

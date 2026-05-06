@@ -1,7 +1,7 @@
 From 0f05f2f03bbc6443d483e05507fda6c1b1482914 Mon Sep 17 00:00:00 2001
 From: Cursor Agent <cursor-agent@users.noreply.github.com>
 Date: Wed, 6 May 2026 17:09:28 +0000
-Subject: [PATCH 11/13] Add start/dev scripts and nodemon devDependency to
+Subject: [PATCH 11/14] Add start/dev scripts and nodemon devDependency to
  backend
 
 Previously backend/package.json had only a 'test' script, so 'npm run dev'

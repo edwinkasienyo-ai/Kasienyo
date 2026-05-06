@@ -1,7 +1,7 @@
 From 07524659e6bc0e5948b175360651af121e760538 Mon Sep 17 00:00:00 2001
 From: Cursor Agent <cursor-agent@users.noreply.github.com>
 Date: Wed, 6 May 2026 17:03:53 +0000
-Subject: [PATCH 01/13] Move real frontend out of backend/ to repo root
+Subject: [PATCH 01/14] Move real frontend out of backend/ to repo root
 
 The actual UI (Login page, Dashboard, components, axios, react-router) was
 incorrectly nested inside backend/imis-frontend/, while the top-level

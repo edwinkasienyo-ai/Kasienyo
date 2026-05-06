@@ -1,7 +1,7 @@
 From 5642015882a238039235d35b8b00dbfcff18aaf2 Mon Sep 17 00:00:00 2001
 From: Cursor Agent <cursor-agent@users.noreply.github.com>
 Date: Wed, 6 May 2026 17:06:38 +0000
-Subject: [PATCH 06/13] Add username field to User model so the login form has
+Subject: [PATCH 06/14] Add username field to User model so the login form has
  something to match
 
 The login form (RightPanel.js) submits {role, username, password, otp},

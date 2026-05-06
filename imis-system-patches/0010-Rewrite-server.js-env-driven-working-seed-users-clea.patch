@@ -1,7 +1,7 @@
 From e518526af6b1e723cebe7c6d7fcd7ff70f6e1c3c Mon Sep 17 00:00:00 2001
 From: Cursor Agent <cursor-agent@users.noreply.github.com>
 Date: Wed, 6 May 2026 17:09:07 +0000
-Subject: [PATCH 10/13] Rewrite server.js: env-driven, working seed users,
+Subject: [PATCH 10/14] Rewrite server.js: env-driven, working seed users,
  clear startup banner
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8

@@ -1,7 +1,7 @@
 From bd010b3c25f4b1c7f4ba84eed8226f00d7e95bfe Mon Sep 17 00:00:00 2001
 From: Cursor Agent <cursor-agent@users.noreply.github.com>
 Date: Wed, 6 May 2026 17:04:50 +0000
-Subject: [PATCH 03/13] Improve login UX in RightPanel: show server errors and
+Subject: [PATCH 03/14] Improve login UX in RightPanel: show server errors and
  dev-mode OTP
 
 Previously sendOTP() and login() swallowed server-side errors and showed

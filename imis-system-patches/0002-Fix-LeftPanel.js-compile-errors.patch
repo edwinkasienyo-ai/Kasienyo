@@ -1,7 +1,7 @@
 From 3c4b81161737ee11672dd8c4ac5fe270a6680d2b Mon Sep 17 00:00:00 2001
 From: Cursor Agent <cursor-agent@users.noreply.github.com>
 Date: Wed, 6 May 2026 17:04:18 +0000
-Subject: [PATCH 02/13] Fix LeftPanel.js compile errors
+Subject: [PATCH 02/14] Fix LeftPanel.js compile errors
 
 Two bugs prevented the frontend from compiling:
 
