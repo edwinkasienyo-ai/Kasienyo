@@ -3,6 +3,8 @@ USE iims_school_system;
 
 CREATE TABLE IF NOT EXISTS institutions (
   id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  status_updated_at DATETIME NULL,
+  status_updated_by_user_id BIGINT NULL,
   institution_name VARCHAR(255) NOT NULL,
   institution_code VARCHAR(100) NOT NULL UNIQUE,
   email VARCHAR(255) NULL,

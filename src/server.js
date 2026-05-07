@@ -407,6 +407,32 @@ async function ensureUserPasswordPolicyColumns() {
     await query("ALTER TABLE institutions ADD COLUMN suspended_reason TEXT NULL");
   }
 
+  // status_updated_at + status_updated_by_user_id are referenced by the
+  // institution suspend/deactivate UPDATE in app.js but were missing from
+  // both schema.sql and the migration loop. Without them, suspending an
+  // institution from the SysDev console throws ER_BAD_FIELD_ERROR.
+  const institutionStatusUpdatedAtRows = await query(
+    `SELECT COUNT(*) total
+     FROM INFORMATION_SCHEMA.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = 'institutions'
+       AND COLUMN_NAME = 'status_updated_at'`
+  );
+  if (!Number(institutionStatusUpdatedAtRows[0]?.total || 0)) {
+    await query("ALTER TABLE institutions ADD COLUMN status_updated_at DATETIME NULL");
+  }
+
+  const institutionStatusUpdatedByRows = await query(
+    `SELECT COUNT(*) total
+     FROM INFORMATION_SCHEMA.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = 'institutions'
+       AND COLUMN_NAME = 'status_updated_by_user_id'`
+  );
+  if (!Number(institutionStatusUpdatedByRows[0]?.total || 0)) {
+    await query("ALTER TABLE institutions ADD COLUMN status_updated_by_user_id BIGINT NULL");
+  }
+
   const userSuspendedReasonRows = await query(
     `SELECT COUNT(*) total
      FROM INFORMATION_SCHEMA.COLUMNS
