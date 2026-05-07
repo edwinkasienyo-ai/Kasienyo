@@ -1,4 +1,37 @@
-# IMIS Hosting Guide (rev45)
+# IMIS Hosting Guide (rev46)
+
+## TL;DR — one-shot Hostinger VPS deploy
+
+After provisioning a fresh Ubuntu 22.04 VPS and pointing `theimis.com`
+DNS at its IPv4 address, SSH in as root and run:
+
+```bash
+apt update && apt install -y git
+git clone -b cursor/launch-day-rev46-3b70 \
+  https://github.com/edwinkasienyo-ai/Kasienyo.git /opt/imis
+cd /opt/imis
+IMIS_DOMAIN=theimis.com \
+IMIS_ADMIN_EMAIL=mwendeguenterpriseltd@gmail.com \
+  bash scripts/ubuntu-vps-bootstrap.sh
+```
+
+That single script:
+- installs Node 20, MySQL 8, nginx, certbot, ufw, fail2ban
+- creates a dedicated `imis` UNIX user
+- provisions the database, generates secure passwords, imports schema
+- writes `/opt/imis/.env` with placeholders for SendGrid + Africa's Talking keys
+- starts the app under PM2 (auto-restart on reboot)
+- configures nginx with HTTPS-redirect + reverse proxy
+- issues a Let's Encrypt cert for `theimis.com` + `www.theimis.com`
+- locks down the firewall (22/80/443 only)
+
+After it finishes, the only manual step is to edit `/opt/imis/.env`,
+paste the SendGrid + AT keys, and run `sudo -u imis pm2 restart imis`.
+
+The rest of this document covers manual steps and the older deployment paths.
+
+---
+
 
 This file documents a production deployment of IMIS (Integrated Management Information System for Basic Learning Institutions).
 
