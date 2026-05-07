@@ -407,6 +407,32 @@ async function ensureUserPasswordPolicyColumns() {
     await query("ALTER TABLE institutions ADD COLUMN suspended_reason TEXT NULL");
   }
 
+  // status_updated_at + status_updated_by_user_id are referenced by the
+  // institution suspend/deactivate UPDATE in app.js but were missing from
+  // both schema.sql and the migration loop. Without them, suspending an
+  // institution from the SysDev console throws ER_BAD_FIELD_ERROR.
+  const institutionStatusUpdatedAtRows = await query(
+    `SELECT COUNT(*) total
+     FROM INFORMATION_SCHEMA.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = 'institutions'
+       AND COLUMN_NAME = 'status_updated_at'`
+  );
+  if (!Number(institutionStatusUpdatedAtRows[0]?.total || 0)) {
+    await query("ALTER TABLE institutions ADD COLUMN status_updated_at DATETIME NULL");
+  }
+
+  const institutionStatusUpdatedByRows = await query(
+    `SELECT COUNT(*) total
+     FROM INFORMATION_SCHEMA.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = 'institutions'
+       AND COLUMN_NAME = 'status_updated_by_user_id'`
+  );
+  if (!Number(institutionStatusUpdatedByRows[0]?.total || 0)) {
+    await query("ALTER TABLE institutions ADD COLUMN status_updated_by_user_id BIGINT NULL");
+  }
+
   const userSuspendedReasonRows = await query(
     `SELECT COUNT(*) total
      FROM INFORMATION_SCHEMA.COLUMNS
@@ -840,7 +866,12 @@ async function ensureUserPasswordPolicyColumns() {
     ["parent2_residence", "VARCHAR(255) NULL"],
     ["parent2_occupation", "VARCHAR(150) NULL"],
     ["parent2_email", "VARCHAR(255) NULL"],
-    ["parent2_relationship", "VARCHAR(80) NULL"]
+    ["parent2_relationship", "VARCHAR(80) NULL"],
+    // conduct_status is referenced by the dashboard (Suspended / Expelled / Drop
+    // Out / Completion / Transferred cards) but was never present in
+    // sql/schema.sql nor previously migrated. Add it idempotently here so
+    // existing databases gain the column on next startup.
+    ["conduct_status", "VARCHAR(80) NULL"]
   ];
   for (const [colName, ddl] of learnerColMigrations) {
     // eslint-disable-next-line no-await-in-loop

@@ -3,6 +3,8 @@ USE iims_school_system;
 
 CREATE TABLE IF NOT EXISTS institutions (
   id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  status_updated_at DATETIME NULL,
+  status_updated_by_user_id BIGINT NULL,
   institution_name VARCHAR(255) NOT NULL,
   institution_code VARCHAR(100) NOT NULL UNIQUE,
   email VARCHAR(255) NULL,
@@ -216,6 +218,7 @@ CREATE TABLE IF NOT EXISTS learners (
   parent2_email VARCHAR(255) NULL,
   parent2_relationship VARCHAR(80) NULL,
   status VARCHAR(60) NULL,
+  conduct_status VARCHAR(80) NULL,
   parent_full_name VARCHAR(255) NULL,
   parent_relationship VARCHAR(50) NULL,
   parent_id_number VARCHAR(120) NULL,
