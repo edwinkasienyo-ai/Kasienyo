@@ -129,7 +129,7 @@ select:disabled {
   min-height: 100dvh;
   height: auto;
   display: grid;
-  grid-template-columns: minmax(340px, 1fr) minmax(340px, 1.06fr);
+  grid-template-columns: minmax(360px, 1.18fr) minmax(330px, 0.92fr);
   align-items: stretch;
   overflow: hidden;
 }
@@ -304,27 +304,53 @@ select:disabled {
 
 .info-strip {
   margin-top: 0;
-  padding: 3px 5px;
+  padding: 4px 7px;
   border-radius: 6px;
   border: 1px solid rgba(255, 255, 255, 0.28);
   background: linear-gradient(90deg, rgba(7, 40, 69, 0.84), rgba(17, 76, 122, 0.78));
   color: #eef6ff;
-  line-height: 1.16;
-  font-size: clamp(7px, 0.65vw + 6px, 10px);
-  font-weight: 900;
-  text-transform: uppercase;
-  letter-spacing: 0.01em;
+  line-height: 1.28;
+  font-size: clamp(8.5px, 0.72vw + 6px, 11px);
+  font-weight: 700;
+  text-transform: none;
+  letter-spacing: 0.005em;
   box-shadow: 0 3px 10px rgba(6, 24, 45, 0.2);
 }
 
+.info-strip-title,
 .info-strip-a {
-  background: linear-gradient(90deg, rgba(12, 45, 77, 0.98), rgba(13, 72, 125, 0.92));
+  background: linear-gradient(92deg, #2a1700 0%, #5a3300 50%, #2a1700 100%);
   color: #ffd76d;
   text-align: center;
-  font-size: clamp(9px, 0.85vw + 6px, 13px);
-  line-height: 1.22;
-  padding: 6px 7px;
+  font-size: clamp(11px, 1vw + 4px, 17px);
+  line-height: 1.16;
+  padding: 9px 10px;
+  border-radius: 10px;
+  border: 1.5px solid rgba(255, 215, 109, 0.85);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-weight: 900;
+  text-shadow:
+    0 1px 0 rgba(0, 0, 0, 0.55),
+    0 0 14px rgba(255, 215, 109, 0.35);
+  box-shadow:
+    0 5px 14px rgba(0, 0, 0, 0.32),
+    inset 0 1px 0 rgba(255, 255, 255, 0.12),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.4);
+}
+
+.info-strip-tagline {
+  background: linear-gradient(92deg, #f7f3e7 0%, #fff7d9 50%, #f3eccd 100%);
+  color: #2a1700;
+  text-align: center;
+  font-style: italic;
+  font-weight: 800;
+  font-size: clamp(9.5px, 0.85vw + 5px, 12.5px);
+  letter-spacing: 0.02em;
+  padding: 6px 8px;
   border-radius: 8px;
+  border: 1px solid rgba(206, 161, 56, 0.55);
+  text-transform: none;
 }
 
 .info-strip-b {
@@ -413,22 +439,25 @@ select:disabled {
 
 .credit-strip {
   margin-top: 6px;
-  margin-bottom: 6px;
+  margin-bottom: 4px;
   text-align: center;
-  color: #1f2937;
-  font-size: clamp(11px, 0.96vw, 13px);
+  color: #2a0d3a;
+  font-size: clamp(9.5px, 0.85vw + 4px, 12px);
   font-weight: 900;
   text-transform: uppercase;
   letter-spacing: 0.05em;
   padding: 7px 10px;
   border-radius: 10px;
-  background: linear-gradient(90deg, #ffd76d, #f5c84b);
-  border: 1px solid rgba(255, 200, 80, 0.7);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.18);
+  background: linear-gradient(120deg, #fff7d9 0%, #ffd76d 30%, #f5c84b 70%, #d49b1a 100%);
+  border: 2px solid #b8860b;
+  box-shadow:
+    0 5px 14px rgba(0, 0, 0, 0.28),
+    inset 0 1px 0 rgba(255, 255, 255, 0.5);
   flex-shrink: 0;
   order: 99;
   position: relative;
   z-index: 5;
+  line-height: 1.28;
 }
 
 .left-legal-footer {
