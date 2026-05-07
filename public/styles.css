@@ -3026,3 +3026,213 @@ tbody tr:hover {
     font-weight: 900;
   }
 }
+
+/* =========================================================================
+   STANDARDIZED COMPACT ACTION BUTTON SYSTEM (rev46 launch-day)
+   -------------------------------------------------------------------------
+   Single source of truth for every action button in every module:
+   Select All / Deselect All / View / Edit / Delete / Save / Process /
+   Modify / Download / Reset / Refresh / Defaults / Print / Generate /
+   Submit / Cancel / Activate / Deactivate / Suspend / Restore.
+
+   USAGE:
+     <button class="ax-btn ax-btn--save">Save</button>
+     <button class="ax-btn ax-btn--edit">Edit</button>
+
+   The .ax-btn class gives the shared shape; the modifier classes
+   (ax-btn--<verb>) give the colour and icon.
+
+   Variants intentionally compact and consistent so a row of 8 buttons
+   fits horizontally without wrapping in a table cell.
+   ========================================================================= */
+
+.ax-btn,
+button.ax-btn,
+a.ax-btn {
+  --axb-fg: #fff;
+  --axb-bg: #2a3949;
+  --axb-bg-hover: #1a2735;
+  --axb-border: rgba(0, 0, 0, 0.12);
+  --axb-shadow: 0 2px 0 rgba(0, 0, 0, 0.18);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 4px 10px;
+  min-height: 26px;
+  line-height: 1.1;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  text-transform: none;
+  border: 1px solid var(--axb-border);
+  background: var(--axb-bg);
+  color: var(--axb-fg);
+  box-shadow: var(--axb-shadow);
+  cursor: pointer;
+  white-space: nowrap;
+  transition:
+    background 0.12s ease,
+    transform 0.06s ease,
+    box-shadow 0.12s ease;
+  text-decoration: none;
+  margin: 2px;
+  vertical-align: middle;
+}
+
+.ax-btn:hover,
+.ax-btn:focus-visible {
+  background: var(--axb-bg-hover);
+  box-shadow:
+    0 3px 0 rgba(0, 0, 0, 0.22),
+    0 4px 10px rgba(0, 0, 0, 0.12);
+  outline: none;
+}
+
+.ax-btn:active {
+  transform: translateY(1px);
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.18);
+}
+
+.ax-btn[disabled],
+.ax-btn[aria-disabled="true"] {
+  opacity: 0.5;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+.ax-btn::before {
+  display: inline-block;
+  font-style: normal;
+  font-weight: 900;
+  margin-right: 3px;
+  font-size: 13px;
+  line-height: 1;
+}
+
+/* ---- modifier colours + icons (matches the owner's photo) ---- */
+.ax-btn--select-all   { --axb-bg: #2da14b; --axb-bg-hover: #228337; }
+.ax-btn--select-all::before   { content: "✓"; }
+
+.ax-btn--deselect-all { --axb-bg: #6b7785; --axb-bg-hover: #525d69; }
+.ax-btn--deselect-all::before { content: "▢"; }
+
+.ax-btn--view         { --axb-bg: #1f6fb5; --axb-bg-hover: #155a99; }
+.ax-btn--view::before         { content: "👁"; }
+
+.ax-btn--edit         { --axb-bg: #7d3aac; --axb-bg-hover: #5e2a83; }
+.ax-btn--edit::before         { content: "✎"; }
+
+.ax-btn--modify       { --axb-bg: #9650d4; --axb-bg-hover: #743ba8; }
+.ax-btn--modify::before       { content: "✎"; }
+
+.ax-btn--delete       { --axb-bg: #c4302a; --axb-bg-hover: #9b2521; }
+.ax-btn--delete::before       { content: "🗑"; }
+
+.ax-btn--save         { --axb-bg: #2da14b; --axb-bg-hover: #228337; }
+.ax-btn--save::before         { content: "💾"; }
+
+.ax-btn--process      { --axb-bg: #de7a14; --axb-bg-hover: #b15f08; }
+.ax-btn--process::before      { content: "⚙"; }
+
+.ax-btn--download     { --axb-bg: #de7a14; --axb-bg-hover: #b15f08; }
+.ax-btn--download::before     { content: "⬇"; }
+
+.ax-btn--upload       { --axb-bg: #1f6fb5; --axb-bg-hover: #155a99; }
+.ax-btn--upload::before       { content: "⬆"; }
+
+.ax-btn--print        { --axb-bg: #4a5562; --axb-bg-hover: #343d49; }
+.ax-btn--print::before        { content: "🖨"; }
+
+.ax-btn--reset        { --axb-bg: #6b7785; --axb-bg-hover: #525d69; }
+.ax-btn--reset::before        { content: "↺"; }
+
+.ax-btn--refresh      { --axb-bg: #6b7785; --axb-bg-hover: #525d69; }
+.ax-btn--refresh::before      { content: "↻"; }
+
+.ax-btn--defaults     { --axb-bg: #d6a818; --axb-bg-hover: #a98510; --axb-fg: #2a1d00; }
+.ax-btn--defaults::before     { content: "★"; }
+
+.ax-btn--generate     { --axb-bg: #15877a; --axb-bg-hover: #0f6359; }
+.ax-btn--generate::before     { content: "✨"; }
+
+.ax-btn--submit       { --axb-bg: #2da14b; --axb-bg-hover: #228337; }
+.ax-btn--submit::before       { content: "➤"; }
+
+.ax-btn--cancel       { --axb-bg: #6b7785; --axb-bg-hover: #525d69; }
+.ax-btn--cancel::before       { content: "✕"; }
+
+.ax-btn--approve      { --axb-bg: #2da14b; --axb-bg-hover: #228337; }
+.ax-btn--approve::before      { content: "✔"; }
+
+.ax-btn--reject       { --axb-bg: #c4302a; --axb-bg-hover: #9b2521; }
+.ax-btn--reject::before       { content: "✕"; }
+
+.ax-btn--activate     { --axb-bg: #2da14b; --axb-bg-hover: #228337; }
+.ax-btn--activate::before     { content: "●"; }
+
+.ax-btn--deactivate   { --axb-bg: #6b7785; --axb-bg-hover: #525d69; }
+.ax-btn--deactivate::before   { content: "○"; }
+
+.ax-btn--suspend      { --axb-bg: #b95a08; --axb-bg-hover: #8c4406; }
+.ax-btn--suspend::before      { content: "⏸"; }
+
+.ax-btn--unsuspend    { --axb-bg: #2da14b; --axb-bg-hover: #228337; }
+.ax-btn--unsuspend::before    { content: "▶"; }
+
+.ax-btn--restore      { --axb-bg: #1f6fb5; --axb-bg-hover: #155a99; }
+.ax-btn--restore::before      { content: "↶"; }
+
+.ax-btn--register     { --axb-bg: #2da14b; --axb-bg-hover: #228337; }
+.ax-btn--register::before     { content: "✚"; }
+
+.ax-btn--add          { --axb-bg: #2da14b; --axb-bg-hover: #228337; }
+.ax-btn--add::before          { content: "+"; }
+
+.ax-btn--export-pdf   { --axb-bg: #c4302a; --axb-bg-hover: #9b2521; }
+.ax-btn--export-pdf::before   { content: "📄"; }
+
+.ax-btn--export-excel { --axb-bg: #1d6f43; --axb-bg-hover: #144d2e; }
+.ax-btn--export-excel::before { content: "📊"; }
+
+/* container that lays a row of action buttons compactly */
+.ax-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+}
+
+.ax-toolbar--right {
+  justify-content: flex-end;
+}
+
+/* in a table cell — keep them on one line */
+td .ax-btn,
+.ax-cell .ax-btn {
+  font-size: 11px;
+  padding: 2px 7px;
+  min-height: 22px;
+  margin: 1px;
+}
+
+td .ax-btn::before,
+.ax-cell .ax-btn::before {
+  font-size: 11px;
+  margin-right: 2px;
+}
+
+/* read-only / hidden-by-permission marker — let access-control hide buttons
+   by class without removing them from the DOM (so layout shifts are minimal) */
+.ax-btn[data-permission="hidden"],
+.ax-btn.ax-perm-hidden {
+  display: none !important;
+}
+
+@media (max-width: 760px) {
+  .ax-btn {
+    font-size: 11px;
+    padding: 3px 8px;
+  }
+}
