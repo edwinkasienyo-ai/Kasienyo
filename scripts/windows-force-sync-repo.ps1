@@ -1,14 +1,17 @@
-# Requires: repo root (package.json here), Git for Windows. ASCII-only strings for Windows PowerShell 5.
+# Requires Git for Windows; repo root contains package.json. Works under Windows PowerShell 5+
+# BASIC EDUCATION folder name does not matter as long as you run from that clone root.
+
 param(
     [string]$Branch = "main",
     [string]$Remote = "origin"
 )
 
-Set-StrictMode -Version Latest
-$ErrorActionPreference = "Stop"
+# Git writes progress to stderr; PS 5 treats that as an error stream. Do NOT use Stop here.
+Remove-Variable ErrorActionPreference -ErrorAction SilentlyContinue
+$ErrorActionPreference = "Continue"
 
 if (-not (Test-Path (Join-Path (Get-Location) "package.json"))) {
-    throw 'Run from repo root - folder must contain package.json (e.g. Desktop\BASIC EDUCATION).'
+    throw 'Run from repo root - folder must contain package.json.'
 }
 
 Write-Host ""
@@ -24,12 +27,12 @@ if ($status.Count -gt 0) {
 
 Write-Host ""
 Write-Host "[3/4] Fetch and align to ${Remote}/${Branch}..." -ForegroundColor Cyan
-git fetch $Remote
-git checkout $Branch
+git fetch $Remote | Out-Host
+git checkout $Branch | Out-Host
 if ($LASTEXITCODE -ne 0) {
     throw "git checkout $Branch failed - run git status."
 }
-git pull $Remote $Branch --ff-only 2>&1 | Out-Host
+git pull $Remote $Branch --ff-only | Out-Host
 if ($LASTEXITCODE -ne 0) {
     Write-Host "Pull --ff-only failed - hard reset to ${Remote}/${Branch}" -ForegroundColor Yellow
     git reset --hard "${Remote}/${Branch}"

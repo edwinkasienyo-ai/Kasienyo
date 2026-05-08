@@ -11,7 +11,7 @@ let allowedModules = [];
 let portalContext = null;
 let searchRowDrafts = {};
 let dashboardAutoRefreshHandle = null;
-const CLIENT_UI_BUNDLE_ID = "dash-bundle-main-v48-layoutfix";
+const CLIENT_UI_BUNDLE_ID = "dash-bundle-main-v49-cards-resilient";
 const DASHBOARD_STAT_LABELS = {
   totalLearners: "Total Learners Population",
   totalActiveLearners: "Active Learners",
@@ -4303,25 +4303,30 @@ function renderDashboardCards(stats) {
     return true;
   }
 
-  const entries = Object.entries(stats || {}).filter(([key]) => cardAllowedForStat(key));
-  const privilegedOverview = ["SYSTEM_DEVELOPER", "ADMIN", "HEAD_OF_INSTITUTION"].includes(
-    String(portalContext?.role || "").toUpperCase()
-  );
-  document.getElementById("cards").innerHTML =
-    entries.length || !privilegedOverview
-      ? entries.length
-        ? entries
-          .map(
-            ([key, value]) => `
+  const allEntries = Object.entries(stats || {});
+  const entries = allEntries.filter(([key]) => cardAllowedForStat(key));
+  const cardsHost = document.getElementById("cards");
+  if (!cardsHost) return;
+  if (entries.length) {
+    cardsHost.innerHTML = entries
+      .map(
+        ([key, value]) => `
       <div class="card stats-card metric-card metric-${escapeHtml(key)}">
         <h4>${escapeHtml(DASHBOARD_STAT_LABELS[key] || key.replace(/([A-Z])/g, " $1"))}</h4>
         <p>${key.toLowerCase().includes("fee") ? formatMoney(value) : formatNumber(value)}</p>
       </div>
     `
-          )
-          .join("")
-        : '<p class="small-note dashboard-hidden-widget">Dashboard statistics cards are restricted for your account.</p>'
-      : `<p class="small-note dashboard-empty-stats">Overview metrics will populate as admissions, attendance, fees, and marks are captured. API returned no summary totals yet.</p>`;
+      )
+      .join("");
+    return;
+  }
+  if (allEntries.length) {
+    cardsHost.innerHTML =
+      '<p class="small-note dashboard-hidden-widget">Dashboard statistics cards are restricted for your account.</p>';
+    return;
+  }
+  cardsHost.innerHTML =
+    '<p class="small-note dashboard-empty-stats">Dashboard summary returned no totals yet. Add learners / fees / attendance to populate metrics.</p>';
 }
 
 function stopDashboardAutoRefresh() {
@@ -6122,7 +6127,16 @@ async function init() {
     portalContext = portalData || null;
     allowedModules = Array.isArray(portalData?.allowed_modules) ? portalData.allowed_modules : [];
     const meData = await request("/api/auth/me");
-    applyDashboardIdentity(meData || {});
+    try {
+      applyDashboardIdentity(meData || {});
+    } catch (identityError) {
+      console.warn("[dashboard] applyDashboardIdentity failed:", identityError);
+      const portalLabelEl = document.getElementById("portalLabel");
+      if (portalLabelEl) {
+        const fallbackName = String(meData?.institution_name || "Institution").trim();
+        portalLabelEl.textContent = `${fallbackName} (${String(meData?.role || "USER")})`;
+      }
+    }
     // Parents and Learners MUST NOT print/download/screenshot
     const normalizedUiRole = String(portalData?.role || meData?.role || "").toUpperCase();
     if (["PARENT", "LEARNER", "BOM"].includes(normalizedUiRole)) {
