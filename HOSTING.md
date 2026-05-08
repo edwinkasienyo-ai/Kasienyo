@@ -49,6 +49,8 @@ Copy `.env.example` to `.env` and set:
 ```
 NODE_ENV=production
 PORT=5002
+# Default in code: listener does NOT silently hop to 5003+ if 5002 is busy (two Node.exe = stale UI forever).
+IIMS_PORT_FALLBACK=0           # leave 0 in production unless you knowingly need spare-port binding
 FORCE_HTTPS=true                 # redirect http -> https when behind proxy
 ENABLE_CSP=true                  # strict CSP headers
 IIMS_BUILD_STAMP=ui-deploy-revXX # visible on /api/build-info

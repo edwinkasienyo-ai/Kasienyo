@@ -11,6 +11,16 @@ const { hashPassword } = require("./utils/password");
 const { ROLES } = require("./config/constants");
 
 const PORT = Number(process.env.PORT || 5002);
+
+function truthyEnv(value, defaultFallback = false) {
+  const v = String(value ?? "").trim().toLowerCase();
+  if (!v) return defaultFallback;
+  return ["1", "true", "yes", "on"].includes(v);
+}
+
+/** By default ONLY one listener: exit if PORT is busy (prevents stale :5002 + new :5003 confusion). Set IIMS_PORT_FALLBACK=1 to allow next-port retry. */
+const IIMS_ALLOW_PORT_FALLBACK = truthyEnv(process.env.IIMS_PORT_FALLBACK, false);
+
 const JWT_SECRET_MIN_LENGTH = 16;
 const MAX_PORT_FALLBACK_ATTEMPTS = 25;
 
@@ -1171,8 +1181,40 @@ async function start() {
       break;
     }
     if (listenResult.retry) {
+      if (!IIMS_ALLOW_PORT_FALLBACK) {
+        const msg = `
+================================================================================
+  IIMS: STOP — PORT ${listenResult.port} IS ALREADY IN USE
+================================================================================
+  A second Node process would hide this problem:
+
+    • Terminal A might bind :5002 (older files in memory — old dashboard/login).
+    • Terminal B grabs :5003 (new Git pull looks "ignored" if the browser/bookmark stays on :5002).
+
+  THERE IS NO separate "backend" folder missing on disk: this repo is ONE app.
+  Server code lives in ./src and static UI in ./public (same folder you opened in VS Code).
+
+  WINDOWS PowerShell — free the port then start ONCE:
+
+    Get-Process node -ErrorAction SilentlyContinue | Stop-Process -Force
+    cd "$env:USERPROFILE\\Desktop\\BASIC EDUCATION"
+    npm start
+
+  Open ONLY the exact URL printed below in the NEXT successful run (often http://localhost:5002/).
+
+  OPTIONAL (not recommended for daily work — allows old multi-port hopping):
+
+    $env:IIMS_PORT_FALLBACK = "1"
+    npm start
+
+================================================================================
+`;
+        // eslint-disable-next-line no-console
+        console.error(msg);
+        process.exit(1);
+      }
       // eslint-disable-next-line no-console
-      console.warn(`[IIMS] Port ${listenResult.port} is in use. Trying next port...`);
+      console.warn(`[IIMS] Port ${listenResult.port} is in use. Trying next port (IIMS_PORT_FALLBACK enabled)...`);
       continue;
     }
     throw listenResult.error;
