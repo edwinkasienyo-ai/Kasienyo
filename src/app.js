@@ -46,7 +46,13 @@ const {
 const { auth } = require("./middleware/auth");
 const { hashPassword, verifyPassword } = require("./utils/password");
 const { sendSimplePdf, sendSimpleExcel } = require("./services/exportService");
-const { generateOtpCode, buildOtpExpiry, sendOtp } = require("./services/otpService");
+const {
+  generateOtpCode,
+  buildOtpExpiry,
+  sendOtp,
+  emailChannelReady,
+  smsChannelReady
+} = require("./services/otpService");
 const { buildSearchWhere } = require("./utils/sql");
 const {
   buildCbcSuggestion,
@@ -399,10 +405,20 @@ function normalizeRole(value) {
     HEAD_DEPARTMENT: ROLES.HEAD_OF_DEPARTMENT,
     PRINCIPAL: ROLES.HEAD_OF_INSTITUTION,
     HEAD_OF_SCHOOL: ROLES.HEAD_OF_INSTITUTION,
-    SENIOR_TEACHER: ROLES.SENIOR_TEACHER,
     SR_TEACHER: ROLES.SENIOR_TEACHER,
-    HEAD_OF_DEPARTMENT: ROLES.HEAD_OF_DEPARTMENT,
-    HOD: ROLES.HEAD_OF_DEPARTMENT,
+    TSC_SCD: ROLES.TSC,
+    TSC_SUB_COUNTY_DIRECTOR: ROLES.TSC,
+    MOE_SCD: ROLES.MOD,
+    MOD_SCD: ROLES.MOD,
+    TSC_CD: ROLES.TSC,
+    TSC_COUNTY_DIRECTOR: ROLES.TSC,
+    MOE_CD: ROLES.MOD,
+    MOD_CD: ROLES.MOD,
+    MOE_RD: ROLES.MOD,
+    MOD_RD: ROLES.MOD,
+    TSC_RD: ROLES.TSC,
+    TSC_REGIONAL_DIRECTOR: ROLES.TSC,
+    MINISTRY_REGIONAL_DIRECTOR: ROLES.MOD,
     SUPPORT_STAFF: ROLES.NON_TEACHING_STAFF,
     NON_TEACHING: ROLES.NON_TEACHING_STAFF,
     NONTEACHING: ROLES.NON_TEACHING_STAFF,
@@ -419,8 +435,7 @@ function normalizeRole(value) {
     SERVICE_PROVIDER: ROLES.SUPPLIER,
     SYSTEMDEVELOPER: ROLES.SYSTEM_DEVELOPER,
     CONTRACTORS: ROLES.CONTRACTOR,
-    SENIOR_TEACHER: ROLES.TEACHER,
-    HEAD_OF_DEPARTMENT: ROLES.TEACHER
+    LEARNER_PORTAL: ROLES.LEARNER
   };
   if (roleAliases[base]) {
     return roleAliases[base];
@@ -1804,25 +1819,23 @@ function buildParallelOtpDeliveries(requestedChannel, account) {
   const emailAddr = cleanValue(account?.otp_email || "");
   const phoneAddr = cleanValue(account?.otp_phone || "");
   const normalized = cleanValue(requestedChannel).toLowerCase();
-  const smtpReady = Boolean(process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS);
-  const smsReady = Boolean(
-    process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN && process.env.TWILIO_FROM
-  );
+  const emailReady = Boolean(emailChannelReady());
+  const smsReady = Boolean(smsChannelReady());
   const channels = [];
   if (normalized === "sms_email") {
-    if (smtpReady && emailAddr) channels.push({ channel: "email", destination: emailAddr });
+    if (emailReady && emailAddr) channels.push({ channel: "email", destination: emailAddr });
     if (smsReady && phoneAddr) channels.push({ channel: "sms", destination: phoneAddr });
     if (!channels.length) return null;
     return { parallel: true, channels, primaryChannel: "sms_email", primaryDestination: `${emailAddr}|${phoneAddr}` };
   }
   if (normalized === "email") {
-    if (smtpReady && emailAddr) channels.push({ channel: "email", destination: emailAddr });
-    else if (!smtpReady && phoneAddr && smsReady) channels.push({ channel: "sms", destination: phoneAddr });
-    else if (!smtpReady && emailAddr) channels.push({ channel: "console", destination: emailAddr });
+    if (emailReady && emailAddr) channels.push({ channel: "email", destination: emailAddr });
+    else if (!emailReady && phoneAddr && smsReady) channels.push({ channel: "sms", destination: phoneAddr });
+    else if (!emailReady && emailAddr) channels.push({ channel: "console", destination: emailAddr });
     else return null;
   } else if (normalized === "sms") {
     if (smsReady && phoneAddr) channels.push({ channel: "sms", destination: phoneAddr });
-    else if (!smsReady && emailAddr && smtpReady) channels.push({ channel: "email", destination: emailAddr });
+    else if (!smsReady && emailAddr && emailReady) channels.push({ channel: "email", destination: emailAddr });
     else if (!smsReady && phoneAddr) channels.push({ channel: "console", destination: phoneAddr });
     else return null;
   } else if (normalized === "console") {
@@ -1844,12 +1857,10 @@ function buildForgotPasswordOtpDeliveryPlan(requestedChannel, contactDestination
   const dest = cleanValue(contactDestination);
   if (!dest) return null;
   const normalized = cleanValue(requestedChannel).toLowerCase();
-  const smtpReady = Boolean(process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS);
-  const smsReady = Boolean(
-    process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN && process.env.TWILIO_FROM
-  );
+  const emailReady = Boolean(emailChannelReady());
+  const smsReady = Boolean(smsChannelReady());
   if (normalized === "email") {
-    if (smtpReady) {
+    if (emailReady) {
       return { parallel: false, channels: [{ channel: "email", destination: dest }], primaryChannel: "email", primaryDestination: dest };
     }
     return { parallel: false, channels: [{ channel: "console", destination: dest }], primaryChannel: "console", primaryDestination: dest };
@@ -1891,7 +1902,7 @@ async function createOtpSession({
       OTP_MAX_VERIFY_ATTEMPTS
     ]
   );
-  const OTP_DISPATCH_TIMEOUT_MS = Number(process.env.OTP_DISPATCH_TIMEOUT_MS || 7000);
+  const OTP_DISPATCH_TIMEOUT_MS = Number(process.env.OTP_DISPATCH_TIMEOUT_MS || 32000);
   const dispatchWithTimeout = async (entry) => {
     return Promise.race([
       sendOtp({
@@ -1916,14 +1927,11 @@ async function createOtpSession({
     });
   }
   if (!sendResults.length) {
-    try {
-      await Promise.race([
-        sendOtp({ channel, destination, code }),
-        new Promise((_, reject) => setTimeout(() => reject(new Error("dispatch-timeout")), OTP_DISPATCH_TIMEOUT_MS))
-      ]);
-      sendResults.push(`${channel}:ok`);
-    } catch (err) {
-      sendResults.push(`${channel}:fail:${err?.message || "error"}`);
+    const single = await dispatchWithTimeout({ channel, destination });
+    sendResults.push(single);
+    if (single.endsWith(":timeout")) {
+      // eslint-disable-next-line no-console
+      console.warn("[otp] dispatch timeout; delivery may still arrive — check provider logs.");
     }
   }
   return { code, expiresAt, sendResults };

@@ -163,6 +163,12 @@ function normalizeRoleValue(role) {
   ) {
     return "SUPPLIER";
   }
+  if (normalized === "TSC_SCD" || normalized === "TSC_CD" || normalized === "TSC_RD") {
+    return "TSC";
+  }
+  if (normalized === "MOE_SCD" || normalized === "MOE_CD" || normalized === "MOE_RD") {
+    return "MOD";
+  }
   if (normalized === "MOE" || normalized === "MINISTRY_OF_EDUCATION_MOE") {
     return "MOD";
   }
@@ -188,12 +194,26 @@ function validateUsernameValue(username, fieldLabel = "Username") {
   return null;
 }
 
+function syncOtpConsoleOption() {
+  const role = normalizeRoleValue(document.getElementById("loginPortalRole")?.value || "");
+  const sel = document.getElementById("otpChannel");
+  if (!sel) return;
+  const consoleOpt = sel.querySelector("option[data-sysdev-only=\"1\"]");
+  if (!consoleOpt) return;
+  const show = role === "SYSTEM_DEVELOPER";
+  consoleOpt.hidden = !show;
+  if (!show && sel.value === "console") {
+    sel.value = "sms_email";
+  }
+}
+
 function updateLoginFieldState() {
   const selectedPortalRole = normalizeRoleValue(
     document.getElementById("loginPortalRole")?.value ||
     document.getElementById("portalRole")?.value ||
     ""
   );
+  syncOtpConsoleOption();
   const isRoleSelected = Boolean(selectedPortalRole);
   const controlledInputIds = ["username", "password", "otpChannel", "otp"];
   controlledInputIds.forEach((id) => {
@@ -242,7 +262,8 @@ async function login() {
   try {
     const data = await request("/api/auth/login", {
       method: "POST",
-      body: JSON.stringify({ username, password, otpChannel })
+      body: JSON.stringify({ username, password, otpChannel }),
+      timeoutMs: 45000
     });
     const accountRole = normalizeRoleValue(data?.role);
     if (accountRole && accountRole !== selectedPortalRole) {
@@ -445,14 +466,15 @@ const INDEX_PAGE_DETAILS = {
     title: "About IMIS",
     path: "/about.html",
     html: `
-      <p>The <strong>Integrated Management Information System (IMIS)</strong> is a secure, multi-tenant platform for basic education institutions.
-      It brings together admissions, attendance, assessments, finance, compliance, and institutional registers in one audited environment.</p>
+      <p>The <strong>Integrated Management Information System (IMIS)</strong> for basic learning institutions combines governance,
+      learner registers, examinations, staffing, finance, procurement, welfare, messaging, security logging, and policy libraries
+      behind one authenticated, multi-tenant surface.</p>
       <h3>What IMIS delivers</h3>
       <ul>
-        <li>Role-based portals for System Developer, administrators, teachers, parents, learners, and service providers.</li>
-        <li>Institution-scoped data isolation with optional institution letterhead on reports and dashboards.</li>
-        <li>Strong authentication with one-time passwords (OTP) where required, plus detailed security audit trails.</li>
-        <li>CBC/CBE-aligned workflows for curriculum, examinations, and learner progress tracking.</li>
+        <li>Dedicated portals (System Developer, Ministry/TSC oversight, institution heads, teachers, support teams, BOM, service providers, parents/guardians, and learners).</li>
+        <li>Strict tenancy — institutions stay isolated unless a role explicitly has cross-cutting authority.</li>
+        <li>CBC/CBE-aligned records, OTP-backed sign-in paths, hashed credentials, recycle-bin oversight, and auditable privileged actions.</li>
+        <li>Configurable branding (hero imagery, stamps) suited to rollout on Hostinger VPS with SSL and managed OTP providers.</li>
       </ul>
       <h3>Developed by</h3>
       <p><strong>MWENDEGU ENTERPRISE LIMITED</strong> — contact: +254725757767 · mwendeguenterpriseltd@gmail.com</p>
@@ -547,9 +569,13 @@ const INDEX_PAGE_DETAILS = {
     title: "Security",
     path: "/security.html",
     html: `
-      <p>Security controls include OTP-backed authentication where configured, hashed passwords, rate limits on sensitive endpoints,
-      structured audit trails, and role-scoped APIs.</p>
-      <p>Deployments should follow <strong>security.txt</strong> disclosures for coordinated vulnerability reporting.</p>
+      <p>Layers include bcrypt password hashing, JWT sessions after OTP verification (where enabled), brute-force cooldowns,
+      institution suspension hooks, CSP-friendly static delivery, HTTPS termination guidance, structured audit sinks, and granular roles.</p>
+      <p>Deployments should advertise <strong>/.well-known/security.txt</strong> for coordinated disclosures and operational contacts.</p>
+      <ul>
+        <li>Rotate SMTP/SMS/API secrets via your VPS .env — never bake them into the UI bundle.</li>
+        <li>Review <code>/api/health/messaging</code> when OTP feels slow — it summarizes provider readiness flags.</li>
+      </ul>
     `
   },
   humans: {

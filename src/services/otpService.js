@@ -43,6 +43,16 @@ function africasTalkingReady() {
   );
 }
 
+/** True if any wired email backend can dispatch OTP (matches sendEmailOtp). */
+function emailChannelReady() {
+  return sendgridReady() || smtpReady();
+}
+
+/** True if any wired SMS backend can dispatch OTP (matches sendSmsOtp). */
+function smsChannelReady() {
+  return africasTalkingReady() || twilioSmsReady();
+}
+
 // =============================================================================
 // EMAIL PROVIDERS
 // =============================================================================
@@ -252,5 +262,7 @@ module.exports = {
   sendgridReady,
   twilioSmsReady,
   twilioVerifyReady,
-  africasTalkingReady
+  africasTalkingReady,
+  emailChannelReady,
+  smsChannelReady
 };
