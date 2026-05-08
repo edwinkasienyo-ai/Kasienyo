@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- STEP1_IDX_REV=47 — split login layout below-right legal strip; OTP provider fix on server -->
+<!-- STEP1_IDX_REV=48 — tighten index left flex / split login auth panel polish -->
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
@@ -43,7 +43,7 @@
     <link rel="apple-touch-icon" href="/uploads/index-hero.jpg?v=20260411" />
     <link rel="manifest" href="/site.webmanifest" />
     <link rel="preload" as="image" href="/uploads/index-hero.jpg?v=20260411" />
-    <link rel="stylesheet" href="/styles.css?v=47" />
+    <link rel="stylesheet" href="/styles.css?v=48" />
   </head>
   <body class="login-page login-page--split">
     <div class="login-split">
@@ -109,16 +109,23 @@
 
       <div class="login-right-stack">
         <div class="login-right">
-          <div class="card auth-card auth-card--compact glass-card">
-            <h3 class="auth-welcome-heading">Welcome back</h3>
-            <p class="small-note auth-intro">
-              Sign in to the IMIS with your credentials, then verify with OTP.
-            </p>
+          <div class="card auth-card auth-card--compact auth-card--index glass-card">
+            <header class="auth-card-head">
+              <h3 class="auth-welcome-heading">Welcome back</h3>
+              <p class="small-note auth-intro auth-intro--tight">
+                Sign in with your credentials and verify OTP. Select <strong>Portal role</strong> first — other fields
+                activate afterward.
+              </p>
+              <div class="auth-link-row auth-link-row--top">
+                <button class="link-btn link-btn--subtle" type="button" data-auth-panel="forgotUsernamePanel">
+                  Forgot username
+                </button>
+                <button class="link-btn link-btn--subtle" type="button" data-auth-panel="forgotPasswordPanel">
+                  Forgot password
+                </button>
+              </div>
+            </header>
             <p id="authNotice" class="small-note auth-notice" aria-live="polite"></p>
-            <p class="small-note auth-role-hint">
-              A user <strong>must</strong> select <strong>Portal role</strong> first for the other sections to become
-              active.
-            </p>
 
             <p class="step-label">STEP 1 — CREDENTIALS</p>
             <label>Portal role *</label>
@@ -160,11 +167,6 @@
             <label>OTP code</label>
             <input id="otp" placeholder="Enter the code you received" disabled />
             <button id="verifyButton" class="auth-primary-btn" type="button" disabled>Verify OTP &amp; log in</button>
-
-            <div class="auth-link-row auth-link-row--split">
-              <button class="link-btn" type="button" data-auth-panel="forgotUsernamePanel">Forgot username</button>
-              <button class="link-btn" type="button" data-auth-panel="forgotPasswordPanel">Forgot password</button>
-            </div>
 
             <section id="forgotPasswordPanel" class="auth-panel">
               <h4>Forgot Password</h4>
@@ -290,6 +292,6 @@
       </div>
     </div>
 
-    <script src="/main.js?v=47"></script>
+    <script src="/main.js?v=48"></script>
   </body>
 </html>
