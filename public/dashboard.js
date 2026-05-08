@@ -11,7 +11,7 @@ let allowedModules = [];
 let portalContext = null;
 let searchRowDrafts = {};
 let dashboardAutoRefreshHandle = null;
-const CLIENT_UI_BUNDLE_ID = "dash-bundle-main-v50-init-resilient";
+const CLIENT_UI_BUNDLE_ID = "dash-bundle-main-v51-runtime-fix";
 const DASHBOARD_STAT_LABELS = {
   totalLearners: "Total Learners Population",
   totalActiveLearners: "Active Learners",
@@ -3883,6 +3883,7 @@ async function admissionRegisterDelete(id) {
   await deleteRow(id);
 }
 
+async function dispatchCommunicationMessage(id) {
   if (!id) return;
   try {
     await request(`/api/communication/messages/${id}/dispatch`, { method: "POST" });
