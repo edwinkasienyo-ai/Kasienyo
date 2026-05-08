@@ -64,8 +64,12 @@ const {
 
 /** Bump when shipping UI/API changes so schools can confirm they run the right copy. */
 const IIMS_BUILD_STAMP = process.env.IIMS_BUILD_STAMP || "ui-deploy-rev45";
-const { readPublicIndexFingerprint } = require("./readIndexFingerprint");
+const {
+  readPublicIndexFingerprint,
+  readPublicDashboardFingerprint
+} = require("./readIndexFingerprint");
 const PUBLIC_INDEX_FINGERPRINT = readPublicIndexFingerprint();
+const PUBLIC_DASHBOARD_FINGERPRINT = readPublicDashboardFingerprint();
 
 const app = express();
 
@@ -2108,10 +2112,16 @@ function sendBuildInfoJson(res) {
   res.json({
     build_stamp: IIMS_BUILD_STAMP,
     public_index: PUBLIC_INDEX_FINGERPRINT,
+    public_dashboard: PUBLIC_DASHBOARD_FINGERPRINT,
     server_time: new Date().toISOString(),
     endpoints: ["/api/build-info", "/api/building-info"],
     tip:
-      "Compare public_index.step1_index_rev and styles_css_query_v with repo. If layout never changes, verify you opened the URL/port from the server banner (not an older Node window on :5002)."
+      "Use ONLY the URL:port printed in this server banner. Stop all stray Node.exe (different port = old bundle). Reload dashboard with Ctrl+F5 / Ctrl+Shift+R. With DevTools open (F12), Network tab → Enable 'Disable cache' while verifying UI.",
+    shortcuts: {
+      hard_reload_windows_linux: ["Ctrl+F5", "Ctrl+Shift+R"],
+      devtools_disable_cache:
+        "F12 → Network → check 'Disable cache' (applies while DevTools stays open)."
+    }
   });
 }
 

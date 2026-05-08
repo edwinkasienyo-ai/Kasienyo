@@ -1,6 +1,9 @@
 require("dotenv").config();
 const app = require("./app");
-const { readPublicIndexFingerprint } = require("./readIndexFingerprint");
+const {
+  readPublicIndexFingerprint,
+  readPublicDashboardFingerprint
+} = require("./readIndexFingerprint");
 
 const IIMS_BUILD_STAMP = process.env.IIMS_BUILD_STAMP || "ui-deploy-rev45";
 const { query } = require("./config/db");
@@ -1183,6 +1186,7 @@ async function start() {
 
   const cwd = process.cwd();
   const idxFp = readPublicIndexFingerprint();
+  const dashFp = readPublicDashboardFingerprint();
   const portShiftNote =
     boundPort !== PORT
       ? `
@@ -1198,6 +1202,7 @@ async function start() {
   URL:          http://localhost:${boundPort}
   Release:      ${IIMS_BUILD_STAMP}
   Index UX:     STEP1_IDX_REV=${idxFp.step1_index_rev ?? "?"}, styles.css?v=${idxFp.styles_css_query_v ?? "?"}
+  Dashboard UX: ${dashFp.dash_bundle_id ?? "?"} • dashboard.js?v=${dashFp.dashboard_js_query_v ?? "?"} • styles?v=${dashFp.dashboard_styles_css_query_v ?? "?"}
   Check API:    http://localhost:${boundPort}/api/build-info
   Static test:  http://localhost:${boundPort}/build-check.txt
   If Release or the Index UX line looks stale after git pull, stop every Node process and npm start once.
