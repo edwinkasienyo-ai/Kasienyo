@@ -11,7 +11,7 @@ let allowedModules = [];
 let portalContext = null;
 let searchRowDrafts = {};
 let dashboardAutoRefreshHandle = null;
-const CLIENT_UI_BUNDLE_ID = "dash-bundle-main-v53-staff-hub-route-fix";
+const CLIENT_UI_BUNDLE_ID = "dash-bundle-main-v54-uniform-buttons-staff-profile";
 const DASHBOARD_STAT_LABELS = {
   totalLearners: "Total Learners Population",
   totalActiveLearners: "Active Learners",
@@ -90,7 +90,7 @@ const MODULE_DESCRIPTIONS = {
   "management-teachers": "Maintain teacher profiles and professional details.",
   "management-non-teaching": "Manage support staff records and roles.",
   "management-staff-service":
-    "Consolidated hub for teachers, support staff, BoM members, and service providers with registration workflows.",
+    "Consolidated Staff Profile hub for teacher and support staff records, uploads, and portal registration workflows.",
   "management-service-providers": "Register service providers and companies supporting the institution.",
   "management-bom": "Maintain Board of Management member profiles and contact data.",
   "management-teacher-resources": "Organize lesson plans, schemes, and class resources.",
@@ -122,29 +122,31 @@ const MODULE_DESCRIPTIONS = {
 
 function isSystemAdminRole() {
   const role = String(portalContext?.role || "");
-  return ["SYSTEM_DEVELOPER", "ADMIN", "HEAD_OF_INSTITUTION"].includes(role);
+  return ["SUPER_SYSTEM_DEVELOPER", "SYSTEM_DEVELOPER", "SYSTEM_ADMINISTRATOR", "ADMIN", "HEAD_OF_INSTITUTION"].includes(role);
 }
 
 function canOpenSecurityAuditModule() {
   const role = normalizeRoleKey(portalContext?.role || "");
-  return role === "SYSTEM_DEVELOPER" || role === "HEAD_OF_INSTITUTION";
+  return role === "SUPER_SYSTEM_DEVELOPER" || role === "SYSTEM_DEVELOPER" || role === "SYSTEM_ADMINISTRATOR" || role === "HEAD_OF_INSTITUTION";
 }
 
 function isAllowedAccessControlAdministrator() {
   const role = normalizeRoleKey(portalContext?.role || "");
-  return role === "SYSTEM_DEVELOPER" || role === "HEAD_OF_INSTITUTION";
+  return role === "SUPER_SYSTEM_DEVELOPER" || role === "SYSTEM_DEVELOPER" || role === "HEAD_OF_INSTITUTION";
 }
 function isSystemDeveloperRole(roleValue = "") {
   const normalized = String(roleValue || "")
     .trim()
     .toUpperCase()
     .replace(/\s+/g, "_");
-  return ["SYSTEM_DEVELOPER", "SYSTEMDEVELOPER", "SYTEM_DEVELOPER"].includes(normalized);
+  return ["SYSTEM_DEVELOPER", "SYSTEMDEVELOPER", "SYTEM_DEVELOPER", "SUPER_SYSTEM_DEVELOPER"].includes(normalized);
 }
 
 function formatRoleLabel(role) {
   const normalized = String(role || "").toUpperCase();
+  if (normalized === "SUPER_SYSTEM_DEVELOPER") return "SUPER SYSTEM DEVELOPER";
   if (normalized === "SYSTEM_DEVELOPER") return "SYSTEM DEVELOPER";
+  if (normalized === "SYSTEM_ADMINISTRATOR") return "SYSTEM ADMINISTRATOR";
   if (normalized === "HEAD_OF_INSTITUTION" || normalized === "ADMIN") return "HoI/Administrator";
   if (normalized === "HEAD_OF_DEPARTMENT") return "Head of Department";
   if (normalized === "SENIOR_TEACHER") return "Senior Teacher";
@@ -162,7 +164,9 @@ function formatDashboardRoleLabel(role) {
 
 function formatRoleForDisplay(role = "") {
   const normalized = String(role || "").toUpperCase();
+  if (normalized === "SUPER_SYSTEM_DEVELOPER") return "SUPER SYSTEM DEVELOPER";
   if (normalized === "SYSTEM_DEVELOPER") return "SYSTEM DEVELOPER";
+  if (normalized === "SYSTEM_ADMINISTRATOR") return "SYSTEM ADMINISTRATOR";
   if (normalized === "HEAD_OF_INSTITUTION") return "HOI/ADMINISTRATOR";
   if (normalized === "ADMIN") return "HOI/ADMINISTRATOR";
   if (normalized === "MOD") return "MOE";
@@ -187,7 +191,7 @@ function normalizeRoleKey(value = "") {
 
 function isSystemAdminRoleValue(roleValue = "") {
   const normalized = normalizeRoleKey(roleValue);
-  return ["SYSTEM_DEVELOPER", "ADMIN", "HEAD_OF_INSTITUTION"].includes(normalized);
+  return ["SUPER_SYSTEM_DEVELOPER", "SYSTEM_DEVELOPER", "SYSTEM_ADMINISTRATOR", "ADMIN", "HEAD_OF_INSTITUTION"].includes(normalized);
 }
 
 function shouldHideInstitutionForIdentity(user = {}) {
@@ -198,7 +202,9 @@ function shouldHideInstitutionForIdentity(user = {}) {
 function friendlyRoleName(roleValue = "") {
   const normalized = normalizeRoleKey(roleValue);
   const map = {
+    SUPER_SYSTEM_DEVELOPER: "Super System Developer",
     SYSTEM_DEVELOPER: "System Developer",
+    SYSTEM_ADMINISTRATOR: "System Administrator",
     ADMIN: "HoI/Administrator",
     HEAD_OF_INSTITUTION: "HoI/Administrator",
     TEACHER: "Teacher",
@@ -567,7 +573,7 @@ async function renderSystemRegistration() {
   setActiveSidebarButton("system-register");
   document.getElementById("moduleTitle").textContent = "Register (Institution/User)";
   if (!isSystemAdminRole()) {
-    alert("Only System Developer, HoI/Administrator can access registration center.");
+    alert("Only Super/System Developer, System Administrator, HoI/Administrator can access registration center.");
     return loadDashboard();
   }
   try {
@@ -577,7 +583,12 @@ async function renderSystemRegistration() {
     ]);
     const institutionRows = Array.isArray(options?.institutions) ? options.institutions : [];
     const userRows = Array.isArray(users) ? users : [];
-    const roleOptions = Array.isArray(options?.assignable_roles) ? options.assignable_roles : [];
+    const actorRole = normalizeRoleKey(portalContext?.role || "");
+    const roleOptionsRaw = Array.isArray(options?.assignable_roles) ? options.assignable_roles : [];
+    const roleOptions = roleOptionsRaw.filter((role) => {
+      if (normalizeRoleKey(role) !== "SUPER_SYSTEM_DEVELOPER") return true;
+      return actorRole === "SUPER_SYSTEM_DEVELOPER";
+    });
     const canRegisterInstitution = Boolean(options?.can_register_institution);
     const canManageAllInstitutions = Boolean(options?.can_manage_all_institutions);
     const canRegisterUsers = Boolean(options?.can_register_users);
@@ -594,6 +605,14 @@ async function renderSystemRegistration() {
     const defaultRole = roleOptions[0] || "";
     const canSelectInstitutionForUser = canManageAllInstitutions;
     let latestInstitutionId = Number(defaultInstitution?.id || 0) || null;
+    const composePrefixedPhone = (prefixElementId, localElementId) => {
+      const prefix = String(document.getElementById(prefixElementId)?.value || "").trim();
+      const localDigits = String(document.getElementById(localElementId)?.value || "")
+        .replace(/[^\d+]/g, "")
+        .slice(0, 25);
+      if (!prefix && !localDigits) return "";
+      return `${prefix}${localDigits}`;
+    };
 
     const renderRegistryUserActions = (row) => {
       const rowId = Number(row?.id || 0);
@@ -630,7 +649,7 @@ async function renderSystemRegistration() {
     document.getElementById("formArea").innerHTML = `
       <div class="module-header-card">
         <h3>Register (Institution/User)</h3>
-        <p>System Developer can register institutions and users. HoI/Administrator only registers users in their institution.</p>
+        <p>Super/System Developer can register institutions and users. HoI/System Administrator registers users in their institution scope.</p>
       </div>
 
       ${canRegisterInstitution ? `
@@ -693,8 +712,15 @@ async function renderSystemRegistration() {
           <input id="sysInstitutionTown" placeholder="Town" />
           <label>Email</label>
           <input id="sysInstitutionEmail" placeholder="Institution email" />
-          <label>Phone</label>
-          <input id="sysInstitutionPhone" placeholder="07..., 01..., +254..., +" />
+          <label>Phone Prefix</label>
+          <select id="sysInstitutionPhonePrefix">
+            <option value="+254">+254</option>
+            <option value="07">07</option>
+            <option value="01">01</option>
+            <option value="+">+</option>
+          </select>
+          <label>Phone Digits</label>
+          <input id="sysInstitutionPhoneLocal" maxlength="25" placeholder="Remaining digits (max 25)" />
           <label>Head of Institution / Deputy Name</label>
           <input id="sysInstitutionAdminName" placeholder="Full name" />
           <label>Admin Username</label>
@@ -704,8 +730,8 @@ async function renderSystemRegistration() {
             <option value="ADMIN">HoI/Administrator</option>
             <option value="HEAD_OF_INSTITUTION">Deputy HoI</option>
           </select>
-          <label>Admin Password</label>
-          <input id="sysInstitutionAdminPassword" type="password" placeholder="Strong password" />
+          <label>Admin Password (optional)</label>
+          <input id="sysInstitutionAdminPassword" type="password" placeholder="Leave blank to auto-generate secure password" />
           <label>Email agreement</label>
           <select id="sysInstitutionSendAgreement">
             <option value="false">No</option>
@@ -777,8 +803,15 @@ async function renderSystemRegistration() {
           </select>
           <label>Email</label>
           <input id="sysUserEmail" placeholder="Email" />
-          <label>Phone</label>
-          <input id="sysUserPhone" placeholder="07..., 01..., +254..., +" />
+          <label>Phone Prefix</label>
+          <select id="sysUserPhonePrefix">
+            <option value="+254">+254</option>
+            <option value="07">07</option>
+            <option value="01">01</option>
+            <option value="+">+</option>
+          </select>
+          <label>Phone Digits</label>
+          <input id="sysUserPhoneLocal" maxlength="25" placeholder="Remaining digits (max 25)" />
           <label>Password</label>
           <input id="sysUserPassword" type="text" placeholder="Manual password if auto-generate is No" />
           <label>Auto Password</label>
@@ -967,7 +1000,7 @@ async function renderSystemRegistration() {
             : undefined,
           town: String(document.getElementById("sysInstitutionTown")?.value || "").trim(),
           email: String(document.getElementById("sysInstitutionEmail")?.value || "").trim(),
-          phone: String(document.getElementById("sysInstitutionPhone")?.value || "").trim(),
+          phone: composePrefixedPhone("sysInstitutionPhonePrefix", "sysInstitutionPhoneLocal"),
           admin_full_name: String(document.getElementById("sysInstitutionAdminName")?.value || "").trim(),
           admin_username: String(document.getElementById("sysInstitutionAdminUsername")?.value || "").trim(),
           admin_password: String(document.getElementById("sysInstitutionAdminPassword")?.value || ""),
@@ -995,7 +1028,7 @@ async function renderSystemRegistration() {
           username: String(document.getElementById("sysUserUsername")?.value || "").trim(),
           role: String(document.getElementById("sysUserRole")?.value || defaultRole),
           email: String(document.getElementById("sysUserEmail")?.value || "").trim(),
-          phone: String(document.getElementById("sysUserPhone")?.value || "").trim(),
+          phone: composePrefixedPhone("sysUserPhonePrefix", "sysUserPhoneLocal"),
           auto_generate_password: autoGenerate,
           password: autoGenerate ? null : String(document.getElementById("sysUserPassword")?.value || ""),
           send_welcome_via: String(document.getElementById("sysUserWelcomeDispatch")?.value || "BOTH")
@@ -1183,7 +1216,25 @@ async function renderModuleRights() {
       "dashboard-fee-collection",
       "dashboard-outstanding-balances"
     ];
-    const moduleKeys = Array.from(new Set([...moduleKeysRaw, ...dashboardWidgetKeys])).sort((a, b) =>
+    const explicitSubModuleKeys = [
+      "admission-register",
+      "admission-form",
+      "admission-letter",
+      "admission-bio-data-bulk-upload",
+      "attendance-teacher-register",
+      "attendance-support-staff-register",
+      "attendance-learner-register",
+      "staff-profile-teacher",
+      "staff-profile-support-staff",
+      "register-institution",
+      "register-users",
+      "security-login-audit",
+      "institution-letterhead-upload",
+      "hr-institutional-letters",
+      "finance-fee-status",
+      "institutional-registers"
+    ];
+    const moduleKeys = Array.from(new Set([...moduleKeysRaw, ...dashboardWidgetKeys, ...explicitSubModuleKeys])).sort((a, b) =>
       String(a).localeCompare(String(b))
     );
     const defaultMap = metaData?.defaultModuleAccessByRole || {};
@@ -1316,7 +1367,7 @@ async function renderModuleRights() {
       renderMatrix();
       if (info) {
         const defaults = Array.isArray(defaultMap[selectedRole]) ? defaultMap[selectedRole] : [];
-        info.textContent = `Role: ${friendlyRoleName(selectedRole)} | Default Allowed Modules: ${defaults.join(", ") || "None"}`;
+        info.textContent = `Role: ${friendlyRoleName(selectedRole)} | Role defaults loaded: ${defaults.length}`;
       }
     };
 
@@ -1336,7 +1387,7 @@ async function renderModuleRights() {
       const defaults = Array.isArray(defaultMap[selectedRole]) ? defaultMap[selectedRole] : [];
       if (info) {
         info.textContent = selectedRole
-          ? `Role default modules (${friendlyRoleName(selectedRole)}): ${defaults.join(", ") || "None"}`
+          ? `Role defaults (${friendlyRoleName(selectedRole)}): ${defaults.length} module(s).`
           : "Select a user to show role defaults.";
       }
     });
@@ -1425,7 +1476,7 @@ async function renderSecurityAudit() {
     document.getElementById("formArea").innerHTML = `
       <div class="module-header-card">
         <h3>Security & Logging Audit</h3>
-        <p class="small-note">This module is not available for your role. Only the System Developer may review every institution, while the Head of Institution may review audit trails for users registered to their institution.</p>
+        <p class="small-note">This module is not available for your role. Super/System Developers review assigned/global institutions, while HoI/System Administrator reviews institution-scoped audit trails.</p>
       </div>
     `;
     resetDataTable("Security audit unavailable for this account.");
@@ -1451,7 +1502,7 @@ async function renderSecurityAudit() {
     document.getElementById("formArea").innerHTML = `
       <div class="module-header-card">
         <h3>Security & Logging Audit</h3>
-        <p>System Developer reviews every institution; Head of Institution reviews only institution-scoped activity. Entries include username, institution code, IP address, machine identifier, logging status, login time, activities, and logout time where recorded.</p>
+        <p>Super/System Developer reviews assigned/global institutions; HoI/System Administrator reviews institution-scoped activity. Entries include username, institution code, IP address, machine identifier, logging status, login time, activities, and logout time where recorded.</p>
       </div>
       <div class="actions-row">
         <button id="auditScrollLeftButton">◀</button>
@@ -2573,9 +2624,17 @@ const moduleConfigs = {
       { name: "middle_name", label: "Middle Name" },
       { name: "last_name", label: "Last Name *" },
       { name: "other_names", label: "Other Names" },
-      { name: "full_name", label: "Full Name (leave blank to auto-build)" },
+      { name: "full_name", label: "Full Name (auto-fills from at least 2 names)" },
+      {
+        name: "admission_number_mode",
+        label: "Admission Number Mode",
+        type: "select",
+        options: ["System auto generation", "Manual generation", "Feed serial for next auto generation"]
+      },
+      { name: "admission_number_seed", label: "Admission Serial Seed (for next auto generation)" },
       { name: "admission_number", label: "Admission Number *" },
       { name: "date_of_admission", label: "Date of Admission", type: "date" },
+      { name: "age_display", label: "Age (Auto: years and months)" },
       { name: "grade", label: "Grade (CBC / Primary / Junior)", type: "select", optionsKey: "gradeOptions" },
       { name: "form_name", label: "Form (Secondary 3–4)", type: "select", optionsKey: "formOptions" },
       { name: "stream", label: "Stream" },
@@ -2597,11 +2656,12 @@ const moduleConfigs = {
       { name: "postal_code", label: "Postal Code", type: "select", optionsKey: "kenyaPostalCodeSelectOptions" },
       { name: "year_joined", label: "Year Joined", type: "select", optionsKey: "yearJoinedWideOptions" },
       { name: "term_joined", label: "Term", type: "select", optionsKey: "termOptions" },
-      { name: "learner_condition", label: "Learner Condition", type: "select", options: ["Without disability", "With disability"] },
+      { name: "learner_condition", label: "Does the learner has disability?", type: "select", options: ["No", "Yes"] },
       { name: "disability_type", label: "Disability Type", type: "select", optionsKey: "disabilityTypes" },
       { name: "biological_parental_status", label: "Biological parental status", type: "select", options: ["Both parents alive", "Partial orphan", "Total orphan", "Others"] },
-      { name: "orphan_condition", label: "Orphan classification (legacy)", type: "select", optionsKey: "orphanStatus" },
-      { name: "status", label: "Status", type: "select", optionsKey: "admissionStatus" },
+      { name: "has_medical_condition", label: "Does the learner has any medical condition?", type: "select", options: ["No", "Yes"] },
+      { name: "medical_condition_notes", label: "Medical Condition Description", type: "textarea" },
+      { name: "status", label: "Learner Status", type: "select", optionsKey: "admissionStatus" },
       { name: "parent_full_name", label: "Parent/Guardian 1 Full Name *" },
       { name: "parent_relationship", label: "Parent/Guardian 1 Relationship", type: "select", optionsKey: "relationshipOptions" },
       { name: "parent_id_number", label: "Parent/Guardian 1 ID Number" },
@@ -2629,8 +2689,8 @@ const moduleConfigs = {
     endpoint: "/api/management/teachers",
     fields: [
       { name: "full_name", label: "Full Name *" },
-      { name: "tsc_number", label: "TSC Number *" },
-      { name: "id_number", label: "ID Number *" },
+      { name: "tsc_number", label: "TSC Number" },
+      { name: "id_number", label: "ID Number" },
       { name: "postal_address", label: "Postal Address" },
       { name: "postal_code", label: "Postal Code (Kenya)" },
       { name: "town", label: "Town" },
@@ -2659,7 +2719,7 @@ const moduleConfigs = {
     fields: [
       { name: "full_name", label: "Full Name *" },
       { name: "staff_number", label: "Service Number *" },
-      { name: "id_number", label: "ID Number" },
+      { name: "id_number", label: "ID Number *" },
       { name: "postal_address", label: "Postal Address" },
       { name: "postal_code", label: "Postal Code" },
       { name: "town", label: "Town" },
@@ -2748,7 +2808,7 @@ const moduleConfigs = {
     title: "Attendance Management",
     endpoint: "/api/attendance/records",
     fields: [
-      { name: "attendance_type", label: "Attendance Type", type: "select", options: ["Teacher", "Learner", "Non-Teaching"] },
+      { name: "attendance_type", label: "Attendance Type", type: "select", options: ["Teacher", "Learner", "Support Staff"] },
       { name: "person_id", label: "Person ID" },
       { name: "person_name", label: "Person Name" },
       { name: "grade", label: "Class/Grade", type: "select", optionsKey: "gradeOptions" },
@@ -2802,7 +2862,7 @@ const moduleConfigs = {
     title: "HR - Leave Management",
     endpoint: "/api/hr/leave-requests",
     fields: [
-      { name: "staff_profile_type", label: "Staff Profile Type", type: "select", options: ["Teacher", "Non-Teaching Staff"] },
+      { name: "staff_profile_type", label: "Staff Profile Type", type: "select", options: ["Teacher", "Support Staff"] },
       { name: "staff_profile_id", label: "Staff Profile ID", type: "number" },
       { name: "staff_name", label: "Staff Name" },
       { name: "leave_type", label: "Leave Type", type: "select", optionsKey: "leaveTypes" },
@@ -2862,7 +2922,7 @@ const moduleConfigs = {
     title: "Finance - Staff Payroll",
     endpoint: "/api/finance/payroll",
     fields: [
-      { name: "staff_profile_type", label: "Staff Type", type: "select", options: ["Teacher", "Non-Teaching Staff"] },
+      { name: "staff_profile_type", label: "Staff Type", type: "select", options: ["Teacher", "Support Staff"] },
       { name: "staff_profile_id", label: "Staff Profile ID", type: "number" },
       { name: "staff_name", label: "Staff Name" },
       { name: "staff_number", label: "Staff Number" },
@@ -2882,7 +2942,7 @@ const moduleConfigs = {
     title: "Finance - Salary Advances",
     endpoint: "/api/finance/salary-advances",
     fields: [
-      { name: "staff_profile_type", label: "Staff Type", type: "select", options: ["Teacher", "Non-Teaching Staff"] },
+      { name: "staff_profile_type", label: "Staff Type", type: "select", options: ["Teacher", "Support Staff"] },
       { name: "staff_profile_id", label: "Staff Profile ID", type: "number" },
       { name: "staff_name", label: "Staff Name" },
       { name: "staff_number", label: "Staff Number" },
@@ -2920,7 +2980,7 @@ const moduleConfigs = {
     fields: [
       { name: "title", label: "Title" },
       { name: "message", label: "Announcement Message", type: "textarea" },
-      { name: "audience", label: "Audience", type: "select", options: ["All", "Teachers", "Parents", "Learners", "Non-Teaching", "BOM"] },
+      { name: "audience", label: "Audience", type: "select", options: ["All", "Teachers", "Parents", "Learners", "Support Staff", "BOM"] },
       { name: "start_date", label: "Start Date", type: "date" },
       { name: "end_date", label: "End Date", type: "date" }
     ]
@@ -2930,7 +2990,7 @@ const moduleConfigs = {
     endpoint: "/api/communication/messages",
     fields: [
       { name: "message_type", label: "Message Type", type: "select", options: ["SMS", "Email", "Push", "Parent Result Notice", "Fee Reminder"] },
-      { name: "recipient_role", label: "Recipient Role", type: "select", options: ["Parent", "Teacher", "Head", "Admin", "BOM", "Learner", "Non-Teaching"] },
+      { name: "recipient_role", label: "Recipient Role", type: "select", options: ["Parent", "Teacher", "Head", "Admin", "BOM", "Learner", "Support Staff"] },
       { name: "recipient_contact", label: "Recipient Contact (Phone/Email)" },
       { name: "message_body", label: "Message Body", type: "textarea" },
       { name: "status", label: "Status", type: "select", options: ["Queued", "Sent", "Failed"] },
@@ -2942,7 +3002,7 @@ const moduleConfigs = {
     endpoint: "/api/welfare/members",
     fields: [
       { name: "member_name", label: "Member Name" },
-      { name: "member_role", label: "Member Role", type: "select", options: ["Teacher", "Non-Teaching Staff", "Head", "Other"] },
+      { name: "member_role", label: "Member Role", type: "select", options: ["Teacher", "Support Staff", "Head", "Other"] },
       { name: "phone_number", label: "Phone Number" },
       { name: "email", label: "Email" },
       { name: "joined_date", label: "Joined Date", type: "date" },
@@ -3018,6 +3078,50 @@ async function request(path, options = {}) {
       (rawText && rawText.length < 400 ? rawText.trim() : "") ||
       `Request failed (${response.status})`;
     throw new Error(message);
+  }
+  return data;
+}
+
+async function downloadWithAuth(path, filename) {
+  const response = await fetch(path, {
+    headers: {
+      Authorization: `Bearer ${token}`
+    }
+  });
+  if (response.status === 401) {
+    localStorage.clear();
+    window.location.href = "/";
+    return;
+  }
+  if (!response.ok) {
+    const raw = await response.text();
+    throw new Error(raw || `Download failed (${response.status})`);
+  }
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename || "download";
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
+async function uploadFileWithAuth(file) {
+  if (!file) throw new Error("Select a file first.");
+  const formData = new FormData();
+  formData.append("file", file);
+  const response = await fetch("/api/uploads", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`
+    },
+    body: formData
+  });
+  const data = await response.json();
+  if (!response.ok) {
+    throw new Error(data.error || "Upload failed.");
   }
   return data;
 }
@@ -3278,6 +3382,8 @@ function buildInput(field) {
 <input id="${id}" type="text" placeholder="/uploads/..." value="${escapeHtml(value)}" />
 <input id="${id}-file" type="file" accept="image/*,.heic,.heif,.tif,.tiff,.bmp" />
 <button type="button" class="ax-btn ax-btn--upload ax-btn--sm" id="${id}-upload">Upload</button>
+<input id="${id}-camera" type="file" accept="image/*" capture="environment" hidden />
+<button type="button" class="ax-btn ax-btn--view ax-btn--sm" id="${id}-camera-open">Take Photo</button>
 </div>`;
   }
   if (field.type === "select") {
@@ -3326,6 +3432,8 @@ function clearForm(config) {
     if (bio) {
       refreshAdmissionGradeFormExclusiveState(bio);
       syncAdmissionDisabilityField(bio);
+      syncAdmissionMedicalField(bio);
+      syncAdmissionAgeField(bio);
     }
   }
 }
@@ -3353,21 +3461,21 @@ async function saveCurrentModule() {
   delete payload.postal_code_lookup;
 
   if (currentModule === "admission") {
-    if (!String(payload.admission_number || "").trim()) {
-      const wantsAuto =
-        typeof window.confirm === "function" &&
-        window.confirm("Admission number missing. Generate one automatically?");
-      if (wantsAuto) {
-        const sample = prompt("Optional sample prefix (letters/numbers):", "");
-        const prefix =
-          sample !== null && String(sample).trim()
-            ? `${String(sample).trim().replace(/\/$/, "")}/`
-            : "ADM/";
-        payload.admission_number = `${prefix}${Date.now()}`.slice(0, 80);
-      } else {
-        alert("Admission number is required.");
+    const admissionMode = String(payload.admission_number_mode || "").trim().toLowerCase();
+    if (admissionMode.includes("feed serial")) {
+      const seed = String(payload.admission_number_seed || "").trim().replace(/\s+/g, "");
+      if (!seed) {
+        alert("Enter the serial seed before using 'Feed serial for next auto generation'.");
         return;
       }
+      payload.admission_number = `ADM/${seed}-${Date.now()}`.slice(0, 80);
+    } else if (admissionMode.includes("system auto")) {
+      const serialSeed = String(payload.admission_number_seed || "").trim().replace(/\s+/g, "");
+      const prefix = serialSeed ? `ADM/${serialSeed}-` : "ADM/";
+      payload.admission_number = `${prefix}${Date.now()}`.slice(0, 80);
+    } else if (!String(payload.admission_number || "").trim()) {
+      alert("Admission number is required when manual generation is selected.");
+      return;
     }
     const first = String(payload.first_name || "").trim();
     const last = String(payload.last_name || "").trim();
@@ -3404,9 +3512,15 @@ async function saveCurrentModule() {
       return;
     }
     payload.full_name = String(payload.full_name || "").trim() || `${first} ${last}`.trim();
-    if (String(payload.learner_condition || "").trim() !== "With disability") {
+    if (String(payload.learner_condition || "").trim().toLowerCase() !== "yes") {
       payload.disability_type = "";
     }
+    if (String(payload.has_medical_condition || "").trim().toLowerCase() !== "yes") {
+      payload.medical_condition_notes = "";
+    }
+    delete payload.age_display;
+    delete payload.admission_number_mode;
+    delete payload.admission_number_seed;
   }
 
   const staffMandatoryModules = [
@@ -3431,6 +3545,10 @@ async function saveCurrentModule() {
     }
     if (currentModule === "management-teachers" && !(tsc || idNo)) {
       alert("Either TSC number or ID number is required for teachers.");
+      return;
+    }
+    if (currentModule === "management-non-teaching" && !idNo) {
+      alert("ID number is required for support staff profile.");
       return;
     }
   }
@@ -3477,6 +3595,8 @@ async function editRow(id) {
       if (bio) {
         refreshAdmissionGradeFormExclusiveState(bio);
         syncAdmissionDisabilityField(bio);
+        syncAdmissionMedicalField(bio);
+        syncAdmissionAgeField(bio);
       }
     }
   } catch (error) {
@@ -3553,9 +3673,9 @@ function renderTable(rows) {
       <tr>
         ${shownKeys.map((key) => `<td>${formatCellValue(row[key])}</td>`).join("")}
         <td class="table-actions-cell">
-          <button class="table-action-btn" onclick="editRow(${row.id})">Edit</button>
-          <button class="table-action-btn danger" onclick="deleteRow(${row.id})">Delete</button>
-          ${canDispatch ? `<button class="table-action-btn" onclick="dispatchCommunicationMessage(${row.id})">Dispatch</button>` : ""}
+          <button class="table-action-btn ax-btn ax-btn--edit ax-btn--sm" onclick="editRow(${row.id})">Edit</button>
+          <button class="table-action-btn danger ax-btn ax-btn--delete ax-btn--sm" onclick="deleteRow(${row.id})">Delete</button>
+          ${canDispatch ? `<button class="table-action-btn ax-btn ax-btn--process ax-btn--sm" onclick="dispatchCommunicationMessage(${row.id})">Dispatch</button>` : ""}
         </td>
       </tr>
     `
@@ -3737,7 +3857,7 @@ function syncAdmissionDisabilityField(scopeEl) {
   const cond = scopeEl.querySelector("#field-learner_condition");
   const dis = scopeEl.querySelector("#field-disability_type");
   if (!cond || !dis) return;
-  const on = cond.value === "With disability";
+  const on = String(cond.value || "").trim().toLowerCase() === "yes";
   dis.disabled = !on;
   if (!on) {
     dis.value = "";
@@ -3750,6 +3870,87 @@ function wireAdmissionDisabilityToggle(scopeEl) {
   cond.dataset.disabilityBound = "1";
   cond.addEventListener("change", () => syncAdmissionDisabilityField(scopeEl));
   syncAdmissionDisabilityField(scopeEl);
+}
+
+function syncAdmissionMedicalField(scopeEl) {
+  const flag = scopeEl.querySelector("#field-has_medical_condition");
+  const notes = scopeEl.querySelector("#field-medical_condition_notes");
+  if (!flag || !notes) return;
+  const enabled = String(flag.value || "").trim().toLowerCase() === "yes";
+  notes.disabled = !enabled;
+  if (!enabled) {
+    notes.value = "";
+  }
+}
+
+function wireAdmissionMedicalToggle(scopeEl) {
+  const flag = scopeEl.querySelector("#field-has_medical_condition");
+  if (!flag || flag.dataset.medBound === "1") return;
+  flag.dataset.medBound = "1";
+  flag.addEventListener("change", () => syncAdmissionMedicalField(scopeEl));
+  syncAdmissionMedicalField(scopeEl);
+}
+
+function calculateAdmissionAgeDisplay(dateOfBirth, dateOfAdmission) {
+  if (!dateOfBirth || !dateOfAdmission) return "";
+  const birth = new Date(dateOfBirth);
+  const admission = new Date(dateOfAdmission);
+  if (Number.isNaN(birth.getTime()) || Number.isNaN(admission.getTime()) || admission < birth) {
+    return "";
+  }
+  let years = admission.getFullYear() - birth.getFullYear();
+  let months = admission.getMonth() - birth.getMonth();
+  const dayDiff = admission.getDate() - birth.getDate();
+  if (dayDiff < 0) {
+    months -= 1;
+  }
+  if (months < 0) {
+    years -= 1;
+    months += 12;
+  }
+  const safeYears = Math.max(years, 0);
+  const safeMonths = Math.max(months, 0);
+  return `${safeYears} year${safeYears === 1 ? "" : "s"} ${safeMonths} month${safeMonths === 1 ? "" : "s"}`;
+}
+
+function syncAdmissionAgeField(scopeEl) {
+  const dob = scopeEl.querySelector("#field-date_of_birth");
+  const doa = scopeEl.querySelector("#field-date_of_admission");
+  const age = scopeEl.querySelector("#field-age_display");
+  if (!dob || !doa || !age) return;
+  age.value = calculateAdmissionAgeDisplay(dob.value, doa.value);
+}
+
+function wireAdmissionAgeField(scopeEl) {
+  const dob = scopeEl.querySelector("#field-date_of_birth");
+  const doa = scopeEl.querySelector("#field-date_of_admission");
+  const age = scopeEl.querySelector("#field-age_display");
+  if (!dob || !doa || !age || age.dataset.ageBound === "1") return;
+  age.dataset.ageBound = "1";
+  age.readOnly = true;
+  age.placeholder = "Auto-calculated";
+  dob.addEventListener("change", () => syncAdmissionAgeField(scopeEl));
+  doa.addEventListener("change", () => syncAdmissionAgeField(scopeEl));
+  syncAdmissionAgeField(scopeEl);
+}
+
+function wireAdmissionNameAutoFill(scopeEl) {
+  const firstNameEl = scopeEl.querySelector("#field-first_name");
+  const middleNameEl = scopeEl.querySelector("#field-middle_name");
+  const lastNameEl = scopeEl.querySelector("#field-last_name");
+  const otherNameEl = scopeEl.querySelector("#field-other_names");
+  const fullNameEl = scopeEl.querySelector("#field-full_name");
+  if (!fullNameEl || fullNameEl.dataset.autoFullNameBound === "1") return;
+  fullNameEl.dataset.autoFullNameBound = "1";
+  const sourceEls = [firstNameEl, middleNameEl, lastNameEl, otherNameEl].filter(Boolean);
+  const refreshFullName = () => {
+    const values = sourceEls.map((el) => String(el.value || "").trim()).filter(Boolean);
+    if (values.length >= 2) {
+      fullNameEl.value = values.join(" ");
+    }
+  };
+  sourceEls.forEach((el) => el.addEventListener("input", refreshFullName));
+  refreshFullName();
 }
 
 function attachAdmissionPostalFromSelect(scopeEl) {
@@ -3771,15 +3972,13 @@ function attachAdmissionPostalFromSelect(scopeEl) {
 function wireAdmissionLearnerPhotoUpload(scopeEl) {
   const btn = scopeEl.querySelector("#field-passport_photo_path-upload");
   const fileEl = scopeEl.querySelector("#field-passport_photo_path-file");
+  const cameraInput = scopeEl.querySelector("#field-passport_photo_path-camera");
+  const cameraOpenBtn = scopeEl.querySelector("#field-passport_photo_path-camera-open");
   const pathInput = scopeEl.querySelector("#field-passport_photo_path");
   if (!btn || !fileEl || !pathInput || btn.dataset.bound === "1") return;
   btn.dataset.bound = "1";
-  btn.addEventListener("click", async () => {
-    const file = fileEl.files?.[0];
-    if (!file) {
-      alert("Choose a photo file first.");
-      return;
-    }
+  const uploadSelectedFile = async (file) => {
+    if (!file) return;
     try {
       const formData = new FormData();
       formData.append("file", file);
@@ -3797,6 +3996,20 @@ function wireAdmissionLearnerPhotoUpload(scopeEl) {
     } catch (error) {
       alert(error.message || "Upload failed.");
     }
+  };
+  btn.addEventListener("click", async () => {
+    const file = fileEl.files?.[0];
+    if (!file) {
+      alert("Choose a photo file first.");
+      return;
+    }
+    await uploadSelectedFile(file);
+  });
+  cameraOpenBtn?.addEventListener("click", () => cameraInput?.click());
+  cameraInput?.addEventListener("change", async () => {
+    const captured = cameraInput.files?.[0];
+    if (!captured) return;
+    await uploadSelectedFile(captured);
   });
 }
 
@@ -3828,12 +4041,137 @@ function wireAdmissionRegisterToolbar(config) {
   );
 }
 
+function parseSimpleCsvRows(text) {
+  return String(text || "")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => line.split(",").map((item) => item.trim().replace(/^"|"$/g, "")));
+}
+
+function wireAdmissionExtendedActions() {
+  (async () => {
+    try {
+      const settings = await request("/api/institutions/letterhead");
+      const letterheadPathEl = document.getElementById("admissionLetterheadPath");
+      const templateTextEl = document.getElementById("admissionLetterTemplateText");
+      if (letterheadPathEl) letterheadPathEl.value = settings?.letterhead_file_path || "";
+      if (templateTextEl) templateTextEl.value = settings?.admission_letter_template_text || "";
+    } catch (_) {
+      // Ignore when role is not allowed or endpoint unavailable.
+    }
+  })();
+  document.getElementById("admissionDownloadBioTemplateBtn")?.addEventListener("click", async () => {
+    await downloadWithAuth("/api/templates/admission-bio-data.csv", "admission-bio-data-template.csv");
+  });
+  document.getElementById("admissionDownloadStreamTemplateBtn")?.addEventListener("click", async () => {
+    await downloadWithAuth("/api/templates/institution-streams.csv", "institution-streams-template.csv");
+  });
+  document.getElementById("admissionStreamTemplateUpload")?.addEventListener("change", async (event) => {
+    try {
+      const file = event.target.files?.[0];
+      if (!file) return;
+      const text = await file.text();
+      const rows = parseSimpleCsvRows(text);
+      const [header, ...body] = rows;
+      if (!header || header.length < 2) {
+        throw new Error("CSV requires columns grade_or_form,stream_name.");
+      }
+      const entries = body
+        .map((cols) => ({ grade_or_form: cols[0] || null, stream_name: cols[1] || "" }))
+        .filter((entry) => entry.stream_name);
+      const result = await request("/api/institutions/streams/bulk", {
+        method: "POST",
+        body: JSON.stringify({ entries })
+      });
+      alert(result.message || "Stream template uploaded.");
+    } catch (error) {
+      alert(error.message);
+    } finally {
+      event.target.value = "";
+    }
+  });
+  document.getElementById("admissionLetterTemplateFileUpload")?.addEventListener("change", async (event) => {
+    try {
+      const file = event.target.files?.[0];
+      if (!file) return;
+      const uploaded = await uploadFileWithAuth(file);
+      const pathInput = document.getElementById("admissionLetterheadPath");
+      if (pathInput && !pathInput.value) {
+        pathInput.value = uploaded.filePath || "";
+      }
+      event.target.setAttribute("data-upload-path", uploaded.filePath || "");
+      alert("Template file uploaded.");
+    } catch (error) {
+      alert(error.message);
+    } finally {
+      event.target.value = "";
+    }
+  });
+  document.getElementById("admissionSaveLetterheadBtn")?.addEventListener("click", async () => {
+    try {
+      const letterheadPath = document.getElementById("admissionLetterheadPath")?.value || "";
+      const templateText = document.getElementById("admissionLetterTemplateText")?.value || "";
+      const templateFileInput = document.getElementById("admissionLetterTemplateFileUpload");
+      const templateFilePath = templateFileInput?.getAttribute("data-upload-path") || "";
+      const result = await request("/api/institutions/letterhead", {
+        method: "PATCH",
+        body: JSON.stringify({
+          letterhead_file_path: letterheadPath || null,
+          admission_letter_template_text: templateText || null,
+          admission_letter_template_file_url: templateFilePath || null
+        })
+      });
+      alert(result.message || "Letterhead saved.");
+    } catch (error) {
+      alert(error.message);
+    }
+  });
+  document.getElementById("admissionGenerateFormBtn")?.addEventListener("click", async () => {
+    try {
+      const learnerId = Number(prompt("Enter learner ID for admission form:") || 0);
+      if (!learnerId) return;
+      const result = await request(`/api/admission/learners/${learnerId}/admission-form`);
+      const outputEl = document.getElementById("admissionGeneratedOutput");
+      if (outputEl) outputEl.textContent = JSON.stringify(result, null, 2);
+    } catch (error) {
+      alert(error.message);
+    }
+  });
+  document.getElementById("admissionGenerateLetterBtn")?.addEventListener("click", async () => {
+    try {
+      const learnerId = Number(prompt("Enter learner ID for admission letter:") || 0);
+      if (!learnerId) return;
+      const result = await request(`/api/admission/learners/${learnerId}/admission-letter`);
+      const outputEl = document.getElementById("admissionGeneratedOutput");
+      if (outputEl) outputEl.textContent = result?.letter_text || JSON.stringify(result, null, 2);
+    } catch (error) {
+      alert(error.message);
+    }
+  });
+  document.getElementById("admissionPreviewOutputBtn")?.addEventListener("click", () => {
+    const content = document.getElementById("admissionGeneratedOutput")?.textContent || "";
+    if (!content.trim()) {
+      alert("No generated output to preview.");
+      return;
+    }
+    const popup = window.open("", "_blank");
+    if (!popup) return;
+    popup.document.write(`<html><head><title>Admission Preview</title></head><body><pre>${escapeHtml(content)}</pre></body></html>`);
+    popup.document.close();
+  });
+}
+
 function wireAdmissionModuleUi(container, config) {
   wireAdmissionGradeFormExclusive(container);
   wireAdmissionDisabilityToggle(container);
+  wireAdmissionMedicalToggle(container);
+  wireAdmissionAgeField(container);
+  wireAdmissionNameAutoFill(container);
   attachAdmissionPostalFromSelect(container);
   wireAdmissionLearnerPhotoUpload(container);
   wireAdmissionRegisterToolbar(config);
+  wireAdmissionExtendedActions();
   renderAdmissionRegisterTable();
 }
 
@@ -4104,6 +4442,36 @@ function renderCrudModule(moduleKey, options = {}) {
       </div>
     </div>
     ${admissionRegisterMarkup}
+    <section class="dashboard-section">
+      <h4>Admission Form & Letter</h4>
+      <p class="small-note">Generate one-page admission forms and admission letters for selected learner IDs.</p>
+      <div class="actions-row">
+        <button type="button" id="admissionGenerateFormBtn" class="ax-btn ax-btn--process ax-btn--sm">Generate Admission Form</button>
+        <button type="button" id="admissionGenerateLetterBtn" class="ax-btn ax-btn--process ax-btn--sm">Generate Admission Letter</button>
+        <button type="button" id="admissionPreviewOutputBtn" class="ax-btn ax-btn--view ax-btn--sm">Preview Last Output</button>
+      </div>
+      <pre id="admissionGeneratedOutput" class="small-note" style="max-height:240px;overflow:auto;white-space:pre-wrap;"></pre>
+    </section>
+    <section class="dashboard-section">
+      <h4>Templates & Letterhead</h4>
+      <div class="actions-row">
+        <button type="button" id="admissionDownloadBioTemplateBtn" class="ax-btn ax-btn--download ax-btn--sm">Download Bio Data Template</button>
+        <button type="button" id="admissionDownloadStreamTemplateBtn" class="ax-btn ax-btn--download ax-btn--sm">Download Stream Template</button>
+        <label class="ax-btn ax-btn--view ax-btn--sm" for="admissionStreamTemplateUpload">Upload Stream CSV</label>
+        <input id="admissionStreamTemplateUpload" type="file" accept=".csv,text/csv" style="display:none;" />
+      </div>
+      <div class="form-grid">
+        <label>Institution Letterhead File Path</label>
+        <input id="admissionLetterheadPath" placeholder="/uploads/....png" />
+        <label>Admission Letter Template (optional text)</label>
+        <textarea id="admissionLetterTemplateText" rows="4" placeholder="Use placeholders {{LEARNER_NAME}}, {{INSTITUTION_NAME}}, {{ADMISSION_NUMBER}}, {{GRADE_FORM}}, {{STREAM}}, {{REPORTING_DATE}}"></textarea>
+      </div>
+      <div class="actions-row">
+        <label class="ax-btn ax-btn--view ax-btn--sm" for="admissionLetterTemplateFileUpload">Upload Letter Template File</label>
+        <input id="admissionLetterTemplateFileUpload" type="file" accept=".pdf,.doc,.docx,.txt" style="display:none;" />
+        <button type="button" id="admissionSaveLetterheadBtn" class="ax-btn ax-btn--save ax-btn--sm">Save Letterhead/Template</button>
+      </div>
+    </section>
   `;
   } else {
   container.innerHTML = `
@@ -4115,17 +4483,17 @@ function renderCrudModule(moduleKey, options = {}) {
       ${config.fields.map(buildInput).join("")}
     </div>
     <div class="actions-row">
-      <button id="${saveId}" type="button">Save</button>
-      <button id="${clearId}" type="button">Clear</button>
-      <button id="${procId}" type="button">Process</button>
-      <button id="${pdfId}" type="button">Download PDF</button>
-      <button id="${xlsId}" type="button">Download Excel</button>
-      <button id="${printId}" type="button">Print</button>
-      <button id="${viewId}" type="button">View</button>
-      ${moduleKey === "finance-payroll" ? `<button id="${btnPrefix}-auto-payroll" type="button">Auto Generate Payroll</button>` : ""}
-      ${moduleKey === "finance-salary-advance" ? `<button id="${btnPrefix}-advance" type="button">Process Selected Advance</button>` : ""}
-      ${moduleKey === "communication-messages" ? `<button id="${btnPrefix}-dispatch" type="button">Dispatch Queued</button>` : ""}
-      ${moduleKey === "communication-messages" ? `<button id="${btnPrefix}-chat" type="button">Open Chat</button>` : ""}
+      <button id="${saveId}" type="button" class="ax-btn ax-btn--save ax-btn--sm">Save</button>
+      <button id="${clearId}" type="button" class="ax-btn ax-btn--reset ax-btn--sm">Clear</button>
+      <button id="${procId}" type="button" class="ax-btn ax-btn--process ax-btn--sm">Process</button>
+      <button id="${pdfId}" type="button" class="ax-btn ax-btn--download ax-btn--sm">Download PDF</button>
+      <button id="${xlsId}" type="button" class="ax-btn ax-btn--download ax-btn--sm">Download Excel</button>
+      <button id="${printId}" type="button" class="ax-btn ax-btn--print ax-btn--sm">Print</button>
+      <button id="${viewId}" type="button" class="ax-btn ax-btn--view ax-btn--sm">View</button>
+      ${moduleKey === "finance-payroll" ? `<button id="${btnPrefix}-auto-payroll" type="button" class="ax-btn ax-btn--process ax-btn--sm">Auto Generate Payroll</button>` : ""}
+      ${moduleKey === "finance-salary-advance" ? `<button id="${btnPrefix}-advance" type="button" class="ax-btn ax-btn--process ax-btn--sm">Process Selected Advance</button>` : ""}
+      ${moduleKey === "communication-messages" ? `<button id="${btnPrefix}-dispatch" type="button" class="ax-btn ax-btn--process ax-btn--sm">Dispatch Queued</button>` : ""}
+      ${moduleKey === "communication-messages" ? `<button id="${btnPrefix}-chat" type="button" class="ax-btn ax-btn--view ax-btn--sm">Open Chat</button>` : ""}
     </div>
   `;
   }
@@ -4576,11 +4944,7 @@ async function loadLearnerMaterials() {
 
 const STAFF_HUB_ROLE_BY_MODULE = {
   "management-teachers": "TEACHER",
-  "management-non-teaching": "NON_TEACHING_STAFF",
-  "management-bom": "BOM",
-  "management-service-providers": "SUPPLIER",
-  "management-teacher-timetable": null,
-  "management-learner-discipline": null
+  "management-non-teaching": "NON_TEACHING_STAFF"
 };
 
 function attachPostalCodeTownHelper(scopeEl) {
@@ -4606,12 +4970,12 @@ async function renderStaffServiceHub() {
   if (tableAreaMain) tableAreaMain.style.display = "";
   currentModule = "management-teachers";
   setActiveSidebarButton("management-staff-service");
-  document.getElementById("moduleTitle").textContent = "Staff & Service Providers Profile";
+  document.getElementById("moduleTitle").textContent = "Staff Profile";
 
   document.getElementById("cards").innerHTML = `
     <div class="card stats-card metric-emphasis">
       <h4>Staff Hub</h4>
-      <p>Teachers • Support • BoM • Providers</p>
+      <p>Teachers • Support Staff</p>
     </div>
     <div class="card stats-card">
       <h4>Registration</h4>
@@ -4625,18 +4989,14 @@ async function renderStaffServiceHub() {
 
   const categories = [
     { key: "management-teachers", label: "Teacher Profile" },
-    { key: "management-teacher-timetable", label: "Teacher Timetable" },
-    { key: "management-non-teaching", label: "Support Staff Profile" },
-    { key: "management-bom", label: "BoM Member" },
-    { key: "management-learner-discipline", label: "Learners Disciplinary Record" },
-    { key: "management-service-providers", label: "Service Provider Profile" }
+    { key: "management-non-teaching", label: "Support Staff Profile" }
   ];
 
   document.getElementById("formArea").innerHTML = `
     <div class="module-header-card">
-      <h3>Staff & Service Providers Profile</h3>
+      <h3>Staff Profile</h3>
       <p class="small-note">
-        HoI/Administrator registers portal users here. Use <strong>Register</strong> after entering contact channels so SMS/email instructions can be dispatched automatically where configured.
+        HoI/Administrator registers teacher and support staff portal users here. Use <strong>Register</strong> after entering contact channels so SMS/email instructions can be dispatched automatically where configured.
       </p>
     </div>
     <div class="form-grid staff-hub-category-grid">
@@ -4656,14 +5016,6 @@ async function renderStaffServiceHub() {
     document.getElementById("tableHead").innerHTML = "";
     document.getElementById("tableBody").innerHTML = "";
     currentModule = key;
-    if (key === "management-teacher-timetable") {
-      renderTeacherTimetableHub(mount);
-      return;
-    }
-    if (key === "management-learner-discipline") {
-      renderLearnerDisciplineHub(mount);
-      return;
-    }
     if (!mount || !moduleConfigs[key]) return;
     renderCrudModule(key, { container: mount, preserveCards: true });
     setTimeout(() => {
@@ -5557,6 +5909,317 @@ function renderPasswordPolicyBanner(user = {}, portal = {}) {
     banner.textContent = message;
     banner.className = `small-note ${severity}`;
   }
+  if (daysRemaining <= 0 && currentModule !== "profile" && !window.__iimsPasswordExpiryRedirected) {
+    window.__iimsPasswordExpiryRedirected = true;
+    setTimeout(() => {
+      changeCredentials();
+    }, 150);
+  }
+}
+
+function attendanceHubThreeStepConfirm() {
+  if (!window.confirm("Delete this attendance record?")) return false;
+  if (!window.confirm("Confirm deletion again?")) return false;
+  if (!window.confirm("Final confirmation: proceed with delete?")) return false;
+  return true;
+}
+
+function normalizeAttendanceTypeForApi(rawType = "") {
+  const normalized = String(rawType || "").trim().toLowerCase();
+  if (normalized === "teacher") return "Teacher";
+  if (normalized === "support staff" || normalized === "support_staff") return "Support Staff";
+  return "Learner";
+}
+
+async function renderAttendanceManagementHub() {
+  stopDashboardAutoRefresh();
+  currentModule = "attendance";
+  currentEditId = null;
+  setActiveSidebarButton("attendance");
+  document.getElementById("moduleTitle").textContent = "Attendance Management";
+  const tableAreaMain = document.querySelector(".main-content .table-area");
+  if (tableAreaMain) tableAreaMain.style.display = "none";
+
+  document.getElementById("cards").innerHTML = `
+    <div class="card stats-card metric-emphasis"><h4>Attendance Workflow</h4><p>Teacher, Support Staff, Learner</p></div>
+    <div class="card stats-card"><h4>Capture Chain</h4><p>Select person -> date -> status -> time in/out -> comment</p></div>
+    <div class="card stats-card"><h4>Registers</h4><p>Daily and period exports (PDF / Excel / Word)</p></div>
+  `;
+
+  document.getElementById("formArea").innerHTML = `
+    <div class="form-grid">
+      <label>Attendance Type</label>
+      <select id="attendanceHubType">
+        <option value="">Select type</option>
+        <option value="Teacher">Teacher</option>
+        <option value="Support Staff">Support Staff</option>
+        <option value="Learner">Learner</option>
+      </select>
+      <label>Date</label>
+      <input id="attendanceHubDate" type="date" />
+      <label>Grade/Form (Learner)</label>
+      <input id="attendanceHubGrade" placeholder="Grade/Form" />
+      <label>Stream (Learner optional)</label>
+      <input id="attendanceHubStream" placeholder="Stream" />
+      <label>Status</label>
+      <select id="attendanceHubStatus">
+        <option value="">Select status</option>
+        <option value="Present">Present</option>
+        <option value="Absent">Absent</option>
+        <option value="Absent with apology">Absent with apology</option>
+        <option value="Absent without apology">Absent without apology</option>
+        <option value="Official Duty">Official Duty</option>
+        <option value="Leave">Leave</option>
+        <option value="Transferred">Transferred</option>
+        <option value="Suspended">Suspended</option>
+        <option value="Interdicted">Interdicted</option>
+        <option value="Dismissed">Dismissed</option>
+        <option value="Others">Others</option>
+      </select>
+      <label>Time In</label>
+      <input id="attendanceHubTimeIn" type="datetime-local" />
+      <label>Time Out</label>
+      <input id="attendanceHubTimeOut" type="datetime-local" />
+      <label>Comment</label>
+      <textarea id="attendanceHubComment" rows="2" placeholder="Comment"></textarea>
+    </div>
+    <div class="actions-row">
+      <button id="attendanceHubLoadPeople" class="ax-btn ax-btn--view ax-btn--sm">Load People</button>
+      <button id="attendanceHubSave" class="ax-btn ax-btn--save ax-btn--sm">Save Attendance</button>
+      <button id="attendanceHubRefresh" class="ax-btn ax-btn--refresh ax-btn--sm">Refresh Register</button>
+    </div>
+    <div id="attendanceHubPeople" class="dashboard-table-wrap"></div>
+    <section class="dashboard-section">
+      <h4>Attendance Register</h4>
+      <div class="form-grid">
+        <label>Type</label>
+        <select id="attendanceRegisterType">
+          <option value="">All</option>
+          <option value="Teacher">Teacher</option>
+          <option value="Support Staff">Support Staff</option>
+          <option value="Learner">Learner</option>
+        </select>
+        <label>From</label>
+        <input id="attendanceRegisterFrom" type="date" />
+        <label>To</label>
+        <input id="attendanceRegisterTo" type="date" />
+      </div>
+      <div class="actions-row">
+        <button id="attendanceRegisterPdf" class="ax-btn ax-btn--download ax-btn--sm">PDF</button>
+        <button id="attendanceRegisterExcel" class="ax-btn ax-btn--download ax-btn--sm">Excel</button>
+        <button id="attendanceRegisterWord" class="ax-btn ax-btn--download ax-btn--sm">Word</button>
+        <button id="attendanceRegisterPrint" class="ax-btn ax-btn--print ax-btn--sm">Print</button>
+      </div>
+      <div id="attendanceRegisterTable" class="dashboard-table-wrap"></div>
+    </section>
+  `;
+
+  const state = { people: [], selected: new Set(), learnerStatus: new Map() };
+  const peopleHost = document.getElementById("attendanceHubPeople");
+
+  const renderPeople = () => {
+    if (!state.people.length) {
+      peopleHost.innerHTML = '<p class="small-note">No people loaded yet.</p>';
+      return;
+    }
+    const type = normalizeAttendanceTypeForApi(document.getElementById("attendanceHubType")?.value || "");
+    const rows = state.people.map((row) => {
+      const id = Number(row.id || 0);
+      const learnerStatus = state.learnerStatus.get(id) || "";
+      return [
+        `<input type="checkbox" class="att-person-check" data-id="${id}" ${state.selected.has(id) ? "checked" : ""} />`,
+        row.person_name || "-",
+        row.tsc_number || row.staff_number || row.admission_number || "-",
+        row.grade || "-",
+        row.stream || "-",
+        type === "Learner"
+          ? `<select class="att-learner-status" data-id="${id}">
+              <option value="">Select</option>
+              <option value="Present" ${learnerStatus === "Present" ? "selected" : ""}>Present</option>
+              <option value="Absent" ${learnerStatus === "Absent" ? "selected" : ""}>Absent</option>
+            </select>`
+          : "-"
+      ];
+    });
+    peopleHost.innerHTML = buildDashboardTable(
+      ["Select", "Name", "Reference", "Grade", "Stream", "Learner Status"],
+      rows
+    );
+    peopleHost.querySelectorAll(".att-person-check").forEach((el) => {
+      el.addEventListener("change", () => {
+        const id = Number(el.getAttribute("data-id") || 0);
+        if (!id) return;
+        if (el.checked) state.selected.add(id);
+        else state.selected.delete(id);
+      });
+    });
+    peopleHost.querySelectorAll(".att-learner-status").forEach((el) => {
+      el.addEventListener("change", () => {
+        const id = Number(el.getAttribute("data-id") || 0);
+        if (!id) return;
+        state.learnerStatus.set(id, el.value || "");
+      });
+    });
+  };
+
+  const buildRegisterParams = () => {
+    const params = new URLSearchParams();
+    const type = document.getElementById("attendanceRegisterType")?.value || "";
+    const fromDate = document.getElementById("attendanceRegisterFrom")?.value || "";
+    const toDate = document.getElementById("attendanceRegisterTo")?.value || "";
+    if (type) params.set("type", type);
+    if (fromDate) params.set("from_date", fromDate);
+    if (toDate) params.set("to_date", toDate);
+    return params;
+  };
+
+  const refreshRegister = async () => {
+    const params = buildRegisterParams();
+    const data = await request(`/api/attendance/register?${params.toString()}`);
+    const rows = Array.isArray(data?.rows) ? data.rows : [];
+    document.getElementById("attendanceRegisterTable").innerHTML = buildDashboardTable(
+      ["Date", "Type", "Name", "Status", "Time In", "Time Out", "Comment", "Action"],
+      rows.map((row) => [
+        formatDateTime(row.attendance_date),
+        row.attendance_type || "-",
+        row.person_name || "-",
+        row.status || "-",
+        formatDateTime(row.time_in),
+        formatDateTime(row.time_out),
+        row.comments || "-",
+        `<button class="ax-btn ax-btn--delete ax-btn--sm" data-att-del="${Number(row.id || 0)}">Delete</button>`
+      ])
+    );
+    document.querySelectorAll("[data-att-del]").forEach((button) => {
+      button.addEventListener("click", async () => {
+        const id = Number(button.getAttribute("data-att-del") || 0);
+        if (!id || !attendanceHubThreeStepConfirm()) return;
+        await request(`/api/attendance/records/${id}`, { method: "DELETE" });
+        await refreshRegister();
+      });
+    });
+  };
+
+  document.getElementById("attendanceHubLoadPeople")?.addEventListener("click", async () => {
+    try {
+      const type = normalizeAttendanceTypeForApi(document.getElementById("attendanceHubType")?.value || "");
+      if (!type) {
+        alert("Select attendance type first.");
+        return;
+      }
+      const params = new URLSearchParams();
+      params.set("type", type);
+      if (type === "Learner") {
+        params.set("grade", document.getElementById("attendanceHubGrade")?.value || "");
+        params.set("stream", document.getElementById("attendanceHubStream")?.value || "");
+      }
+      const data = await request(`/api/attendance/participants?${params.toString()}`);
+      state.people = Array.isArray(data?.rows) ? data.rows : [];
+      state.selected = new Set();
+      state.learnerStatus = new Map();
+      renderPeople();
+    } catch (error) {
+      alert(error.message);
+    }
+  });
+
+  document.getElementById("attendanceHubSave")?.addEventListener("click", async () => {
+    try {
+      const type = normalizeAttendanceTypeForApi(document.getElementById("attendanceHubType")?.value || "");
+      const dateValue = document.getElementById("attendanceHubDate")?.value || "";
+      const statusValue = document.getElementById("attendanceHubStatus")?.value || "";
+      const timeInValue = document.getElementById("attendanceHubTimeIn")?.value || "";
+      const timeOutValue = document.getElementById("attendanceHubTimeOut")?.value || "";
+      const commentValue = document.getElementById("attendanceHubComment")?.value || "";
+      const gradeValue = document.getElementById("attendanceHubGrade")?.value || "";
+      const streamValue = document.getElementById("attendanceHubStream")?.value || "";
+      const selectedPeople = state.people.filter((row) => state.selected.has(Number(row.id || 0)));
+      if (!type || !dateValue || !selectedPeople.length) {
+        alert("Select type, date and at least one participant.");
+        return;
+      }
+      if (type === "Learner") {
+        for (const row of selectedPeople) {
+          const learnerStatus = state.learnerStatus.get(Number(row.id || 0));
+          if (!learnerStatus) continue;
+          // eslint-disable-next-line no-await-in-loop
+          await request("/api/attendance/records", {
+            method: "POST",
+            body: JSON.stringify({
+              attendance_type: "Learner",
+              person_id: String(row.id || ""),
+              person_name: row.person_name || row.full_name || "-",
+              grade: row.grade || gradeValue || null,
+              stream: row.stream || streamValue || null,
+              attendance_date: `${dateValue}T08:00`,
+              status: learnerStatus,
+              comments: commentValue || null
+            })
+          });
+        }
+      } else {
+        if (!statusValue || !timeInValue) {
+          alert("Status and Time In are required for teacher/support attendance.");
+          return;
+        }
+        for (const row of selectedPeople) {
+          // eslint-disable-next-line no-await-in-loop
+          await request("/api/attendance/records", {
+            method: "POST",
+            body: JSON.stringify({
+              attendance_type: type,
+              person_id: String(row.id || ""),
+              person_name: row.person_name || row.full_name || "-",
+              grade: null,
+              stream: null,
+              attendance_date: `${dateValue}T08:00`,
+              time_in: timeInValue || null,
+              time_out: timeOutValue || null,
+              status: statusValue,
+              reason: statusValue.toLowerCase().startsWith("absent") ? statusValue : null,
+              comments: commentValue || null
+            })
+          });
+        }
+      }
+      alert("Attendance saved.");
+      await refreshRegister();
+    } catch (error) {
+      alert(error.message);
+    }
+  });
+
+  document.getElementById("attendanceHubRefresh")?.addEventListener("click", async () => {
+    try {
+      await refreshRegister();
+    } catch (error) {
+      alert(error.message);
+    }
+  });
+
+  document.getElementById("attendanceRegisterPdf")?.addEventListener("click", async () => {
+    const params = buildRegisterParams();
+    await downloadWithAuth(`/api/attendance/register/export/pdf?${params.toString()}`, "attendance-register.pdf");
+  });
+  document.getElementById("attendanceRegisterExcel")?.addEventListener("click", async () => {
+    const params = buildRegisterParams();
+    await downloadWithAuth(`/api/attendance/register/export/excel?${params.toString()}`, "attendance-register.xlsx");
+  });
+  document.getElementById("attendanceRegisterWord")?.addEventListener("click", async () => {
+    const params = buildRegisterParams();
+    await downloadWithAuth(`/api/attendance/register/export/word?${params.toString()}`, "attendance-register.doc");
+  });
+  document.getElementById("attendanceRegisterPrint")?.addEventListener("click", () => {
+    const hostHtml = document.getElementById("attendanceRegisterTable")?.innerHTML || "<p>No attendance rows.</p>";
+    const popup = window.open("", "_blank");
+    if (!popup) return;
+    popup.document.write(`<html><head><title>Attendance Register</title></head><body>${hostHtml}</body></html>`);
+    popup.document.close();
+    popup.focus();
+    popup.print();
+  });
+
+  await refreshRegister();
 }
 
 function bindSidebar() {
@@ -5576,6 +6239,7 @@ function bindSidebar() {
       if (currentModule === "system-recycle-bin") return renderRecycleBin();
       if (currentModule === "system-cbc-editor") return renderCbcCurriculumEditor();
       if (currentModule === "management-staff-service") return renderStaffServiceHub();
+      if (currentModule === "attendance") return renderAttendanceManagementHub();
       if (currentModule === "parents-results") return loadParentOrBomResults();
       if (currentModule === "learner-materials") return loadLearnerMaterials();
       if (currentModule === "communication-messages") return renderCrudModule(currentModule);
@@ -5609,7 +6273,7 @@ function bindTopbarButtons() {
     });
   const heroButton = document.getElementById("updateHeroImageButton");
   const heroInput = document.getElementById("heroImageInput");
-  const canManageHeroImage = ["SYSTEM_DEVELOPER", "ADMIN", "HEAD_OF_INSTITUTION"].includes(
+  const canManageHeroImage = ["SUPER_SYSTEM_DEVELOPER", "SYSTEM_DEVELOPER", "SYSTEM_ADMINISTRATOR", "ADMIN", "HEAD_OF_INSTITUTION"].includes(
     String(portalContext?.role || "")
   );
   if (heroButton && heroInput) {
@@ -5651,6 +6315,10 @@ function renderProfileCenter(profile) {
   ).trim();
   const profileInitial = String(profile?.full_name || "U").trim().charAt(0).toUpperCase() || "U";
   const roleLabel = formatDashboardRoleLabel(profile?.role || "");
+  const institutionScopeOptions = Array.isArray(portalContext?.institution_scope_options)
+    ? portalContext.institution_scope_options
+    : [];
+  const showInstitutionSwitch = String(profile?.role || "").toUpperCase() === "SYSTEM_DEVELOPER" && institutionScopeOptions.length > 1;
   document.getElementById("moduleTitle").textContent = "Profile";
   document.getElementById("cards").innerHTML = `
     <div class="card stats-card metric-emphasis">
@@ -5709,6 +6377,30 @@ function renderProfileCenter(profile) {
           <button id="requestProfileOtpButton">Request OTP</button>
           <button id="saveProfileButton">Save Profile Updates</button>
         </div>
+        ${
+          showInstitutionSwitch
+            ? `
+        <hr />
+        <h4>Institution Scope</h4>
+        <p class="small-note">Switch to one of your assigned institutions.</p>
+        <div class="form-grid">
+          <label>Assigned Institution</label>
+          <select id="profileInstitutionSwitch">
+            ${institutionScopeOptions
+              .map((row) => {
+                const id = Number(row?.id || 0);
+                const selected = Number(profile?.institution_id || 0) === id ? "selected" : "";
+                const label = `${row?.institution_name || "Institution"} (${row?.institution_code || "-"})`;
+                return `<option value="${id}" ${selected}>${escapeHtml(label)}</option>`;
+              })
+              .join("")}
+          </select>
+        </div>
+        <div class="actions-row">
+          <button id="profileSwitchInstitutionButton">Switch Institution</button>
+        </div>`
+            : ""
+        }
       </div>
     </div>
   `;
@@ -5757,6 +6449,27 @@ function renderProfileCenter(profile) {
       alert(error.message);
     }
   });
+  document.getElementById("profileSwitchInstitutionButton")?.addEventListener("click", async () => {
+    try {
+      const nextInstitutionId = Number(document.getElementById("profileInstitutionSwitch")?.value || 0);
+      if (!nextInstitutionId) {
+        alert("Select an institution to switch.");
+        return;
+      }
+      const result = await request("/api/portal/switch-institution", {
+        method: "POST",
+        body: JSON.stringify({ institution_id: nextInstitutionId })
+      });
+      if (result?.token) {
+        token = result.token;
+        localStorage.setItem("token", token);
+      }
+      alert(result?.message || "Institution switched.");
+      await init();
+    } catch (error) {
+      alert(error.message);
+    }
+  });
 }
 
 function bindQuickActionCards() {
@@ -5796,6 +6509,10 @@ function bindQuickActionCards() {
       }
       if (targetModule === "management-staff-service") {
         await renderStaffServiceHub();
+        return;
+      }
+      if (targetModule === "attendance") {
+        await renderAttendanceManagementHub();
         return;
       }
       if (targetModule === "parents-results") {

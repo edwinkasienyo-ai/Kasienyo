@@ -342,7 +342,16 @@ function enforcePermission(permission) {
 function enforceRole(roles = []) {
   return (req, res, next) => {
     const normalizedRole = normalizeRole(req.user.role);
-    if (normalizedRole === ROLES.SYSTEM_DEVELOPER) {
+    if (normalizedRole === ROLES.SUPER_SYSTEM_DEVELOPER) {
+      return next();
+    }
+    if (normalizedRole === ROLES.SYSTEM_DEVELOPER && roles.includes(ROLES.SYSTEM_DEVELOPER)) {
+      return next();
+    }
+    if (
+      normalizedRole === ROLES.SYSTEM_ADMINISTRATOR &&
+      (roles.includes(ROLES.ADMIN) || roles.includes(ROLES.HEAD_OF_INSTITUTION))
+    ) {
       return next();
     }
     if (!roles.includes(normalizedRole)) {
@@ -354,8 +363,12 @@ function enforceRole(roles = []) {
 
 function toPortal(role) {
   switch (normalizeRole(role)) {
+    case ROLES.SUPER_SYSTEM_DEVELOPER:
+      return "Super System Developer Console";
     case ROLES.SYSTEM_DEVELOPER:
       return "System Developer Console";
+    case ROLES.SYSTEM_ADMINISTRATOR:
+      return "System Administrator Dashboard";
     case ROLES.ADMIN:
       return "Administrator Dashboard";
     case ROLES.HEAD_OF_INSTITUTION:
@@ -392,8 +405,12 @@ function normalizeRole(value) {
   const base = cleanValue(value).toUpperCase().replace(/[\s-]+/g, "_");
   if (!base) return "";
   const roleAliases = {
+    SUPER_SYSTEM_DEVELOPER: ROLES.SUPER_SYSTEM_DEVELOPER,
+    SUPER_SYSTEMDEVELOPER: ROLES.SUPER_SYSTEM_DEVELOPER,
     SYSTEM_DEVELOPER: ROLES.SYSTEM_DEVELOPER,
     SYTEM_DEVELOPER: ROLES.SYSTEM_DEVELOPER,
+    SYSTEM_ADMINISTRATOR: ROLES.SYSTEM_ADMINISTRATOR,
+    SYSTEM_ADMIN: ROLES.SYSTEM_ADMINISTRATOR,
     ADMINISTRATOR: ROLES.ADMIN,
     SCHOOL_ADMIN: ROLES.ADMIN,
     HOI_ADMINISTRATOR: ROLES.HEAD_OF_INSTITUTION,
@@ -458,6 +475,9 @@ function normalizePhoneInput(value) {
   const cleaned = cleanValue(value);
   if (!cleaned) return null;
   const compact = cleaned.replace(/\s+/g, "");
+  if (compact.length > 25) {
+    return null;
+  }
   if (!/^[0-9+]+$/.test(compact)) {
     return null;
   }
@@ -480,7 +500,9 @@ function hasAllowedPhonePrefix(value) {
 }
 
 const PUBLIC_ROLE_OPTIONS = [
+  ROLES.SUPER_SYSTEM_DEVELOPER,
   ROLES.SYSTEM_DEVELOPER,
+  ROLES.SYSTEM_ADMINISTRATOR,
   ROLES.MOD,
   ROLES.TSC,
   ROLES.HEAD_OF_INSTITUTION,
@@ -494,7 +516,12 @@ const PUBLIC_ROLE_OPTIONS = [
   ROLES.SUPPLIER,
   ROLES.CONTRACTOR
 ];
-const HIGH_PRIVILEGE_REGISTRATION_ROLES = new Set([ROLES.SYSTEM_DEVELOPER, ROLES.MOD, ROLES.TSC]);
+const HIGH_PRIVILEGE_REGISTRATION_ROLES = new Set([
+  ROLES.SUPER_SYSTEM_DEVELOPER,
+  ROLES.SYSTEM_DEVELOPER,
+  ROLES.MOD,
+  ROLES.TSC
+]);
 
 const AGREEMENT_COMPANY = {
   name: "Mwendegu Enterprise Limited",
@@ -503,8 +530,8 @@ const AGREEMENT_COMPANY = {
 };
 const RECYCLE_BIN_RETENTION_YEARS = Number(process.env.RECYCLE_BIN_RETENTION_YEARS || 15);
 
-const PASSWORD_ROTATION_DAYS = Number(process.env.PASSWORD_ROTATION_DAYS || 30);
-const PASSWORD_ROTATION_EXEMPT_ROLES = new Set([ROLES.SYSTEM_DEVELOPER]);
+const PASSWORD_ROTATION_DAYS = Number(process.env.PASSWORD_ROTATION_DAYS || 90);
+const PASSWORD_ROTATION_EXEMPT_ROLES = new Set([ROLES.SUPER_SYSTEM_DEVELOPER]);
 const PASSWORD_MIN_LENGTH = Number(process.env.PASSWORD_MIN_LENGTH || 12);
 const USERNAME_MIN_LENGTH = Number(process.env.USERNAME_MIN_LENGTH || 5);
 const LOGIN_MAX_ATTEMPTS = Number(process.env.LOGIN_MAX_ATTEMPTS || 5);
@@ -513,7 +540,16 @@ const OTP_MAX_VERIFY_ATTEMPTS = Number(process.env.OTP_MAX_VERIFY_ATTEMPTS || 5)
 const OTP_RESEND_COOLDOWN_SECONDS = Number(process.env.OTP_RESEND_COOLDOWN_SECONDS || 30);
 const ACCOUNT_MUTATION_COOLDOWN_SECONDS = Number(process.env.ACCOUNT_MUTATION_COOLDOWN_SECONDS || 5);
 const LOGIN_JITTER_MAX_MS = Number(process.env.LOGIN_JITTER_MAX_MS || 350);
-const SYSTEM_DEVELOPER_MAX_ACCOUNTS = Number(process.env.SYSTEM_DEVELOPER_MAX_ACCOUNTS || 50);
+const SYSTEM_DEVELOPER_MAX_ACCOUNTS = Number(process.env.SYSTEM_DEVELOPER_MAX_ACCOUNTS || 5000);
+const SUPER_SYSTEM_DEVELOPER_MAX_ACCOUNTS = Number(process.env.SUPER_SYSTEM_DEVELOPER_MAX_ACCOUNTS || 3);
+const SUPER_SYSTEM_DEVELOPER_USERNAMES = Array.from(
+  new Set(
+    cleanValue(process.env.SUPER_SYSTEM_DEVELOPER_USERNAMES || "29645654,952252")
+      .split(",")
+      .map((item) => cleanValue(item))
+      .filter(Boolean)
+  )
+).slice(0, SUPER_SYSTEM_DEVELOPER_MAX_ACCOUNTS);
 const REQUEST_RATE_WINDOW_MS = Number(process.env.REQUEST_RATE_WINDOW_MS || 15 * 60 * 1000);
 const MAX_PUBLIC_BODY_KEYS = Number(process.env.MAX_PUBLIC_BODY_KEYS || 120);
 const REQUEST_RATE_TRACKER = new Map();
@@ -529,6 +565,19 @@ function parseTruthy(value) {
   const normalized = cleanValue(value).toLowerCase();
   if (!normalized) return false;
   return ["1", "true", "yes", "y", "on"].includes(normalized);
+}
+
+function isSuperSystemDeveloperUsername(value) {
+  return SUPER_SYSTEM_DEVELOPER_USERNAMES.includes(cleanValue(value));
+}
+
+function isSuperSystemDeveloperRole(role) {
+  return normalizeRole(role) === ROLES.SUPER_SYSTEM_DEVELOPER;
+}
+
+function isAnySystemDeveloperRole(role) {
+  const normalized = normalizeRole(role);
+  return normalized === ROLES.SUPER_SYSTEM_DEVELOPER || normalized === ROLES.SYSTEM_DEVELOPER;
 }
 
 async function delayWithRandomJitter() {
@@ -740,8 +789,22 @@ function validateUsername(username, fieldLabel = "username") {
 }
 
 async function checkSystemDeveloperAccountCapacity(role) {
-  if (normalizeRole(role) !== ROLES.SYSTEM_DEVELOPER) {
+  const normalizedRole = normalizeRole(role);
+  if (normalizedRole !== ROLES.SYSTEM_DEVELOPER && normalizedRole !== ROLES.SUPER_SYSTEM_DEVELOPER) {
     return { allowed: true, max: SYSTEM_DEVELOPER_MAX_ACCOUNTS, total: null };
+  }
+  if (normalizedRole === ROLES.SUPER_SYSTEM_DEVELOPER) {
+    const superRows = await query(
+      `SELECT COUNT(*) AS total
+       FROM users
+       WHERE role = ?`,
+      [ROLES.SUPER_SYSTEM_DEVELOPER]
+    );
+    const superTotal = Number(superRows[0]?.total || 0);
+    if (superTotal >= SUPER_SYSTEM_DEVELOPER_MAX_ACCOUNTS) {
+      return { allowed: false, max: SUPER_SYSTEM_DEVELOPER_MAX_ACCOUNTS, total: superTotal };
+    }
+    return { allowed: true, max: SUPER_SYSTEM_DEVELOPER_MAX_ACCOUNTS, total: superTotal };
   }
   const rows = await query(
     `SELECT COUNT(*) AS total
@@ -1004,22 +1067,25 @@ function generateStrongPassword(length = 12) {
 
 function canRegisterInstitution(user) {
   const role = normalizeRole(user?.role);
-  return role === ROLES.SYSTEM_DEVELOPER;
+  return isAnySystemDeveloperRole(role);
 }
 
 function canRegisterPrivilegedUsers(user) {
-  return normalizeRole(user?.role) === ROLES.SYSTEM_DEVELOPER;
+  return isAnySystemDeveloperRole(user?.role);
 }
 
 function canRegisterInstitutionUsers(user) {
   const role = normalizeRole(user?.role);
-  return [ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION].includes(role);
+  return [ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER, ROLES.SYSTEM_ADMINISTRATOR, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION].includes(role);
 }
 
 function getAssignableRolesForActor(user) {
   const role = normalizeRole(user?.role);
-  if (role === ROLES.SYSTEM_DEVELOPER) {
+  if (role === ROLES.SUPER_SYSTEM_DEVELOPER) {
     return [...PUBLIC_ROLE_OPTIONS];
+  }
+  if (role === ROLES.SYSTEM_DEVELOPER) {
+    return PUBLIC_ROLE_OPTIONS.filter((item) => item !== ROLES.SUPER_SYSTEM_DEVELOPER);
   }
   if ([ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION].includes(role)) {
     return PUBLIC_ROLE_OPTIONS.filter(
@@ -1148,11 +1214,29 @@ const MODULE_KEYS = {
   DASHBOARD_OUTSTANDING_BALANCES: "dashboard-outstanding-balances",
   SEARCH: "search",
   PARENT_RESULTS: "parent-results",
-  LEARNER_MATERIALS: "learner-materials"
+  LEARNER_MATERIALS: "learner-materials",
+  ADMISSION_REGISTER: "admission-register",
+  ADMISSION_FORM: "admission-form",
+  ADMISSION_LETTER: "admission-letter",
+  ADMISSION_BIO_DATA_BULK_UPLOAD: "admission-bio-data-bulk-upload",
+  ATTENDANCE_TEACHER_REGISTER: "attendance-teacher-register",
+  ATTENDANCE_SUPPORT_STAFF_REGISTER: "attendance-support-staff-register",
+  ATTENDANCE_LEARNER_REGISTER: "attendance-learner-register",
+  STAFF_PROFILE_TEACHER: "staff-profile-teacher",
+  STAFF_PROFILE_SUPPORT_STAFF: "staff-profile-support-staff",
+  REGISTER_INSTITUTION: "register-institution",
+  REGISTER_USERS: "register-users",
+  SECURITY_LOGIN_AUDIT: "security-login-audit",
+  INSTITUTION_LETTERHEAD_UPLOAD: "institution-letterhead-upload",
+  HR_INSTITUTIONAL_LETTERS: "hr-institutional-letters",
+  FINANCE_FEE_STATUS: "finance-fee-status",
+  INSTITUTIONAL_REGISTERS: "institutional-registers"
 };
 
 const DEFAULT_MODULE_ACCESS_BY_ROLE = {
+  [ROLES.SUPER_SYSTEM_DEVELOPER]: Object.values(MODULE_KEYS),
   [ROLES.SYSTEM_DEVELOPER]: Object.values(MODULE_KEYS),
+  [ROLES.SYSTEM_ADMINISTRATOR]: Object.values(MODULE_KEYS).filter((key) => key !== MODULE_KEYS.SECURITY_AUDIT),
   [ROLES.ADMIN]: Object.values(MODULE_KEYS).filter((key) => key !== MODULE_KEYS.SECURITY_AUDIT),
   [ROLES.HEAD_OF_INSTITUTION]: Object.values(MODULE_KEYS).filter(
     (key) => key !== MODULE_KEYS.SECURITY_AUDIT
@@ -1193,7 +1277,7 @@ async function hasModuleAccess(user, moduleKey) {
     return true;
   }
   const normalizedRole = normalizeRole(user.role);
-  if (normalizedRole === ROLES.SYSTEM_DEVELOPER) {
+  if (normalizedRole === ROLES.SUPER_SYSTEM_DEVELOPER || normalizedRole === ROLES.SYSTEM_DEVELOPER) {
     return true;
   }
   const staffBundleKeys = [
@@ -1231,7 +1315,7 @@ async function userHasDelegatedAccessControl(user) {
 function enforceAccessControlActors() {
   return asyncHandler(async (req, res, next) => {
     const role = normalizeRole(req.user.role);
-    if (role === ROLES.SYSTEM_DEVELOPER || role === ROLES.HEAD_OF_INSTITUTION) {
+    if (isAnySystemDeveloperRole(role) || role === ROLES.HEAD_OF_INSTITUTION || role === ROLES.SYSTEM_ADMINISTRATOR) {
       return next();
     }
     const delegated = await userHasDelegatedAccessControl(req.user);
@@ -1269,18 +1353,92 @@ function enforceModuleAccess(moduleKey) {
 }
 
 function canManageAcrossInstitutions(user) {
-  return normalizeRole(user?.role) === ROLES.SYSTEM_DEVELOPER;
+  return isSuperSystemDeveloperRole(user?.role);
+}
+
+async function getSystemDeveloperAssignedInstitutionIds(userId) {
+  const normalizedUserId = Number(userId || 0);
+  if (!normalizedUserId) return [];
+  const rows = await query(
+    `SELECT institution_id
+     FROM system_developer_institution_assignments
+     WHERE developer_user_id = ?
+       AND is_active = 1`,
+    [normalizedUserId]
+  );
+  return rows
+    .map((row) => Number(row.institution_id || 0))
+    .filter((id) => id > 0);
+}
+
+async function hasInstitutionScopeAccess(user, targetInstitutionId, options = {}) {
+  const targetId = Number(targetInstitutionId || 0);
+  if (!targetId) return false;
+  if (canManageAcrossInstitutions(user)) return true;
+  const role = normalizeRole(user?.role);
+  const ownInstitutionId = Number(user?.institution_id || 0);
+  const includeOwnInstitution = options.includeOwnInstitution !== false;
+  if (includeOwnInstitution && ownInstitutionId === targetId) {
+    return true;
+  }
+  if (role !== ROLES.SYSTEM_DEVELOPER) {
+    return false;
+  }
+  const assignedInstitutionIds = await getSystemDeveloperAssignedInstitutionIds(user?.id);
+  return assignedInstitutionIds.includes(targetId);
+}
+
+async function assertInstitutionScopeAccess(req, targetInstitutionId, forbiddenMessage) {
+  const allowed = await hasInstitutionScopeAccess(req.user, targetInstitutionId);
+  if (!allowed) {
+    return {
+      error: forbiddenMessage || "You are not allowed to access this institution scope.",
+      status: 403
+    };
+  }
+  return null;
+}
+
+async function loadInstitutionScopeOptions(user) {
+  if (canManageAcrossInstitutions(user)) {
+    return query(
+      `SELECT id, institution_name, institution_code
+       FROM institutions
+       ORDER BY institution_name ASC`
+    );
+  }
+  const ownInstitutionId = Number(user?.institution_id || 0);
+  if (normalizeRole(user?.role) !== ROLES.SYSTEM_DEVELOPER) {
+    return query(
+      `SELECT id, institution_name, institution_code
+       FROM institutions
+       WHERE id = ?
+       ORDER BY institution_name ASC`,
+      [ownInstitutionId]
+    );
+  }
+  const assignedIds = await getSystemDeveloperAssignedInstitutionIds(user?.id);
+  const scopedIds = Array.from(new Set([ownInstitutionId, ...assignedIds])).filter((id) => id > 0);
+  if (!scopedIds.length) return [];
+  const placeholders = scopedIds.map(() => "?").join(", ");
+  return query(
+    `SELECT id, institution_name, institution_code
+     FROM institutions
+     WHERE id IN (${placeholders})
+     ORDER BY institution_name ASC`,
+    scopedIds
+  );
 }
 
 function buildModuleRightsErrorMessage(moduleKey, user) {
   const role = normalizeRole(user?.role);
-  if (role === ROLES.SYSTEM_DEVELOPER) return null;
+  if (isAnySystemDeveloperRole(role)) return null;
   return `Access denied for ${moduleKey}. Request rights from the System Developer.`;
 }
 
 function determineRecycleVisibilityScope(user) {
   const role = normalizeRole(user?.role);
-  if (role === ROLES.SYSTEM_DEVELOPER) {
+  if (isAnySystemDeveloperRole(role)) {
     return { includeAllInstitutions: true, scopeInstitutionId: null };
   }
   return { includeAllInstitutions: false, scopeInstitutionId: Number(user?.institution_id || 0) || null };
@@ -1288,7 +1446,7 @@ function determineRecycleVisibilityScope(user) {
 
 function canPurgeRecycleItem(requestUser, recycleItem) {
   const actorRole = normalizeRole(requestUser?.role);
-  if (actorRole === ROLES.SYSTEM_DEVELOPER) {
+  if (isAnySystemDeveloperRole(actorRole)) {
     return { allowed: true, mode: "SYSTEM_DEVELOPER_PURGE" };
   }
   if (Number(recycleItem?.institution_id || 0) !== Number(requestUser?.institution_id || 0)) {
@@ -1310,15 +1468,17 @@ async function loadInstitutionAgreementContext(institutionId) {
   return rows.length ? rows[0] : null;
 }
 
-function assertInstitutionAgreementAccess(req, institutionRow) {
+async function assertInstitutionAgreementAccess(req, institutionRow) {
   if (!institutionRow) {
     return { error: "Institution not found.", status: 404 };
   }
-  if (canManageAcrossInstitutions(req.user)) {
-    return null;
-  }
-  if (Number(institutionRow.id) !== Number(req.user.institution_id)) {
-    return { error: "You are not allowed to access this institution's agreement.", status: 403 };
+  const accessError = await assertInstitutionScopeAccess(
+    req,
+    institutionRow.id,
+    "You are not allowed to access this institution's agreement."
+  );
+  if (accessError) {
+    return accessError;
   }
   return null;
 }
@@ -1356,8 +1516,8 @@ async function archiveRecycleBinItem({
   );
 }
 
-function canManageInstitutionUser(reqUser, targetInstitutionId) {
-  return canManageAcrossInstitutions(reqUser) || Number(reqUser?.institution_id) === Number(targetInstitutionId || 0);
+async function canManageInstitutionUser(reqUser, targetInstitutionId) {
+  return hasInstitutionScopeAccess(reqUser, targetInstitutionId);
 }
 
 function buildRecycleContextFromRequest(req, extra = {}) {
@@ -1393,13 +1553,20 @@ async function getTableColumns(tableName) {
 
 function getScopedFilter(config, user) {
   const normalizedRole = normalizeRole(user.role);
+  const resolveScopedIdentity = (columnName) => {
+    const normalizedColumn = cleanValue(columnName || "").toLowerCase();
+    if (normalizedColumn.endsWith("_user_id") || normalizedColumn === "created_by_user_id") {
+      return Number(user.id || 0) || null;
+    }
+    return cleanValue(user.full_name) || cleanValue(user.username);
+  };
   if (
     config?.scopedByRole &&
     Array.isArray(config.scopedByRole.roles) &&
     config.scopedByRole.roles.includes(normalizedRole) &&
     config.scopedByRole.column
   ) {
-    const identity = cleanValue(user.full_name) || cleanValue(user.username);
+    const identity = resolveScopedIdentity(config.scopedByRole.column);
     return {
       where: ` AND ${config.scopedByRole.column} = ?`,
       params: [identity]
@@ -2312,6 +2479,36 @@ app.post("/api/auth/login", authLoginRateLimit, asyncHandler(async (req, res) =>
   if (securityUser?.id) {
     await resetLoginFailureState(securityUser.id);
   }
+  const isSuperSystemDeveloperLogin =
+    isSuperSystemDeveloperRole(account?.role) ||
+    (isAnySystemDeveloperRole(account?.role) && isSuperSystemDeveloperUsername(account?.payload?.username || account?.identity));
+  if (isSuperSystemDeveloperLogin) {
+    const directPayload = {
+      ...(account.payload || {}),
+      role: normalizeRole(account.role),
+      login_session_started_at: dayjs().format("YYYY-MM-DD HH:mm:ss")
+    };
+    const directToken = issueToken(directPayload);
+    const superLoginAuditDetails = await augmentAuthAuditDetailsWithInstitution(
+      buildAuthAuditDetails(req, directPayload.username || username, {
+        password_correct: true,
+        otp_correct: true,
+        otp_bypassed: true,
+        role: directPayload.role,
+        activity_done: "LOGIN_SUCCESS"
+      }),
+      directPayload.institution_id
+    );
+    await auditLog(directPayload, "LOGIN_SUCCESS", "auth", directPayload.id, superLoginAuditDetails);
+    return res.json({
+      message: "Super System Developer login successful.",
+      token: directToken,
+      role: directPayload.role,
+      portal: toPortal(directPayload.role),
+      otp_required: false,
+      user: directPayload
+    });
+  }
   const otpCooldown = checkOtpRequestCooldown(account.identity);
   if (!otpCooldown.allowed) {
     await auditLog(
@@ -2355,9 +2552,8 @@ app.post("/api/auth/login", authLoginRateLimit, asyncHandler(async (req, res) =>
     channel: effectiveChannel,
     deliveryPlan
   });
-  const isSystemDeveloperLogin = normalizeRole(account.role) === ROLES.SYSTEM_DEVELOPER;
   const exposeOtpPreview =
-    isSystemDeveloperLogin && (process.env.NODE_ENV !== "production" || parseTruthy(process.env.EXPOSE_OTP_PREVIEW));
+    isSuperSystemDeveloperLogin && (process.env.NODE_ENV !== "production" || parseTruthy(process.env.EXPOSE_OTP_PREVIEW));
   const loggedOtpDetails = await augmentAuthAuditDetailsWithInstitution(
     buildAuthAuditDetails(req, username, {
       password_correct: true,
@@ -2630,7 +2826,7 @@ app.patch("/api/users/:id/force-reset-password", auth, accountMutationRateLimit,
   });
 }));
 
-app.patch("/api/system-developer/credentials", auth, accountMutationRateLimit, accountMutationCooldown, enforceRole([ROLES.SYSTEM_DEVELOPER]), asyncHandler(async (req, res) => {
+app.patch("/api/system-developer/credentials", auth, accountMutationRateLimit, accountMutationCooldown, enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER]), asyncHandler(async (req, res) => {
   const currentUsername = cleanValue(req.body?.current_username) || cleanValue(req.user.username);
   const newUsername = cleanOptionalValue(req.body?.new_username);
   const newPasswordRaw = cleanOptionalValue(req.body?.new_password);
@@ -2662,10 +2858,10 @@ app.patch("/api/system-developer/credentials", auth, accountMutationRateLimit, a
     `SELECT id, username
      FROM users
      WHERE username = ?
-       AND role = ?
+       AND role IN (?, ?)
      ORDER BY id ASC
      LIMIT 1`,
-    [currentUsername, ROLES.SYSTEM_DEVELOPER]
+    [currentUsername, ROLES.SYSTEM_DEVELOPER, ROLES.SUPER_SYSTEM_DEVELOPER]
   );
   if (!users.length) {
     return res.status(404).json({ error: "System Developer account not found." });
@@ -3077,6 +3273,7 @@ app.get("/api/portal/current", auth, asyncHandler(async (req, res) => {
     }
   }
   const passwordPolicy = evaluatePasswordRotation(req.user);
+  const institution_scope_options = await loadInstitutionScopeOptions(req.user);
   res.json({
     role: req.user.role,
     portal: toPortal(req.user.role),
@@ -3090,9 +3287,165 @@ app.get("/api/portal/current", auth, asyncHandler(async (req, res) => {
     must_change_password: Boolean(req.user.must_change_password),
     password_last_changed_at: req.user.password_last_changed_at || null,
     password_expires_at: req.user.password_expires_at || null,
-    password_days_remaining: passwordPolicy.remainingDays
+    password_days_remaining: passwordPolicy.remainingDays,
+    institution_scope_options
   });
 }));
+
+app.get(
+  "/api/system-developer/assigned-institutions",
+  auth,
+  enforceRole([ROLES.SYSTEM_DEVELOPER]),
+  asyncHandler(async (req, res) => {
+    const institutions = await loadInstitutionScopeOptions(req.user);
+    res.json({ institutions });
+  })
+);
+
+app.get(
+  "/api/system-developer/institution-assignments",
+  auth,
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER]),
+  asyncHandler(async (req, res) => {
+    const developerUserId = Number(req.query?.developer_user_id || 0) || null;
+    const rows = await query(
+      `SELECT a.id, a.developer_user_id, a.institution_id, a.is_active, a.created_at,
+              d.username AS developer_username, d.full_name AS developer_name,
+              i.institution_name, i.institution_code
+       FROM system_developer_institution_assignments a
+       INNER JOIN users d ON d.id = a.developer_user_id
+       INNER JOIN institutions i ON i.id = a.institution_id
+       WHERE (? IS NULL OR a.developer_user_id = ?)
+       ORDER BY a.id DESC`,
+      [developerUserId, developerUserId]
+    );
+    res.json({ assignments: rows });
+  })
+);
+
+app.post(
+  "/api/system-developer/institution-assignments",
+  auth,
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER]),
+  asyncHandler(async (req, res) => {
+    const developerUserId = Number(req.body?.developer_user_id || 0);
+    const institutionId = Number(req.body?.institution_id || 0);
+    const isActive = Number(parseTruthy(req.body?.is_active ?? true));
+    if (!developerUserId || !institutionId) {
+      return res.status(400).json({ error: "developer_user_id and institution_id are required." });
+    }
+    const developerRows = await query(
+      `SELECT id, role
+       FROM users
+       WHERE id = ?
+       LIMIT 1`,
+      [developerUserId]
+    );
+    if (!developerRows.length) {
+      return res.status(404).json({ error: "Developer account not found." });
+    }
+    const developerRole = normalizeRole(developerRows[0].role);
+    if (developerRole !== ROLES.SYSTEM_DEVELOPER) {
+      return res.status(400).json({ error: "Assignments can only be made to System Developer accounts." });
+    }
+    const institutionRows = await query(
+      "SELECT id FROM institutions WHERE id = ? LIMIT 1",
+      [institutionId]
+    );
+    if (!institutionRows.length) {
+      return res.status(404).json({ error: "Institution not found." });
+    }
+    const existing = await query(
+      `SELECT id
+       FROM system_developer_institution_assignments
+       WHERE developer_user_id = ? AND institution_id = ?
+       LIMIT 1`,
+      [developerUserId, institutionId]
+    );
+    if (existing.length) {
+      await query(
+        `UPDATE system_developer_institution_assignments
+         SET is_active = ?,
+             updated_at = NOW()
+         WHERE id = ?`,
+        [isActive, existing[0].id]
+      );
+      return res.json({ message: "Assignment updated.", id: existing[0].id });
+    }
+    const result = await query(
+      `INSERT INTO system_developer_institution_assignments
+        (developer_user_id, institution_id, is_active, created_by_user_id)
+       VALUES (?, ?, ?, ?)`,
+      [developerUserId, institutionId, isActive, Number(req.user.id || 0) || null]
+    );
+    await auditLog(req.user, "ASSIGN_SYSTEM_DEVELOPER_INSTITUTION", "system_developer_institution_assignments", result.insertId, {
+      developer_user_id: developerUserId,
+      institution_id: institutionId,
+      is_active: isActive
+    });
+    res.status(201).json({ message: "Assignment created.", id: result.insertId });
+  })
+);
+
+app.delete(
+  "/api/system-developer/institution-assignments/:id",
+  auth,
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER]),
+  asyncHandler(async (req, res) => {
+    const assignmentId = Number(req.params.id || 0);
+    if (!assignmentId) return res.status(400).json({ error: "Valid assignment id is required." });
+    const result = await query(
+      `DELETE FROM system_developer_institution_assignments
+       WHERE id = ?`,
+      [assignmentId]
+    );
+    if (!result.affectedRows) {
+      return res.status(404).json({ error: "Assignment not found." });
+    }
+    await auditLog(req.user, "DELETE_SYSTEM_DEVELOPER_INSTITUTION_ASSIGNMENT", "system_developer_institution_assignments", assignmentId, {});
+    res.json({ message: "Assignment removed." });
+  })
+);
+
+app.post(
+  "/api/portal/switch-institution",
+  auth,
+  enforceRole([ROLES.SYSTEM_DEVELOPER]),
+  asyncHandler(async (req, res) => {
+    const institutionId = Number(req.body?.institution_id || 0);
+    if (!institutionId) {
+      return res.status(400).json({ error: "institution_id is required." });
+    }
+    const allowed = await hasInstitutionScopeAccess(req.user, institutionId);
+    if (!allowed) {
+      return res.status(403).json({ error: "You are not assigned to this institution." });
+    }
+    const institutions = await query(
+      `SELECT id, institution_name, institution_code
+       FROM institutions
+       WHERE id = ?
+       LIMIT 1`,
+      [institutionId]
+    );
+    if (!institutions.length) {
+      return res.status(404).json({ error: "Institution not found." });
+    }
+    const switchedPayload = {
+      ...req.user,
+      institution_id: institutionId
+    };
+    const token = issueToken(switchedPayload);
+    await auditLog(req.user, "SYSTEM_DEVELOPER_SWITCH_INSTITUTION", "institutions", institutionId, {
+      from_institution_id: req.user.institution_id,
+      to_institution_id: institutionId
+    });
+    res.json({
+      message: "Institution scope switched successfully.",
+      token,
+      institution: institutions[0]
+    });
+  })
+);
 
 app.get(
   "/api/users/registrar-options",
@@ -3101,24 +3454,16 @@ app.get(
   enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
   asyncHandler(async (req, res) => {
     const canSeeAllInstitutions = canManageAcrossInstitutions(req.user);
-    const institutionScopeId = canSeeAllInstitutions
-      ? Number(req.query?.institution_id || 0) || null
-      : Number(req.user.institution_id || 0) || null;
-    const institutions = canSeeAllInstitutions
-      ? await query(
-        `SELECT id, institution_name, institution_code, county, email, phone, created_at
-         FROM institutions
-         ${institutionScopeId ? "WHERE id = ?" : ""}
-         ORDER BY institution_name ASC`,
-        institutionScopeId ? [institutionScopeId] : []
-      )
-      : await query(
-        `SELECT id, institution_name, institution_code, county, email, phone, created_at
-         FROM institutions
-         WHERE id = ?
-         LIMIT 1`,
-        [req.user.institution_id]
-      );
+    const requestedInstitutionId = Number(req.query?.institution_id || 0) || null;
+    const scopeInstitutions = await loadInstitutionScopeOptions(req.user);
+    const institutionScopeId = requestedInstitutionId || Number(req.user.institution_id || 0) || Number(scopeInstitutions[0]?.id || 0) || null;
+    const institutions = scopeInstitutions
+      .filter((item) => !requestedInstitutionId || Number(item.id) === requestedInstitutionId)
+      .map((item) => ({
+        id: item.id,
+        institution_name: item.institution_name,
+        institution_code: item.institution_code
+      }));
     const registrationMeta = canRegisterInstitution(req.user)
       ? {
           counties: COUNTIES,
@@ -3130,7 +3475,7 @@ app.get(
       requester_role: normalizeRole(req.user.role),
       can_manage_all_institutions: canSeeAllInstitutions,
       institution_scope_id: institutionScopeId,
-      can_view_registry_institutions: canSeeAllInstitutions,
+      can_view_registry_institutions: canSeeAllInstitutions || normalizeRole(req.user.role) === ROLES.SYSTEM_DEVELOPER,
       assignable_roles: getAssignableRolesForActor(req.user),
       can_register_institution: canRegisterInstitution(req.user),
       can_register_users: canRegisterInstitutionUsers(req.user),
@@ -3231,10 +3576,12 @@ app.post(
 
     const postalDetails = getPostalDetails(postalCodeInput);
     const normalizedTown = townInput || postalDetails?.town || null;
-    const adminPassword = adminPasswordInput;
-    const weakAdminPasswordError = requireStrongPassword(adminPassword, "admin_password");
-    if (weakAdminPasswordError) {
-      return res.status(400).json({ error: weakAdminPasswordError });
+    const adminPassword = adminPasswordInput || generateStrongPassword(14);
+    if (adminPasswordInput) {
+      const weakAdminPasswordError = requireStrongPassword(adminPassword, "admin_password");
+      if (weakAdminPasswordError) {
+        return res.status(400).json({ error: weakAdminPasswordError });
+      }
     }
     if (institutionPhone && !hasAllowedPhonePrefix(institutionPhone)) {
       return res.status(400).json({
@@ -3242,9 +3589,9 @@ app.post(
       });
     }
 
-    if (!institutionName || !adminFullName || !adminUsername || !adminPassword) {
+    if (!institutionName || !adminFullName || !adminUsername) {
       return res.status(400).json({
-        error: "institution_name, admin_full_name, admin_username and admin_password are required."
+        error: "institution_name, admin_full_name, and admin_username are required."
       });
     }
 
@@ -3304,14 +3651,14 @@ app.post(
     );
 
     const credentialMessage = [
-      "WELCOME TO INTEGRATED MANAGEMENT INFORMATION SYSTEM (IMIS).",
-      "Your account has been created successfully.",
+      "Welcome to IMIS for Basic Education Learning Institution.",
+      "Your institution account has been registered successfully.",
       `Institution: ${institutionName}`,
       `Institution Code: ${institutionCode}`,
       `Username: ${adminUsername}`,
       `Password: ${adminPassword}`,
       "",
-      "IMPORTANT SECURITY NOTE:",
+      "Login Link: www.theimis.com",
       "Please log in and change this password immediately after first sign-in."
     ].join("\n");
     const credentialDispatch = await dispatchCredentialNotice({
@@ -3357,7 +3704,7 @@ app.post(
     });
 
     res.status(201).json({
-      message: "Institution and administrator account registered successfully.",
+      message: "Institution and administrator account registered successfully. Credentials dispatched via configured channels.",
       institution_id: institutionId,
       institution_code: institutionCode,
       admin_username: adminUsername,
@@ -3387,7 +3734,7 @@ app.get(
       return res.status(400).json({ error: "Valid institution id is required." });
     }
     const institution = await loadInstitutionAgreementContext(institutionId);
-    const accessError = assertInstitutionAgreementAccess(req, institution);
+    const accessError = await assertInstitutionAgreementAccess(req, institution);
     if (accessError) {
       return res.status(accessError.status).json({ error: accessError.error });
     }
@@ -3416,7 +3763,7 @@ app.post(
       return res.status(400).json({ error: "Valid institution id is required." });
     }
     const institution = await loadInstitutionAgreementContext(institutionId);
-    const accessError = assertInstitutionAgreementAccess(req, institution);
+    const accessError = await assertInstitutionAgreementAccess(req, institution);
     if (accessError) {
       return res.status(accessError.status).json({ error: accessError.error });
     }
@@ -4027,8 +4374,8 @@ app.get(
     const includeBom = ["all", "bom"].includes(normalizedTarget);
     const includeInstitutions = ["all", "institutions", "institution"].includes(normalizedTarget);
     const includeUsers = ["all", "users", "user"].includes(normalizedTarget);
-    const isSystemDeveloper = normalizeRole(req.user.role) === ROLES.SYSTEM_DEVELOPER;
-    if (!isSystemDeveloper && ["institutions", "institution", "users", "user"].includes(normalizedTarget)) {
+    const canSearchGlobalRegistry = canManageAcrossInstitutions(req.user);
+    if (!canSearchGlobalRegistry && ["institutions", "institution", "users", "user"].includes(normalizedTarget)) {
       return res.status(403).json({
         error: "Institutions and users search scope is restricted to System Developer."
       });
@@ -4378,7 +4725,7 @@ app.get(
   auth,
   enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
   asyncHandler(async (req, res) => {
-    if (normalizeRole(req.user.role) === ROLES.SYSTEM_DEVELOPER) {
+    if (canManageAcrossInstitutions(req.user)) {
       const users = await query(
         `SELECT u.id, u.institution_id, u.full_name, u.username, u.role, u.email, u.phone, u.is_active, u.created_at,
                 u.is_suspended, u.suspended_reason, u.status_reason,
@@ -4395,8 +4742,10 @@ app.get(
               i.institution_name, i.institution_code
        FROM users u
        INNER JOIN institutions i ON i.id = u.institution_id
-       WHERE u.institution_id = ? ORDER BY u.id DESC`,
-      [req.user.institution_id]
+       WHERE u.institution_id = ?
+         AND u.role NOT IN (?, ?)
+       ORDER BY u.id DESC`,
+      [req.user.institution_id, ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER]
     );
     res.json(users);
   })
@@ -4443,8 +4792,11 @@ app.post(
     }
     const roleCapacity = await checkSystemDeveloperAccountCapacity(normalizedRole);
     if (!roleCapacity.allowed) {
+      const roleLabel = normalizedRole === ROLES.SUPER_SYSTEM_DEVELOPER
+        ? "Super System Developer"
+        : "System Developer";
       return res.status(409).json({
-        error: `System Developer registration limit reached. Maximum allowed is ${roleCapacity.max}.`,
+        error: `${roleLabel} registration limit reached. Maximum allowed is ${roleCapacity.max}.`,
         current_total: roleCapacity.total,
         max_allowed: roleCapacity.max
       });
@@ -4452,11 +4804,21 @@ app.post(
     const passwordHash = await hashPassword(password);
     const isRotationExempt = PASSWORD_ROTATION_EXEMPT_ROLES.has(normalizedRole);
     const targetInstitutionId =
-      normalizeRole(req.user.role) === ROLES.SYSTEM_DEVELOPER
+      isAnySystemDeveloperRole(req.user.role)
         ? Number(req.body?.institution_id || req.user.institution_id)
         : req.user.institution_id;
     if (!targetInstitutionId) {
       return res.status(400).json({ error: "institution_id is required for this operation." });
+    }
+    if (isAnySystemDeveloperRole(req.user.role) && !canManageAcrossInstitutions(req.user)) {
+      const scopeError = await assertInstitutionScopeAccess(
+        req,
+        targetInstitutionId,
+        "You can only register users within your assigned institutions."
+      );
+      if (scopeError) {
+        return res.status(scopeError.status).json({ error: scopeError.error });
+      }
     }
     const existingUser = await query(
       "SELECT id FROM users WHERE institution_id = ? AND username = ? LIMIT 1",
@@ -4531,7 +4893,7 @@ app.post(
       message: "User created successfully.",
       credential_dispatch: credentialDispatch,
       welcome_dispatch_mode: welcomeDispatchMode,
-      generated_password: normalizeRole(req.user.role) === ROLES.SYSTEM_DEVELOPER ? password : null
+      generated_password: isAnySystemDeveloperRole(req.user.role) ? password : null
     });
   })
 );
@@ -4704,6 +5066,156 @@ app.delete(
     if (!result.affectedRows) return res.status(404).json({ error: "Stream not found." });
     await auditLog(req.user, "DELETE_STREAM", "institution_streams", id, {});
     res.json({ message: "Stream removed." });
+  })
+);
+
+app.get(
+  "/api/templates/institution-streams.csv",
+  auth,
+  enforceModuleAccess(MODULE_KEYS.ADMISSION),
+  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.SYSTEM_ADMINISTRATOR]),
+  asyncHandler(async (req, res) => {
+    const csv = [
+      "grade_or_form,stream_name",
+      "Grade 1,East",
+      "Grade 1,West",
+      "Form 3,North"
+    ].join("\n");
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", "attachment; filename=\"institution-streams-template.csv\"");
+    res.send(csv);
+  })
+);
+
+app.post(
+  "/api/institutions/streams/bulk",
+  auth,
+  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.SYSTEM_ADMINISTRATOR]),
+  asyncHandler(async (req, res) => {
+    const institutionId = Number(req.user.institution_id);
+    const entries = Array.isArray(req.body?.entries) ? req.body.entries : [];
+    if (!entries.length) {
+      return res.status(400).json({ error: "entries[] is required." });
+    }
+    let created = 0;
+    let skipped = 0;
+    for (const entry of entries) {
+      const grade = cleanOptionalValue(entry?.grade_or_form);
+      const streamName = cleanValue(entry?.stream_name || "");
+      if (!streamName) {
+        skipped += 1;
+        // eslint-disable-next-line no-continue
+        continue;
+      }
+      try {
+        // eslint-disable-next-line no-await-in-loop
+        await query(
+          `INSERT INTO institution_streams (institution_id, grade_or_form, stream_name, created_by_user_id)
+           VALUES (?, ?, ?, ?)`,
+          [institutionId, grade, streamName, String(req.user.id || "")]
+        );
+        created += 1;
+      } catch (error) {
+        if (error?.code === "ER_DUP_ENTRY") {
+          skipped += 1;
+          // eslint-disable-next-line no-continue
+          continue;
+        }
+        throw error;
+      }
+    }
+    await auditLog(req.user, "BULK_CREATE_STREAM", "institution_streams", null, {
+      attempted: entries.length,
+      created,
+      skipped
+    });
+    res.json({ message: "Streams bulk upload processed.", attempted: entries.length, created, skipped });
+  })
+);
+
+app.get(
+  "/api/templates/admission-bio-data.csv",
+  auth,
+  enforceModuleAccess(MODULE_KEYS.ADMISSION),
+  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.SYSTEM_ADMINISTRATOR]),
+  asyncHandler(async (req, res) => {
+    const csv = [
+      "first_name,middle_name,last_name,other_names,admission_number,date_of_birth,date_of_admission,grade,form_name,stream,gender,parent_full_name,parent_phone,parent_email,learner_condition,disability_type,has_medical_condition,medical_condition_notes,status",
+      "Jane,,Achieng,,ADM-001,2015-02-10,2026-01-08,Grade 5,,Blue,Female,Mary Achieng,+254712000000,mary@example.com,No,,No,,In Session"
+    ].join("\n");
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", "attachment; filename=\"admission-bio-data-template.csv\"");
+    res.send(csv);
+  })
+);
+
+app.get(
+  "/api/templates/staff-profiles.csv",
+  auth,
+  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.SYSTEM_ADMINISTRATOR]),
+  asyncHandler(async (req, res) => {
+    const profileType = cleanValue(req.query?.type || "teacher").toLowerCase();
+    const csv = profileType === "support"
+      ? [
+        "full_name,staff_number,id_number,phone_number,email_address,position_department,postal_address,postal_code,town",
+        "John Otieno,NTS-001,12345678,+254700000001,john@example.com,Accounts,P.O Box 1,00100,Nairobi"
+      ].join("\n")
+      : [
+        "full_name,tsc_number,id_number,phone_number,email_address,category,major_subject,other_subject,postal_address,postal_code,town",
+        "Grace Wanjiku,TSC12345,98765432,+254700000002,grace@example.com,Primary,English,Mathematics,P.O Box 2,20100,Nakuru"
+      ].join("\n");
+    const fileName = profileType === "support"
+      ? "support-staff-profile-template.csv"
+      : "teacher-profile-template.csv";
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", `attachment; filename="${fileName}"`);
+    res.send(csv);
+  })
+);
+
+app.get(
+  "/api/institutions/letterhead",
+  auth,
+  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.SYSTEM_ADMINISTRATOR]),
+  asyncHandler(async (req, res) => {
+    const institutionId = Number(req.user.institution_id);
+    const rows = await query(
+      `SELECT id, institution_name, institution_code, letterhead_file_path, admission_letter_template_text, admission_letter_template_file_url
+       FROM institutions
+       WHERE id = ?
+       LIMIT 1`,
+      [institutionId]
+    );
+    if (!rows.length) {
+      return res.status(404).json({ error: "Institution not found." });
+    }
+    res.json(rows[0]);
+  })
+);
+
+app.patch(
+  "/api/institutions/letterhead",
+  auth,
+  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.SYSTEM_ADMINISTRATOR]),
+  asyncHandler(async (req, res) => {
+    const institutionId = Number(req.user.institution_id);
+    const letterheadFilePath = cleanOptionalValue(req.body?.letterhead_file_path);
+    const admissionLetterTemplateText = cleanOptionalValue(req.body?.admission_letter_template_text);
+    const admissionLetterTemplateFileUrl = cleanOptionalValue(req.body?.admission_letter_template_file_url);
+    await query(
+      `UPDATE institutions
+       SET letterhead_file_path = COALESCE(?, letterhead_file_path),
+           admission_letter_template_text = COALESCE(?, admission_letter_template_text),
+           admission_letter_template_file_url = COALESCE(?, admission_letter_template_file_url)
+       WHERE id = ?`,
+      [letterheadFilePath, admissionLetterTemplateText, admissionLetterTemplateFileUrl, institutionId]
+    );
+    await auditLog(req.user, "UPDATE_INSTITUTION_LETTERHEAD", "institutions", institutionId, {
+      letterhead_file_path: letterheadFilePath,
+      has_admission_letter_template_text: Boolean(admissionLetterTemplateText),
+      admission_letter_template_file_url: admissionLetterTemplateFileUrl
+    });
+    res.json({ message: "Letterhead and admission letter template saved." });
   })
 );
 
@@ -4943,7 +5455,7 @@ app.get(
   asyncHandler(async (req, res) => {
     const institutionId = Number(req.params.id);
     const institution = await loadInstitutionAgreementContext(institutionId);
-    const accessError = assertInstitutionAgreementAccess(req, institution);
+    const accessError = await assertInstitutionAgreementAccess(req, institution);
     if (accessError) return res.status(accessError.status).json({ error: accessError.error });
     res.json({
       institution_id: institution.id,
@@ -4963,7 +5475,7 @@ app.put(
   asyncHandler(async (req, res) => {
     const institutionId = Number(req.params.id);
     const institution = await loadInstitutionAgreementContext(institutionId);
-    const accessError = assertInstitutionAgreementAccess(req, institution);
+    const accessError = await assertInstitutionAgreementAccess(req, institution);
     if (accessError) return res.status(accessError.status).json({ error: accessError.error });
     const templateText = cleanOptionalValue(req.body?.agreement_template_text);
     const templateFileUrl = cleanOptionalValue(req.body?.agreement_template_file_url);
@@ -4991,7 +5503,7 @@ app.delete(
   asyncHandler(async (req, res) => {
     const institutionId = Number(req.params.id);
     const institution = await loadInstitutionAgreementContext(institutionId);
-    const accessError = assertInstitutionAgreementAccess(req, institution);
+    const accessError = await assertInstitutionAgreementAccess(req, institution);
     if (accessError) return res.status(accessError.status).json({ error: accessError.error });
     await query(
       `UPDATE institutions
@@ -5027,11 +5539,16 @@ app.patch(
     if (!institutions.length) {
       return res.status(404).json({ error: "Institution not found." });
     }
-    if (!canManageAcrossInstitutions(req.user) && Number(req.user.institution_id) !== institutionId) {
-      return res.status(403).json({ error: "You can only manage institution status within your own institution." });
+    const institutionScopeError = await assertInstitutionScopeAccess(
+      req,
+      institutionId,
+      "You can only manage institution status within your assigned institution scope."
+    );
+    if (institutionScopeError) {
+      return res.status(institutionScopeError.status).json({ error: institutionScopeError.error });
     }
     const normalizedRole = normalizeRole(req.user.role);
-    if (normalizedRole !== ROLES.SYSTEM_DEVELOPER && Number(is_active) === 0) {
+    if (!isAnySystemDeveloperRole(normalizedRole) && Number(is_active) === 0) {
       return res.status(403).json({ error: "Only System Developer can deactivate an institution." });
     }
     const nextActive = Number(typeof is_active === "boolean" || typeof is_active === "number" ? is_active : 1) === 1 ? 1 : 0;
@@ -5061,7 +5578,6 @@ app.patch(
   asyncHandler(async (req, res) => {
     const { is_active } = req.body;
     const userId = Number(req.params.id);
-    const normalizedRequesterRole = normalizeRole(req.user.role);
     const users = await query(
       `SELECT id, institution_id, username
        FROM users
@@ -5072,8 +5588,9 @@ app.patch(
     if (!users.length) {
       return res.status(404).json({ error: "User account not found." });
     }
-    if (normalizedRequesterRole !== ROLES.SYSTEM_DEVELOPER && users[0].institution_id !== req.user.institution_id) {
-      return res.status(403).json({ error: "You can only change user status within your institution." });
+    const statusScopeAllowed = await hasInstitutionScopeAccess(req.user, users[0].institution_id);
+    if (!statusScopeAllowed) {
+      return res.status(403).json({ error: "You can only change user status within your assigned institution scope." });
     }
     await query("UPDATE users SET is_active = ? WHERE id = ?", [Number(Boolean(is_active)), userId]);
     await auditLog(req.user, "CHANGE_USER_STATUS", "users", req.params.id, { is_active });
@@ -5110,9 +5627,9 @@ app.patch(
     if (!users.length) {
       return res.status(404).json({ error: "User account not found." });
     }
-    const normalizedRequesterRole = normalizeRole(req.user.role);
-    if (normalizedRequesterRole !== ROLES.SYSTEM_DEVELOPER && users[0].institution_id !== req.user.institution_id) {
-      return res.status(403).json({ error: "You can only reset user passwords within your institution." });
+    const passwordScopeAllowed = await hasInstitutionScopeAccess(req.user, users[0].institution_id);
+    if (!passwordScopeAllowed) {
+      return res.status(403).json({ error: "You can only reset user passwords within your assigned institution scope." });
     }
 
     const passwordHash = await hashPassword(newPassword);
@@ -5184,11 +5701,12 @@ app.delete(
     }
     const targetUser = users[0];
     const requesterRole = normalizeRole(req.user.role);
-    if (requesterRole !== ROLES.SYSTEM_DEVELOPER && targetUser.institution_id !== req.user.institution_id) {
-      return res.status(403).json({ error: "You can only delete users within your institution." });
+    const deleteScopeAllowed = await hasInstitutionScopeAccess(req.user, targetUser.institution_id);
+    if (!deleteScopeAllowed) {
+      return res.status(403).json({ error: "You can only delete users within your assigned institution scope." });
     }
-    if (requesterRole !== ROLES.SYSTEM_DEVELOPER && normalizeRole(targetUser.role) === ROLES.SYSTEM_DEVELOPER) {
-      return res.status(403).json({ error: "Only the System Developer can delete this account." });
+    if (!isSuperSystemDeveloperRole(requesterRole) && isAnySystemDeveloperRole(targetUser.role)) {
+      return res.status(403).json({ error: "Only the Super/System Developer can delete this account." });
     }
     await archiveRecycleBinItem({
       institutionId: targetUser.institution_id,
@@ -5385,8 +5903,9 @@ app.post(
     }
 
     const targetUser = users[0];
-    if (req.user.role !== ROLES.SYSTEM_DEVELOPER && targetUser.institution_id !== req.user.institution_id) {
-      return res.status(403).json({ error: "Cannot change module access for users outside your institution." });
+    const accessScopeAllowed = await hasInstitutionScopeAccess(req.user, targetUser.institution_id);
+    if (!accessScopeAllowed) {
+      return res.status(403).json({ error: "Cannot change module access for users outside your assigned institution scope." });
     }
 
     const actionKey = cleanValue(req.body?.action_key).toUpperCase() || "ACCESS";
@@ -5434,8 +5953,9 @@ app.post(
       return res.status(404).json({ error: "Target user not found." });
     }
     const targetUser = users[0];
-    if (req.user.role !== ROLES.SYSTEM_DEVELOPER && targetUser.institution_id !== req.user.institution_id) {
-      return res.status(403).json({ error: "Cannot change module access for users outside your institution." });
+    const bulkAccessScopeAllowed = await hasInstitutionScopeAccess(req.user, targetUser.institution_id);
+    if (!bulkAccessScopeAllowed) {
+      return res.status(403).json({ error: "Cannot change module access for users outside your assigned institution scope." });
     }
     const normalizedEntries = entries
       .map((item) => ({
@@ -5484,8 +6004,13 @@ app.get(
       return res.status(404).json({ error: "Target user not found." });
     }
     const targetUser = users[0];
-    if (!canManageAcrossInstitutions(req.user) && targetUser.institution_id !== req.user.institution_id) {
-      return res.status(403).json({ error: "Cannot view module overrides for users outside your institution." });
+    const targetUserScopeError = await assertInstitutionScopeAccess(
+      req,
+      targetUser.institution_id,
+      "Cannot view module overrides for users outside your assigned institution scope."
+    );
+    if (targetUserScopeError) {
+      return res.status(targetUserScopeError.status).json({ error: targetUserScopeError.error });
     }
     const overrides = await query(
       `SELECT id, institution_id, user_id, module_key, permission_key, can_access, created_by_user_id, created_at
@@ -5537,6 +6062,9 @@ app.get(
         details_json: details
       };
     });
+    const filteredLogs = isSuperSystemDeveloperRole(req.user.role)
+      ? normalizedLogs
+      : normalizedLogs.filter((row) => normalizeRole(row.actor_role) !== ROLES.SUPER_SYSTEM_DEVELOPER);
     const [failedLoginsRow] = await query(
       `SELECT COUNT(*) total
        FROM activity_logs a
@@ -5552,7 +6080,7 @@ app.get(
       params
     );
     res.json({
-      logs: normalizedLogs,
+      logs: filteredLogs,
       metrics: {
         failed_login_events_24h: Number(failedLoginsRow?.total || 0),
         otp_fail_events_24h: Number(otpFailuresRow?.total || 0)
@@ -5567,31 +6095,27 @@ app.get(
   enforceModuleAccess(MODULE_KEYS.INSTITUTIONS_USERS_REGISTRY),
   enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
   asyncHandler(async (req, res) => {
-    const includeInstitutionRegistry = canManageAcrossInstitutions(req.user);
-    const institutions = includeInstitutionRegistry
+    const scopedInstitutions = await loadInstitutionScopeOptions(req.user);
+    const includeInstitutionRegistry = scopedInstitutions.length > 0;
+    const institutions = scopedInstitutions.map((row) => ({
+      id: row.id,
+      institution_name: row.institution_name,
+      institution_code: row.institution_code
+    }));
+    const scopedInstitutionIds = institutions.map((item) => Number(item.id || 0)).filter((id) => id > 0);
+    const placeholders = scopedInstitutionIds.map(() => "?").join(", ");
+    const users = scopedInstitutionIds.length
       ? await query(
-        `SELECT id, institution_name, institution_code, email, phone, county, created_at
-         FROM institutions
-         ORDER BY id DESC`
+        `SELECT u.id, u.institution_id, u.full_name, u.username, u.role, u.email, u.phone, u.is_active, u.created_at,
+                i.institution_name, i.institution_code
+         FROM users u
+         INNER JOIN institutions i ON i.id = u.institution_id
+         WHERE u.institution_id IN (${placeholders})
+           AND ( ? = 1 OR u.role NOT IN (?, ?))
+         ORDER BY u.id DESC`,
+        [...scopedInstitutionIds, Number(canManageAcrossInstitutions(req.user)), ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER]
       )
       : [];
-    const users = canManageAcrossInstitutions(req.user)
-      ? await query(
-        `SELECT u.id, u.institution_id, u.full_name, u.username, u.role, u.email, u.phone, u.is_active, u.created_at,
-                i.institution_name, i.institution_code
-         FROM users u
-         INNER JOIN institutions i ON i.id = u.institution_id
-         ORDER BY u.id DESC`
-      )
-      : await query(
-        `SELECT u.id, u.institution_id, u.full_name, u.username, u.role, u.email, u.phone, u.is_active, u.created_at,
-                i.institution_name, i.institution_code
-         FROM users u
-         INNER JOIN institutions i ON i.id = u.institution_id
-         WHERE u.institution_id = ?
-         ORDER BY u.id DESC`,
-        [req.user.institution_id]
-      );
     res.json({
       include_institution_registry: includeInstitutionRegistry,
       institutions,
@@ -5620,8 +6144,9 @@ app.get(
       return res.status(404).json({ error: "Institution not found." });
     }
     const institution = rows[0];
-    if (!canManageAcrossInstitutions(req.user) && institution.id !== req.user.institution_id) {
-      return res.status(403).json({ error: "You can only view institutions in your scope." });
+    const viewInstitutionScopeError = await assertInstitutionScopeAccess(req, institution.id, "You can only view institutions in your assigned scope.");
+    if (viewInstitutionScopeError) {
+      return res.status(viewInstitutionScopeError.status).json({ error: viewInstitutionScopeError.error });
     }
     res.json({ institution });
   })
@@ -5637,8 +6162,9 @@ app.patch(
     if (!institutionId) return res.status(400).json({ error: "Valid institution id is required." });
     const rows = await query("SELECT id, institution_name, email, phone FROM institutions WHERE id = ? LIMIT 1", [institutionId]);
     if (!rows.length) return res.status(404).json({ error: "Institution not found." });
-    if (!canManageAcrossInstitutions(req.user) && institutionId !== req.user.institution_id) {
-      return res.status(403).json({ error: "You can only edit institutions in your scope." });
+    const editInstitutionScopeError = await assertInstitutionScopeAccess(req, institutionId, "You can only edit institutions in your assigned scope.");
+    if (editInstitutionScopeError) {
+      return res.status(editInstitutionScopeError.status).json({ error: editInstitutionScopeError.error });
     }
     const institution_name = cleanOptionalValue(req.body?.institution_name);
     const email = cleanOptionalValue(req.body?.email);
@@ -5670,8 +6196,9 @@ app.patch(
     if (!institutionId) return res.status(400).json({ error: "Valid institution id is required." });
     const rows = await query("SELECT id FROM institutions WHERE id = ? LIMIT 1", [institutionId]);
     if (!rows.length) return res.status(404).json({ error: "Institution not found." });
-    if (!canManageAcrossInstitutions(req.user) && institutionId !== req.user.institution_id) {
-      return res.status(403).json({ error: "You can only change status for your institution." });
+    const institutionStatusScopeError = await assertInstitutionScopeAccess(req, institutionId, "You can only change status for institutions in your assigned scope.");
+    if (institutionStatusScopeError) {
+      return res.status(institutionStatusScopeError.status).json({ error: institutionStatusScopeError.error });
     }
     const isActive = req.body?.is_active;
     const isSuspended = req.body?.is_suspended;
@@ -5763,8 +6290,9 @@ app.get(
     );
     if (!rows.length) return res.status(404).json({ error: "User not found." });
     const user = rows[0];
-    if (!canManageAcrossInstitutions(req.user) && user.institution_id !== req.user.institution_id) {
-      return res.status(403).json({ error: "You can only view users in your scope." });
+    const viewUserScopeError = await assertInstitutionScopeAccess(req, user.institution_id, "You can only view users in your assigned institution scope.");
+    if (viewUserScopeError) {
+      return res.status(viewUserScopeError.status).json({ error: viewUserScopeError.error });
     }
     res.json({ user });
   })
@@ -5787,8 +6315,9 @@ app.patch(
     );
     if (!rows.length) return res.status(404).json({ error: "User not found." });
     const target = rows[0];
-    if (!canManageAcrossInstitutions(req.user) && target.institution_id !== req.user.institution_id) {
-      return res.status(403).json({ error: "You can only edit users in your institution." });
+    const editUserScopeError = await assertInstitutionScopeAccess(req, target.institution_id, "You can only edit users in your assigned institution scope.");
+    if (editUserScopeError) {
+      return res.status(editUserScopeError.status).json({ error: editUserScopeError.error });
     }
     const full_name = cleanOptionalValue(req.body?.full_name);
     const email = cleanOptionalValue(req.body?.email);
@@ -5827,8 +6356,9 @@ app.patch(
     );
     if (!rows.length) return res.status(404).json({ error: "User not found." });
     const target = rows[0];
-    if (!canManageAcrossInstitutions(req.user) && target.institution_id !== req.user.institution_id) {
-      return res.status(403).json({ error: "You can only change status for users in your institution." });
+    const statusUserScopeError = await assertInstitutionScopeAccess(req, target.institution_id, "You can only change user status in your assigned institution scope.");
+    if (statusUserScopeError) {
+      return res.status(statusUserScopeError.status).json({ error: statusUserScopeError.error });
     }
     const isActive = req.body?.is_active;
     const isSuspended = req.body?.is_suspended;
@@ -5950,8 +6480,9 @@ app.post(
       return res.status(404).json({ error: "Recycle bin item not found." });
     }
     const item = rows[0];
-    if (!canManageAcrossInstitutions(req.user) && item.institution_id !== req.user.institution_id) {
-      return res.status(403).json({ error: "You can only restore items from your institution." });
+    const restoreScopeError = await assertInstitutionScopeAccess(req, item.institution_id, "You can only restore items from your assigned institution scope.");
+    if (restoreScopeError) {
+      return res.status(restoreScopeError.status).json({ error: restoreScopeError.error });
     }
     if (cleanValue(item.status).toUpperCase() !== "TRASHED") {
       return res.status(409).json({ error: "Only trashed items can be restored." });
@@ -6044,7 +6575,7 @@ app.delete(
       });
     }
     const normalizedRole = normalizeRole(req.user.role);
-    if (normalizedRole === ROLES.SYSTEM_DEVELOPER) {
+    if (isAnySystemDeveloperRole(normalizedRole)) {
       await query(
         `UPDATE recycle_bin_items
          SET status = 'DELETED',
@@ -6870,7 +7401,7 @@ app.post(
     const params = [];
 
     if (new_username) {
-      if (![ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN].includes(requesterRole)) {
+      if (![ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN].includes(requesterRole)) {
         return res.status(403).json({
           error: "Only the System Developer or HoI/Administrator can change usernames."
         });
@@ -6956,7 +7487,7 @@ app.post(
     const passwordChange = updateType === "password_change" || Boolean(req.body?.password_change);
     if (
       !passwordChange &&
-      [ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN].includes(requesterRole)
+      [ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN].includes(requesterRole)
     ) {
       return res.json({
         message: "OTP is optional for your role for non-password changes. Proceed directly.",
@@ -7009,7 +7540,7 @@ app.post(
       otp_channels: otpSession.sendResults || []
     });
     const exposeOtp =
-      normalizeRole(req.user.role) === ROLES.SYSTEM_DEVELOPER &&
+      isSuperSystemDeveloperRole(req.user.role) &&
       (process.env.NODE_ENV !== "production" || parseTruthy(process.env.EXPOSE_OTP_PREVIEW));
     res.json({
       message: `OTP dispatched (${(otpSession.sendResults || []).join(", ")}).`,
@@ -7038,7 +7569,7 @@ app.post(
       phone !== null &&
       String(phone).trim() !== String(user.phone || "").trim();
     const requireOtp =
-      Boolean(newPassword) || phoneChanged || ![ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN].includes(requesterRole);
+      Boolean(newPassword) || phoneChanged || ![ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN].includes(requesterRole);
 
     const users = await query(
       `SELECT id, institution_id, username, password_hash, email, phone
@@ -7181,6 +7712,8 @@ const moduleConfigs = [
       "parent2_email",
       "parent2_relationship",
       "learner_condition",
+      "has_medical_condition",
+      "medical_condition_notes",
       "disability_type",
       "learner_password_hash"
     ]
@@ -7285,6 +7818,10 @@ const moduleConfigs = [
     moduleKey: MODULE_KEYS.MANAGEMENT_TEACHER_RESOURCES,
     searchFields: ["resource_type", "title", "grade", "term"],
     allowedRoles: [ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER],
+    scopedByRole: {
+      roles: [ROLES.TEACHER],
+      column: "created_by_user_id"
+    },
     fields: [
       "teacher_profile_id",
       "resource_type",
@@ -7710,7 +8247,11 @@ moduleConfigs.forEach((config) => {
       data.institution_id = req.user.institution_id;
       data.created_by_user_id = req.user.id;
       if (scopedFilter.where && config.scopedByRole?.column) {
-        data[config.scopedByRole.column] = cleanValue(req.user.full_name) || cleanValue(req.user.username);
+        const scopedColumn = cleanValue(config.scopedByRole.column || "").toLowerCase();
+        data[config.scopedByRole.column] =
+          scopedColumn.endsWith("_user_id") || scopedColumn === "created_by_user_id"
+            ? Number(req.user.id || 0) || null
+            : cleanValue(req.user.full_name) || cleanValue(req.user.username);
       }
 
       if (config.table === "academic_marks" && data.marks !== undefined && data.marks !== null) {
@@ -7772,9 +8313,13 @@ moduleConfigs.forEach((config) => {
         } else {
           data.form_name = null;
         }
-        const lc = cleanValue(data.learner_condition || "");
-        if (lc !== "With disability") {
+        const lc = cleanValue(data.learner_condition || "").toLowerCase();
+        if (lc !== "with disability" && lc !== "yes") {
           data.disability_type = null;
+        }
+        const mc = cleanValue(data.has_medical_condition || "").toLowerCase();
+        if (mc !== "yes") {
+          data.medical_condition_notes = null;
         }
       }
 
@@ -7801,7 +8346,7 @@ moduleConfigs.forEach((config) => {
       const data = pickFields(req.body, config.fields);
       if (config.table === "learners") {
         const mergeRows = await query(
-          `SELECT grade, form_name, learner_condition FROM ${config.table}
+          `SELECT grade, form_name, learner_condition, has_medical_condition FROM ${config.table}
            WHERE id = ? AND institution_id = ?${scopedFilter.where}
            LIMIT 1`,
           [req.params.id, req.user.institution_id, ...scopedFilter.params]
@@ -7830,9 +8375,16 @@ moduleConfigs.forEach((config) => {
         const lcSource = Object.prototype.hasOwnProperty.call(data, "learner_condition")
           ? data.learner_condition
           : prev.learner_condition;
-        const lc = cleanValue(lcSource || "");
-        if (lc !== "With disability") {
+        const lc = cleanValue(lcSource || "").toLowerCase();
+        if (lc !== "with disability" && lc !== "yes") {
           data.disability_type = null;
+        }
+        const mcSource = Object.prototype.hasOwnProperty.call(data, "has_medical_condition")
+          ? data.has_medical_condition
+          : prev.has_medical_condition;
+        const mc = cleanValue(mcSource || "").toLowerCase();
+        if (mc !== "yes") {
+          data.medical_condition_notes = null;
         }
       }
       const columns = Object.keys(data);
@@ -8071,6 +8623,262 @@ app.post(
       count: learners.length
     });
     res.json({ message: "Class register auto-generated.", count: learners.length });
+  })
+);
+
+app.get(
+  "/api/admission/learners/:id/admission-form",
+  auth,
+  enforceModuleAccess(MODULE_KEYS.ADMISSION),
+  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.SYSTEM_ADMINISTRATOR, ROLES.TEACHER]),
+  asyncHandler(async (req, res) => {
+    const learnerId = Number(req.params.id || 0);
+    if (!learnerId) {
+      return res.status(400).json({ error: "Valid learner id is required." });
+    }
+    const rows = await query(
+      `SELECT l.*, i.institution_name, i.institution_code, i.letterhead_file_path
+       FROM learners l
+       INNER JOIN institutions i ON i.id = l.institution_id
+       WHERE l.id = ? AND l.institution_id = ?
+       LIMIT 1`,
+      [learnerId, req.user.institution_id]
+    );
+    if (!rows.length) {
+      return res.status(404).json({ error: "Learner not found." });
+    }
+    const learner = rows[0];
+    const referenceNo = `ADM-FORM-${learner.id}-${dayjs().format("YYYYMMDDHHmmss")}`;
+    res.json({
+      reference_no: referenceNo,
+      generated_at: dayjs().format("YYYY-MM-DD HH:mm:ss"),
+      title: "Institution Admission Form",
+      letterhead_file_path: learner.letterhead_file_path || null,
+      learner_details: learner,
+      parent_guardian_details: {
+        parent_full_name: learner.parent_full_name,
+        parent_relationship: learner.parent_relationship,
+        parent_id_number: learner.parent_id_number,
+        parent_phone: learner.parent_phone,
+        parent_phone_secondary: learner.parent_phone_secondary,
+        parent_email: learner.parent_email,
+        parent_residence: learner.parent_residence,
+        parent_nationality: learner.parent_nationality,
+        parent_occupation: learner.parent_occupation,
+        parent2_full_name: learner.parent2_full_name,
+        parent2_relationship: learner.parent2_relationship,
+        parent2_phone_primary: learner.parent2_phone_primary,
+        parent2_phone_secondary: learner.parent2_phone_secondary,
+        parent2_email: learner.parent2_email,
+        parent2_residence: learner.parent2_residence
+      },
+      learner_declaration:
+        "I hereby confirm that the information provided above is true and complete to the best of my knowledge.",
+      parent_declaration:
+        "I/we, the parent/guardian, confirm that this learner's details are accurate and authorize this admission request.",
+      signature_fields: {
+        learner_signature: "",
+        learner_signature_date: "",
+        parent_signature: "",
+        parent_signature_date: ""
+      }
+    });
+  })
+);
+
+app.get(
+  "/api/admission/learners/:id/admission-letter",
+  auth,
+  enforceModuleAccess(MODULE_KEYS.ADMISSION),
+  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.SYSTEM_ADMINISTRATOR, ROLES.TEACHER]),
+  asyncHandler(async (req, res) => {
+    const learnerId = Number(req.params.id || 0);
+    if (!learnerId) {
+      return res.status(400).json({ error: "Valid learner id is required." });
+    }
+    const rows = await query(
+      `SELECT l.*, i.institution_name, i.institution_code, i.letterhead_file_path,
+              i.admission_letter_template_text, i.admission_letter_template_file_url
+       FROM learners l
+       INNER JOIN institutions i ON i.id = l.institution_id
+       WHERE l.id = ? AND l.institution_id = ?
+       LIMIT 1`,
+      [learnerId, req.user.institution_id]
+    );
+    if (!rows.length) {
+      return res.status(404).json({ error: "Learner not found." });
+    }
+    const learner = rows[0];
+    const baseTemplate = cleanOptionalValue(learner.admission_letter_template_text) || [
+      "Dear {{LEARNER_NAME}},",
+      "",
+      "We are pleased to offer you admission to {{INSTITUTION_NAME}}.",
+      "Admission Number: {{ADMISSION_NUMBER}}",
+      "Grade/Form: {{GRADE_FORM}}",
+      "Stream: {{STREAM}}",
+      "",
+      "Reporting Date: {{REPORTING_DATE}}",
+      "",
+      "Please present this letter during reporting together with required documents.",
+      "",
+      "Yours faithfully,",
+      "Head of Institution"
+    ].join("\n");
+    const renderedLetter = baseTemplate
+      .replaceAll("{{LEARNER_NAME}}", cleanValue(learner.full_name || "-"))
+      .replaceAll("{{INSTITUTION_NAME}}", cleanValue(learner.institution_name || "-"))
+      .replaceAll("{{INSTITUTION_CODE}}", cleanValue(learner.institution_code || "-"))
+      .replaceAll("{{ADMISSION_NUMBER}}", cleanValue(learner.admission_number || "-"))
+      .replaceAll("{{GRADE_FORM}}", cleanValue(learner.grade || learner.form_name || "-"))
+      .replaceAll("{{STREAM}}", cleanValue(learner.stream || "-"))
+      .replaceAll("{{REPORTING_DATE}}", dayjs().add(7, "day").format("YYYY-MM-DD"))
+      .replaceAll("{{DATE_TIME}}", dayjs().format("YYYY-MM-DD HH:mm:ss"));
+    res.json({
+      learner_id: learner.id,
+      learner_name: learner.full_name,
+      admission_number: learner.admission_number,
+      generated_at: dayjs().format("YYYY-MM-DD HH:mm:ss"),
+      letterhead_file_path: learner.letterhead_file_path || null,
+      template_file_url: learner.admission_letter_template_file_url || null,
+      letter_text: renderedLetter
+    });
+  })
+);
+
+app.get(
+  "/api/attendance/participants",
+  auth,
+  enforceModuleAccess(MODULE_KEYS.ATTENDANCE),
+  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.SYSTEM_ADMINISTRATOR, ROLES.TEACHER]),
+  asyncHandler(async (req, res) => {
+    const institutionId = Number(req.user.institution_id);
+    const type = cleanValue(req.query?.type || "Teacher").toLowerCase();
+    const grade = cleanValue(req.query?.grade || "");
+    const stream = cleanValue(req.query?.stream || "");
+    if (type === "teacher") {
+      const rows = await query(
+        `SELECT id, full_name AS person_name, tsc_number, id_number
+         FROM teacher_profiles
+         WHERE institution_id = ?
+         ORDER BY full_name ASC`,
+        [institutionId]
+      );
+      return res.json({ rows });
+    }
+    if (type === "support staff" || type === "support_staff") {
+      const rows = await query(
+        `SELECT id, full_name AS person_name, staff_number, id_number
+         FROM non_teaching_staff_profiles
+         WHERE institution_id = ?
+         ORDER BY full_name ASC`,
+        [institutionId]
+      );
+      return res.json({ rows });
+    }
+    const rows = await query(
+      `SELECT id, full_name AS person_name, admission_number, grade, stream
+       FROM learners
+       WHERE institution_id = ?
+         AND (? = '' OR grade = ? OR form_name = ?)
+         AND (? = '' OR stream = ?)
+       ORDER BY full_name ASC`,
+      [institutionId, grade, grade, grade, stream, stream]
+    );
+    return res.json({ rows });
+  })
+);
+
+app.get(
+  "/api/attendance/register",
+  auth,
+  enforceModuleAccess(MODULE_KEYS.ATTENDANCE),
+  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.SYSTEM_ADMINISTRATOR, ROLES.TEACHER]),
+  asyncHandler(async (req, res) => {
+    const institutionId = Number(req.user.institution_id);
+    const type = cleanValue(req.query?.type || "").toLowerCase();
+    const fromDate = cleanValue(req.query?.from_date || "");
+    const toDate = cleanValue(req.query?.to_date || "");
+    const grade = cleanValue(req.query?.grade || "");
+    const stream = cleanValue(req.query?.stream || "");
+    const whereParts = ["institution_id = ?"];
+    const params = [institutionId];
+    if (type) {
+      whereParts.push("LOWER(attendance_type) = ?");
+      params.push(type);
+    }
+    if (fromDate) {
+      whereParts.push("DATE(attendance_date) >= DATE(?)");
+      params.push(fromDate);
+    }
+    if (toDate) {
+      whereParts.push("DATE(attendance_date) <= DATE(?)");
+      params.push(toDate);
+    }
+    if (grade) {
+      whereParts.push("(grade = ?)");
+      params.push(grade);
+    }
+    if (stream) {
+      whereParts.push("(stream = ?)");
+      params.push(stream);
+    }
+    const rows = await query(
+      `SELECT id, attendance_type, person_id, person_name, grade, stream, attendance_date, time_in, time_out, status, reason, comments
+       FROM attendance_records
+       WHERE ${whereParts.join(" AND ")}
+       ORDER BY attendance_date DESC, person_name ASC`,
+      params
+    );
+    res.json({ rows });
+  })
+);
+
+app.get(
+  "/api/attendance/register/export/:format",
+  auth,
+  enforceModuleAccess(MODULE_KEYS.ATTENDANCE),
+  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.SYSTEM_ADMINISTRATOR, ROLES.TEACHER]),
+  asyncHandler(async (req, res) => {
+    const format = cleanValue(req.params.format || "").toLowerCase();
+    const registerResponse = await query(
+      `SELECT attendance_type, person_id, person_name, grade, stream, attendance_date, time_in, time_out, status, reason, comments
+       FROM attendance_records
+       WHERE institution_id = ?
+         AND (? = '' OR LOWER(attendance_type) = ?)
+         AND (? = '' OR DATE(attendance_date) >= DATE(?))
+         AND (? = '' OR DATE(attendance_date) <= DATE(?))
+       ORDER BY attendance_date DESC, person_name ASC`,
+      [
+        Number(req.user.institution_id),
+        cleanValue(req.query?.type || "").toLowerCase(),
+        cleanValue(req.query?.type || "").toLowerCase(),
+        cleanValue(req.query?.from_date || ""),
+        cleanValue(req.query?.from_date || ""),
+        cleanValue(req.query?.to_date || ""),
+        cleanValue(req.query?.to_date || "")
+      ]
+    );
+    if (format === "pdf") {
+      return sendSimplePdf(
+        res,
+        `attendance-register-${dayjs().format("YYYYMMDDHHmmss")}`,
+        registerResponse.map((row, index) => `${index + 1}. ${JSON.stringify(row)}`)
+      );
+    }
+    if (format === "excel") {
+      const headers = registerResponse.length ? Object.keys(registerResponse[0]) : ["No Data"];
+      const rows = registerResponse.length ? registerResponse.map((row) => headers.map((header) => row[header])) : [];
+      return sendSimpleExcel(res, `attendance-register-${dayjs().format("YYYYMMDDHHmmss")}`, headers, rows);
+    }
+    if (format === "word") {
+      res.setHeader("Content-Type", "application/msword; charset=utf-8");
+      res.setHeader("Content-Disposition", `attachment; filename="attendance-register-${dayjs().format("YYYYMMDDHHmmss")}.doc"`);
+      const content = registerResponse
+        .map((row, index) => `${index + 1}. ${row.person_name || "-"} | ${row.attendance_type || "-"} | ${row.status || "-"} | ${row.attendance_date || "-"}`)
+        .join("\n");
+      return res.send(content || "No attendance records found.");
+    }
+    return res.status(400).json({ error: "Unsupported format. Use pdf, excel, or word." });
   })
 );
 
@@ -8375,7 +9183,13 @@ app.get(
   asyncHandler(async (req, res) => {
     const institutionId = Number(req.user.institution_id);
     const role = normalizeRole(req.user.role);
-    const scopeSelf = ![ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION].includes(role);
+    const scopeSelf = ![
+      ROLES.SUPER_SYSTEM_DEVELOPER,
+      ROLES.SYSTEM_DEVELOPER,
+      ROLES.SYSTEM_ADMINISTRATOR,
+      ROLES.ADMIN,
+      ROLES.HEAD_OF_INSTITUTION
+    ].includes(role);
     const rows = scopeSelf
       ? await query(
           `SELECT id, record_type, title, target_staff_name, terms_of_service, position_name, status, issued_at, created_at

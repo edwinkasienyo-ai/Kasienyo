@@ -175,6 +175,9 @@ function normalizeRoleValue(role) {
   if (normalized === "SYSTEMDEVELOPER") {
     return "SYSTEM_DEVELOPER";
   }
+  if (normalized === "SUPER_SYSTEMDEVELOPER") {
+    return "SUPER_SYSTEM_DEVELOPER";
+  }
   if (normalized === "SENIOR_TEACHER") {
     return "SENIOR_TEACHER";
   }
@@ -200,7 +203,7 @@ function syncOtpConsoleOption() {
   if (!sel) return;
   const consoleOpt = sel.querySelector("option[data-sysdev-only=\"1\"]");
   if (!consoleOpt) return;
-  const show = role === "SYSTEM_DEVELOPER";
+  const show = role === "SUPER_SYSTEM_DEVELOPER";
   consoleOpt.hidden = !show;
   if (!show && sel.value === "console") {
     sel.value = "sms_email";
@@ -271,6 +274,13 @@ async function login() {
         `Selected role does not match account role (${data.role}). Choose the correct role and retry.`,
         "error"
       );
+      return;
+    }
+    if (data?.token) {
+      localStorage.setItem("token", data.token);
+      localStorage.setItem("portal", data.portal || "");
+      localStorage.removeItem("pendingUsername");
+      window.location.href = "/dashboard.html";
       return;
     }
     localStorage.setItem("pendingUsername", username);

@@ -21,6 +21,9 @@ CREATE TABLE IF NOT EXISTS institutions (
   login_hero_image_path VARCHAR(255) NULL,
   agreement_template_text TEXT NULL,
   agreement_template_file_url VARCHAR(255) NULL,
+  letterhead_file_path VARCHAR(255) NULL,
+  admission_letter_template_text LONGTEXT NULL,
+  admission_letter_template_file_url VARCHAR(255) NULL,
   village VARCHAR(100) NULL,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
@@ -65,6 +68,20 @@ CREATE TABLE IF NOT EXISTS users (
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   UNIQUE KEY unique_user_per_institution (institution_id, username),
   CONSTRAINT fk_users_institution FOREIGN KEY (institution_id) REFERENCES institutions(id)
+);
+
+CREATE TABLE IF NOT EXISTS system_developer_institution_assignments (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  developer_user_id BIGINT NOT NULL,
+  institution_id BIGINT NOT NULL,
+  is_active TINYINT(1) NOT NULL DEFAULT 1,
+  created_by_user_id BIGINT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY uq_system_dev_institution (developer_user_id, institution_id),
+  INDEX idx_system_dev_assign_inst (institution_id, is_active),
+  CONSTRAINT fk_system_dev_assign_user FOREIGN KEY (developer_user_id) REFERENCES users(id),
+  CONSTRAINT fk_system_dev_assign_institution FOREIGN KEY (institution_id) REFERENCES institutions(id)
 );
 
 CREATE TABLE IF NOT EXISTS user_module_access_overrides (
@@ -206,6 +223,8 @@ CREATE TABLE IF NOT EXISTS learners (
   term_joined VARCHAR(40) NULL,
   orphan_condition VARCHAR(60) NULL,
   learner_condition VARCHAR(80) NULL,
+  has_medical_condition VARCHAR(10) NULL,
+  medical_condition_notes TEXT NULL,
   disability_type VARCHAR(120) NULL,
   biological_parental_status VARCHAR(80) NULL,
   parent_nationality VARCHAR(100) NULL,
