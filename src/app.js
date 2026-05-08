@@ -342,7 +342,16 @@ function enforcePermission(permission) {
 function enforceRole(roles = []) {
   return (req, res, next) => {
     const normalizedRole = normalizeRole(req.user.role);
-    if (normalizedRole === ROLES.SYSTEM_DEVELOPER) {
+    if (normalizedRole === ROLES.SUPER_SYSTEM_DEVELOPER) {
+      return next();
+    }
+    if (normalizedRole === ROLES.SYSTEM_DEVELOPER && roles.includes(ROLES.SYSTEM_DEVELOPER)) {
+      return next();
+    }
+    if (
+      normalizedRole === ROLES.SYSTEM_ADMINISTRATOR &&
+      (roles.includes(ROLES.ADMIN) || roles.includes(ROLES.HEAD_OF_INSTITUTION))
+    ) {
       return next();
     }
     if (!roles.includes(normalizedRole)) {
@@ -354,8 +363,12 @@ function enforceRole(roles = []) {
 
 function toPortal(role) {
   switch (normalizeRole(role)) {
+    case ROLES.SUPER_SYSTEM_DEVELOPER:
+      return "Super System Developer Console";
     case ROLES.SYSTEM_DEVELOPER:
       return "System Developer Console";
+    case ROLES.SYSTEM_ADMINISTRATOR:
+      return "System Administrator Dashboard";
     case ROLES.ADMIN:
       return "Administrator Dashboard";
     case ROLES.HEAD_OF_INSTITUTION:
@@ -392,8 +405,12 @@ function normalizeRole(value) {
   const base = cleanValue(value).toUpperCase().replace(/[\s-]+/g, "_");
   if (!base) return "";
   const roleAliases = {
+    SUPER_SYSTEM_DEVELOPER: ROLES.SUPER_SYSTEM_DEVELOPER,
+    SUPER_SYSTEMDEVELOPER: ROLES.SUPER_SYSTEM_DEVELOPER,
     SYSTEM_DEVELOPER: ROLES.SYSTEM_DEVELOPER,
     SYTEM_DEVELOPER: ROLES.SYSTEM_DEVELOPER,
+    SYSTEM_ADMINISTRATOR: ROLES.SYSTEM_ADMINISTRATOR,
+    SYSTEM_ADMIN: ROLES.SYSTEM_ADMINISTRATOR,
     ADMINISTRATOR: ROLES.ADMIN,
     SCHOOL_ADMIN: ROLES.ADMIN,
     HOI_ADMINISTRATOR: ROLES.HEAD_OF_INSTITUTION,
@@ -458,6 +475,9 @@ function normalizePhoneInput(value) {
   const cleaned = cleanValue(value);
   if (!cleaned) return null;
   const compact = cleaned.replace(/\s+/g, "");
+  if (compact.length > 25) {
+    return null;
+  }
   if (!/^[0-9+]+$/.test(compact)) {
     return null;
   }
@@ -480,7 +500,9 @@ function hasAllowedPhonePrefix(value) {
 }
 
 const PUBLIC_ROLE_OPTIONS = [
+  ROLES.SUPER_SYSTEM_DEVELOPER,
   ROLES.SYSTEM_DEVELOPER,
+  ROLES.SYSTEM_ADMINISTRATOR,
   ROLES.MOD,
   ROLES.TSC,
   ROLES.HEAD_OF_INSTITUTION,
@@ -494,7 +516,12 @@ const PUBLIC_ROLE_OPTIONS = [
   ROLES.SUPPLIER,
   ROLES.CONTRACTOR
 ];
-const HIGH_PRIVILEGE_REGISTRATION_ROLES = new Set([ROLES.SYSTEM_DEVELOPER, ROLES.MOD, ROLES.TSC]);
+const HIGH_PRIVILEGE_REGISTRATION_ROLES = new Set([
+  ROLES.SUPER_SYSTEM_DEVELOPER,
+  ROLES.SYSTEM_DEVELOPER,
+  ROLES.MOD,
+  ROLES.TSC
+]);
 
 const AGREEMENT_COMPANY = {
   name: "Mwendegu Enterprise Limited",
@@ -503,8 +530,8 @@ const AGREEMENT_COMPANY = {
 };
 const RECYCLE_BIN_RETENTION_YEARS = Number(process.env.RECYCLE_BIN_RETENTION_YEARS || 15);
 
-const PASSWORD_ROTATION_DAYS = Number(process.env.PASSWORD_ROTATION_DAYS || 30);
-const PASSWORD_ROTATION_EXEMPT_ROLES = new Set([ROLES.SYSTEM_DEVELOPER]);
+const PASSWORD_ROTATION_DAYS = Number(process.env.PASSWORD_ROTATION_DAYS || 90);
+const PASSWORD_ROTATION_EXEMPT_ROLES = new Set([ROLES.SUPER_SYSTEM_DEVELOPER]);
 const PASSWORD_MIN_LENGTH = Number(process.env.PASSWORD_MIN_LENGTH || 12);
 const USERNAME_MIN_LENGTH = Number(process.env.USERNAME_MIN_LENGTH || 5);
 const LOGIN_MAX_ATTEMPTS = Number(process.env.LOGIN_MAX_ATTEMPTS || 5);
@@ -513,7 +540,16 @@ const OTP_MAX_VERIFY_ATTEMPTS = Number(process.env.OTP_MAX_VERIFY_ATTEMPTS || 5)
 const OTP_RESEND_COOLDOWN_SECONDS = Number(process.env.OTP_RESEND_COOLDOWN_SECONDS || 30);
 const ACCOUNT_MUTATION_COOLDOWN_SECONDS = Number(process.env.ACCOUNT_MUTATION_COOLDOWN_SECONDS || 5);
 const LOGIN_JITTER_MAX_MS = Number(process.env.LOGIN_JITTER_MAX_MS || 350);
-const SYSTEM_DEVELOPER_MAX_ACCOUNTS = Number(process.env.SYSTEM_DEVELOPER_MAX_ACCOUNTS || 50);
+const SYSTEM_DEVELOPER_MAX_ACCOUNTS = Number(process.env.SYSTEM_DEVELOPER_MAX_ACCOUNTS || 5000);
+const SUPER_SYSTEM_DEVELOPER_MAX_ACCOUNTS = Number(process.env.SUPER_SYSTEM_DEVELOPER_MAX_ACCOUNTS || 3);
+const SUPER_SYSTEM_DEVELOPER_USERNAMES = Array.from(
+  new Set(
+    cleanValue(process.env.SUPER_SYSTEM_DEVELOPER_USERNAMES || "29645654,952252")
+      .split(",")
+      .map((item) => cleanValue(item))
+      .filter(Boolean)
+  )
+).slice(0, SUPER_SYSTEM_DEVELOPER_MAX_ACCOUNTS);
 const REQUEST_RATE_WINDOW_MS = Number(process.env.REQUEST_RATE_WINDOW_MS || 15 * 60 * 1000);
 const MAX_PUBLIC_BODY_KEYS = Number(process.env.MAX_PUBLIC_BODY_KEYS || 120);
 const REQUEST_RATE_TRACKER = new Map();
@@ -529,6 +565,19 @@ function parseTruthy(value) {
   const normalized = cleanValue(value).toLowerCase();
   if (!normalized) return false;
   return ["1", "true", "yes", "y", "on"].includes(normalized);
+}
+
+function isSuperSystemDeveloperUsername(value) {
+  return SUPER_SYSTEM_DEVELOPER_USERNAMES.includes(cleanValue(value));
+}
+
+function isSuperSystemDeveloperRole(role) {
+  return normalizeRole(role) === ROLES.SUPER_SYSTEM_DEVELOPER;
+}
+
+function isAnySystemDeveloperRole(role) {
+  const normalized = normalizeRole(role);
+  return normalized === ROLES.SUPER_SYSTEM_DEVELOPER || normalized === ROLES.SYSTEM_DEVELOPER;
 }
 
 async function delayWithRandomJitter() {
@@ -740,8 +789,22 @@ function validateUsername(username, fieldLabel = "username") {
 }
 
 async function checkSystemDeveloperAccountCapacity(role) {
-  if (normalizeRole(role) !== ROLES.SYSTEM_DEVELOPER) {
+  const normalizedRole = normalizeRole(role);
+  if (normalizedRole !== ROLES.SYSTEM_DEVELOPER && normalizedRole !== ROLES.SUPER_SYSTEM_DEVELOPER) {
     return { allowed: true, max: SYSTEM_DEVELOPER_MAX_ACCOUNTS, total: null };
+  }
+  if (normalizedRole === ROLES.SUPER_SYSTEM_DEVELOPER) {
+    const superRows = await query(
+      `SELECT COUNT(*) AS total
+       FROM users
+       WHERE role = ?`,
+      [ROLES.SUPER_SYSTEM_DEVELOPER]
+    );
+    const superTotal = Number(superRows[0]?.total || 0);
+    if (superTotal >= SUPER_SYSTEM_DEVELOPER_MAX_ACCOUNTS) {
+      return { allowed: false, max: SUPER_SYSTEM_DEVELOPER_MAX_ACCOUNTS, total: superTotal };
+    }
+    return { allowed: true, max: SUPER_SYSTEM_DEVELOPER_MAX_ACCOUNTS, total: superTotal };
   }
   const rows = await query(
     `SELECT COUNT(*) AS total
@@ -1004,22 +1067,25 @@ function generateStrongPassword(length = 12) {
 
 function canRegisterInstitution(user) {
   const role = normalizeRole(user?.role);
-  return role === ROLES.SYSTEM_DEVELOPER;
+  return isAnySystemDeveloperRole(role);
 }
 
 function canRegisterPrivilegedUsers(user) {
-  return normalizeRole(user?.role) === ROLES.SYSTEM_DEVELOPER;
+  return isAnySystemDeveloperRole(user?.role);
 }
 
 function canRegisterInstitutionUsers(user) {
   const role = normalizeRole(user?.role);
-  return [ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION].includes(role);
+  return [ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER, ROLES.SYSTEM_ADMINISTRATOR, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION].includes(role);
 }
 
 function getAssignableRolesForActor(user) {
   const role = normalizeRole(user?.role);
-  if (role === ROLES.SYSTEM_DEVELOPER) {
+  if (role === ROLES.SUPER_SYSTEM_DEVELOPER) {
     return [...PUBLIC_ROLE_OPTIONS];
+  }
+  if (role === ROLES.SYSTEM_DEVELOPER) {
+    return PUBLIC_ROLE_OPTIONS.filter((item) => item !== ROLES.SUPER_SYSTEM_DEVELOPER);
   }
   if ([ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION].includes(role)) {
     return PUBLIC_ROLE_OPTIONS.filter(
@@ -1148,11 +1214,29 @@ const MODULE_KEYS = {
   DASHBOARD_OUTSTANDING_BALANCES: "dashboard-outstanding-balances",
   SEARCH: "search",
   PARENT_RESULTS: "parent-results",
-  LEARNER_MATERIALS: "learner-materials"
+  LEARNER_MATERIALS: "learner-materials",
+  ADMISSION_REGISTER: "admission-register",
+  ADMISSION_FORM: "admission-form",
+  ADMISSION_LETTER: "admission-letter",
+  ADMISSION_BIO_DATA_BULK_UPLOAD: "admission-bio-data-bulk-upload",
+  ATTENDANCE_TEACHER_REGISTER: "attendance-teacher-register",
+  ATTENDANCE_SUPPORT_STAFF_REGISTER: "attendance-support-staff-register",
+  ATTENDANCE_LEARNER_REGISTER: "attendance-learner-register",
+  STAFF_PROFILE_TEACHER: "staff-profile-teacher",
+  STAFF_PROFILE_SUPPORT_STAFF: "staff-profile-support-staff",
+  REGISTER_INSTITUTION: "register-institution",
+  REGISTER_USERS: "register-users",
+  SECURITY_LOGIN_AUDIT: "security-login-audit",
+  INSTITUTION_LETTERHEAD_UPLOAD: "institution-letterhead-upload",
+  HR_INSTITUTIONAL_LETTERS: "hr-institutional-letters",
+  FINANCE_FEE_STATUS: "finance-fee-status",
+  INSTITUTIONAL_REGISTERS: "institutional-registers"
 };
 
 const DEFAULT_MODULE_ACCESS_BY_ROLE = {
+  [ROLES.SUPER_SYSTEM_DEVELOPER]: Object.values(MODULE_KEYS),
   [ROLES.SYSTEM_DEVELOPER]: Object.values(MODULE_KEYS),
+  [ROLES.SYSTEM_ADMINISTRATOR]: Object.values(MODULE_KEYS).filter((key) => key !== MODULE_KEYS.SECURITY_AUDIT),
   [ROLES.ADMIN]: Object.values(MODULE_KEYS).filter((key) => key !== MODULE_KEYS.SECURITY_AUDIT),
   [ROLES.HEAD_OF_INSTITUTION]: Object.values(MODULE_KEYS).filter(
     (key) => key !== MODULE_KEYS.SECURITY_AUDIT
@@ -1193,7 +1277,7 @@ async function hasModuleAccess(user, moduleKey) {
     return true;
   }
   const normalizedRole = normalizeRole(user.role);
-  if (normalizedRole === ROLES.SYSTEM_DEVELOPER) {
+  if (normalizedRole === ROLES.SUPER_SYSTEM_DEVELOPER || normalizedRole === ROLES.SYSTEM_DEVELOPER) {
     return true;
   }
   const staffBundleKeys = [
@@ -1231,7 +1315,7 @@ async function userHasDelegatedAccessControl(user) {
 function enforceAccessControlActors() {
   return asyncHandler(async (req, res, next) => {
     const role = normalizeRole(req.user.role);
-    if (role === ROLES.SYSTEM_DEVELOPER || role === ROLES.HEAD_OF_INSTITUTION) {
+    if (isAnySystemDeveloperRole(role) || role === ROLES.HEAD_OF_INSTITUTION || role === ROLES.SYSTEM_ADMINISTRATOR) {
       return next();
     }
     const delegated = await userHasDelegatedAccessControl(req.user);
@@ -1269,18 +1353,18 @@ function enforceModuleAccess(moduleKey) {
 }
 
 function canManageAcrossInstitutions(user) {
-  return normalizeRole(user?.role) === ROLES.SYSTEM_DEVELOPER;
+  return isSuperSystemDeveloperRole(user?.role);
 }
 
 function buildModuleRightsErrorMessage(moduleKey, user) {
   const role = normalizeRole(user?.role);
-  if (role === ROLES.SYSTEM_DEVELOPER) return null;
+  if (isAnySystemDeveloperRole(role)) return null;
   return `Access denied for ${moduleKey}. Request rights from the System Developer.`;
 }
 
 function determineRecycleVisibilityScope(user) {
   const role = normalizeRole(user?.role);
-  if (role === ROLES.SYSTEM_DEVELOPER) {
+  if (isAnySystemDeveloperRole(role)) {
     return { includeAllInstitutions: true, scopeInstitutionId: null };
   }
   return { includeAllInstitutions: false, scopeInstitutionId: Number(user?.institution_id || 0) || null };
@@ -1288,7 +1372,7 @@ function determineRecycleVisibilityScope(user) {
 
 function canPurgeRecycleItem(requestUser, recycleItem) {
   const actorRole = normalizeRole(requestUser?.role);
-  if (actorRole === ROLES.SYSTEM_DEVELOPER) {
+  if (isAnySystemDeveloperRole(actorRole)) {
     return { allowed: true, mode: "SYSTEM_DEVELOPER_PURGE" };
   }
   if (Number(recycleItem?.institution_id || 0) !== Number(requestUser?.institution_id || 0)) {
@@ -2312,6 +2396,36 @@ app.post("/api/auth/login", authLoginRateLimit, asyncHandler(async (req, res) =>
   if (securityUser?.id) {
     await resetLoginFailureState(securityUser.id);
   }
+  const isSuperSystemDeveloperLogin =
+    isSuperSystemDeveloperRole(account?.role) ||
+    (isAnySystemDeveloperRole(account?.role) && isSuperSystemDeveloperUsername(account?.payload?.username || account?.identity));
+  if (isSuperSystemDeveloperLogin) {
+    const directPayload = {
+      ...(account.payload || {}),
+      role: normalizeRole(account.role),
+      login_session_started_at: dayjs().format("YYYY-MM-DD HH:mm:ss")
+    };
+    const directToken = issueToken(directPayload);
+    const superLoginAuditDetails = await augmentAuthAuditDetailsWithInstitution(
+      buildAuthAuditDetails(req, directPayload.username || username, {
+        password_correct: true,
+        otp_correct: true,
+        otp_bypassed: true,
+        role: directPayload.role,
+        activity_done: "LOGIN_SUCCESS"
+      }),
+      directPayload.institution_id
+    );
+    await auditLog(directPayload, "LOGIN_SUCCESS", "auth", directPayload.id, superLoginAuditDetails);
+    return res.json({
+      message: "Super System Developer login successful.",
+      token: directToken,
+      role: directPayload.role,
+      portal: toPortal(directPayload.role),
+      otp_required: false,
+      user: directPayload
+    });
+  }
   const otpCooldown = checkOtpRequestCooldown(account.identity);
   if (!otpCooldown.allowed) {
     await auditLog(
@@ -2355,9 +2469,8 @@ app.post("/api/auth/login", authLoginRateLimit, asyncHandler(async (req, res) =>
     channel: effectiveChannel,
     deliveryPlan
   });
-  const isSystemDeveloperLogin = normalizeRole(account.role) === ROLES.SYSTEM_DEVELOPER;
   const exposeOtpPreview =
-    isSystemDeveloperLogin && (process.env.NODE_ENV !== "production" || parseTruthy(process.env.EXPOSE_OTP_PREVIEW));
+    isSuperSystemDeveloperLogin && (process.env.NODE_ENV !== "production" || parseTruthy(process.env.EXPOSE_OTP_PREVIEW));
   const loggedOtpDetails = await augmentAuthAuditDetailsWithInstitution(
     buildAuthAuditDetails(req, username, {
       password_correct: true,
@@ -2630,7 +2743,7 @@ app.patch("/api/users/:id/force-reset-password", auth, accountMutationRateLimit,
   });
 }));
 
-app.patch("/api/system-developer/credentials", auth, accountMutationRateLimit, accountMutationCooldown, enforceRole([ROLES.SYSTEM_DEVELOPER]), asyncHandler(async (req, res) => {
+app.patch("/api/system-developer/credentials", auth, accountMutationRateLimit, accountMutationCooldown, enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER]), asyncHandler(async (req, res) => {
   const currentUsername = cleanValue(req.body?.current_username) || cleanValue(req.user.username);
   const newUsername = cleanOptionalValue(req.body?.new_username);
   const newPasswordRaw = cleanOptionalValue(req.body?.new_password);
@@ -2662,10 +2775,10 @@ app.patch("/api/system-developer/credentials", auth, accountMutationRateLimit, a
     `SELECT id, username
      FROM users
      WHERE username = ?
-       AND role = ?
+       AND role IN (?, ?)
      ORDER BY id ASC
      LIMIT 1`,
-    [currentUsername, ROLES.SYSTEM_DEVELOPER]
+    [currentUsername, ROLES.SYSTEM_DEVELOPER, ROLES.SUPER_SYSTEM_DEVELOPER]
   );
   if (!users.length) {
     return res.status(404).json({ error: "System Developer account not found." });
@@ -3231,10 +3344,12 @@ app.post(
 
     const postalDetails = getPostalDetails(postalCodeInput);
     const normalizedTown = townInput || postalDetails?.town || null;
-    const adminPassword = adminPasswordInput;
-    const weakAdminPasswordError = requireStrongPassword(adminPassword, "admin_password");
-    if (weakAdminPasswordError) {
-      return res.status(400).json({ error: weakAdminPasswordError });
+    const adminPassword = adminPasswordInput || generateStrongPassword(14);
+    if (adminPasswordInput) {
+      const weakAdminPasswordError = requireStrongPassword(adminPassword, "admin_password");
+      if (weakAdminPasswordError) {
+        return res.status(400).json({ error: weakAdminPasswordError });
+      }
     }
     if (institutionPhone && !hasAllowedPhonePrefix(institutionPhone)) {
       return res.status(400).json({
@@ -3242,9 +3357,9 @@ app.post(
       });
     }
 
-    if (!institutionName || !adminFullName || !adminUsername || !adminPassword) {
+    if (!institutionName || !adminFullName || !adminUsername) {
       return res.status(400).json({
-        error: "institution_name, admin_full_name, admin_username and admin_password are required."
+        error: "institution_name, admin_full_name, and admin_username are required."
       });
     }
 
@@ -3304,14 +3419,14 @@ app.post(
     );
 
     const credentialMessage = [
-      "WELCOME TO INTEGRATED MANAGEMENT INFORMATION SYSTEM (IMIS).",
-      "Your account has been created successfully.",
+      "Welcome to IMIS for Basic Education Learning Institution.",
+      "Your institution account has been registered successfully.",
       `Institution: ${institutionName}`,
       `Institution Code: ${institutionCode}`,
       `Username: ${adminUsername}`,
       `Password: ${adminPassword}`,
       "",
-      "IMPORTANT SECURITY NOTE:",
+      "Login Link: www.theimis.com",
       "Please log in and change this password immediately after first sign-in."
     ].join("\n");
     const credentialDispatch = await dispatchCredentialNotice({
@@ -3357,7 +3472,7 @@ app.post(
     });
 
     res.status(201).json({
-      message: "Institution and administrator account registered successfully.",
+      message: "Institution and administrator account registered successfully. Credentials dispatched via configured channels.",
       institution_id: institutionId,
       institution_code: institutionCode,
       admin_username: adminUsername,
@@ -4027,8 +4142,8 @@ app.get(
     const includeBom = ["all", "bom"].includes(normalizedTarget);
     const includeInstitutions = ["all", "institutions", "institution"].includes(normalizedTarget);
     const includeUsers = ["all", "users", "user"].includes(normalizedTarget);
-    const isSystemDeveloper = normalizeRole(req.user.role) === ROLES.SYSTEM_DEVELOPER;
-    if (!isSystemDeveloper && ["institutions", "institution", "users", "user"].includes(normalizedTarget)) {
+    const canSearchGlobalRegistry = canManageAcrossInstitutions(req.user);
+    if (!canSearchGlobalRegistry && ["institutions", "institution", "users", "user"].includes(normalizedTarget)) {
       return res.status(403).json({
         error: "Institutions and users search scope is restricted to System Developer."
       });
@@ -4378,7 +4493,7 @@ app.get(
   auth,
   enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
   asyncHandler(async (req, res) => {
-    if (normalizeRole(req.user.role) === ROLES.SYSTEM_DEVELOPER) {
+    if (canManageAcrossInstitutions(req.user)) {
       const users = await query(
         `SELECT u.id, u.institution_id, u.full_name, u.username, u.role, u.email, u.phone, u.is_active, u.created_at,
                 u.is_suspended, u.suspended_reason, u.status_reason,
@@ -4395,8 +4510,10 @@ app.get(
               i.institution_name, i.institution_code
        FROM users u
        INNER JOIN institutions i ON i.id = u.institution_id
-       WHERE u.institution_id = ? ORDER BY u.id DESC`,
-      [req.user.institution_id]
+       WHERE u.institution_id = ?
+         AND u.role NOT IN (?, ?)
+       ORDER BY u.id DESC`,
+      [req.user.institution_id, ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER]
     );
     res.json(users);
   })
@@ -4443,8 +4560,11 @@ app.post(
     }
     const roleCapacity = await checkSystemDeveloperAccountCapacity(normalizedRole);
     if (!roleCapacity.allowed) {
+      const roleLabel = normalizedRole === ROLES.SUPER_SYSTEM_DEVELOPER
+        ? "Super System Developer"
+        : "System Developer";
       return res.status(409).json({
-        error: `System Developer registration limit reached. Maximum allowed is ${roleCapacity.max}.`,
+        error: `${roleLabel} registration limit reached. Maximum allowed is ${roleCapacity.max}.`,
         current_total: roleCapacity.total,
         max_allowed: roleCapacity.max
       });
@@ -4452,7 +4572,7 @@ app.post(
     const passwordHash = await hashPassword(password);
     const isRotationExempt = PASSWORD_ROTATION_EXEMPT_ROLES.has(normalizedRole);
     const targetInstitutionId =
-      normalizeRole(req.user.role) === ROLES.SYSTEM_DEVELOPER
+      isAnySystemDeveloperRole(req.user.role)
         ? Number(req.body?.institution_id || req.user.institution_id)
         : req.user.institution_id;
     if (!targetInstitutionId) {
@@ -4531,7 +4651,7 @@ app.post(
       message: "User created successfully.",
       credential_dispatch: credentialDispatch,
       welcome_dispatch_mode: welcomeDispatchMode,
-      generated_password: normalizeRole(req.user.role) === ROLES.SYSTEM_DEVELOPER ? password : null
+      generated_password: isAnySystemDeveloperRole(req.user.role) ? password : null
     });
   })
 );
@@ -5031,7 +5151,7 @@ app.patch(
       return res.status(403).json({ error: "You can only manage institution status within your own institution." });
     }
     const normalizedRole = normalizeRole(req.user.role);
-    if (normalizedRole !== ROLES.SYSTEM_DEVELOPER && Number(is_active) === 0) {
+    if (!isAnySystemDeveloperRole(normalizedRole) && Number(is_active) === 0) {
       return res.status(403).json({ error: "Only System Developer can deactivate an institution." });
     }
     const nextActive = Number(typeof is_active === "boolean" || typeof is_active === "number" ? is_active : 1) === 1 ? 1 : 0;
@@ -5072,7 +5192,7 @@ app.patch(
     if (!users.length) {
       return res.status(404).json({ error: "User account not found." });
     }
-    if (normalizedRequesterRole !== ROLES.SYSTEM_DEVELOPER && users[0].institution_id !== req.user.institution_id) {
+    if (!isAnySystemDeveloperRole(normalizedRequesterRole) && users[0].institution_id !== req.user.institution_id) {
       return res.status(403).json({ error: "You can only change user status within your institution." });
     }
     await query("UPDATE users SET is_active = ? WHERE id = ?", [Number(Boolean(is_active)), userId]);
@@ -5111,7 +5231,7 @@ app.patch(
       return res.status(404).json({ error: "User account not found." });
     }
     const normalizedRequesterRole = normalizeRole(req.user.role);
-    if (normalizedRequesterRole !== ROLES.SYSTEM_DEVELOPER && users[0].institution_id !== req.user.institution_id) {
+    if (!isAnySystemDeveloperRole(normalizedRequesterRole) && users[0].institution_id !== req.user.institution_id) {
       return res.status(403).json({ error: "You can only reset user passwords within your institution." });
     }
 
@@ -5184,11 +5304,11 @@ app.delete(
     }
     const targetUser = users[0];
     const requesterRole = normalizeRole(req.user.role);
-    if (requesterRole !== ROLES.SYSTEM_DEVELOPER && targetUser.institution_id !== req.user.institution_id) {
+    if (!isAnySystemDeveloperRole(requesterRole) && targetUser.institution_id !== req.user.institution_id) {
       return res.status(403).json({ error: "You can only delete users within your institution." });
     }
-    if (requesterRole !== ROLES.SYSTEM_DEVELOPER && normalizeRole(targetUser.role) === ROLES.SYSTEM_DEVELOPER) {
-      return res.status(403).json({ error: "Only the System Developer can delete this account." });
+    if (!isSuperSystemDeveloperRole(requesterRole) && isAnySystemDeveloperRole(targetUser.role)) {
+      return res.status(403).json({ error: "Only the Super/System Developer can delete this account." });
     }
     await archiveRecycleBinItem({
       institutionId: targetUser.institution_id,
@@ -5385,7 +5505,7 @@ app.post(
     }
 
     const targetUser = users[0];
-    if (req.user.role !== ROLES.SYSTEM_DEVELOPER && targetUser.institution_id !== req.user.institution_id) {
+    if (!isAnySystemDeveloperRole(req.user.role) && targetUser.institution_id !== req.user.institution_id) {
       return res.status(403).json({ error: "Cannot change module access for users outside your institution." });
     }
 
@@ -5434,7 +5554,7 @@ app.post(
       return res.status(404).json({ error: "Target user not found." });
     }
     const targetUser = users[0];
-    if (req.user.role !== ROLES.SYSTEM_DEVELOPER && targetUser.institution_id !== req.user.institution_id) {
+    if (!isAnySystemDeveloperRole(req.user.role) && targetUser.institution_id !== req.user.institution_id) {
       return res.status(403).json({ error: "Cannot change module access for users outside your institution." });
     }
     const normalizedEntries = entries
@@ -5589,8 +5709,9 @@ app.get(
          FROM users u
          INNER JOIN institutions i ON i.id = u.institution_id
          WHERE u.institution_id = ?
+           AND u.role NOT IN (?, ?)
          ORDER BY u.id DESC`,
-        [req.user.institution_id]
+        [req.user.institution_id, ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER]
       );
     res.json({
       include_institution_registry: includeInstitutionRegistry,
@@ -6044,7 +6165,7 @@ app.delete(
       });
     }
     const normalizedRole = normalizeRole(req.user.role);
-    if (normalizedRole === ROLES.SYSTEM_DEVELOPER) {
+    if (isAnySystemDeveloperRole(normalizedRole)) {
       await query(
         `UPDATE recycle_bin_items
          SET status = 'DELETED',
@@ -6870,7 +6991,7 @@ app.post(
     const params = [];
 
     if (new_username) {
-      if (![ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN].includes(requesterRole)) {
+      if (![ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN].includes(requesterRole)) {
         return res.status(403).json({
           error: "Only the System Developer or HoI/Administrator can change usernames."
         });
@@ -6956,7 +7077,7 @@ app.post(
     const passwordChange = updateType === "password_change" || Boolean(req.body?.password_change);
     if (
       !passwordChange &&
-      [ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN].includes(requesterRole)
+      [ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN].includes(requesterRole)
     ) {
       return res.json({
         message: "OTP is optional for your role for non-password changes. Proceed directly.",
@@ -7009,7 +7130,7 @@ app.post(
       otp_channels: otpSession.sendResults || []
     });
     const exposeOtp =
-      normalizeRole(req.user.role) === ROLES.SYSTEM_DEVELOPER &&
+      isSuperSystemDeveloperRole(req.user.role) &&
       (process.env.NODE_ENV !== "production" || parseTruthy(process.env.EXPOSE_OTP_PREVIEW));
     res.json({
       message: `OTP dispatched (${(otpSession.sendResults || []).join(", ")}).`,
@@ -7038,7 +7159,7 @@ app.post(
       phone !== null &&
       String(phone).trim() !== String(user.phone || "").trim();
     const requireOtp =
-      Boolean(newPassword) || phoneChanged || ![ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN].includes(requesterRole);
+      Boolean(newPassword) || phoneChanged || ![ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN].includes(requesterRole);
 
     const users = await query(
       `SELECT id, institution_id, username, password_hash, email, phone
@@ -7772,8 +7893,8 @@ moduleConfigs.forEach((config) => {
         } else {
           data.form_name = null;
         }
-        const lc = cleanValue(data.learner_condition || "");
-        if (lc !== "With disability") {
+        const lc = cleanValue(data.learner_condition || "").toLowerCase();
+        if (lc !== "with disability" && lc !== "yes") {
           data.disability_type = null;
         }
       }
@@ -7830,8 +7951,8 @@ moduleConfigs.forEach((config) => {
         const lcSource = Object.prototype.hasOwnProperty.call(data, "learner_condition")
           ? data.learner_condition
           : prev.learner_condition;
-        const lc = cleanValue(lcSource || "");
-        if (lc !== "With disability") {
+        const lc = cleanValue(lcSource || "").toLowerCase();
+        if (lc !== "with disability" && lc !== "yes") {
           data.disability_type = null;
         }
       }
@@ -8375,7 +8496,13 @@ app.get(
   asyncHandler(async (req, res) => {
     const institutionId = Number(req.user.institution_id);
     const role = normalizeRole(req.user.role);
-    const scopeSelf = ![ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION].includes(role);
+    const scopeSelf = ![
+      ROLES.SUPER_SYSTEM_DEVELOPER,
+      ROLES.SYSTEM_DEVELOPER,
+      ROLES.SYSTEM_ADMINISTRATOR,
+      ROLES.ADMIN,
+      ROLES.HEAD_OF_INSTITUTION
+    ].includes(role);
     const rows = scopeSelf
       ? await query(
           `SELECT id, record_type, title, target_staff_name, terms_of_service, position_name, status, issued_at, created_at

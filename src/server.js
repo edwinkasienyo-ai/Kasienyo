@@ -107,17 +107,14 @@ async function ensureDefaultInstitutionAndAdmin() {
 }
 
 async function ensureSystemDeveloperAccount(defaultInstitutionId) {
-  const username = process.env.SYSTEM_DEVELOPER_USERNAME || "952252";
-  const password = process.env.SYSTEM_DEVELOPER_PASSWORD || "Sheeza@2015";
-  const systemDeveloperFullName = process.env.SYSTEM_DEVELOPER_FULL_NAME || "Mr.Edwin Onyango";
   const systemDeveloperEmail = process.env.SYSTEM_DEVELOPER_EMAIL || "mwendeguenterpriseltd@gmail.com";
-  const systemDeveloperPhone = process.env.SYSTEM_DEVELOPER_PHONE || "0725757767";
+  const systemDeveloperPhone = process.env.SYSTEM_DEVELOPER_PHONE || "+254725757767";
   const systemDeveloperInstitutionName =
     process.env.SYSTEM_DEVELOPER_INSTITUTION_NAME || "MWENDEGU ENTERPRISE LIMITED";
   const systemDeveloperInstitutionCode =
-    process.env.SYSTEM_DEVELOPER_INSTITUTION_CODE || "254001";
-  const maxSystemDevelopers = Number(process.env.SYSTEM_DEVELOPER_MAX_ACCOUNTS || 50);
-  const passwordHash = await hashPassword(password);
+    process.env.SYSTEM_DEVELOPER_INSTITUTION_CODE || "0001";
+  const maxSystemDevelopers = Number(process.env.SYSTEM_DEVELOPER_MAX_ACCOUNTS || 5000);
+  const maxSuperSystemDevelopers = Number(process.env.SUPER_SYSTEM_DEVELOPER_MAX_ACCOUNTS || 3);
   let systemDeveloperInstitutionId = defaultInstitutionId;
   const institutionRows = await query(
     `SELECT id
@@ -162,74 +159,99 @@ async function ensureSystemDeveloperAccount(defaultInstitutionId) {
     );
     systemDeveloperInstitutionId = insertedInstitution.insertId || defaultInstitutionId;
   }
-  const [{ total: totalSystemDevelopersRaw } = { total: 0 }] = await query(
-    "SELECT COUNT(*) AS total FROM users WHERE role = ?",
-    [ROLES.SYSTEM_DEVELOPER]
-  );
-  const totalSystemDevelopers = Number(totalSystemDevelopersRaw || 0);
-  const existing = await query(
-    `SELECT id
-     FROM users
-     WHERE username = ?
-     ORDER BY id ASC`,
-    [username]
-  );
+  const superSystemDevelopers = [
+    {
+      username: process.env.SUPER_SYSTEM_DEVELOPER_USERNAME || "29645654",
+      password: process.env.SUPER_SYSTEM_DEVELOPER_PASSWORD || "Achieng@30!",
+      full_name: process.env.SUPER_SYSTEM_DEVELOPER_FULL_NAME || "Edwin Onyango",
+      role: ROLES.SUPER_SYSTEM_DEVELOPER
+    },
+    {
+      username: process.env.SECOND_SUPER_SYSTEM_DEVELOPER_USERNAME || "952252",
+      password: process.env.SECOND_SUPER_SYSTEM_DEVELOPER_PASSWORD || "Sheeza@2015",
+      full_name: process.env.SECOND_SUPER_SYSTEM_DEVELOPER_FULL_NAME || "Edwin Onyango",
+      role: ROLES.SUPER_SYSTEM_DEVELOPER
+    }
+  ].slice(0, maxSuperSystemDevelopers);
+  const optionalSystemDevelopers = [
+    {
+      username: process.env.SYSTEM_DEVELOPER_USERNAME || "",
+      password: process.env.SYSTEM_DEVELOPER_PASSWORD || "",
+      full_name: process.env.SYSTEM_DEVELOPER_FULL_NAME || "System Developer",
+      role: ROLES.SYSTEM_DEVELOPER
+    }
+  ].filter((item) => item.username && item.password);
+  const seedAccounts = [...superSystemDevelopers, ...optionalSystemDevelopers];
 
-  if (!existing.length) {
-    if (totalSystemDevelopers >= maxSystemDevelopers) {
-      // eslint-disable-next-line no-console
-      console.warn(
-        `System developer seed account skipped. Existing count (${totalSystemDevelopers}) reached configured maximum (${maxSystemDevelopers}).`
+  for (const seed of seedAccounts) {
+    const passwordHash = await hashPassword(seed.password);
+    const existing = await query(
+      `SELECT id
+       FROM users
+       WHERE username = ?
+       ORDER BY id ASC`,
+      [seed.username]
+    );
+    if (!existing.length) {
+      if (seed.role === ROLES.SYSTEM_DEVELOPER) {
+        const [{ total: totalSystemDevelopersRaw } = { total: 0 }] = await query(
+          "SELECT COUNT(*) AS total FROM users WHERE role = ?",
+          [ROLES.SYSTEM_DEVELOPER]
+        );
+        if (Number(totalSystemDevelopersRaw || 0) >= maxSystemDevelopers) {
+          // eslint-disable-next-line no-console
+          console.warn(
+            `System developer seed account skipped (${seed.username}). Existing count reached configured maximum (${maxSystemDevelopers}).`
+          );
+          // eslint-disable-next-line no-continue
+          continue;
+        }
+      }
+      await query(
+        `INSERT INTO users
+          (institution_id, full_name, username, password_hash, password_last_changed_at, password_expires_at, must_change_password, role, email, phone, is_active)
+         VALUES (?, ?, ?, ?, NOW(), NULL, 0, ?, ?, ?, 1)`,
+        [
+          systemDeveloperInstitutionId,
+          seed.full_name,
+          seed.username,
+          passwordHash,
+          seed.role,
+          systemDeveloperEmail,
+          systemDeveloperPhone
+        ]
       );
-      return;
+      // eslint-disable-next-line no-console
+      console.log(`${seed.role} account created: ${seed.username}`);
+      // eslint-disable-next-line no-continue
+      continue;
     }
     await query(
-      `INSERT INTO users
-        (institution_id, full_name, username, password_hash, password_last_changed_at, password_expires_at, must_change_password, role, email, phone, is_active)
-       VALUES (?, ?, ?, ?, NOW(), NULL, 0, ?, ?, ?, 1)`,
+      `UPDATE users
+       SET institution_id = ?,
+           full_name = ?,
+           password_hash = ?,
+           role = ?,
+           is_active = 1,
+           password_last_changed_at = NOW(),
+           password_expires_at = NULL,
+           must_change_password = 0,
+           email = ?,
+           phone = ?
+       WHERE username = ?`,
       [
         systemDeveloperInstitutionId,
-        systemDeveloperFullName,
-        username,
+        seed.full_name,
         passwordHash,
-        ROLES.SYSTEM_DEVELOPER,
+        seed.role,
         systemDeveloperEmail,
-        systemDeveloperPhone
+        systemDeveloperPhone,
+        seed.username
       ]
     );
     // eslint-disable-next-line no-console
-    console.log(`System developer account created: ${username}`);
-    return;
+    console.log(`${seed.role} account refreshed: ${seed.username}`);
   }
-
-  await query(
-    `UPDATE users
-     SET institution_id = ?,
-         full_name = ?,
-         password_hash = ?,
-         role = ?,
-         is_active = 1,
-         password_last_changed_at = NOW(),
-         password_expires_at = NULL,
-         must_change_password = 0
-     WHERE username = ?`,
-    [
-      systemDeveloperInstitutionId,
-      systemDeveloperFullName,
-      passwordHash,
-      ROLES.SYSTEM_DEVELOPER,
-      username
-    ]
-  );
-  await query(
-    `UPDATE users
-     SET email = ?,
-         phone = ?
-     WHERE username = ?`,
-    [systemDeveloperEmail, systemDeveloperPhone, username]
-  );
-  // eslint-disable-next-line no-console
-  console.log(`System developer account refreshed: ${username}`);
 }
 
 async function ensureUserPasswordPolicyColumns() {
