@@ -83,9 +83,38 @@ mysql -u root -p < sql/seed.sql
 npm run dev
 ```
 
-Open:
-- Login page: `http://localhost:5000`
-- Dashboard: `http://localhost:5000/dashboard.html`
+Open (default `PORT` in `.env.example` is **5002**, not 5000):
+- Login: `http://localhost:5002/`
+- Dashboard: `http://localhost:5002/dashboard.html`
+
+## Windows: dashboard stuck on `dash-bundle-rev45` or Git refuses `pull/checkout`
+
+Usually **one or both**:
+
+1. **Uncommitted edits** to `public/dashboard.js` — Git warns *would be overwritten* and stays on **old JS** while `index.html` updates.
+2. **Two Node processes**: one stays on `:5002` (older in-memory bundle), another runs on `:5003` — the browser/bookmark wins the wrong tab.
+
+Fix in one shot from the repo root (`BASIC EDUCATION`, where `package.json` lives):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\windows-force-sync-repo.ps1
+npm install
+npm start
+```
+
+By default **`IIMS_PORT_FALLBACK`** is OFF: if `:5002` is busy, **`npm start` exits** with instructions unless you set **`IIMS_PORT_FALLBACK=1`** in `.env`. That prevents “silent jump” to `:5003` during local development.
+
+Manual equivalent (minimal):
+
+```powershell
+Get-Process node -ErrorAction SilentlyContinue | Stop-Process -Force
+git stash push -u -m "backup"
+git checkout main
+git fetch origin; git reset --hard origin/main
+npm install && npm start
+```
+
+After **`npm start`**, use **exactly** the **URL:** line from that window. Hard-refresh the dashboard with **Ctrl+F5**. Static assets are served with **`Cache-Control: no-store`**; if the fingerprint string stays old, **the disk file is old** — run the sync script again.
 
 ## One-Command Auto Setup (Windows)
 
