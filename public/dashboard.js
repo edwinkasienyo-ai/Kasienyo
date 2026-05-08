@@ -11,7 +11,7 @@ let allowedModules = [];
 let portalContext = null;
 let searchRowDrafts = {};
 let dashboardAutoRefreshHandle = null;
-const CLIENT_UI_BUNDLE_ID = "dash-bundle-main-v51-runtime-fix";
+const CLIENT_UI_BUNDLE_ID = "dash-bundle-main-v52-no-dashboard-photo";
 const DASHBOARD_STAT_LABELS = {
   totalLearners: "Total Learners Population",
   totalActiveLearners: "Active Learners",
@@ -554,38 +554,12 @@ function applyDashboardIdentity(meData = {}) {
       <span class="tag">Role: ${escapeHtml(resolvedRole)}</span>
     `;
   }
-  const welcomeTop = document.getElementById("dashboardWelcomeTop");
-  const institutionId = Number(meData?.institution_id || portalContext?.institution_id || 0) || 0;
-  if (welcomeTop) {
-    const leftPane = welcomeTop.querySelector("div");
-    if (leftPane) {
-      let logoWrap = document.getElementById("dashboardInstitutionLogoWrap");
-      if (!logoWrap) {
-        logoWrap = document.createElement("div");
-        logoWrap.id = "dashboardInstitutionLogoWrap";
-        logoWrap.className = "dashboard-welcome-logo-wrap";
-        logoWrap.innerHTML = '<img id="dashboardInstitutionLogo" class="dashboard-welcome-logo" alt="Institution logo" />';
-        leftPane.prepend(logoWrap);
-      }
-      const logoImg = document.getElementById("dashboardInstitutionLogo");
-      if (logoWrap && logoImg && institutionId > 0) {
-        request(`/api/public/branding/hero-image?institution_id=${institutionId}`)
-          .then((branding) => {
-            const heroUrl = String(branding?.hero_image_url || "");
-            if (!heroUrl) {
-              logoWrap.style.display = "none";
-              return;
-            }
-            logoImg.src = heroUrl;
-            logoWrap.style.display = "flex";
-          })
-          .catch(() => {
-            logoWrap.style.display = "none";
-          });
-      } else if (logoWrap) {
-        logoWrap.style.display = "none";
-      }
-    }
+  // Keep dashboard cockpit stable: do not mount login hero image here.
+  // Large institution hero images can expand the welcome block and visually
+  // mask modules/cards on smaller screens.
+  const staleLogoWrap = document.getElementById("dashboardInstitutionLogoWrap");
+  if (staleLogoWrap) {
+    staleLogoWrap.remove();
   }
 }
 
