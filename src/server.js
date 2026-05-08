@@ -377,6 +377,39 @@ async function ensureUserPasswordPolicyColumns() {
     await query("ALTER TABLE institutions ADD COLUMN agreement_template_file_url VARCHAR(255) NULL");
   }
 
+  const institutionLetterheadRows = await query(
+    `SELECT COUNT(*) total
+     FROM INFORMATION_SCHEMA.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = 'institutions'
+       AND COLUMN_NAME = 'letterhead_file_path'`
+  );
+  if (!Number(institutionLetterheadRows[0]?.total || 0)) {
+    await query("ALTER TABLE institutions ADD COLUMN letterhead_file_path VARCHAR(255) NULL");
+  }
+
+  const admissionLetterTemplateTextRows = await query(
+    `SELECT COUNT(*) total
+     FROM INFORMATION_SCHEMA.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = 'institutions'
+       AND COLUMN_NAME = 'admission_letter_template_text'`
+  );
+  if (!Number(admissionLetterTemplateTextRows[0]?.total || 0)) {
+    await query("ALTER TABLE institutions ADD COLUMN admission_letter_template_text LONGTEXT NULL");
+  }
+
+  const admissionLetterTemplateFileRows = await query(
+    `SELECT COUNT(*) total
+     FROM INFORMATION_SCHEMA.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = 'institutions'
+       AND COLUMN_NAME = 'admission_letter_template_file_url'`
+  );
+  if (!Number(admissionLetterTemplateFileRows[0]?.total || 0)) {
+    await query("ALTER TABLE institutions ADD COLUMN admission_letter_template_file_url VARCHAR(255) NULL");
+  }
+
   const institutionActiveRows = await query(
     `SELECT COUNT(*) total
      FROM INFORMATION_SCHEMA.COLUMNS
@@ -910,7 +943,9 @@ async function ensureUserPasswordPolicyColumns() {
     ["conduct_status", "VARCHAR(80) NULL"],
     ["postal_address", "VARCHAR(255) NULL"],
     ["postal_code", "VARCHAR(20) NULL"],
-    ["town", "VARCHAR(120) NULL"]
+    ["town", "VARCHAR(120) NULL"],
+    ["has_medical_condition", "VARCHAR(10) NULL"],
+    ["medical_condition_notes", "TEXT NULL"]
   ];
   for (const [colName, ddl] of learnerColMigrations) {
     // eslint-disable-next-line no-await-in-loop
@@ -1171,6 +1206,21 @@ CREATE TABLE IF NOT EXISTS institutional_registers (
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   INDEX idx_registers_inst_type (institution_id, register_type),
   CONSTRAINT fk_registers_institution FOREIGN KEY (institution_id) REFERENCES institutions(id)
+)`);
+
+  await query(`
+CREATE TABLE IF NOT EXISTS system_developer_institution_assignments (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  developer_user_id BIGINT NOT NULL,
+  institution_id BIGINT NOT NULL,
+  is_active TINYINT(1) NOT NULL DEFAULT 1,
+  created_by_user_id BIGINT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY uq_system_dev_institution (developer_user_id, institution_id),
+  INDEX idx_system_dev_assign_inst (institution_id, is_active),
+  CONSTRAINT fk_system_dev_assign_user FOREIGN KEY (developer_user_id) REFERENCES users(id),
+  CONSTRAINT fk_system_dev_assign_institution FOREIGN KEY (institution_id) REFERENCES institutions(id)
 )`);
 }
 

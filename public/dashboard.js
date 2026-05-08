@@ -3082,6 +3082,50 @@ async function request(path, options = {}) {
   return data;
 }
 
+async function downloadWithAuth(path, filename) {
+  const response = await fetch(path, {
+    headers: {
+      Authorization: `Bearer ${token}`
+    }
+  });
+  if (response.status === 401) {
+    localStorage.clear();
+    window.location.href = "/";
+    return;
+  }
+  if (!response.ok) {
+    const raw = await response.text();
+    throw new Error(raw || `Download failed (${response.status})`);
+  }
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename || "download";
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
+async function uploadFileWithAuth(file) {
+  if (!file) throw new Error("Select a file first.");
+  const formData = new FormData();
+  formData.append("file", file);
+  const response = await fetch("/api/uploads", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`
+    },
+    body: formData
+  });
+  const data = await response.json();
+  if (!response.ok) {
+    throw new Error(data.error || "Upload failed.");
+  }
+  return data;
+}
+
 async function uploadHeroImage(file) {
   if (!file) {
     throw new Error("Select an image file first.");
@@ -3997,6 +4041,127 @@ function wireAdmissionRegisterToolbar(config) {
   );
 }
 
+function parseSimpleCsvRows(text) {
+  return String(text || "")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => line.split(",").map((item) => item.trim().replace(/^"|"$/g, "")));
+}
+
+function wireAdmissionExtendedActions() {
+  (async () => {
+    try {
+      const settings = await request("/api/institutions/letterhead");
+      const letterheadPathEl = document.getElementById("admissionLetterheadPath");
+      const templateTextEl = document.getElementById("admissionLetterTemplateText");
+      if (letterheadPathEl) letterheadPathEl.value = settings?.letterhead_file_path || "";
+      if (templateTextEl) templateTextEl.value = settings?.admission_letter_template_text || "";
+    } catch (_) {
+      // Ignore when role is not allowed or endpoint unavailable.
+    }
+  })();
+  document.getElementById("admissionDownloadBioTemplateBtn")?.addEventListener("click", async () => {
+    await downloadWithAuth("/api/templates/admission-bio-data.csv", "admission-bio-data-template.csv");
+  });
+  document.getElementById("admissionDownloadStreamTemplateBtn")?.addEventListener("click", async () => {
+    await downloadWithAuth("/api/templates/institution-streams.csv", "institution-streams-template.csv");
+  });
+  document.getElementById("admissionStreamTemplateUpload")?.addEventListener("change", async (event) => {
+    try {
+      const file = event.target.files?.[0];
+      if (!file) return;
+      const text = await file.text();
+      const rows = parseSimpleCsvRows(text);
+      const [header, ...body] = rows;
+      if (!header || header.length < 2) {
+        throw new Error("CSV requires columns grade_or_form,stream_name.");
+      }
+      const entries = body
+        .map((cols) => ({ grade_or_form: cols[0] || null, stream_name: cols[1] || "" }))
+        .filter((entry) => entry.stream_name);
+      const result = await request("/api/institutions/streams/bulk", {
+        method: "POST",
+        body: JSON.stringify({ entries })
+      });
+      alert(result.message || "Stream template uploaded.");
+    } catch (error) {
+      alert(error.message);
+    } finally {
+      event.target.value = "";
+    }
+  });
+  document.getElementById("admissionLetterTemplateFileUpload")?.addEventListener("change", async (event) => {
+    try {
+      const file = event.target.files?.[0];
+      if (!file) return;
+      const uploaded = await uploadFileWithAuth(file);
+      const pathInput = document.getElementById("admissionLetterheadPath");
+      if (pathInput && !pathInput.value) {
+        pathInput.value = uploaded.filePath || "";
+      }
+      event.target.setAttribute("data-upload-path", uploaded.filePath || "");
+      alert("Template file uploaded.");
+    } catch (error) {
+      alert(error.message);
+    } finally {
+      event.target.value = "";
+    }
+  });
+  document.getElementById("admissionSaveLetterheadBtn")?.addEventListener("click", async () => {
+    try {
+      const letterheadPath = document.getElementById("admissionLetterheadPath")?.value || "";
+      const templateText = document.getElementById("admissionLetterTemplateText")?.value || "";
+      const templateFileInput = document.getElementById("admissionLetterTemplateFileUpload");
+      const templateFilePath = templateFileInput?.getAttribute("data-upload-path") || "";
+      const result = await request("/api/institutions/letterhead", {
+        method: "PATCH",
+        body: JSON.stringify({
+          letterhead_file_path: letterheadPath || null,
+          admission_letter_template_text: templateText || null,
+          admission_letter_template_file_url: templateFilePath || null
+        })
+      });
+      alert(result.message || "Letterhead saved.");
+    } catch (error) {
+      alert(error.message);
+    }
+  });
+  document.getElementById("admissionGenerateFormBtn")?.addEventListener("click", async () => {
+    try {
+      const learnerId = Number(prompt("Enter learner ID for admission form:") || 0);
+      if (!learnerId) return;
+      const result = await request(`/api/admission/learners/${learnerId}/admission-form`);
+      const outputEl = document.getElementById("admissionGeneratedOutput");
+      if (outputEl) outputEl.textContent = JSON.stringify(result, null, 2);
+    } catch (error) {
+      alert(error.message);
+    }
+  });
+  document.getElementById("admissionGenerateLetterBtn")?.addEventListener("click", async () => {
+    try {
+      const learnerId = Number(prompt("Enter learner ID for admission letter:") || 0);
+      if (!learnerId) return;
+      const result = await request(`/api/admission/learners/${learnerId}/admission-letter`);
+      const outputEl = document.getElementById("admissionGeneratedOutput");
+      if (outputEl) outputEl.textContent = result?.letter_text || JSON.stringify(result, null, 2);
+    } catch (error) {
+      alert(error.message);
+    }
+  });
+  document.getElementById("admissionPreviewOutputBtn")?.addEventListener("click", () => {
+    const content = document.getElementById("admissionGeneratedOutput")?.textContent || "";
+    if (!content.trim()) {
+      alert("No generated output to preview.");
+      return;
+    }
+    const popup = window.open("", "_blank");
+    if (!popup) return;
+    popup.document.write(`<html><head><title>Admission Preview</title></head><body><pre>${escapeHtml(content)}</pre></body></html>`);
+    popup.document.close();
+  });
+}
+
 function wireAdmissionModuleUi(container, config) {
   wireAdmissionGradeFormExclusive(container);
   wireAdmissionDisabilityToggle(container);
@@ -4006,6 +4171,7 @@ function wireAdmissionModuleUi(container, config) {
   attachAdmissionPostalFromSelect(container);
   wireAdmissionLearnerPhotoUpload(container);
   wireAdmissionRegisterToolbar(config);
+  wireAdmissionExtendedActions();
   renderAdmissionRegisterTable();
 }
 
@@ -4276,6 +4442,36 @@ function renderCrudModule(moduleKey, options = {}) {
       </div>
     </div>
     ${admissionRegisterMarkup}
+    <section class="dashboard-section">
+      <h4>Admission Form & Letter</h4>
+      <p class="small-note">Generate one-page admission forms and admission letters for selected learner IDs.</p>
+      <div class="actions-row">
+        <button type="button" id="admissionGenerateFormBtn" class="ax-btn ax-btn--process ax-btn--sm">Generate Admission Form</button>
+        <button type="button" id="admissionGenerateLetterBtn" class="ax-btn ax-btn--process ax-btn--sm">Generate Admission Letter</button>
+        <button type="button" id="admissionPreviewOutputBtn" class="ax-btn ax-btn--view ax-btn--sm">Preview Last Output</button>
+      </div>
+      <pre id="admissionGeneratedOutput" class="small-note" style="max-height:240px;overflow:auto;white-space:pre-wrap;"></pre>
+    </section>
+    <section class="dashboard-section">
+      <h4>Templates & Letterhead</h4>
+      <div class="actions-row">
+        <button type="button" id="admissionDownloadBioTemplateBtn" class="ax-btn ax-btn--download ax-btn--sm">Download Bio Data Template</button>
+        <button type="button" id="admissionDownloadStreamTemplateBtn" class="ax-btn ax-btn--download ax-btn--sm">Download Stream Template</button>
+        <label class="ax-btn ax-btn--view ax-btn--sm" for="admissionStreamTemplateUpload">Upload Stream CSV</label>
+        <input id="admissionStreamTemplateUpload" type="file" accept=".csv,text/csv" style="display:none;" />
+      </div>
+      <div class="form-grid">
+        <label>Institution Letterhead File Path</label>
+        <input id="admissionLetterheadPath" placeholder="/uploads/....png" />
+        <label>Admission Letter Template (optional text)</label>
+        <textarea id="admissionLetterTemplateText" rows="4" placeholder="Use placeholders {{LEARNER_NAME}}, {{INSTITUTION_NAME}}, {{ADMISSION_NUMBER}}, {{GRADE_FORM}}, {{STREAM}}, {{REPORTING_DATE}}"></textarea>
+      </div>
+      <div class="actions-row">
+        <label class="ax-btn ax-btn--view ax-btn--sm" for="admissionLetterTemplateFileUpload">Upload Letter Template File</label>
+        <input id="admissionLetterTemplateFileUpload" type="file" accept=".pdf,.doc,.docx,.txt" style="display:none;" />
+        <button type="button" id="admissionSaveLetterheadBtn" class="ax-btn ax-btn--save ax-btn--sm">Save Letterhead/Template</button>
+      </div>
+    </section>
   `;
   } else {
   container.innerHTML = `
@@ -5713,6 +5909,317 @@ function renderPasswordPolicyBanner(user = {}, portal = {}) {
     banner.textContent = message;
     banner.className = `small-note ${severity}`;
   }
+  if (daysRemaining <= 0 && currentModule !== "profile" && !window.__iimsPasswordExpiryRedirected) {
+    window.__iimsPasswordExpiryRedirected = true;
+    setTimeout(() => {
+      changeCredentials();
+    }, 150);
+  }
+}
+
+function attendanceHubThreeStepConfirm() {
+  if (!window.confirm("Delete this attendance record?")) return false;
+  if (!window.confirm("Confirm deletion again?")) return false;
+  if (!window.confirm("Final confirmation: proceed with delete?")) return false;
+  return true;
+}
+
+function normalizeAttendanceTypeForApi(rawType = "") {
+  const normalized = String(rawType || "").trim().toLowerCase();
+  if (normalized === "teacher") return "Teacher";
+  if (normalized === "support staff" || normalized === "support_staff") return "Support Staff";
+  return "Learner";
+}
+
+async function renderAttendanceManagementHub() {
+  stopDashboardAutoRefresh();
+  currentModule = "attendance";
+  currentEditId = null;
+  setActiveSidebarButton("attendance");
+  document.getElementById("moduleTitle").textContent = "Attendance Management";
+  const tableAreaMain = document.querySelector(".main-content .table-area");
+  if (tableAreaMain) tableAreaMain.style.display = "none";
+
+  document.getElementById("cards").innerHTML = `
+    <div class="card stats-card metric-emphasis"><h4>Attendance Workflow</h4><p>Teacher, Support Staff, Learner</p></div>
+    <div class="card stats-card"><h4>Capture Chain</h4><p>Select person -> date -> status -> time in/out -> comment</p></div>
+    <div class="card stats-card"><h4>Registers</h4><p>Daily and period exports (PDF / Excel / Word)</p></div>
+  `;
+
+  document.getElementById("formArea").innerHTML = `
+    <div class="form-grid">
+      <label>Attendance Type</label>
+      <select id="attendanceHubType">
+        <option value="">Select type</option>
+        <option value="Teacher">Teacher</option>
+        <option value="Support Staff">Support Staff</option>
+        <option value="Learner">Learner</option>
+      </select>
+      <label>Date</label>
+      <input id="attendanceHubDate" type="date" />
+      <label>Grade/Form (Learner)</label>
+      <input id="attendanceHubGrade" placeholder="Grade/Form" />
+      <label>Stream (Learner optional)</label>
+      <input id="attendanceHubStream" placeholder="Stream" />
+      <label>Status</label>
+      <select id="attendanceHubStatus">
+        <option value="">Select status</option>
+        <option value="Present">Present</option>
+        <option value="Absent">Absent</option>
+        <option value="Absent with apology">Absent with apology</option>
+        <option value="Absent without apology">Absent without apology</option>
+        <option value="Official Duty">Official Duty</option>
+        <option value="Leave">Leave</option>
+        <option value="Transferred">Transferred</option>
+        <option value="Suspended">Suspended</option>
+        <option value="Interdicted">Interdicted</option>
+        <option value="Dismissed">Dismissed</option>
+        <option value="Others">Others</option>
+      </select>
+      <label>Time In</label>
+      <input id="attendanceHubTimeIn" type="datetime-local" />
+      <label>Time Out</label>
+      <input id="attendanceHubTimeOut" type="datetime-local" />
+      <label>Comment</label>
+      <textarea id="attendanceHubComment" rows="2" placeholder="Comment"></textarea>
+    </div>
+    <div class="actions-row">
+      <button id="attendanceHubLoadPeople" class="ax-btn ax-btn--view ax-btn--sm">Load People</button>
+      <button id="attendanceHubSave" class="ax-btn ax-btn--save ax-btn--sm">Save Attendance</button>
+      <button id="attendanceHubRefresh" class="ax-btn ax-btn--refresh ax-btn--sm">Refresh Register</button>
+    </div>
+    <div id="attendanceHubPeople" class="dashboard-table-wrap"></div>
+    <section class="dashboard-section">
+      <h4>Attendance Register</h4>
+      <div class="form-grid">
+        <label>Type</label>
+        <select id="attendanceRegisterType">
+          <option value="">All</option>
+          <option value="Teacher">Teacher</option>
+          <option value="Support Staff">Support Staff</option>
+          <option value="Learner">Learner</option>
+        </select>
+        <label>From</label>
+        <input id="attendanceRegisterFrom" type="date" />
+        <label>To</label>
+        <input id="attendanceRegisterTo" type="date" />
+      </div>
+      <div class="actions-row">
+        <button id="attendanceRegisterPdf" class="ax-btn ax-btn--download ax-btn--sm">PDF</button>
+        <button id="attendanceRegisterExcel" class="ax-btn ax-btn--download ax-btn--sm">Excel</button>
+        <button id="attendanceRegisterWord" class="ax-btn ax-btn--download ax-btn--sm">Word</button>
+        <button id="attendanceRegisterPrint" class="ax-btn ax-btn--print ax-btn--sm">Print</button>
+      </div>
+      <div id="attendanceRegisterTable" class="dashboard-table-wrap"></div>
+    </section>
+  `;
+
+  const state = { people: [], selected: new Set(), learnerStatus: new Map() };
+  const peopleHost = document.getElementById("attendanceHubPeople");
+
+  const renderPeople = () => {
+    if (!state.people.length) {
+      peopleHost.innerHTML = '<p class="small-note">No people loaded yet.</p>';
+      return;
+    }
+    const type = normalizeAttendanceTypeForApi(document.getElementById("attendanceHubType")?.value || "");
+    const rows = state.people.map((row) => {
+      const id = Number(row.id || 0);
+      const learnerStatus = state.learnerStatus.get(id) || "";
+      return [
+        `<input type="checkbox" class="att-person-check" data-id="${id}" ${state.selected.has(id) ? "checked" : ""} />`,
+        row.person_name || "-",
+        row.tsc_number || row.staff_number || row.admission_number || "-",
+        row.grade || "-",
+        row.stream || "-",
+        type === "Learner"
+          ? `<select class="att-learner-status" data-id="${id}">
+              <option value="">Select</option>
+              <option value="Present" ${learnerStatus === "Present" ? "selected" : ""}>Present</option>
+              <option value="Absent" ${learnerStatus === "Absent" ? "selected" : ""}>Absent</option>
+            </select>`
+          : "-"
+      ];
+    });
+    peopleHost.innerHTML = buildDashboardTable(
+      ["Select", "Name", "Reference", "Grade", "Stream", "Learner Status"],
+      rows
+    );
+    peopleHost.querySelectorAll(".att-person-check").forEach((el) => {
+      el.addEventListener("change", () => {
+        const id = Number(el.getAttribute("data-id") || 0);
+        if (!id) return;
+        if (el.checked) state.selected.add(id);
+        else state.selected.delete(id);
+      });
+    });
+    peopleHost.querySelectorAll(".att-learner-status").forEach((el) => {
+      el.addEventListener("change", () => {
+        const id = Number(el.getAttribute("data-id") || 0);
+        if (!id) return;
+        state.learnerStatus.set(id, el.value || "");
+      });
+    });
+  };
+
+  const buildRegisterParams = () => {
+    const params = new URLSearchParams();
+    const type = document.getElementById("attendanceRegisterType")?.value || "";
+    const fromDate = document.getElementById("attendanceRegisterFrom")?.value || "";
+    const toDate = document.getElementById("attendanceRegisterTo")?.value || "";
+    if (type) params.set("type", type);
+    if (fromDate) params.set("from_date", fromDate);
+    if (toDate) params.set("to_date", toDate);
+    return params;
+  };
+
+  const refreshRegister = async () => {
+    const params = buildRegisterParams();
+    const data = await request(`/api/attendance/register?${params.toString()}`);
+    const rows = Array.isArray(data?.rows) ? data.rows : [];
+    document.getElementById("attendanceRegisterTable").innerHTML = buildDashboardTable(
+      ["Date", "Type", "Name", "Status", "Time In", "Time Out", "Comment", "Action"],
+      rows.map((row) => [
+        formatDateTime(row.attendance_date),
+        row.attendance_type || "-",
+        row.person_name || "-",
+        row.status || "-",
+        formatDateTime(row.time_in),
+        formatDateTime(row.time_out),
+        row.comments || "-",
+        `<button class="ax-btn ax-btn--delete ax-btn--sm" data-att-del="${Number(row.id || 0)}">Delete</button>`
+      ])
+    );
+    document.querySelectorAll("[data-att-del]").forEach((button) => {
+      button.addEventListener("click", async () => {
+        const id = Number(button.getAttribute("data-att-del") || 0);
+        if (!id || !attendanceHubThreeStepConfirm()) return;
+        await request(`/api/attendance/records/${id}`, { method: "DELETE" });
+        await refreshRegister();
+      });
+    });
+  };
+
+  document.getElementById("attendanceHubLoadPeople")?.addEventListener("click", async () => {
+    try {
+      const type = normalizeAttendanceTypeForApi(document.getElementById("attendanceHubType")?.value || "");
+      if (!type) {
+        alert("Select attendance type first.");
+        return;
+      }
+      const params = new URLSearchParams();
+      params.set("type", type);
+      if (type === "Learner") {
+        params.set("grade", document.getElementById("attendanceHubGrade")?.value || "");
+        params.set("stream", document.getElementById("attendanceHubStream")?.value || "");
+      }
+      const data = await request(`/api/attendance/participants?${params.toString()}`);
+      state.people = Array.isArray(data?.rows) ? data.rows : [];
+      state.selected = new Set();
+      state.learnerStatus = new Map();
+      renderPeople();
+    } catch (error) {
+      alert(error.message);
+    }
+  });
+
+  document.getElementById("attendanceHubSave")?.addEventListener("click", async () => {
+    try {
+      const type = normalizeAttendanceTypeForApi(document.getElementById("attendanceHubType")?.value || "");
+      const dateValue = document.getElementById("attendanceHubDate")?.value || "";
+      const statusValue = document.getElementById("attendanceHubStatus")?.value || "";
+      const timeInValue = document.getElementById("attendanceHubTimeIn")?.value || "";
+      const timeOutValue = document.getElementById("attendanceHubTimeOut")?.value || "";
+      const commentValue = document.getElementById("attendanceHubComment")?.value || "";
+      const gradeValue = document.getElementById("attendanceHubGrade")?.value || "";
+      const streamValue = document.getElementById("attendanceHubStream")?.value || "";
+      const selectedPeople = state.people.filter((row) => state.selected.has(Number(row.id || 0)));
+      if (!type || !dateValue || !selectedPeople.length) {
+        alert("Select type, date and at least one participant.");
+        return;
+      }
+      if (type === "Learner") {
+        for (const row of selectedPeople) {
+          const learnerStatus = state.learnerStatus.get(Number(row.id || 0));
+          if (!learnerStatus) continue;
+          // eslint-disable-next-line no-await-in-loop
+          await request("/api/attendance/records", {
+            method: "POST",
+            body: JSON.stringify({
+              attendance_type: "Learner",
+              person_id: String(row.id || ""),
+              person_name: row.person_name || row.full_name || "-",
+              grade: row.grade || gradeValue || null,
+              stream: row.stream || streamValue || null,
+              attendance_date: `${dateValue}T08:00`,
+              status: learnerStatus,
+              comments: commentValue || null
+            })
+          });
+        }
+      } else {
+        if (!statusValue || !timeInValue) {
+          alert("Status and Time In are required for teacher/support attendance.");
+          return;
+        }
+        for (const row of selectedPeople) {
+          // eslint-disable-next-line no-await-in-loop
+          await request("/api/attendance/records", {
+            method: "POST",
+            body: JSON.stringify({
+              attendance_type: type,
+              person_id: String(row.id || ""),
+              person_name: row.person_name || row.full_name || "-",
+              grade: null,
+              stream: null,
+              attendance_date: `${dateValue}T08:00`,
+              time_in: timeInValue || null,
+              time_out: timeOutValue || null,
+              status: statusValue,
+              reason: statusValue.toLowerCase().startsWith("absent") ? statusValue : null,
+              comments: commentValue || null
+            })
+          });
+        }
+      }
+      alert("Attendance saved.");
+      await refreshRegister();
+    } catch (error) {
+      alert(error.message);
+    }
+  });
+
+  document.getElementById("attendanceHubRefresh")?.addEventListener("click", async () => {
+    try {
+      await refreshRegister();
+    } catch (error) {
+      alert(error.message);
+    }
+  });
+
+  document.getElementById("attendanceRegisterPdf")?.addEventListener("click", async () => {
+    const params = buildRegisterParams();
+    await downloadWithAuth(`/api/attendance/register/export/pdf?${params.toString()}`, "attendance-register.pdf");
+  });
+  document.getElementById("attendanceRegisterExcel")?.addEventListener("click", async () => {
+    const params = buildRegisterParams();
+    await downloadWithAuth(`/api/attendance/register/export/excel?${params.toString()}`, "attendance-register.xlsx");
+  });
+  document.getElementById("attendanceRegisterWord")?.addEventListener("click", async () => {
+    const params = buildRegisterParams();
+    await downloadWithAuth(`/api/attendance/register/export/word?${params.toString()}`, "attendance-register.doc");
+  });
+  document.getElementById("attendanceRegisterPrint")?.addEventListener("click", () => {
+    const hostHtml = document.getElementById("attendanceRegisterTable")?.innerHTML || "<p>No attendance rows.</p>";
+    const popup = window.open("", "_blank");
+    if (!popup) return;
+    popup.document.write(`<html><head><title>Attendance Register</title></head><body>${hostHtml}</body></html>`);
+    popup.document.close();
+    popup.focus();
+    popup.print();
+  });
+
+  await refreshRegister();
 }
 
 function bindSidebar() {
@@ -5732,6 +6239,7 @@ function bindSidebar() {
       if (currentModule === "system-recycle-bin") return renderRecycleBin();
       if (currentModule === "system-cbc-editor") return renderCbcCurriculumEditor();
       if (currentModule === "management-staff-service") return renderStaffServiceHub();
+      if (currentModule === "attendance") return renderAttendanceManagementHub();
       if (currentModule === "parents-results") return loadParentOrBomResults();
       if (currentModule === "learner-materials") return loadLearnerMaterials();
       if (currentModule === "communication-messages") return renderCrudModule(currentModule);
@@ -5765,7 +6273,7 @@ function bindTopbarButtons() {
     });
   const heroButton = document.getElementById("updateHeroImageButton");
   const heroInput = document.getElementById("heroImageInput");
-  const canManageHeroImage = ["SYSTEM_DEVELOPER", "ADMIN", "HEAD_OF_INSTITUTION"].includes(
+  const canManageHeroImage = ["SUPER_SYSTEM_DEVELOPER", "SYSTEM_DEVELOPER", "SYSTEM_ADMINISTRATOR", "ADMIN", "HEAD_OF_INSTITUTION"].includes(
     String(portalContext?.role || "")
   );
   if (heroButton && heroInput) {
@@ -5807,6 +6315,10 @@ function renderProfileCenter(profile) {
   ).trim();
   const profileInitial = String(profile?.full_name || "U").trim().charAt(0).toUpperCase() || "U";
   const roleLabel = formatDashboardRoleLabel(profile?.role || "");
+  const institutionScopeOptions = Array.isArray(portalContext?.institution_scope_options)
+    ? portalContext.institution_scope_options
+    : [];
+  const showInstitutionSwitch = String(profile?.role || "").toUpperCase() === "SYSTEM_DEVELOPER" && institutionScopeOptions.length > 1;
   document.getElementById("moduleTitle").textContent = "Profile";
   document.getElementById("cards").innerHTML = `
     <div class="card stats-card metric-emphasis">
@@ -5865,6 +6377,30 @@ function renderProfileCenter(profile) {
           <button id="requestProfileOtpButton">Request OTP</button>
           <button id="saveProfileButton">Save Profile Updates</button>
         </div>
+        ${
+          showInstitutionSwitch
+            ? `
+        <hr />
+        <h4>Institution Scope</h4>
+        <p class="small-note">Switch to one of your assigned institutions.</p>
+        <div class="form-grid">
+          <label>Assigned Institution</label>
+          <select id="profileInstitutionSwitch">
+            ${institutionScopeOptions
+              .map((row) => {
+                const id = Number(row?.id || 0);
+                const selected = Number(profile?.institution_id || 0) === id ? "selected" : "";
+                const label = `${row?.institution_name || "Institution"} (${row?.institution_code || "-"})`;
+                return `<option value="${id}" ${selected}>${escapeHtml(label)}</option>`;
+              })
+              .join("")}
+          </select>
+        </div>
+        <div class="actions-row">
+          <button id="profileSwitchInstitutionButton">Switch Institution</button>
+        </div>`
+            : ""
+        }
       </div>
     </div>
   `;
@@ -5913,6 +6449,27 @@ function renderProfileCenter(profile) {
       alert(error.message);
     }
   });
+  document.getElementById("profileSwitchInstitutionButton")?.addEventListener("click", async () => {
+    try {
+      const nextInstitutionId = Number(document.getElementById("profileInstitutionSwitch")?.value || 0);
+      if (!nextInstitutionId) {
+        alert("Select an institution to switch.");
+        return;
+      }
+      const result = await request("/api/portal/switch-institution", {
+        method: "POST",
+        body: JSON.stringify({ institution_id: nextInstitutionId })
+      });
+      if (result?.token) {
+        token = result.token;
+        localStorage.setItem("token", token);
+      }
+      alert(result?.message || "Institution switched.");
+      await init();
+    } catch (error) {
+      alert(error.message);
+    }
+  });
 }
 
 function bindQuickActionCards() {
@@ -5952,6 +6509,10 @@ function bindQuickActionCards() {
       }
       if (targetModule === "management-staff-service") {
         await renderStaffServiceHub();
+        return;
+      }
+      if (targetModule === "attendance") {
+        await renderAttendanceManagementHub();
         return;
       }
       if (targetModule === "parents-results") {
