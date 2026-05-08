@@ -1,0 +1,61 @@
+From 5642015882a238039235d35b8b00dbfcff18aaf2 Mon Sep 17 00:00:00 2001
+From: Cursor Agent <cursor-agent@users.noreply.github.com>
+Date: Wed, 6 May 2026 17:06:38 +0000
+Subject: [PATCH 06/14] Add username field to User model so the login form has
+ something to match
+
+The login form (RightPanel.js) submits {role, username, password, otp},
+but the User Sequelize model only had email/fullName/password/role.
+There was no field to match the submitted username against, so the
+backend could never find the seeded user during login.
+
+Changes:
+- Add a username STRING column with unique=true.
+- Keep email also unique and nullable so existing rows survive sequelize
+  sync({ alter: true }).
+- Mark username allowNull:true so schema migration is painless on
+  existing databases; the seed in server.js will always populate it.
+---
+ backend/src/modules/users/user.model.js | 14 +++++++++++++-
+ 1 file changed, 13 insertions(+), 1 deletion(-)
+
+diff --git a/backend/src/modules/users/user.model.js b/backend/src/modules/users/user.model.js
+index 3be24b4..da85712 100644
+--- a/backend/src/modules/users/user.model.js
++++ b/backend/src/modules/users/user.model.js
+@@ -8,11 +8,21 @@ const User = sequelize.define("User", {
+     primaryKey: true,
+   },
+ 
++  // Username is what the login form submits, so it must exist and be unique.
++  // It is allowed to be NULL only to keep migrations easy on existing rows;
++  // new rows always set it.
++  username: {
++    type: DataTypes.STRING,
++    unique: true,
++    allowNull: true,
++  },
++
+   fullName: DataTypes.STRING,
+ 
+   email: {
+     type: DataTypes.STRING,
+     unique: true,
++    allowNull: true,
+   },
+ 
+   password: DataTypes.STRING,
+@@ -21,6 +31,8 @@ const User = sequelize.define("User", {
+     type: DataTypes.STRING,
+     defaultValue: "USER",
+   },
++}, {
++  timestamps: true,
+ });
+ 
+-module.exports = User;
+\ No newline at end of file
++module.exports = User;
+-- 
+2.43.0
+

@@ -1,0 +1,242 @@
+From e518526af6b1e723cebe7c6d7fcd7ff70f6e1c3c Mon Sep 17 00:00:00 2001
+From: Cursor Agent <cursor-agent@users.noreply.github.com>
+Date: Wed, 6 May 2026 17:09:07 +0000
+Subject: [PATCH 10/14] Rewrite server.js: env-driven, working seed users,
+ clear startup banner
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The previous server.js had several issues that prevented login from
+working even after the auth flow was fixed:
+
+1. The seed only created a single user with email='teacher@test.com'
+   and no username. Since RightPanel.js submits 'username' (not email),
+   that seed could never be matched at login.
+
+2. CORS origin was hard-coded to http://localhost:3000 with no env
+   override, making non-default frontend ports impossible.
+
+3. The DB lifecycle code was wrapped in a long .then() chain mixing
+   sync, seed, and listen — hard to follow, and any failure printed
+   only 'Database connection failed' with no exit code.
+
+This commit:
+- Wraps startup in an async IIFE with try/catch and process.exit(1)
+  on failure so the user immediately knows something went wrong.
+- Calls a separate seedDefaultUsers() helper that creates two users
+  the login form can actually accept:
+    admin  / Admin@1234   (HOI/ADMINISTRATOR)
+    sysdev / Sysdev@1234  (SYSTEM DEVELOPER)
+- All seed values can be overridden via DEFAULT_ADMIN_USERNAME etc.
+- CORS origin reads FRONTEND_ORIGIN from env (default localhost:3000).
+- PORT reads from env, defaulting to 5000 (matches frontend axios base).
+- On successful boot, prints a banner with the URL, DB dialect, CORS
+  origin, and the seeded credentials so the user knows exactly what
+  to put in the login form.
+---
+ backend/server.js | 130 +++++++++++++++++++++++++++++-----------------
+ 1 file changed, 83 insertions(+), 47 deletions(-)
+
+diff --git a/backend/server.js b/backend/server.js
+index 81e45ac..2582d84 100644
+--- a/backend/server.js
++++ b/backend/server.js
+@@ -8,6 +8,7 @@ require("dotenv").config();
+ // =======================
+ const express = require("express");
+ const cors = require("cors");
++const bcrypt = require("bcryptjs");
+ 
+ // =======================
+ // INIT APP
+@@ -17,10 +18,12 @@ const app = express();
+ // =======================
+ // MIDDLEWARE
+ // =======================
+-app.use(cors({
+-  origin: "http://localhost:3000",
+-  credentials: true
+-}));
++app.use(
++  cors({
++    origin: process.env.FRONTEND_ORIGIN || "http://localhost:3000",
++    credentials: true,
++  })
++);
+ 
+ app.use(express.json());
+ app.use(express.urlencoded({ extended: true }));
+@@ -29,12 +32,7 @@ app.use(express.urlencoded({ extended: true }));
+ // DATABASE
+ // =======================
+ const sequelize = require("./src/config/db");
+-
+-// =======================
+-// MODELS (IMPORTANT FOR DEFAULT USER)
+-// =======================
+ const User = require("./src/modules/users/user.model");
+-const bcrypt = require("bcryptjs");
+ 
+ // =======================
+ // ROUTES
+@@ -44,18 +42,19 @@ const dashboardRoutes = require("./src/modules/dashboard/dashboard.routes");
+ const authRoutes = require("./src/modules/auth/auth.routes");
+ 
+ app.use("/api/auth", authRoutes);
++
+ // =======================
+ // ROOT
+ // =======================
+ app.get("/", (req, res) => {
+-  res.send("IMIS SYSTEM BACKEND RUNNING 🚀");
++  res.send("IMIS SYSTEM BACKEND RUNNING");
+ });
+ 
+ // =======================
+ // TEST ROUTE
+ // =======================
+ app.get("/api/test", (req, res) => {
+-  res.json({ message: "API working ✅" });
++  res.json({ message: "API working" });
+ });
+ 
+ // =======================
+@@ -68,60 +67,97 @@ app.use("/api/dashboard", dashboardRoutes);
+ // 404 HANDLER
+ // =======================
+ app.use((req, res) => {
+-  res.status(404).json({ message: "Route not found ❌" });
++  res.status(404).json({ message: "Route not found" });
+ });
+ 
+ // =======================
+ // ERROR HANDLER
+ // =======================
++// eslint-disable-next-line no-unused-vars
+ app.use((err, req, res, next) => {
+-  console.error("SERVER ERROR ❌:", err);
++  // eslint-disable-next-line no-console
++  console.error("SERVER ERROR:", err);
+   res.status(500).json({
+-    message: "Internal Server Error ❌",
++    message: "Internal Server Error",
+     error: err.message,
+   });
+ });
+ 
++// =======================
++// SEED DEFAULT USERS
++// =======================
++async function seedDefaultUsers() {
++  const seeds = [
++    {
++      username: process.env.DEFAULT_ADMIN_USERNAME || "admin",
++      password: process.env.DEFAULT_ADMIN_PASSWORD || "Admin@1234",
++      fullName: "System Administrator",
++      email: "admin@imis.local",
++      role: "HOI/ADMINISTRATOR",
++    },
++    {
++      username: process.env.DEFAULT_SYSDEV_USERNAME || "sysdev",
++      password: process.env.DEFAULT_SYSDEV_PASSWORD || "Sysdev@1234",
++      fullName: "System Developer",
++      email: "sysdev@imis.local",
++      role: "SYSTEM DEVELOPER",
++    },
++  ];
++
++  for (const seed of seeds) {
++    // eslint-disable-next-line no-await-in-loop
++    const existing = await User.findOne({ where: { username: seed.username } });
++    if (existing) continue;
++
++    // eslint-disable-next-line no-await-in-loop
++    const hashed = await bcrypt.hash(seed.password, 10);
++    // eslint-disable-next-line no-await-in-loop
++    await User.create({
++      username: seed.username,
++      password: hashed,
++      fullName: seed.fullName,
++      email: seed.email,
++      role: seed.role,
++    });
++    // eslint-disable-next-line no-console
++    console.log(
++      `[SEED] Created default user: ${seed.username} (role: ${seed.role})`
++    );
++  }
++}
++
+ // =======================
+ // START SERVER
+ // =======================
+-const PORT = process.env.PORT || 5000;
++const PORT = Number(process.env.PORT || 5000);
+ 
+-sequelize.authenticate()
+-  .then(async () => {
+-    console.log("Database connected ✅");
++(async () => {
++  try {
++    await sequelize.authenticate();
++    // eslint-disable-next-line no-console
++    console.log("Database connected");
+ 
+     await sequelize.sync({ alter: true });
+-    console.log("Database synced successfully ✅");
+-
+-    // =======================
+-    // CREATE DEFAULT USER (CLEAN)
+-    // =======================
+-    const exists = await User.findOne({
+-      where: { email: "teacher@test.com" }
+-    });
++    // eslint-disable-next-line no-console
++    console.log("Database synced");
+ 
+-    if (!exists) {
+-      const hashed = await bcrypt.hash("123456", 10);
++    await seedDefaultUsers();
+ 
+-      await User.create({
+-        fullName: "Test Teacher",
+-        email: "teacher@test.com",
+-        password: hashed,
+-        role: "USER"
+-      });
+-
+-      console.log("Default user created ✅");
+-    }
+-
+-    // =======================
+-    // START SERVER
+-    // =======================
+     app.listen(PORT, () => {
+-      console.log(`Server running on http://localhost:${PORT} 🚀`);
++      // eslint-disable-next-line no-console
++      console.log(
++        `\nIMIS BACKEND RUNNING\n` +
++          `  URL:        http://localhost:${PORT}\n` +
++          `  DB dialect: ${(process.env.DB_DIALECT || "sqlite").toLowerCase()}\n` +
++          `  CORS:       ${process.env.FRONTEND_ORIGIN || "http://localhost:3000"}\n` +
++          `\nDEFAULT LOGIN (username / password):\n` +
++          `  ${process.env.DEFAULT_ADMIN_USERNAME || "admin"} / ${process.env.DEFAULT_ADMIN_PASSWORD || "Admin@1234"}    (HOI/ADMINISTRATOR)\n` +
++          `  ${process.env.DEFAULT_SYSDEV_USERNAME || "sysdev"} / ${process.env.DEFAULT_SYSDEV_PASSWORD || "Sysdev@1234"}  (SYSTEM DEVELOPER)\n`
++      );
+     });
+-
+-  })
+-  .catch((err) => {
+-    console.error("Database connection failed ❌:", err);
+-  });
+\ No newline at end of file
++  } catch (err) {
++    // eslint-disable-next-line no-console
++    console.error("Failed to start server:", err);
++    process.exit(1);
++  }
++})();
+-- 
+2.43.0
+

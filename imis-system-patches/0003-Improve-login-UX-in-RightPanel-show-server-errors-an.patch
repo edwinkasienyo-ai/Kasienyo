@@ -1,0 +1,70 @@
+From bd010b3c25f4b1c7f4ba84eed8226f00d7e95bfe Mon Sep 17 00:00:00 2001
+From: Cursor Agent <cursor-agent@users.noreply.github.com>
+Date: Wed, 6 May 2026 17:04:50 +0000
+Subject: [PATCH 03/14] Improve login UX in RightPanel: show server errors and
+ dev-mode OTP
+
+Previously sendOTP() and login() swallowed server-side errors and showed
+a generic 'OTP failed' / 'Login failed' alert, making failures impossible
+to diagnose without opening DevTools.
+
+Changes:
+- Surface backend err.response.data.message in alerts.
+- Validate username/password/otp/role on the client before calling the API.
+- When the backend returns the OTP in the response body (dev mode, no
+  SMS/Email configured), show it in the alert so the user can complete
+  login without configuring Twilio.
+---
+ imis-frontend/src/components/RightPanel.js | 21 +++++++++++++++++----
+ 1 file changed, 17 insertions(+), 4 deletions(-)
+
+diff --git a/imis-frontend/src/components/RightPanel.js b/imis-frontend/src/components/RightPanel.js
+index 21a1277..1332433 100644
+--- a/imis-frontend/src/components/RightPanel.js
++++ b/imis-frontend/src/components/RightPanel.js
+@@ -33,17 +33,29 @@ const RightPanel = () => {
+   // ✅ SEND OTP
+   const sendOTP = async () => {
+     if (!form.role) return alert("Select Portal Role first");
++    if (!form.username) return alert("Enter username first");
+ 
+     try {
+-      await API.post("/auth/send-otp", form);
+-      alert("OTP sent successfully ✅");
++      const res = await API.post("/auth/send-otp", form);
++      // In dev mode the backend returns the OTP in the response body so
++      // you don't have to configure SMS/Email to log in. Show it to the user.
++      if (res?.data?.otp) {
++        alert(`OTP sent (dev mode). Code: ${res.data.otp}`);
++      } else {
++        alert("OTP sent successfully ✅ — check your SMS/email or the server console.");
++      }
+     } catch (err) {
+-      alert("OTP failed ❌");
++      const msg = err?.response?.data?.message || err.message || "OTP failed";
++      alert(`OTP failed ❌  ${msg}`);
+     }
+   };
+ 
+   // ✅ LOGIN
+   const login = async () => {
++    if (!form.username || !form.password || !form.otp) {
++      return alert("Username, password and OTP are all required.");
++    }
++
+     try {
+       const res = await API.post("/auth/login", form);
+ 
+@@ -52,7 +64,8 @@ const RightPanel = () => {
+ 
+       window.location.href = "/dashboard";
+     } catch (err) {
+-      alert("Login failed ❌");
++      const msg = err?.response?.data?.message || err.message || "Login failed";
++      alert(`Login failed ❌  ${msg}`);
+     }
+   };
+ 
+-- 
+2.43.0
+
