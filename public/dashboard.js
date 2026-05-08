@@ -11,7 +11,7 @@ let allowedModules = [];
 let portalContext = null;
 let searchRowDrafts = {};
 let dashboardAutoRefreshHandle = null;
-const CLIENT_UI_BUNDLE_ID = "dash-bundle-main-v52-no-dashboard-photo";
+const CLIENT_UI_BUNDLE_ID = "dash-bundle-main-v53-staff-hub-route-fix";
 const DASHBOARD_STAT_LABELS = {
   totalLearners: "Total Learners Population",
   totalActiveLearners: "Active Learners",
@@ -5575,6 +5575,7 @@ function bindSidebar() {
       if (currentModule === "system-registry") return renderInstitutionsRegistry();
       if (currentModule === "system-recycle-bin") return renderRecycleBin();
       if (currentModule === "system-cbc-editor") return renderCbcCurriculumEditor();
+      if (currentModule === "management-staff-service") return renderStaffServiceHub();
       if (currentModule === "parents-results") return loadParentOrBomResults();
       if (currentModule === "learner-materials") return loadLearnerMaterials();
       if (currentModule === "communication-messages") return renderCrudModule(currentModule);
@@ -5791,6 +5792,10 @@ function bindQuickActionCards() {
       }
       if (targetModule === "system-cbc-editor") {
         await renderCbcCurriculumEditor();
+        return;
+      }
+      if (targetModule === "management-staff-service") {
+        await renderStaffServiceHub();
         return;
       }
       if (targetModule === "parents-results") {
