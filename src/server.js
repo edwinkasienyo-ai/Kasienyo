@@ -872,7 +872,10 @@ async function ensureUserPasswordPolicyColumns() {
     // Out / Completion / Transferred cards) but was never present in
     // sql/schema.sql nor previously migrated. Add it idempotently here so
     // existing databases gain the column on next startup.
-    ["conduct_status", "VARCHAR(80) NULL"]
+    ["conduct_status", "VARCHAR(80) NULL"],
+    ["postal_address", "VARCHAR(255) NULL"],
+    ["postal_code", "VARCHAR(20) NULL"],
+    ["town", "VARCHAR(120) NULL"]
   ];
   for (const [colName, ddl] of learnerColMigrations) {
     // eslint-disable-next-line no-await-in-loop

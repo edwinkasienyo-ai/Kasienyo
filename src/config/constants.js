@@ -91,34 +91,8 @@ const ORPHAN_STATUS = ["Both parents alive", "Partial orphan", "Total orphan", "
 
 const YEAR_JOINED_WIDE_OPTIONS = Array.from({ length: 2145 - 1945 + 1 }, (_, index) => 1945 + index);
 
-const WORLD_COUNTRY_OPTIONS = [
-  "Kenya",
-  "Uganda",
-  "Tanzania",
-  "Rwanda",
-  "Ethiopia",
-  "Somalia",
-  "South Sudan",
-  "Sudan",
-  "Egypt",
-  "Morocco",
-  "South Africa",
-  "Nigeria",
-  "Ghana",
-  "United States",
-  "United Kingdom",
-  "Germany",
-  "France",
-  "Spain",
-  "Italy",
-  "India",
-  "China",
-  "Japan",
-  "Brazil",
-  "Canada",
-  "Australia",
-  "Others"
-];
+const WORLD_COUNTRY_NAMES = require("./worldCountryNames.json");
+const WORLD_COUNTRY_OPTIONS = [...WORLD_COUNTRY_NAMES, "Others"];
 
 const RELIGION_OPTIONS = [
   "Christianity",

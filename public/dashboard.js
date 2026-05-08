@@ -4,13 +4,14 @@ if (!token) {
 }
 
 let meta = {};
+let admissionRegisterRows = [];
 let currentModule = "dashboard";
 let currentEditId = null;
 let allowedModules = [];
 let portalContext = null;
 let searchRowDrafts = {};
 let dashboardAutoRefreshHandle = null;
-const CLIENT_UI_BUNDLE_ID = "dash-bundle-rev45";
+const CLIENT_UI_BUNDLE_ID = "dash-bundle-rev46-admission";
 const DASHBOARD_STAT_LABELS = {
   totalLearners: "Total Learners Population",
   totalActiveLearners: "Active Learners",
@@ -2601,15 +2602,15 @@ const moduleConfigs = {
       { name: "full_name", label: "Full Name (leave blank to auto-build)" },
       { name: "admission_number", label: "Admission Number *" },
       { name: "date_of_admission", label: "Date of Admission", type: "date" },
-      { name: "grade", label: "Grade *", type: "select", optionsKey: "gradeOptions" },
-      { name: "form_name", label: "Form (3–4)", type: "select", optionsKey: "formOptions" },
+      { name: "grade", label: "Grade (CBC / Primary / Junior)", type: "select", optionsKey: "gradeOptions" },
+      { name: "form_name", label: "Form (Secondary 3–4)", type: "select", optionsKey: "formOptions" },
       { name: "stream", label: "Stream" },
       { name: "assessment_number", label: "Assessment Number" },
       { name: "upi_number", label: "UPI Number" },
       { name: "birth_certificate_number", label: "Birth Certificate Number *" },
       { name: "date_of_birth", label: "Date of Birth", type: "date" },
       { name: "gender", label: "Gender", type: "select", optionsKey: "genderOptions" },
-      { name: "passport_photo_path", label: "Photo Path (/uploads/...)", type: "textarea" },
+      { name: "passport_photo_path", label: "Photo path (upload or type /uploads/...)", type: "photoPath" },
       { name: "religion", label: "Religion", type: "select", optionsKey: "religionOptions" },
       { name: "nationality", label: "Nationality", type: "select", optionsKey: "nationalityOptions" },
       { name: "county", label: "County", type: "select", optionsKey: "kenyaCountyOptions" },
@@ -2617,6 +2618,9 @@ const moduleConfigs = {
       { name: "location", label: "Location" },
       { name: "sub_location", label: "Sub-location" },
       { name: "village", label: "Village" },
+      { name: "postal_address", label: "Postal address" },
+      { name: "town", label: "Town" },
+      { name: "postal_code", label: "Postal Code", type: "select", optionsKey: "kenyaPostalCodeSelectOptions" },
       { name: "year_joined", label: "Year Joined", type: "select", optionsKey: "yearJoinedWideOptions" },
       { name: "term_joined", label: "Term", type: "select", optionsKey: "termOptions" },
       { name: "learner_condition", label: "Learner Condition", type: "select", options: ["Without disability", "With disability"] },
@@ -2642,7 +2646,6 @@ const moduleConfigs = {
       { name: "parent2_nationality", label: "Parent/Guardian 2 Nationality", type: "select", optionsKey: "nationalityOptions" },
       { name: "parent2_residence", label: "Parent/Guardian 2 Residence" },
       { name: "parent2_occupation", label: "Parent/Guardian 2 Occupation" },
-      { name: "postal_code_lookup", label: "Kenya postal code → town (helper)", type: "select", optionsKey: "postalCodeTownOptions" },
       { name: "conduct_status", label: "Conduct Status" },
       { name: "learner_password_hash", label: "Learner password hash (technical)" }
     ]
@@ -3291,8 +3294,29 @@ function buildInput(field) {
   if (field.type === "textarea") {
     return `<label>${field.label}</label><textarea id="${id}" rows="3" placeholder="${field.label}">${value}</textarea>`;
   }
+  if (field.type === "photoPath") {
+    return `<label>${escapeHtml(field.label)}</label>
+<div class="photo-path-upload-row">
+<input id="${id}" type="text" placeholder="/uploads/..." value="${escapeHtml(value)}" />
+<input id="${id}-file" type="file" accept="image/*,.heic,.heif,.tif,.tiff,.bmp" />
+<button type="button" class="ax-btn ax-btn--upload ax-btn--sm" id="${id}-upload">Upload</button>
+</div>`;
+  }
   if (field.type === "select") {
     const options = field.options || meta[field.optionsKey] || [];
+    if (options.length && typeof options[0] === "object" && options[0] && "value" in options[0]) {
+      const optionHtml = ['<option value="">Select...</option>']
+        .concat(
+          options.map(
+            (option) =>
+              `<option value="${escapeHtmlAttribute(String(option.value))}">${escapeHtml(
+                option.label != null ? option.label : String(option.value)
+              )}</option>`
+          )
+        )
+        .join("");
+      return `<label>${field.label}</label><select id="${id}">${optionHtml}</select>`;
+    }
     const optionHtml = ['<option value="">Select...</option>']
       .concat(options.map((option) => `<option value="${option}">${option}</option>`))
       .join("");
@@ -3319,6 +3343,13 @@ function setFieldValue(field, value) {
 function clearForm(config) {
   currentEditId = null;
   config.fields.forEach((field) => setFieldValue(field, ""));
+  if (currentModule === "admission") {
+    const bio = document.querySelector(".admission-bio-panel");
+    if (bio) {
+      refreshAdmissionGradeFormExclusiveState(bio);
+      syncAdmissionDisabilityField(bio);
+    }
+  }
 }
 
 function cbcBandFromScore(score) {
@@ -3362,15 +3393,31 @@ async function saveCurrentModule() {
     }
     const first = String(payload.first_name || "").trim();
     const last = String(payload.last_name || "").trim();
-    const gradeVal = String(payload.grade || "").trim();
+    let gradeVal = String(payload.grade || "").trim();
+    let formVal = String(payload.form_name || "").trim();
+    if (gradeVal && formVal) {
+      alert("Choose either a Grade or a Form—not both.");
+      return;
+    }
+    if (!gradeVal && !formVal) {
+      alert("Select either a Grade or a Form for the learner.");
+      return;
+    }
+    if (formVal) {
+      payload.grade = "";
+      payload.form_name = formVal;
+    } else {
+      payload.form_name = "";
+      payload.grade = gradeVal;
+    }
     const parentName = String(payload.parent_full_name || "").trim();
     const parentNationality = String(payload.parent_nationality || "").trim();
     const parentResidence = String(payload.parent_residence || "").trim();
     const parentOccupation = String(payload.parent_occupation || "").trim();
     const parentMobile = String(payload.parent_phone || "").trim();
-    if (!first || !gradeVal || !parentName || !parentNationality || !parentResidence || !parentOccupation || !parentMobile) {
+    if (!first || !parentName || !parentNationality || !parentResidence || !parentOccupation || !parentMobile) {
       alert(
-        "Mandatory fields missing: learner first name, grade, parent/guardian full name, nationality, residence, occupation, and mobile."
+        "Mandatory fields missing: learner first name, parent/guardian full name, nationality, residence, occupation, and mobile (and either grade or form)."
       );
       return;
     }
@@ -3447,6 +3494,13 @@ async function editRow(id) {
     const row = await request(`${config.endpoint}/${id}`);
     currentEditId = row.id;
     config.fields.forEach((field) => setFieldValue(field, row[field.name]));
+    if (currentModule === "admission") {
+      const bio = document.querySelector(".admission-bio-panel");
+      if (bio) {
+        refreshAdmissionGradeFormExclusiveState(bio);
+        syncAdmissionDisabilityField(bio);
+      }
+    }
   } catch (error) {
     alert(error.message);
   }
@@ -3554,13 +3608,277 @@ async function loadModuleData(config) {
   try {
     const rows = await request(config.endpoint);
     renderModuleSummary(config, rows || []);
+    if (currentModule === "admission") {
+      admissionRegisterRows = rows || [];
+      renderAdmissionRegisterTable();
+      resetDataTable(
+        "The admission register is shown in the Admission Module form (scroll to “Admission Register”)."
+      );
+      return;
+    }
     renderTable(rows || []);
   } catch (error) {
     alert(error.message);
   }
 }
 
-async function dispatchCommunicationMessage(id) {
+function admissionStatusClass(status) {
+  const normalized = String(status || "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ");
+  if (normalized === "in session") return "adm-status--in-session";
+  if (normalized === "not in session") return "adm-status--not-in-session";
+  if (normalized.includes("transferred")) return "adm-status--transferred";
+  if (normalized.includes("alumni")) return "adm-status--alumni";
+  if (normalized.includes("deceased")) return "adm-status--deceased";
+  return "adm-status--default";
+}
+
+function filterAdmissionRegisterRows() {
+  const raw = admissionRegisterRows || [];
+  const scopeEl = document.getElementById("admissionRegisterScope");
+  const streamEl = document.getElementById("admissionRegisterStream");
+  const gfEl = document.getElementById("admissionRegisterGradeFormFilter");
+  const qEl = document.getElementById("admissionRegisterSearch");
+  const scope = scopeEl ? scopeEl.value : "whole";
+  const streamNeedle = String(streamEl?.value || "")
+    .trim()
+    .toLowerCase();
+  const gradeFormVal = String(gfEl?.value || "").trim();
+  const q = String(qEl?.value || "")
+    .trim()
+    .toLowerCase();
+
+  return raw.filter((row) => {
+    if (scope === "stream" && streamNeedle) {
+      const s = String(row.stream || "")
+        .trim()
+        .toLowerCase();
+      if (!s || s !== streamNeedle) return false;
+    }
+    if (scope === "gradeform" && gradeFormVal) {
+      const g = String(row.grade || "").trim();
+      const f = String(row.form_name || "").trim();
+      if (g !== gradeFormVal && f !== gradeFormVal) return false;
+    }
+    if (q) {
+      const blob = [
+        row.full_name,
+        row.admission_number,
+        row.stream,
+        row.grade,
+        row.form_name,
+        row.upi_number
+      ]
+        .map((v) => String(v || "").toLowerCase())
+        .join(" ");
+      if (!blob.includes(q)) return false;
+    }
+    return true;
+  });
+}
+
+function renderAdmissionRegisterTable() {
+  const head = document.getElementById("admissionRegisterHead");
+  const body = document.getElementById("admissionRegisterBody");
+  if (!head || !body) return;
+  const rows = filterAdmissionRegisterRows();
+  head.innerHTML = `<tr>
+    <th>#</th>
+    <th>Admission No.</th>
+    <th>Full name</th>
+    <th>Grade</th>
+    <th>Form</th>
+    <th>Stream</th>
+    <th>Status</th>
+    <th>Parent mobile</th>
+    <th>Actions</th>
+  </tr>`;
+  if (!rows.length) {
+    body.innerHTML = `<tr><td colspan="9" class="table-empty-state">No learners match the current filters.</td></tr>`;
+    return;
+  }
+  body.innerHTML = rows
+    .map((row, idx) => {
+      const st = row.status || "-";
+      const stClass = admissionStatusClass(st);
+      return `<tr>
+        <td>${idx + 1}</td>
+        <td>${escapeHtml(row.admission_number || "-")}</td>
+        <td>${escapeHtml(row.full_name || "-")}</td>
+        <td>${escapeHtml(row.grade || "-")}</td>
+        <td>${escapeHtml(row.form_name || "-")}</td>
+        <td>${escapeHtml(row.stream || "-")}</td>
+        <td><span class="adm-status-pill ${stClass}">${escapeHtml(st)}</span></td>
+        <td>${escapeHtml(row.parent_phone || "-")}</td>
+        <td class="table-actions-cell admission-register-actions">
+          <button type="button" class="ax-btn ax-btn--view ax-btn--sm" onclick="admissionRegisterView(${row.id})">View</button>
+          <button type="button" class="ax-btn ax-btn--edit ax-btn--sm" onclick="admissionRegisterEdit(${row.id})">Edit</button>
+          <button type="button" class="ax-btn ax-btn--save ax-btn--sm" onclick="admissionRegisterSaveRow(${row.id})">Save</button>
+          <button type="button" class="ax-btn ax-btn--delete ax-btn--sm" onclick="admissionRegisterDelete(${row.id})">Delete</button>
+        </td>
+      </tr>`;
+    })
+    .join("");
+}
+
+function refreshAdmissionGradeFormExclusiveState(scopeEl) {
+  const gradeEl = scopeEl.querySelector("#field-grade");
+  const formEl = scopeEl.querySelector("#field-form_name");
+  if (!gradeEl || !formEl) return;
+  const g = String(gradeEl.value || "").trim();
+  const f = String(formEl.value || "").trim();
+  if (g) {
+    formEl.value = "";
+    formEl.disabled = true;
+    gradeEl.disabled = false;
+  } else if (f) {
+    gradeEl.value = "";
+    gradeEl.disabled = true;
+    formEl.disabled = false;
+  } else {
+    gradeEl.disabled = false;
+    formEl.disabled = false;
+  }
+}
+
+function wireAdmissionGradeFormExclusive(scopeEl) {
+  const gradeEl = scopeEl.querySelector("#field-grade");
+  const formEl = scopeEl.querySelector("#field-form_name");
+  if (!gradeEl || !formEl || gradeEl.dataset.gfBound === "1") return;
+  gradeEl.dataset.gfBound = "1";
+  formEl.dataset.gfBound = "1";
+  const onChange = () => refreshAdmissionGradeFormExclusiveState(scopeEl);
+  gradeEl.addEventListener("change", onChange);
+  formEl.addEventListener("change", onChange);
+  refreshAdmissionGradeFormExclusiveState(scopeEl);
+}
+
+function syncAdmissionDisabilityField(scopeEl) {
+  const cond = scopeEl.querySelector("#field-learner_condition");
+  const dis = scopeEl.querySelector("#field-disability_type");
+  if (!cond || !dis) return;
+  const on = cond.value === "With disability";
+  dis.disabled = !on;
+  if (!on) {
+    dis.value = "";
+  }
+}
+
+function wireAdmissionDisabilityToggle(scopeEl) {
+  const cond = scopeEl.querySelector("#field-learner_condition");
+  if (!cond || cond.dataset.disabilityBound === "1") return;
+  cond.dataset.disabilityBound = "1";
+  cond.addEventListener("change", () => syncAdmissionDisabilityField(scopeEl));
+  syncAdmissionDisabilityField(scopeEl);
+}
+
+function attachAdmissionPostalFromSelect(scopeEl) {
+  const pc = scopeEl.querySelector("#field-postal_code");
+  const town = scopeEl.querySelector("#field-town");
+  if (!pc || !town || pc.dataset.postalSync === "1") return;
+  pc.dataset.postalSync = "1";
+  pc.addEventListener("change", () => {
+    const code = String(pc.value || "").trim();
+    if (!code) return;
+    const list = meta.kenyaPostalCodeSelectOptions || [];
+    const hit = list.find((row) => String(row.value) === code);
+    if (hit && hit.town) {
+      town.value = hit.town;
+    }
+  });
+}
+
+function wireAdmissionLearnerPhotoUpload(scopeEl) {
+  const btn = scopeEl.querySelector("#field-passport_photo_path-upload");
+  const fileEl = scopeEl.querySelector("#field-passport_photo_path-file");
+  const pathInput = scopeEl.querySelector("#field-passport_photo_path");
+  if (!btn || !fileEl || !pathInput || btn.dataset.bound === "1") return;
+  btn.dataset.bound = "1";
+  btn.addEventListener("click", async () => {
+    const file = fileEl.files?.[0];
+    if (!file) {
+      alert("Choose a photo file first.");
+      return;
+    }
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      const response = await fetch("/api/uploads", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+        body: formData
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.error || "Upload failed.");
+      }
+      pathInput.value = data.filePath || "";
+      alert(data.message || "Photo uploaded.");
+    } catch (error) {
+      alert(error.message || "Upload failed.");
+    }
+  });
+}
+
+function populateAdmissionGradeFormFilterOptions() {
+  const sel = document.getElementById("admissionRegisterGradeFormFilter");
+  if (!sel) return;
+  const grades = Array.isArray(meta.gradeOptions) ? meta.gradeOptions : [];
+  const forms = Array.isArray(meta.formOptions) ? meta.formOptions : [];
+  const parts = [
+    ...grades.map((g) => ({ v: g, l: `Grade: ${g}` })),
+    ...forms.map((f) => ({ v: f, l: `Form: ${f}` }))
+  ];
+  sel.innerHTML = ['<option value="">All grades / forms</option>']
+    .concat(parts.map((p) => `<option value="${escapeHtmlAttribute(p.v)}">${escapeHtml(p.l)}</option>`))
+    .join("");
+}
+
+function wireAdmissionRegisterToolbar(config) {
+  populateAdmissionGradeFormFilterOptions();
+  document.getElementById("admissionRegisterApply")?.addEventListener("click", () => renderAdmissionRegisterTable());
+  document.getElementById("admissionRegisterPrint")?.addEventListener("click", () => window.print());
+  document.getElementById("admissionRegisterPdf")?.addEventListener("click", () => exportPdf());
+  document.getElementById("admissionRegisterXls")?.addEventListener("click", () => exportExcel());
+  ["admissionRegisterScope", "admissionRegisterStream", "admissionRegisterGradeFormFilter", "admissionRegisterSearch"].forEach(
+    (id) => {
+      document.getElementById(id)?.addEventListener("input", () => renderAdmissionRegisterTable());
+      document.getElementById(id)?.addEventListener("change", () => renderAdmissionRegisterTable());
+    }
+  );
+}
+
+function wireAdmissionModuleUi(container, config) {
+  wireAdmissionGradeFormExclusive(container);
+  wireAdmissionDisabilityToggle(container);
+  attachAdmissionPostalFromSelect(container);
+  wireAdmissionLearnerPhotoUpload(container);
+  wireAdmissionRegisterToolbar(config);
+  renderAdmissionRegisterTable();
+}
+
+async function admissionRegisterView(id) {
+  await editRow(id);
+  document.querySelector(".admission-bio-panel")?.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+async function admissionRegisterEdit(id) {
+  await admissionRegisterView(id);
+}
+
+async function admissionRegisterSaveRow(id) {
+  if (Number(currentEditId) !== Number(id)) {
+    await editRow(id);
+  }
+  await saveCurrentModule();
+}
+
+async function admissionRegisterDelete(id) {
+  await deleteRow(id);
+}
+
   if (!id) return;
   try {
     await request(`/api/communication/messages/${id}/dispatch`, { method: "POST" });
@@ -3739,6 +4057,76 @@ function renderCrudModule(moduleKey, options = {}) {
     </div>
   `;
   }
+  const admissionRegisterMarkup =
+    moduleKey === "admission"
+      ? `
+      <section class="admission-register-panel" aria-label="Admission register">
+        <h3 class="admission-register-title">Admission Register</h3>
+        <p class="small-note admission-register-note">
+          Filter learners by institution scope, stream, grade/form, or keyword search (name, admission number). Use row actions or the toolbar below.
+        </p>
+        <div class="admission-register-toolbar">
+          <label class="admission-reg-field">
+            Scope
+            <select id="admissionRegisterScope">
+              <option value="whole">Entire institution</option>
+              <option value="stream">Single stream</option>
+              <option value="gradeform">Grade or Form only</option>
+            </select>
+          </label>
+          <label class="admission-reg-field">
+            Stream
+            <input id="admissionRegisterStream" placeholder="required when scoped to stream" />
+          </label>
+          <label class="admission-reg-field">
+            Grade / Form filter
+            <select id="admissionRegisterGradeFormFilter"></select>
+          </label>
+          <label class="admission-reg-field admission-reg-search">
+            Search learner
+            <input id="admissionRegisterSearch" placeholder="name • admission no • stream" />
+          </label>
+          <div class="admission-register-toolbar-actions">
+            <button type="button" id="admissionRegisterApply" class="ax-btn ax-btn--view ax-btn--sm">Apply</button>
+            <button type="button" id="admissionRegisterPrint" class="ax-btn ax-btn--print ax-btn--sm">Print</button>
+            <button type="button" id="admissionRegisterPdf" class="ax-btn ax-btn--download ax-btn--sm">PDF</button>
+            <button type="button" id="admissionRegisterXls" class="ax-btn ax-btn--download ax-btn--sm">Excel</button>
+          </div>
+        </div>
+        <div class="dashboard-table-wrap admission-register-table-wrap">
+          <table class="dashboard-table admission-register-table" id="admissionRegisterTable">
+            <thead id="admissionRegisterHead"></thead>
+            <tbody id="admissionRegisterBody"></tbody>
+          </table>
+        </div>
+      </section>`
+      : "";
+
+  if (moduleKey === "admission") {
+    container.innerHTML = `
+    <div class="section-card-header">
+      <h3>${escapeHtml(config.title)}</h3>
+      <p class="small-note">${escapeHtml(MODULE_DESCRIPTIONS[moduleKey] || "Manage records and actions for this module.")}</p>
+    </div>
+    <div class="admission-bio-panel">
+      <h4 class="admission-bio-title">Learners Bio Data</h4>
+      <p class="small-note admission-mutual-note">Select <strong>either</strong> Grade <strong>or</strong> Form (not both). Postal code fills the town automatically.</p>
+      <div class="form-grid form-grid-admission">
+        ${config.fields.map(buildInput).join("")}
+      </div>
+      <div class="actions-row actions-row--compact">
+        <button id="${saveId}" type="button" class="ax-btn ax-btn--save ax-btn--sm">Save</button>
+        <button id="${clearId}" type="button" class="ax-btn ax-btn--reset ax-btn--sm">Clear</button>
+        <button id="${procId}" type="button" class="ax-btn ax-btn--process ax-btn--sm">Proceed</button>
+        <button id="${pdfId}" type="button" class="ax-btn ax-btn--download ax-btn--sm">PDF</button>
+        <button id="${xlsId}" type="button" class="ax-btn ax-btn--download ax-btn--sm">Excel</button>
+        <button id="${printId}" type="button" class="ax-btn ax-btn--print ax-btn--sm">Print</button>
+        <button id="${viewId}" type="button" class="ax-btn ax-btn--refresh ax-btn--sm">Refresh</button>
+      </div>
+    </div>
+    ${admissionRegisterMarkup}
+  `;
+  } else {
   container.innerHTML = `
     <div class="section-card-header">
       <h3>${config.title}</h3>
@@ -3761,9 +4149,25 @@ function renderCrudModule(moduleKey, options = {}) {
       ${moduleKey === "communication-messages" ? `<button id="${btnPrefix}-chat" type="button">Open Chat</button>` : ""}
     </div>
   `;
+  }
   document.getElementById(saveId).onclick = saveCurrentModule;
   document.getElementById(clearId).onclick = () => clearForm(config);
-  document.getElementById(procId).onclick = () => alert("Processing completed for this module.");
+  const tableAreaMain = document.querySelector(".main-content .table-area");
+  if (moduleKey === "admission") {
+    if (tableAreaMain) tableAreaMain.style.display = "none";
+    wireAdmissionModuleUi(container, config);
+    document.getElementById(procId).onclick = async () => {
+      try {
+        await loadModuleData(config);
+        alert("Admission register refreshed from the server.");
+      } catch (error) {
+        alert(error.message);
+      }
+    };
+  } else {
+    if (tableAreaMain) tableAreaMain.style.display = "";
+    document.getElementById(procId).onclick = () => alert("Processing completed for this module.");
+  }
   document.getElementById(pdfId).onclick = exportPdf;
   document.getElementById(xlsId).onclick = exportExcel;
   document.getElementById(printId).onclick = () => window.print();
@@ -3933,6 +4337,8 @@ function startDashboardAutoRefresh() {
 async function loadDashboard(options = {}) {
   const { silent = false, skipAutoRefresh = false } = options;
   currentModule = "dashboard";
+  const tableAreaMain = document.querySelector(".main-content .table-area");
+  if (tableAreaMain) tableAreaMain.style.display = "";
   setActiveSidebarButton("dashboard");
   document.getElementById("moduleTitle").textContent = "DASHBOARD";
   try {
@@ -4191,6 +4597,8 @@ function attachPostalCodeTownHelper(scopeEl) {
 async function renderStaffServiceHub() {
   stopDashboardAutoRefresh();
   currentEditId = null;
+  const tableAreaMain = document.querySelector(".main-content .table-area");
+  if (tableAreaMain) tableAreaMain.style.display = "";
   currentModule = "management-teachers";
   setActiveSidebarButton("management-staff-service");
   document.getElementById("moduleTitle").textContent = "Staff & Service Providers Profile";
@@ -5743,6 +6151,10 @@ async function init() {
 window.editRow = editRow;
 window.deleteRow = deleteRow;
 window.dispatchCommunicationMessage = dispatchCommunicationMessage;
+window.admissionRegisterView = admissionRegisterView;
+window.admissionRegisterEdit = admissionRegisterEdit;
+window.admissionRegisterSaveRow = admissionRegisterSaveRow;
+window.admissionRegisterDelete = admissionRegisterDelete;
 window.restoreCbcEntry = async (entryId) => {
   if (!entryId) return;
   try {

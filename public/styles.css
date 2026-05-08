@@ -3679,3 +3679,123 @@ td .ax-btn::before,
     padding: 3px 8px;
   }
 }
+
+/* —— Admission module: bio + compact actions + register —— */
+.admission-bio-title {
+  margin: 0 0 0.35rem;
+  font-size: 1rem;
+}
+.admission-mutual-note {
+  margin-bottom: 0.5rem;
+}
+.form-grid-admission {
+  gap: 0.5rem 0.85rem;
+}
+.actions-row--compact {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  margin-top: 0.65rem;
+}
+.photo-path-upload-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+.photo-path-upload-row input[type="text"] {
+  flex: 1 1 200px;
+  min-width: 160px;
+}
+.ax-btn.ax-btn--sm {
+  padding: 4px 10px;
+  font-size: 11px;
+  border-radius: 6px;
+  min-height: 26px;
+  line-height: 1.2;
+}
+
+.admission-register-panel {
+  margin-top: 1rem;
+  padding: 1rem;
+  border: 1px solid rgba(15, 56, 96, 0.12);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.6);
+}
+.admission-register-title {
+  margin: 0 0 0.35rem;
+  font-size: 1.05rem;
+}
+.admission-register-note {
+  margin-bottom: 0.6rem;
+}
+.admission-register-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: flex-end;
+  margin-bottom: 0.75rem;
+}
+.admission-reg-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  min-width: 140px;
+}
+.admission-reg-field select,
+.admission-reg-field input {
+  font-size: 12px;
+  padding: 4px 6px;
+}
+.admission-reg-search {
+  flex: 1 1 220px;
+}
+.admission-register-toolbar-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.admission-register-table-wrap {
+  max-height: 420px;
+  overflow: auto;
+}
+.admission-register-actions {
+  white-space: normal;
+}
+.admission-register-actions .ax-btn {
+  margin: 2px;
+}
+
+.adm-status-pill {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+}
+.adm-status--in-session {
+  background: #dcfce7;
+  color: #166534;
+}
+.adm-status--not-in-session {
+  background: #fef9c3;
+  color: #854d0e;
+}
+.adm-status--transferred {
+  background: #dbeafe;
+  color: #1e40af;
+}
+.adm-status--alumni {
+  background: #ede9fe;
+  color: #5b21b6;
+}
+.adm-status--deceased {
+  background: #fee2e2;
+  color: #991b1b;
+}
+.adm-status--default {
+  background: #f1f5f9;
+  color: #334155;
+}

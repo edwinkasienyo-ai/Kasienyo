@@ -2134,10 +2134,24 @@ app.get("/api/meta", (_, res) => {
     religionOptions: RELIGION_OPTIONS,
     disabilityTypes: DISABILITY_TYPE_OPTIONS,
     kenyaCountyOptions: COUNTIES.map((c) => `${c.name} (${c.code})`).concat(["Others"]),
-    postalCodeTownOptions: Array.from(new Set(Object.entries(KENYA_POSTAL_CODES || {}).map(([code, meta]) => {
-      const town = typeof meta === "object" ? cleanValue(meta.town || meta.area || "") : cleanValue(meta);
-      return `${code} — ${town || "Town"}`;
-    }))).slice(0, 800),
+    postalCodeTownOptions: Array.from(
+      new Set(
+        (Array.isArray(KENYA_POSTAL_CODES) ? KENYA_POSTAL_CODES : []).map((row) => {
+          const code = cleanValue(row?.postal_code || "");
+          const town = cleanValue(row?.town || row?.area || "");
+          return `${code} — ${town || "Town"}`;
+        })
+      )
+    ),
+    kenyaPostalCodeSelectOptions: (Array.isArray(KENYA_POSTAL_CODES) ? KENYA_POSTAL_CODES : []).map((row) => {
+      const code = cleanValue(row?.postal_code || "");
+      const town = cleanValue(row?.town || row?.area || "");
+      return {
+        value: code,
+        label: `${code} — ${town || "Town"}`,
+        town: town || ""
+      };
+    }),
     admissionStatus: ADMISSION_STATUS,
     orphanStatus: ORPHAN_STATUS,
     relationshipOptions: RELATIONSHIP_OPTIONS,
@@ -7099,7 +7113,10 @@ const moduleConfigs = [
       "admission_number",
       "upi_number",
       "assessment_number",
-      "birth_certificate_number"
+      "birth_certificate_number",
+      "grade",
+      "form_name",
+      "stream"
     ],
     allowedRoles: [ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER],
     fields: [
@@ -7126,6 +7143,9 @@ const moduleConfigs = [
       "location",
       "sub_location",
       "village",
+      "postal_address",
+      "postal_code",
+      "town",
       "year_joined",
       "term_joined",
       "orphan_condition",
@@ -7728,6 +7748,26 @@ moduleConfigs.forEach((config) => {
         }
       }
 
+      if (config.table === "learners") {
+        const gradePart = cleanValue(data.grade || "");
+        const formPart = cleanValue(data.form_name || "");
+        if (gradePart && formPart) {
+          return res.status(400).json({ error: "Select either Grade or Form, not both." });
+        }
+        if (!gradePart && !formPart) {
+          return res.status(400).json({ error: "Either Grade or Form must be provided." });
+        }
+        if (formPart) {
+          data.grade = "";
+        } else {
+          data.form_name = null;
+        }
+        const lc = cleanValue(data.learner_condition || "");
+        if (lc !== "With disability") {
+          data.disability_type = null;
+        }
+      }
+
       const columns = Object.keys(data);
       if (!columns.length) {
         return res.status(400).json({ error: "No valid payload fields." });
@@ -7749,6 +7789,42 @@ moduleConfigs.forEach((config) => {
     asyncHandler(async (req, res) => {
       const scopedFilter = getScopedFilter(config, req.user);
       const data = pickFields(req.body, config.fields);
+      if (config.table === "learners") {
+        const mergeRows = await query(
+          `SELECT grade, form_name, learner_condition FROM ${config.table}
+           WHERE id = ? AND institution_id = ?${scopedFilter.where}
+           LIMIT 1`,
+          [req.params.id, req.user.institution_id, ...scopedFilter.params]
+        );
+        if (!mergeRows.length) {
+          return res.status(404).json({ error: "Record not found." });
+        }
+        const prev = mergeRows[0];
+        const gradePart = cleanValue(
+          Object.prototype.hasOwnProperty.call(data, "grade") ? data.grade : prev.grade
+        );
+        const formPart = cleanValue(
+          Object.prototype.hasOwnProperty.call(data, "form_name") ? data.form_name : prev.form_name
+        );
+        if (gradePart && formPart) {
+          return res.status(400).json({ error: "Select either Grade or Form, not both." });
+        }
+        if (!gradePart && !formPart) {
+          return res.status(400).json({ error: "Either Grade or Form must be provided." });
+        }
+        if (formPart) {
+          data.grade = "";
+        } else {
+          data.form_name = null;
+        }
+        const lcSource = Object.prototype.hasOwnProperty.call(data, "learner_condition")
+          ? data.learner_condition
+          : prev.learner_condition;
+        const lc = cleanValue(lcSource || "");
+        if (lc !== "With disability") {
+          data.disability_type = null;
+        }
+      }
       const columns = Object.keys(data);
       if (!columns.length) {
         return res.status(400).json({ error: "No valid payload fields." });
