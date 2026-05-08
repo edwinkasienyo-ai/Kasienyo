@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- STEP1_IDX_REV=50 — left column intrinsic height + larger cropped hero -->
+<!-- STEP1_IDX_REV=51 — index left stacks like owner reference (light panel + hero + bordered strips) -->
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
@@ -43,11 +43,14 @@
     <link rel="apple-touch-icon" href="/uploads/index-hero.jpg?v=20260411" />
     <link rel="manifest" href="/site.webmanifest" />
     <link rel="preload" as="image" href="/uploads/index-hero.jpg?v=20260411" />
-    <link rel="stylesheet" href="/styles.css?v=50" />
+    <link rel="stylesheet" href="/styles.css?v=51" />
   </head>
   <body class="login-page login-page--split">
     <div class="login-split">
-      <aside class="login-left login-left--at-glance" aria-label="Integrated Management Information System overview">
+      <aside
+        class="login-left login-left--at-glance login-left--index-ref"
+        aria-label="Integrated Management Information System overview"
+      >
         <div class="hero-panel hero-panel--flush hero-panel--index">
           <img
             class="hero-image"
@@ -246,13 +249,13 @@
               <div id="forgotUsernameGuidance" class="forgot-username-guidance" hidden aria-live="polite"></div>
             </section>
             <p id="step1IndexFingerprint" class="login-tech-fingerprint" aria-hidden="true" hidden>
-              STEP1 ui-rev50
+              STEP1 ui-rev51
             </p>
           </div>
         </div>
       </div>
     </div>
 
-    <script src="/main.js?v=50"></script>
+    <script src="/main.js?v=51"></script>
   </body>
 </html>
