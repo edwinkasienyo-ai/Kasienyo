@@ -11,7 +11,7 @@ let allowedModules = [];
 let portalContext = null;
 let searchRowDrafts = {};
 let dashboardAutoRefreshHandle = null;
-const CLIENT_UI_BUNDLE_ID = "dash-bundle-rev46-admission";
+const CLIENT_UI_BUNDLE_ID = "dash-bundle-pr20-v47-admission";
 const DASHBOARD_STAT_LABELS = {
   totalLearners: "Total Learners Population",
   totalActiveLearners: "Active Learners",
