@@ -11,7 +11,7 @@ let allowedModules = [];
 let portalContext = null;
 let searchRowDrafts = {};
 let dashboardAutoRefreshHandle = null;
-const CLIENT_UI_BUNDLE_ID = "dash-bundle-main-v49-cards-resilient";
+const CLIENT_UI_BUNDLE_ID = "dash-bundle-main-v50-init-resilient";
 const DASHBOARD_STAT_LABELS = {
   totalLearners: "Total Learners Population",
   totalActiveLearners: "Active Learners",
@@ -6120,66 +6120,91 @@ function toRoleLabel(role) {
   return formatRoleDisplay(role);
 }
 
-async function init() {
+async function safeStep(label, fn) {
   try {
-    [meta] = await Promise.all([request("/api/meta")]);
-    const portalData = await request("/api/portal/current");
-    portalContext = portalData || null;
-    allowedModules = Array.isArray(portalData?.allowed_modules) ? portalData.allowed_modules : [];
-    const meData = await request("/api/auth/me");
+    return await fn();
+  } catch (error) {
+    console.warn(`[dashboard:init] step "${label}" failed:`, error);
+    return null;
+  }
+}
+
+function showInitErrorBanner(message) {
+  const fp = document.getElementById("dashUiFingerprint");
+  if (fp) {
+    fp.textContent = `${CLIENT_UI_BUNDLE_ID} · INIT WARNING: ${String(message).slice(0, 220)}`;
+  }
+  const cardsEl = document.getElementById("cards");
+  if (cardsEl && !cardsEl.innerHTML.trim()) {
+    cardsEl.innerHTML = `<div class="form-notice error">Some startup data did not load (check F12 console). Sidebar buttons should still work; click <strong>Dashboard</strong> to retry.</div>`;
+  }
+}
+
+async function init() {
+  meta = (await safeStep("/api/meta", () => request("/api/meta"))) || meta || {};
+  const portalData = await safeStep("/api/portal/current", () => request("/api/portal/current"));
+  portalContext = portalData || null;
+  allowedModules = Array.isArray(portalData?.allowed_modules) ? portalData.allowed_modules : [];
+  const meData = (await safeStep("/api/auth/me", () => request("/api/auth/me"))) || {};
+
+  await safeStep("applyDashboardIdentity", async () => {
     try {
       applyDashboardIdentity(meData || {});
     } catch (identityError) {
-      console.warn("[dashboard] applyDashboardIdentity failed:", identityError);
       const portalLabelEl = document.getElementById("portalLabel");
       if (portalLabelEl) {
         const fallbackName = String(meData?.institution_name || "Institution").trim();
         portalLabelEl.textContent = `${fallbackName} (${String(meData?.role || "USER")})`;
       }
+      throw identityError;
     }
-    // Parents and Learners MUST NOT print/download/screenshot
-    const normalizedUiRole = String(portalData?.role || meData?.role || "").toUpperCase();
-    if (["PARENT", "LEARNER", "BOM"].includes(normalizedUiRole)) {
-      document.body.classList.add("read-only-portal");
-      document.addEventListener("contextmenu", (e) => e.preventDefault());
-      document.addEventListener("keydown", (e) => {
-        const k = (e.key || "").toLowerCase();
-        if (e.ctrlKey && ["p", "s", "c"].includes(k)) e.preventDefault();
-        if (k === "printscreen") e.preventDefault();
-      });
-    }
+  });
+
+  const normalizedUiRole = String(portalData?.role || meData?.role || "").toUpperCase();
+  if (["PARENT", "LEARNER", "BOM"].includes(normalizedUiRole)) {
+    document.body.classList.add("read-only-portal");
+    document.addEventListener("contextmenu", (e) => e.preventDefault());
+    document.addEventListener("keydown", (e) => {
+      const k = (e.key || "").toLowerCase();
+      if (e.ctrlKey && ["p", "s", "c"].includes(k)) e.preventDefault();
+      if (k === "printscreen") e.preventDefault();
+    });
+  }
+
+  await safeStep("build-info fingerprint", async () => {
+    let stamp = "unknown";
     try {
-      let stamp = "unknown";
-      try {
-        const buildRes = await fetch("/api/build-info", { cache: "no-store" });
-        if (buildRes.ok) {
-          const b = await buildRes.json();
-          stamp = b?.build_stamp || stamp;
-        }
-      } catch (_) {
-        /* ignore */
+      const buildRes = await fetch("/api/build-info", { cache: "no-store" });
+      if (buildRes.ok) {
+        const b = await buildRes.json();
+        stamp = b?.build_stamp || stamp;
       }
-      const fp = document.getElementById("dashUiFingerprint");
-      if (fp) {
-        fp.textContent = `${CLIENT_UI_BUNDLE_ID} · API build_stamp: ${stamp} — if this text is old, redeploy or hard-refresh.`;
-      }
-    } catch (_) {
-      /* ignore */
+    } catch (_) { /* ignore */ }
+    const fp = document.getElementById("dashUiFingerprint");
+    if (fp) {
+      fp.textContent = `${CLIENT_UI_BUNDLE_ID} · API build_stamp: ${stamp} — Ctrl+F5 if this text looks old.`;
     }
-    const buildLineEl = document.getElementById("iimsBuildLineDash");
-    if (buildLineEl) {
-      buildLineEl.textContent = "";
-    }
-    bindSidebar();
-    bindTopbarButtons();
-    bindQuickActionCards();
-    await loadDashboard();
-    renderPasswordPolicyBanner(meData, portalData);
-    if (meData?.must_change_password) {
-      alert("Password policy notice: your password was reset and must be changed immediately.");
-    }
-  } catch (error) {
-    alert(error.message);
+  });
+
+  const buildLineEl = document.getElementById("iimsBuildLineDash");
+  if (buildLineEl) buildLineEl.textContent = "";
+
+  // CRITICAL: bind sidebar/topbar BEFORE the dashboard cockpit fetch so module
+  // navigation always works even if /api/dashboard/summary fails.
+  await safeStep("bindSidebar", async () => bindSidebar());
+  await safeStep("bindTopbarButtons", async () => bindTopbarButtons());
+  await safeStep("bindQuickActionCards", async () => bindQuickActionCards());
+
+  const loaded = await safeStep("loadDashboard", () => loadDashboard());
+  if (loaded === null) {
+    showInitErrorBanner("dashboard summary failed");
+  }
+
+  await safeStep("renderPasswordPolicyBanner", async () =>
+    renderPasswordPolicyBanner(meData, portalData)
+  );
+  if (meData?.must_change_password) {
+    alert("Password policy notice: your password was reset and must be changed immediately.");
   }
 }
 
