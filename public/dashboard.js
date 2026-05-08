@@ -11,7 +11,7 @@ let allowedModules = [];
 let portalContext = null;
 let searchRowDrafts = {};
 let dashboardAutoRefreshHandle = null;
-const CLIENT_UI_BUNDLE_ID = "dash-bundle-pr20-v47-admission";
+const CLIENT_UI_BUNDLE_ID = "dash-bundle-main-v48-layoutfix";
 const DASHBOARD_STAT_LABELS = {
   totalLearners: "Total Learners Population",
   totalActiveLearners: "Active Learners",
@@ -3232,6 +3232,10 @@ function isSidebarModuleAllowed(moduleId) {
 }
 
 function isDashboardWidgetVisible(widgetKey) {
+  const role = String(portalContext?.role || "").toUpperCase();
+  if (["SYSTEM_DEVELOPER", "ADMIN", "HEAD_OF_INSTITUTION"].includes(role)) {
+    return true;
+  }
   if (!Array.isArray(allowedModules) || !allowedModules.length) return true;
   if (allowedModules.includes("dashboard")) return true;
   return allowedModules.includes(widgetKey);
@@ -4300,18 +4304,24 @@ function renderDashboardCards(stats) {
   }
 
   const entries = Object.entries(stats || {}).filter(([key]) => cardAllowedForStat(key));
-  document.getElementById("cards").innerHTML = entries.length
-    ? entries
-        .map(
-          ([key, value]) => `
+  const privilegedOverview = ["SYSTEM_DEVELOPER", "ADMIN", "HEAD_OF_INSTITUTION"].includes(
+    String(portalContext?.role || "").toUpperCase()
+  );
+  document.getElementById("cards").innerHTML =
+    entries.length || !privilegedOverview
+      ? entries.length
+        ? entries
+          .map(
+            ([key, value]) => `
       <div class="card stats-card metric-card metric-${escapeHtml(key)}">
-        <h4>${DASHBOARD_STAT_LABELS[key] || key.replace(/([A-Z])/g, " $1")}</h4>
+        <h4>${escapeHtml(DASHBOARD_STAT_LABELS[key] || key.replace(/([A-Z])/g, " $1"))}</h4>
         <p>${key.toLowerCase().includes("fee") ? formatMoney(value) : formatNumber(value)}</p>
       </div>
     `
-        )
-        .join("")
-    : '<p class="small-note dashboard-hidden-widget">Dashboard statistics cards are restricted for your account.</p>';
+          )
+          .join("")
+        : '<p class="small-note dashboard-hidden-widget">Dashboard statistics cards are restricted for your account.</p>'
+      : `<p class="small-note dashboard-empty-stats">Overview metrics will populate as admissions, attendance, fees, and marks are captured. API returned no summary totals yet.</p>`;
 }
 
 function stopDashboardAutoRefresh() {
@@ -4504,6 +4514,21 @@ async function loadDashboard(options = {}) {
   } catch (error) {
     if (!silent) {
       alert(error.message);
+    }
+    const cardsEl = document.getElementById("cards");
+    const formAreaEl = document.getElementById("formArea");
+    if (!silent && cardsEl) {
+      cardsEl.innerHTML = `<div class="form-notice error dashboard-load-error">${escapeHtml(
+        error.message || "Dashboard statistics could not be loaded."
+      )}</div>`;
+    }
+    if (!silent && formAreaEl) {
+      formAreaEl.innerHTML = `
+        <div class="form-notice error">
+          <strong>Dashboard data unavailable.</strong>
+          Check MySQL is running and you are logged in on the URL/port from your <code>npm start</code> banner.
+          You can retry by clicking <strong>Dashboard</strong> in the sidebar.
+        </div>`;
     }
   }
 }
@@ -6097,11 +6122,7 @@ async function init() {
     portalContext = portalData || null;
     allowedModules = Array.isArray(portalData?.allowed_modules) ? portalData.allowed_modules : [];
     const meData = await request("/api/auth/me");
-    const institutionName = String(
-      meData?.institution_name || portalData?.institution_name || "Institution"
-    ).trim();
-    const roleLabel = formatRoleDisplay(portalData?.role || meData?.role || "");
-    document.getElementById("portalLabel").textContent = `${institutionName} (${roleLabel})`;
+    applyDashboardIdentity(meData || {});
     // Parents and Learners MUST NOT print/download/screenshot
     const normalizedUiRole = String(portalData?.role || meData?.role || "").toUpperCase();
     if (["PARENT", "LEARNER", "BOM"].includes(normalizedUiRole)) {

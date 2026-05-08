@@ -1613,9 +1613,9 @@ button:hover {
 }
 
 .main-content {
-  flex: 1;
+  flex: 1 1 auto;
   min-width: 0;
-  height: 100vh;
+  min-height: 0;
   padding: 12px 14px;
   overflow-y: auto;
   overflow-x: hidden;
@@ -3397,6 +3397,24 @@ tbody tr:hover {
     overflow: visible;
   }
 
+  .cards {
+    grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 1fr));
+    gap: 10px;
+  }
+
+  #dashboardWelcomeTop.dashboard-welcome-top {
+    padding: 12px;
+  }
+
+  .dashboard-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .dashboard-fixed-header {
+    position: relative;
+    top: auto;
+  }
+
   .app-shell {
     height: auto;
     overflow: visible;
@@ -3798,4 +3816,9 @@ td .ax-btn::before,
 .adm-status--default {
   background: #f1f5f9;
   color: #334155;
+}
+
+.dashboard-empty-stats,
+.dashboard-load-error {
+  margin: 4px 0 10px;
 }
