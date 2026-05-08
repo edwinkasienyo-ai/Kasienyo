@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- STEP1_IDX_REV=48 — tighten index left flex / split login auth panel polish -->
+<!-- STEP1_IDX_REV=49 — hero crop favors graduates; footer links removed -->
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
@@ -43,7 +43,7 @@
     <link rel="apple-touch-icon" href="/uploads/index-hero.jpg?v=20260411" />
     <link rel="manifest" href="/site.webmanifest" />
     <link rel="preload" as="image" href="/uploads/index-hero.jpg?v=20260411" />
-    <link rel="stylesheet" href="/styles.css?v=48" />
+    <link rel="stylesheet" href="/styles.css?v=49" />
   </head>
   <body class="login-page login-page--split">
     <div class="login-split">
@@ -110,20 +110,12 @@
       <div class="login-right-stack">
         <div class="login-right">
           <div class="card auth-card auth-card--compact auth-card--index glass-card">
-            <header class="auth-card-head">
+            <header class="auth-card-head auth-card-head--welcome-only">
               <h3 class="auth-welcome-heading">Welcome back</h3>
               <p class="small-note auth-intro auth-intro--tight">
                 Sign in with your credentials and verify OTP. Select <strong>Portal role</strong> first — other fields
                 activate afterward.
               </p>
-              <div class="auth-link-row auth-link-row--top">
-                <button class="link-btn link-btn--subtle" type="button" data-auth-panel="forgotUsernamePanel">
-                  Forgot username
-                </button>
-                <button class="link-btn link-btn--subtle" type="button" data-auth-panel="forgotPasswordPanel">
-                  Forgot password
-                </button>
-              </div>
             </header>
             <p id="authNotice" class="small-note auth-notice" aria-live="polite"></p>
 
@@ -167,6 +159,15 @@
             <label>OTP code</label>
             <input id="otp" placeholder="Enter the code you received" disabled />
             <button id="verifyButton" class="auth-primary-btn" type="button" disabled>Verify OTP &amp; log in</button>
+
+            <div class="auth-link-row auth-link-row--after-verify">
+              <button class="link-btn link-btn--subtle" type="button" data-auth-panel="forgotUsernamePanel">
+                Forgot username
+              </button>
+              <button class="link-btn link-btn--subtle" type="button" data-auth-panel="forgotPasswordPanel">
+                Forgot password
+              </button>
+            </div>
 
             <section id="forgotPasswordPanel" class="auth-panel">
               <h4>Forgot Password</h4>
@@ -245,53 +246,13 @@
               <div id="forgotUsernameGuidance" class="forgot-username-guidance" hidden aria-live="polite"></div>
             </section>
             <p id="step1IndexFingerprint" class="login-tech-fingerprint" aria-hidden="true" hidden>
-              STEP1 ui-rev47
+              STEP1 ui-rev49
             </p>
           </div>
         </div>
-
-        <nav class="index-legal-footer-below" aria-label="Legal and information">
-          <button type="button" class="legal-link-btn" data-index-page="about">About</button>
-          <button type="button" class="legal-link-btn" data-index-page="contact">Contact</button>
-          <button type="button" class="legal-link-btn" data-index-page="privacy">Privacy Policy</button>
-          <button type="button" class="legal-link-btn" data-index-page="terms">Terms of Service</button>
-          <button type="button" class="legal-link-btn" data-index-page="compliance">Compliance</button>
-          <button type="button" class="legal-link-btn" data-index-page="support">Support</button>
-          <button type="button" class="legal-link-btn" data-index-page="support-compliance">Support &amp; Compliance</button>
-          <button type="button" class="legal-link-btn" data-index-page="cookies">Cookie Notice</button>
-          <button type="button" class="legal-link-btn" data-index-page="security">Security</button>
-          <button type="button" class="legal-link-btn" data-index-page="humans">Humans.txt</button>
-          <button type="button" class="legal-link-btn" data-index-page="llms">LLMs.txt</button>
-          <button type="button" class="legal-link-btn" data-index-page="status">Service Status</button>
-          <button type="button" class="legal-link-btn" data-index-page="accessibility">Accessibility</button>
-        </nav>
       </div>
     </div>
 
-    <div
-      id="indexPageModal"
-      class="index-modal"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="indexPageModalTitle"
-      hidden
-    >
-      <div class="index-modal__backdrop" data-index-modal-close tabindex="-1"></div>
-      <div class="index-modal__panel">
-        <header class="index-modal__header">
-          <h2 id="indexPageModalTitle" class="index-modal__title"></h2>
-          <button type="button" class="index-modal__close" data-index-modal-close aria-label="Close dialog">×</button>
-        </header>
-        <div id="indexPageModalBody" class="index-modal__body"></div>
-        <footer class="index-modal__footer">
-          <a id="indexPageModalOpenNew" class="index-modal__open-tab" href="#" target="_blank" rel="noopener noreferrer"
-            >Open full page in new tab</a
-          >
-          <button type="button" class="primary-btn index-modal__done" data-index-modal-close>Close</button>
-        </footer>
-      </div>
-    </div>
-
-    <script src="/main.js?v=48"></script>
+    <script src="/main.js?v=49"></script>
   </body>
 </html>
