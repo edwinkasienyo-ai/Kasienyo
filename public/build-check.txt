@@ -1,12 +1,10 @@
-IIMS static file check — if you can read this in the browser, Express is serving THIS project folder.
+IIMS static file check — Express is serving THIS project folder (`public/` from cwd).
 
-Expected release stamp: 20260422-ui9 (override with IIMS_BUILD_STAMP in .env).
-Dashboard sidebar shows yellow line: "Static UI v9 — System Admin is directly under Dashboard".
-If terminal does not print a boxed IIMS SERVER STARTED banner with Folder (cwd), server.js is old — git pull and restart.
+1. Open **`http://localhost:<PORT-from-banner>/`** — not an older `:5002` tab if banner says `:5003`.
+2. **`GET http://localhost:<PORT>/api/build-info`** JSON includes **`public_index`** (`step1_index_rev`, `styles_css_query_v`). After `git pull` these must match `public/index.html` on disk.
 
-JSON: GET /api/build-info
-Typo alias: GET /api/building-info
+Release stamp: set `IIMS_BUILD_STAMP` in `.env` if you want a custom banner label.
 
-Login page must NOT show "Register institution" on the index — registration is only inside the dashboard after sign-in.
+JSON: `GET /api/build-info`
 
-If your public/index.html still has Register institution links, replace your BASIC EDUCATION folder with the latest Git files.
+If port fallback messages appear (`Port 5002 is in use`), stop stray Node: `Get-Process node | Stop-Process -Force`, then run `npm start` again.

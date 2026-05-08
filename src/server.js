@@ -1,5 +1,6 @@
 require("dotenv").config();
 const app = require("./app");
+const { readPublicIndexFingerprint } = require("./readIndexFingerprint");
 
 const IIMS_BUILD_STAMP = process.env.IIMS_BUILD_STAMP || "ui-deploy-rev45";
 const { query } = require("./config/db");
@@ -1178,16 +1179,26 @@ async function start() {
   }
 
   const cwd = process.cwd();
+  const idxFp = readPublicIndexFingerprint();
+  const portShiftNote =
+    boundPort !== PORT
+      ? `
+  [!] Port ${PORT} is in use — this server bound to :${boundPort}.
+      Use the URL above. If you still open :${PORT}, you may be hitting a *different* OLD Node process with stale files. Run: Get-Process node | Stop-Process -Force then npm start again.
+`
+      : "";
+
   const banner = `
 ================================================================================
   IIMS SERVER STARTED
   Folder (cwd): ${cwd}
   URL:          http://localhost:${boundPort}
   Release:      ${IIMS_BUILD_STAMP}
+  Index UX:     STEP1_IDX_REV=${idxFp.step1_index_rev ?? "?"}, styles.css?v=${idxFp.styles_css_query_v ?? "?"}
   Check API:    http://localhost:${boundPort}/api/build-info
   Static test:  http://localhost:${boundPort}/build-check.txt
-  If Release is NOT ${IIMS_BUILD_STAMP} or Folder is wrong, pull Git and restart.
-================================================================================`;
+  If Release or the Index UX line looks stale after git pull, stop every Node process and npm start once.
+${portShiftNote}================================================================================`;
   // eslint-disable-next-line no-console
   console.log(banner);
 }
