@@ -60,7 +60,8 @@ const {
   buildSuggestionFromMappings,
   makeNotes,
   getAllCbcLearningAreas,
-  buildBulkCbcEntries
+  buildBulkCbcEntries,
+  getPreTechnicalSeedRows
 } = require("./config/cbcLibrary");
 const {
   KICD_LEVEL_PAGES,
@@ -7626,6 +7627,136 @@ app.post(
       document_summaries: extracted.document_summaries,
       level_errors: catalog.level_errors,
       document_errors: extracted.document_errors
+    });
+  })
+);
+
+app.post(
+  "/api/cbc/curriculum/pretechnical-seed",
+  auth,
+  enforceModuleAccess(MODULE_KEYS.CBC_CURRICULUM_EDITOR),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
+  enforcePermission(PERMISSIONS.CREATE),
+  asyncHandler(async (req, res) => {
+    const replaceExisting = parseTruthy(req.body?.replace_existing);
+    const sourceLabel = "PHOTO_JSS_PRETECHNICAL";
+    const seedRows = getPreTechnicalSeedRows();
+    if (replaceExisting) {
+      await query(
+        `DELETE FROM cbc_structure_mappings
+         WHERE institution_id = ? AND source_label = ?`,
+        [req.user.institution_id, sourceLabel]
+      );
+    }
+    const existingRows = await query(
+      `SELECT learning_area, strand, sub_strand, COALESCE(grade, '') grade
+       FROM cbc_structure_mappings
+       WHERE institution_id = ? AND source_label = ?`,
+      [req.user.institution_id, sourceLabel]
+    );
+    const existingKeys = new Set(
+      existingRows.map((row) => [
+        cleanValue(row.grade).toLowerCase(),
+        cleanValue(row.learning_area).toLowerCase(),
+        cleanValue(row.strand).toLowerCase(),
+        cleanValue(row.sub_strand).toLowerCase()
+      ].join("::"))
+    );
+    let insertedMappings = 0;
+    let skippedMappings = 0;
+    for (const row of seedRows) {
+      const key = [
+        cleanValue(row.grade).toLowerCase(),
+        cleanValue(row.learning_area).toLowerCase(),
+        cleanValue(row.strand).toLowerCase(),
+        cleanValue(row.sub_strand).toLowerCase()
+      ].join("::");
+      if (!replaceExisting && existingKeys.has(key)) {
+        skippedMappings += 1;
+        // eslint-disable-next-line no-continue
+        continue;
+      }
+      await query(
+        `INSERT INTO cbc_structure_mappings
+          (institution_id, learning_area, strand, sub_strand, notes, grade, form_name, source_label, created_by_user_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          req.user.institution_id,
+          row.learning_area,
+          row.strand,
+          row.sub_strand,
+          cleanOptionalValue(row.notes),
+          cleanOptionalValue(row.grade),
+          null,
+          sourceLabel,
+          req.user.id
+        ]
+      );
+      existingKeys.add(key);
+      insertedMappings += 1;
+    }
+
+    const existingEntries = await query(
+      `SELECT id, COALESCE(grade, '') grade, learning_area, strand, sub_strand
+       FROM cbc_curriculum_entries
+       WHERE institution_id = ?`,
+      [req.user.institution_id]
+    );
+    const existingEntryKeys = new Set(
+      existingEntries.map((entry) => [
+        cleanValue(entry.grade).toLowerCase(),
+        cleanValue(entry.learning_area).toLowerCase(),
+        cleanValue(entry.strand).toLowerCase(),
+        cleanValue(entry.sub_strand).toLowerCase()
+      ].join("::"))
+    );
+    let insertedCurriculumEntries = 0;
+    for (const row of seedRows) {
+      const key = [
+        cleanValue(row.grade).toLowerCase(),
+        cleanValue(row.learning_area).toLowerCase(),
+        cleanValue(row.strand).toLowerCase(),
+        cleanValue(row.sub_strand).toLowerCase()
+      ].join("::");
+      if (existingEntryKeys.has(key)) {
+        // eslint-disable-next-line no-continue
+        continue;
+      }
+      await query(
+        `INSERT INTO cbc_curriculum_entries
+          (institution_id, grade, form_name, learning_area, strand, sub_strand, specific_learning_outcomes,
+           learning_experiences, notes, created_by_user_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          req.user.institution_id,
+          cleanOptionalValue(row.grade),
+          null,
+          row.learning_area,
+          row.strand,
+          row.sub_strand,
+          "",
+          "",
+          "",
+          req.user.id
+        ]
+      );
+      existingEntryKeys.add(key);
+      insertedCurriculumEntries += 1;
+    }
+
+    await auditLog(req.user, "SEED_JSS_PRETECHNICAL_STRANDS", "cbc_structure_mappings", null, {
+      source_label: sourceLabel,
+      replace_existing: replaceExisting,
+      inserted_mappings: insertedMappings,
+      skipped_mappings: skippedMappings,
+      inserted_curriculum_entries: insertedCurriculumEntries
+    });
+    res.json({
+      message: "Grade 7-9 Pre-Technical strands/sub-strands seeded successfully.",
+      source_label: sourceLabel,
+      inserted_mappings: insertedMappings,
+      skipped_mappings: skippedMappings,
+      inserted_curriculum_entries: insertedCurriculumEntries
     });
   })
 );

@@ -3063,6 +3063,7 @@ async function renderCbcCurriculumEditor(options = {}) {
         <label>Upload Teacher/Textbook/Learning Material</label><input id="cbcMaterialFile" type="file" />
       </div>
       <div class="ax-toolbar">
+        <button class="ax-btn ax-btn--add" id="seedPretechnicalStrandsButton">Load Grade 7-9 Pre-Technical Strands</button>
         <button class="ax-btn ax-btn--save" id="saveCbcEntryButton">Save Curriculum Entry</button>
         <button class="ax-btn ax-btn--generate" id="generateCbcStructureButton">AI Strand/Sub-Strand Assist</button>
         <button class="ax-btn ax-btn--generate" id="generateCbcNotesButton">Generate AI Notes</button>
@@ -3258,6 +3259,7 @@ async function renderCbcCurriculumEditor(options = {}) {
     let strandMap = {};
 
     const writeControlIds = [
+      "seedPretechnicalStrandsButton",
       "saveCbcEntryButton",
       "generateCbcStructureButton",
       "bulkGenerateCbcLibraryButton",
@@ -3301,6 +3303,8 @@ async function renderCbcCurriculumEditor(options = {}) {
         );
         if (matchedLevel) levelEl.value = matchedLevel.key || "";
       }
+      if (gradeEl) gradeEl.disabled = hasForm;
+      if (formEl) formEl.disabled = hasGrade;
 
       const uploadButton = document.getElementById("uploadCbcMaterialButton");
       if (uploadButton) uploadButton.disabled = !canManageCurriculum;
@@ -3421,6 +3425,28 @@ async function renderCbcCurriculumEditor(options = {}) {
     applyRoleEditMode();
     refreshLearningAreaOptionsFromSelection();
     applyCurriculumActivationState();
+    document.getElementById("seedPretechnicalStrandsButton")?.addEventListener("click", async () => {
+      const proceed = window.confirm(
+        "Load Grade 7, 8 and 9 Pre-Technical strands/sub-strands from the provided photo set?"
+      );
+      if (!proceed) return;
+      try {
+        const result = await request("/api/cbc/curriculum/pretechnical-seed", {
+          method: "POST",
+          body: JSON.stringify({
+            replace_existing: false
+          })
+        });
+        alert(
+          `${result.message || "Seed complete."}\nInserted mappings: ${result.inserted_mappings || 0}\nSkipped: ${
+            result.skipped_mappings || 0
+          }`
+        );
+        await renderCbcCurriculumEditor();
+      } catch (error) {
+        alert(error.message);
+      }
+    });
     document.getElementById("generateCbcNotesButton")?.addEventListener("click", async () => {
       const payload = {
         grade: gradeEl?.value || "",

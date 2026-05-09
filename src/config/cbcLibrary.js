@@ -44,6 +44,86 @@ const SUBJECT_LIBRARY = {
   }
 };
 
+const PRE_TECHNICAL_JSS_LIBRARY = {
+  "Grade 7": {
+    "1.0 Foundations of Pre-Technical Studies": [
+      "1.1 Introduction to Pre-Technical Studies",
+      "1.2 Safety in the Immediate environment",
+      "1.3 Computer Concepts"
+    ],
+    "2.0 Communication in Pre-Technical studies": [
+      "2.1 Introduction to Drawing",
+      "2.2 Free-hand sketching",
+      "2.3 ICT tools in Communication"
+    ],
+    "3.0 Materials for Production": [
+      "3.1 Introduction to Materials",
+      "3.2 Metallic Materials",
+      "3.3 Non-Metallic Materials"
+    ],
+    "4.0 Tools and Production": [
+      "4.1 Measuring and Marking Out Tools",
+      "4.2 computer hardware"
+    ],
+    "5.0 Entrepreneurship": [
+      "5.1 Introduction to Entrepreneurship",
+      "5.2 Production Unit",
+      "5.3 Financial Goals"
+    ]
+  },
+  "Grade 8": {
+    "1.0 Foundations of Pre-Technical studies": [
+      "1.1 Fire Safety",
+      "1.2 Data Safety"
+    ],
+    "2.0 Communication": [
+      "2.1 Plane Geometry",
+      "2.2 Dimensioning",
+      "2.3 Plain scale drawing",
+      "2.4 Visual programming"
+    ],
+    "3.0 Materials for production": [
+      "3.1 Composite Materials",
+      "3.2 Ceramics"
+    ],
+    "4.0 Tools and Production": [
+      "4.1 Cutting Tools",
+      "4.2 Computer Software"
+    ],
+    "5.0 Entrepreneurship": [
+      "5.1 Bookkeeping",
+      "5.2 Income and Budgeting",
+      "5.3 Marketing goods and Services",
+      "5.4 Distribution of Goods and Services"
+    ]
+  },
+  "Grade 9": {
+    "1.0 Foundations of Pre-Technical Studies": [
+      "1.1 Safety on Raised Platforms",
+      "1.2 Handling Hazardous Substances",
+      "1.3 Self-Exploration and Career Development"
+    ],
+    "2.0 Communication in Pre-Technical Studies": [
+      "2.1 Oblique Projection",
+      "2.2 Visual Programming"
+    ],
+    "3.0 Materials for Production": [
+      "3.1 Wood",
+      "3.2 Handling Waste Materials"
+    ],
+    "4.0 Tools and Production": [
+      "4.1 Holding Tools",
+      "4.2 Driving Tools",
+      "4.3 Project"
+    ],
+    "5.0 Entrepreneurship": [
+      "5.1 Financial Services",
+      "5.2 Government and Business",
+      "5.3 Business Plan"
+    ]
+  }
+};
+
 function getAllCbcLearningAreas() {
   const levelAreas = Array.isArray(CBC_LEVELS)
     ? CBC_LEVELS.flatMap((level) => [
@@ -56,6 +136,17 @@ function getAllCbcLearningAreas() {
 
 function normalize(value) {
   return String(value || "").trim();
+}
+
+function normalizeKey(value) {
+  return normalize(value)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "");
+}
+
+function isPreTechnicalLearningArea(value = "") {
+  const key = normalizeKey(value);
+  return key.includes("pretechnical") && key.includes("studies");
 }
 
 function textbookReferences(learningArea, gradeOrForm) {
@@ -112,6 +203,26 @@ function buildCbcSuggestion({ grade, formName, learningArea, mappingRows = [] })
     return mappedSuggestion;
   }
   const subjectKey = normalize(learningArea);
+  const gradeKey = normalize(grade);
+  if (isPreTechnicalLearningArea(subjectKey) && PRE_TECHNICAL_JSS_LIBRARY[gradeKey]) {
+    const strands = Object.keys(PRE_TECHNICAL_JSS_LIBRARY[gradeKey]);
+    const subStrandsByStrand = {};
+    strands.forEach((strand) => {
+      subStrandsByStrand[strand] = [...PRE_TECHNICAL_JSS_LIBRARY[gradeKey][strand]];
+    });
+    const selectedStrand = strands[0] || "";
+    const selectedSubStrand = (subStrandsByStrand[selectedStrand] || [])[0] || "";
+    return {
+      strand: selectedStrand,
+      sub_strand: selectedSubStrand,
+      strand_options: strands,
+      sub_strand_options_by_strand: subStrandsByStrand,
+      learning_outcomes: "",
+      assessment_rubric: "Add notes and assessment guidance for the selected sub-strand.",
+      textbook_references: textbookReferences(subjectKey || "Pre-Technical Studies", gradeKey || "Junior Secondary"),
+      generated_notes: ""
+    };
+  }
   const library = SUBJECT_LIBRARY[subjectKey];
   const strands = library?.strands?.length ? library.strands : DEFAULT_STRANDS;
   const subStrandsByStrand = {};
@@ -141,6 +252,27 @@ function buildCbcSuggestion({ grade, formName, learningArea, mappingRows = [] })
       subStrand: selectedSubStrand
     })
   };
+}
+
+function getPreTechnicalSeedRows() {
+  const rows = [];
+  Object.entries(PRE_TECHNICAL_JSS_LIBRARY).forEach(([grade, strandsMap]) => {
+    Object.entries(strandsMap).forEach(([strand, subStrands]) => {
+      subStrands.forEach((subStrand) => {
+        rows.push({
+          grade,
+          form_name: null,
+          learning_area: "Pre-Technical Studies",
+          strand,
+          sub_strand: subStrand,
+          specific_learning_outcomes: "",
+          learning_experiences: "",
+          notes: ""
+        });
+      });
+    });
+  });
+  return rows;
 }
 
 function buildSuggestionFromMappings({ grade, formName, learningArea, mappings = [] }) {
@@ -239,5 +371,6 @@ module.exports = {
   buildSuggestionFromMappings,
   makeNotes,
   getAllCbcLearningAreas,
-  buildBulkCbcEntries
+  buildBulkCbcEntries,
+  getPreTechnicalSeedRows
 };
