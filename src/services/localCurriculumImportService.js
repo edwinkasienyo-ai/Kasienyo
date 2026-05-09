@@ -1,8 +1,8 @@
 const fs = require("fs/promises");
 const path = require("path");
-const pdfParse = require("pdf-parse");
 
 const DEFAULT_IMPORT_DIR = path.join(process.cwd(), "uploads", "curriculum-design");
+let cachedPdfParse = null;
 
 function cleanValue(value = "") {
   return String(value || "").replace(/\s+/g, " ").trim();
@@ -13,6 +13,23 @@ function toSlug(value = "") {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "");
+}
+
+function getPdfParse() {
+  if (cachedPdfParse) return cachedPdfParse;
+  try {
+    // Lazy load so app boot does not fail when this optional parser dependency is absent.
+    // The import endpoint will return a clear message instructing installation.
+    // eslint-disable-next-line global-require
+    cachedPdfParse = require("pdf-parse");
+    return cachedPdfParse;
+  } catch (_) {
+    const error = new Error(
+      "Missing dependency 'pdf-parse'. Run: npm install pdf-parse@1.1.1"
+    );
+    error.code = "MISSING_PDF_PARSE";
+    throw error;
+  }
 }
 
 function titleCase(value = "") {
@@ -297,6 +314,7 @@ function extractMetadataFromPath(filePath, baseDirectory) {
 }
 
 async function extractRowsFromSinglePdf(filePath, metadata) {
+  const pdfParse = getPdfParse();
   const buffer = await fs.readFile(filePath);
   const parsed = await pdfParse(buffer);
   const rows = extractRowsFromPdfText(parsed?.text || "");
