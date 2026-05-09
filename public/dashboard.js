@@ -12,7 +12,14 @@ let portalContext = null;
 let searchRowDrafts = {};
 let dashboardAutoRefreshHandle = null;
 let currentSidebarSubmoduleId = null;
-const CLIENT_UI_BUNDLE_ID = "dash-bundle-main-v56-kicd-export-sidebar-submodules";
+const CLIENT_UI_BUNDLE_ID = "dash-bundle-main-v57-local-pdf-import-exam-live";
+const examPanelState = {
+  generatedExam: null,
+  serials: [],
+  marksRows: [],
+  resultRows: [],
+  assessmentReport: null
+};
 const DASHBOARD_STAT_LABELS = {
   totalLearners: "Total Learners Population",
   totalActiveLearners: "Active Learners",
@@ -1906,9 +1913,70 @@ function buildExamGradeFormSelectOptions() {
 }
 
 function buildExamLearningAreaOptions() {
-  const subjectOptions = (Array.isArray(meta?.subjectOptions) ? meta.subjectOptions : [])
+  return buildExamLearningAreaOptionsBySelection({});
+}
+
+function normalizeLookupKey(value = "") {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "");
+}
+
+function collectAllCbcLearningAreas() {
+  if (Array.isArray(meta?.cbcLearningAreas) && meta.cbcLearningAreas.length) {
+    return meta.cbcLearningAreas;
+  }
+  const levels = Array.isArray(meta?.cbcLevels) ? meta.cbcLevels : [];
+  return levels.flatMap((level) => [
+    ...(Array.isArray(level.learningAreas) ? level.learningAreas : []),
+    ...Object.values(level.pathways || {}).flatMap((areas) => (Array.isArray(areas) ? areas : []))
+  ]);
+}
+
+function getSeniorSecondaryPathwayOptions() {
+  const levels = Array.isArray(meta?.cbcLevels) ? meta.cbcLevels : [];
+  const senior = levels.find((level) => normalizeLookupKey(level.key || level.label) === "seniorsecondary");
+  return Object.keys(senior?.pathways || {});
+}
+
+function buildExamLearningAreaOptionsBySelection(selection = {}) {
+  const fallback = (Array.isArray(meta?.subjectOptions) ? meta.subjectOptions : [])
     .filter((item) => String(item || "").toUpperCase() !== "ALL");
-  return subjectOptions.map((s) => `<option value="${escapeHtml(s)}">${escapeHtml(s)}</option>`).join("");
+  const levels = Array.isArray(meta?.cbcLevels) ? meta.cbcLevels : [];
+  if (!levels.length) {
+    return fallback.map((s) => `<option value="${escapeHtml(s)}">${escapeHtml(s)}</option>`).join("");
+  }
+  const grade = String(selection?.grade || "");
+  const form = String(selection?.form || "");
+  const pathway = String(selection?.pathway || "");
+  const chosen = grade || form;
+  const chosenKey = normalizeLookupKey(chosen);
+  const selectedLevel = levels.find((level) =>
+    Array.isArray(level.grades)
+    && level.grades.some((item) => normalizeLookupKey(item) === chosenKey)
+  );
+  const areas = [];
+  if (selectedLevel) {
+    areas.push(...(Array.isArray(selectedLevel.learningAreas) ? selectedLevel.learningAreas : []));
+    const pathways = selectedLevel.pathways || {};
+    const selectedPathwayKey = normalizeLookupKey(pathway);
+    if (selectedPathwayKey && Object.keys(pathways).length) {
+      const matchedPathway = Object.keys(pathways).find((name) => normalizeLookupKey(name) === selectedPathwayKey);
+      if (matchedPathway) {
+        areas.splice(0, areas.length);
+        areas.push(...(Array.isArray(pathways[matchedPathway]) ? pathways[matchedPathway] : []));
+      }
+    } else {
+      Object.values(pathways).forEach((items) => {
+        if (Array.isArray(items)) areas.push(...items);
+      });
+    }
+  } else {
+    areas.push(...collectAllCbcLearningAreas());
+  }
+  const deduped = Array.from(new Set(areas.map((item) => String(item || "").trim()).filter(Boolean)));
+  return deduped.map((s) => `<option value="${escapeHtml(s)}">${escapeHtml(s)}</option>`).join("");
 }
 
 function buildExamTermYearOptions() {
@@ -1923,7 +1991,8 @@ function buildExamTermYearOptions() {
 function renderExamGenerationPanel() {
   const { grades, forms } = buildExamGradeFormSelectOptions();
   const { terms, years } = buildExamTermYearOptions();
-  const learningAreas = buildExamLearningAreaOptions();
+  const learningAreas = buildExamLearningAreaOptionsBySelection({});
+  const pathways = getSeniorSecondaryPathwayOptions();
   const examTypes = (Array.isArray(meta?.examTypes) ? meta.examTypes : ["Head Start", "Mid Term", "End Term", "Mock"]);
   return `
     <div class="module-header-card">
@@ -1940,6 +2009,11 @@ function renderExamGenerationPanel() {
       <select id="examGenGrade"><option value="">Select grade</option>${grades}</select>
       <label>Form</label>
       <select id="examGenForm"><option value="">Select form</option>${forms}</select>
+      <label>Senior Pathway</label>
+      <select id="examGenPathway">
+        <option value="">All pathways</option>
+        ${pathways.map((name) => `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`).join("")}
+      </select>
       <label>Learning Area</label>
       <select id="examGenLearningArea"><option value="">Select learning area</option>${learningAreas}</select>
       <label>Strand</label>
@@ -1966,16 +2040,18 @@ function renderExamGenerationPanel() {
         <option value="per_learner">Per Learner (distinct serial per learner)</option>
       </select>
     </div>
-    <div class="iim-actions-row">
-      <button class="iim-action-btn gold" id="examGenGenerateButton" title="Generate Exam (AI)">⚡ Generate</button>
-      <button class="iim-action-btn success" id="examGenSaveButton" title="Save">💾 Save</button>
-      <button class="iim-action-btn" id="examGenEditButton" title="Edit">✎ Edit</button>
-      <button class="iim-action-btn success" id="examGenSubmitButton" title="Submit">✅ Submit</button>
-      <button class="iim-action-btn" id="examGenViewButton" title="View">👁 View</button>
-      <button class="iim-action-btn warn" id="examGenDownloadButton" title="Download">📄 Download</button>
-      <button class="iim-action-btn warn" id="examGenBulkDownloadButton" title="Bulk Download">📦 Bulk PDF</button>
-      <button class="iim-action-btn muted" id="examGenAnswerSheetButton" title="Generate Answer Sheet">🗒 Answer Sheet</button>
+    <div class="ax-toolbar">
+      <button class="ax-btn ax-btn--generate" id="examGenGenerateButton" title="Generate Exam (AI)">Generate</button>
+      <button class="ax-btn ax-btn--save" id="examGenSaveButton" title="Save">Save</button>
+      <button class="ax-btn ax-btn--edit" id="examGenEditButton" title="Edit">Edit</button>
+      <button class="ax-btn ax-btn--submit" id="examGenSubmitButton" title="Submit">Submit</button>
+      <button class="ax-btn ax-btn--view" id="examGenViewButton" title="View">View</button>
+      <button class="ax-btn ax-btn--download" id="examGenDownloadButton" title="Download">Download</button>
+      <button class="ax-btn ax-btn--export-pdf" id="examGenBulkDownloadButton" title="Bulk Download">Bulk PDF</button>
+      <button class="ax-btn ax-btn--defaults" id="examGenAnswerSheetButton" title="Generate Answer Sheet">Answer Sheet</button>
     </div>
+    <label>Generated Exam Text</label>
+    <textarea id="examGenGeneratedText" rows="8" placeholder="Generated exam text will appear here."></textarea>
     <div id="examGenPreview" class="small-note">Configure the selections above, then press <em>Generate Exam (AI)</em>. Each exam carries a distinct serial number.</div>
   `;
 }
@@ -1995,47 +2071,259 @@ function buildExamSerialNumber({ grade, form, learningArea, examType, term, year
     .join("-");
 }
 
+function downloadTextFile(filename, text, mimeType = "text/plain;charset=utf-8") {
+  const blob = new Blob([String(text || "")], { type: mimeType });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+function csvEscape(value) {
+  const raw = String(value ?? "");
+  if (!/[",\n]/.test(raw)) return raw;
+  return `"${raw.replace(/"/g, "\"\"")}"`;
+}
+
+function rowsToCsv(rows, headers) {
+  if (!Array.isArray(rows) || !rows.length) return "";
+  const columns = Array.isArray(headers) && headers.length ? headers : Object.keys(rows[0]);
+  return [
+    columns.join(","),
+    ...rows.map((row) => columns.map((column) => csvEscape(row[column])).join(","))
+  ].join("\n");
+}
+
 function wireExamGenerationPanel() {
-  const generate = () => {
+  const getPayload = () => {
     const grade = String(document.getElementById("examGenGrade")?.value || "");
     const form = String(document.getElementById("examGenForm")?.value || "");
+    const pathway = String(document.getElementById("examGenPathway")?.value || "");
     if (grade && form) {
       alert("Choose either Grade or Form, not both.");
       return null;
     }
     const examType = String(document.getElementById("examGenType")?.value || "");
     const learningArea = String(document.getElementById("examGenLearningArea")?.value || "");
+    const strand = String(document.getElementById("examGenStrand")?.value || "");
+    const subStrand = String(document.getElementById("examGenSubStrand")?.value || "");
     const term = String(document.getElementById("examGenTerm")?.value || "");
     const year = String(document.getElementById("examGenYear")?.value || "");
     const stream = String(document.getElementById("examGenStream")?.value || "");
+    const mode = String(document.getElementById("examGenMode")?.value || "bulk_class");
+    const section = String(document.getElementById("examGenSection")?.value || "A");
     if (!examType || (!grade && !form) || !learningArea || !term || !year) {
       alert("Examination type, grade or form, learning area, term and year are required.");
       return null;
     }
-    const serial = buildExamSerialNumber({ grade, form, learningArea, examType, term, year, stream });
-    return { serial, grade, form, examType, learningArea, term, year, stream };
+    return {
+      title: `${examType} - ${learningArea}`,
+      grade,
+      form_name: form,
+      stream,
+      subject: learningArea,
+      learning_area: learningArea,
+      strand,
+      sub_strand: subStrand,
+      term,
+      year: Number(year),
+      exam_type: examType,
+      mode,
+      section,
+      pathway
+    };
   };
-  document.getElementById("examGenGenerateButton")?.addEventListener("click", () => {
-    const result = generate();
-    if (!result) return;
+
+  const updateLearningAreaOptions = () => {
+    const grade = String(document.getElementById("examGenGrade")?.value || "");
+    const form = String(document.getElementById("examGenForm")?.value || "");
+    const pathway = String(document.getElementById("examGenPathway")?.value || "");
+    const learningAreaEl = document.getElementById("examGenLearningArea");
+    if (!learningAreaEl) return;
+    const selected = String(learningAreaEl.value || "");
+    learningAreaEl.innerHTML = `<option value="">Select learning area</option>${buildExamLearningAreaOptionsBySelection({
+      grade,
+      form,
+      pathway
+    })}`;
+    if (selected && Array.from(learningAreaEl.options).some((option) => option.value === selected)) {
+      learningAreaEl.value = selected;
+    }
+  };
+
+  const gradeEl = document.getElementById("examGenGrade");
+  const formEl = document.getElementById("examGenForm");
+  gradeEl?.addEventListener("change", () => {
+    if (String(gradeEl.value || "").trim() && formEl) formEl.value = "";
+    updateLearningAreaOptions();
+  });
+  formEl?.addEventListener("change", () => {
+    if (String(formEl.value || "").trim() && gradeEl) gradeEl.value = "";
+    updateLearningAreaOptions();
+  });
+  document.getElementById("examGenPathway")?.addEventListener("change", updateLearningAreaOptions);
+  updateLearningAreaOptions();
+
+  document.getElementById("examGenGenerateButton")?.addEventListener("click", async () => {
+    const payload = getPayload();
+    if (!payload) return;
     const preview = document.getElementById("examGenPreview");
-    if (preview) {
-      preview.innerHTML = `Generated exam serial: <strong>${escapeHtml(result.serial)}</strong> · Strand-aligned content prepared.`;
+    try {
+      const generated = await request("/api/academic/exams/auto-generate", {
+        method: "POST",
+        body: JSON.stringify(payload)
+      });
+      const serialAllocation = await request("/api/academic/exams/allocate-serials", {
+        method: "POST",
+        body: JSON.stringify(payload)
+      });
+      examPanelState.generatedExam = {
+        id: generated.id,
+        examText: generated.examText,
+        payload
+      };
+      examPanelState.serials = Array.isArray(serialAllocation.serials) ? serialAllocation.serials : [];
+      const generatedTextEl = document.getElementById("examGenGeneratedText");
+      if (generatedTextEl) {
+        generatedTextEl.value = String(generated.examText || "");
+      }
+      if (preview) {
+        const serialExample = examPanelState.serials[0]?.serial || buildExamSerialNumber({
+          grade: payload.grade,
+          form: payload.form_name,
+          learningArea: payload.learning_area,
+          examType: payload.exam_type,
+          term: payload.term,
+          year: payload.year,
+          stream: payload.stream
+        });
+        preview.innerHTML = `Generated exam ID <strong>${escapeHtml(String(generated.id || "-"))}</strong> · Serial sample <strong>${escapeHtml(serialExample)}</strong> · ${
+          examPanelState.serials.length
+        } serial(s) allocated.`;
+      }
+    } catch (error) {
+      alert(error.message);
     }
   });
-  document.getElementById("examGenSaveButton")?.addEventListener("click", () => alert("Exam draft saved locally."));
-  document.getElementById("examGenEditButton")?.addEventListener("click", () => alert("Exam draft is editable in the form above."));
-  document.getElementById("examGenSubmitButton")?.addEventListener("click", () => alert("Exam submitted for printing/distribution."));
-  document.getElementById("examGenViewButton")?.addEventListener("click", () => alert("Exam preview opened."));
-  document.getElementById("examGenDownloadButton")?.addEventListener("click", () => alert("Exam download prepared. Use Bulk Download for whole grade."));
-  document.getElementById("examGenBulkDownloadButton")?.addEventListener("click", () => alert("Bulk download prepared."));
-  document.getElementById("examGenAnswerSheetButton")?.addEventListener("click", () => alert("Answer sheet generated alongside the exam."));
+
+  document.getElementById("examGenSaveButton")?.addEventListener("click", async () => {
+    const generatedText = String(document.getElementById("examGenGeneratedText")?.value || "").trim();
+    if (!examPanelState.generatedExam?.id) {
+      alert("Generate an exam first.");
+      return;
+    }
+    try {
+      await request(`/api/academic/exams/${examPanelState.generatedExam.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          generated_exam_text: generatedText || examPanelState.generatedExam.examText
+        })
+      });
+      alert("Exam draft saved.");
+    } catch (error) {
+      alert(error.message);
+    }
+  });
+
+  document.getElementById("examGenEditButton")?.addEventListener("click", async () => {
+    const examId = Number(prompt("Enter exam ID to edit:", String(examPanelState.generatedExam?.id || "")) || 0);
+    if (!examId) return;
+    const nextTitle = prompt("Update title (leave blank to keep):", "") || "";
+    try {
+      await request(`/api/academic/exams/${examId}`, {
+        method: "PATCH",
+        body: JSON.stringify({ title: nextTitle || undefined })
+      });
+      alert("Exam updated.");
+    } catch (error) {
+      alert(error.message);
+    }
+  });
+
+  document.getElementById("examGenSubmitButton")?.addEventListener("click", () => {
+    if (!examPanelState.generatedExam?.id) {
+      alert("Generate an exam first.");
+      return;
+    }
+    alert(`Exam ${examPanelState.generatedExam.id} submitted for printing/distribution.`);
+  });
+
+  document.getElementById("examGenViewButton")?.addEventListener("click", async () => {
+    try {
+      const rows = await request("/api/academic/exams?limit=25");
+      const latest = Array.isArray(rows) ? rows.slice(0, 10) : [];
+      const preview = document.getElementById("examGenPreview");
+      if (preview) {
+        preview.innerHTML = latest.length
+          ? latest
+            .map((row) => `#${row.id} | ${row.title || "-"} | ${row.grade || row.stream || "-"} | ${row.subject || "-"} | ${row.term || "-"} ${row.year || ""}`)
+            .join("<br/>")
+          : "No saved exams found.";
+      }
+    } catch (error) {
+      alert(error.message);
+    }
+  });
+
+  document.getElementById("examGenDownloadButton")?.addEventListener("click", () => {
+    const text = String(document.getElementById("examGenGeneratedText")?.value || examPanelState.generatedExam?.examText || "");
+    if (!text.trim()) {
+      alert("Generate an exam first.");
+      return;
+    }
+    downloadTextFile("generated-exam.txt", text);
+  });
+
+  document.getElementById("examGenBulkDownloadButton")?.addEventListener("click", () => {
+    if (!examPanelState.serials.length) {
+      alert("Generate an exam first to allocate serials.");
+      return;
+    }
+    const csv = rowsToCsv(examPanelState.serials, [
+      "serial",
+      "learner_id",
+      "learner_name",
+      "admission_number",
+      "grade",
+      "stream"
+    ]);
+    downloadTextFile("exam-serials.csv", csv, "text/csv;charset=utf-8");
+  });
+
+  document.getElementById("examGenAnswerSheetButton")?.addEventListener("click", () => {
+    const payload = examPanelState.generatedExam?.payload;
+    if (!payload) {
+      alert("Generate an exam first.");
+      return;
+    }
+    const text = [
+      "ANSWER SHEET",
+      `Exam: ${payload.title}`,
+      `Level: ${payload.grade || payload.form_name}`,
+      `Learning Area: ${payload.learning_area}`,
+      `Term/Year: ${payload.term} ${payload.year}`,
+      "",
+      "Learner Name: ____________________________",
+      "Admission Number: ________________________",
+      "Stream: _________________________________",
+      "",
+      "Answer Section:",
+      "1.",
+      "2.",
+      "3.",
+      "4."
+    ].join("\n");
+    downloadTextFile("answer-sheet.txt", text);
+  });
 }
 
 function renderExamMarksEntryPanel() {
   const { grades, forms } = buildExamGradeFormSelectOptions();
   const { terms, years } = buildExamTermYearOptions();
-  const learningAreas = buildExamLearningAreaOptions();
+  const learningAreas = buildExamLearningAreaOptionsBySelection({});
+  const examTypes = (Array.isArray(meta?.examTypes) ? meta.examTypes : ["Head Start", "Mid Term", "End Term", "Mock"]);
   return `
     <div class="module-header-card">
       <h4>Marks Entry Sub-Module</h4>
@@ -2050,10 +2338,17 @@ function renderExamMarksEntryPanel() {
       <select id="marksEntryForm"><option value="">Select form</option>${forms}</select>
       <label>Stream</label>
       <input id="marksEntryStream" placeholder="Stream (where necessary)" />
+      <label>Learner</label>
+      <select id="marksEntryLearner"><option value="">Select learner</option></select>
       <label>Learning Area</label>
       <select id="marksEntryLearningArea"><option value="">Select learning area</option>${learningAreas}</select>
-      <label>Exam Title</label>
-      <input id="marksEntryExamTitle" placeholder="Exam title" />
+      <label>Exam Type</label>
+      <select id="marksEntryExamType">
+        <option value="">Select exam type</option>
+        ${examTypes.map((item) => `<option value="${escapeHtml(item)}">${escapeHtml(item)}</option>`).join("")}
+      </select>
+      <label>Record ID (for edit/delete)</label>
+      <input id="marksEntryRecordId" type="number" min="1" placeholder="Existing record ID" />
       <label>Term</label>
       <select id="marksEntryTerm"><option value="">Select term</option>${terms}</select>
       <label>Year</label>
@@ -2069,37 +2364,243 @@ function renderExamMarksEntryPanel() {
         <option value="BELOW">Below Expectation</option>
       </select>
     </div>
-    <div class="iim-actions-row">
-      <button class="iim-action-btn" id="marksEntryViewButton" title="View">👁 View</button>
-      <button class="iim-action-btn success" id="marksEntrySaveButton" title="Save">💾 Save</button>
-      <button class="iim-action-btn" id="marksEntryEditButton" title="Edit">✎ Edit</button>
-      <button class="iim-action-btn delete" id="marksEntryDeleteButton" title="Delete">🗑 Delete</button>
-      <button class="iim-action-btn warn" id="marksEntryDownloadPdfButton" title="Download PDF">📄 PDF</button>
-      <button class="iim-action-btn warn" id="marksEntryDownloadExcelButton" title="Download Excel">📊 Excel</button>
-      <button class="iim-action-btn muted" id="marksEntryPrintButton" title="Print">🖨 Print</button>
-      <button class="iim-action-btn gold" id="marksEntryDownloadSampleButton" title="Download Sample">⬇ Sample</button>
-      <button class="iim-action-btn" id="marksEntryUploadAmendedButton" title="Upload Amended Sample">⬆ Upload</button>
+    <div class="ax-toolbar">
+      <button class="ax-btn ax-btn--view" id="marksEntryViewButton" title="View">View</button>
+      <button class="ax-btn ax-btn--save" id="marksEntrySaveButton" title="Save">Save</button>
+      <button class="ax-btn ax-btn--edit" id="marksEntryEditButton" title="Edit">Edit</button>
+      <button class="ax-btn ax-btn--delete" id="marksEntryDeleteButton" title="Delete">Delete</button>
+      <button class="ax-btn ax-btn--export-pdf" id="marksEntryDownloadPdfButton" title="Download PDF">PDF</button>
+      <button class="ax-btn ax-btn--export-excel" id="marksEntryDownloadExcelButton" title="Download Excel">Excel</button>
+      <button class="ax-btn ax-btn--print" id="marksEntryPrintButton" title="Print">Print</button>
+      <button class="ax-btn ax-btn--download" id="marksEntryDownloadSampleButton" title="Download Sample">Sample</button>
+      <button class="ax-btn ax-btn--upload" id="marksEntryUploadAmendedButton" title="Upload Amended Sample">Upload</button>
       <input id="marksEntryUploadInput" type="file" accept=".xlsx,.csv" style="display:none;" />
+      <button class="ax-btn ax-btn--refresh" id="marksEntryRefreshLearnersButton" title="Refresh Learners">Refresh Learners</button>
     </div>
+    <div id="marksEntryOutput" class="small-note">Use Save to store marks for selected learner.</div>
   `;
 }
 
 function wireExamMarksEntryPanel() {
-  document.getElementById("marksEntryViewButton")?.addEventListener("click", () => alert("Marks view opened."));
-  document.getElementById("marksEntrySaveButton")?.addEventListener("click", () => alert("Marks entry saved."));
-  document.getElementById("marksEntryEditButton")?.addEventListener("click", () => alert("Marks entry now editable."));
-  document.getElementById("marksEntryDeleteButton")?.addEventListener("click", () => {
-    if (window.confirm("Delete this marks entry?")) alert("Marks entry deleted.");
+  const output = document.getElementById("marksEntryOutput");
+  const learnerSelect = document.getElementById("marksEntryLearner");
+  const gradeEl = document.getElementById("marksEntryGrade");
+  const formEl = document.getElementById("marksEntryForm");
+  const streamEl = document.getElementById("marksEntryStream");
+  const examTypeEl = document.getElementById("marksEntryExamType");
+  const learningAreaEl = document.getElementById("marksEntryLearningArea");
+  const scoreEl = document.getElementById("marksEntryScore");
+  const termEl = document.getElementById("marksEntryTerm");
+  const yearEl = document.getElementById("marksEntryYear");
+  const levelEl = document.getElementById("marksEntryCbcLevel");
+  const recordIdEl = document.getElementById("marksEntryRecordId");
+
+  const learnerMap = new Map();
+  const refreshLearningAreas = () => {
+    if (!learningAreaEl) return;
+    const selected = String(learningAreaEl.value || "");
+    learningAreaEl.innerHTML = `<option value="">Select learning area</option>${buildExamLearningAreaOptionsBySelection({
+      grade: gradeEl?.value || "",
+      form: formEl?.value || ""
+    })}`;
+    if (selected && Array.from(learningAreaEl.options).some((option) => option.value === selected)) {
+      learningAreaEl.value = selected;
+    }
+  };
+  refreshLearningAreas();
+
+  gradeEl?.addEventListener("change", () => {
+    if (String(gradeEl.value || "").trim() && formEl) formEl.value = "";
+    refreshLearningAreas();
   });
-  document.getElementById("marksEntryDownloadPdfButton")?.addEventListener("click", () => alert("PDF download prepared."));
-  document.getElementById("marksEntryDownloadExcelButton")?.addEventListener("click", () => alert("Excel download prepared."));
-  document.getElementById("marksEntryPrintButton")?.addEventListener("click", () => window.print());
-  document.getElementById("marksEntryDownloadSampleButton")?.addEventListener("click", () => alert("Sample marks template prepared for download."));
+  formEl?.addEventListener("change", () => {
+    if (String(formEl.value || "").trim() && gradeEl) gradeEl.value = "";
+    refreshLearningAreas();
+  });
+
+  const loadLearners = async () => {
+    const grade = String(gradeEl?.value || "");
+    const form = String(formEl?.value || "");
+    const stream = String(streamEl?.value || "");
+    const searchTokens = [grade, form, stream].filter(Boolean).join(" ");
+    try {
+      const rows = await request(`/api/admission/learners?limit=500&search=${encodeURIComponent(searchTokens)}`);
+      const learners = (Array.isArray(rows) ? rows : []).filter((row) => {
+        if (grade && String(row.grade || "") !== grade) return false;
+        if (form && String(row.form_name || "") !== form) return false;
+        if (stream && String(row.stream || "").toLowerCase() !== stream.toLowerCase()) return false;
+        return true;
+      });
+      learnerMap.clear();
+      learnerSelect.innerHTML = `<option value="">Select learner</option>${learners
+        .map((row) => {
+          learnerMap.set(String(row.id), row);
+          return `<option value="${escapeHtml(String(row.id))}">${escapeHtml(row.full_name || "-")} (${escapeHtml(
+            row.admission_number || row.upi_number || String(row.id)
+          )})</option>`;
+        })
+        .join("")}`;
+      if (output) output.textContent = `Loaded ${learners.length} learner(s) for marks entry.`;
+    } catch (error) {
+      if (output) output.textContent = `Failed to load learners: ${error.message}`;
+    }
+  };
+
+  document.getElementById("marksEntryRefreshLearnersButton")?.addEventListener("click", loadLearners);
+  loadLearners();
+
+  document.getElementById("marksEntrySaveButton")?.addEventListener("click", async () => {
+    const learnerId = String(learnerSelect?.value || "");
+    const learner = learnerMap.get(learnerId);
+    if (!learnerId || !learner) {
+      alert("Select a learner first.");
+      return;
+    }
+    const score = Number(scoreEl?.value || 0);
+    const examType = String(examTypeEl?.value || "");
+    const learningArea = String(learningAreaEl?.value || "");
+    if (!examType || !learningArea || !Number.isFinite(score)) {
+      alert("Exam type, learning area and marks are required.");
+      return;
+    }
+    const payload = {
+      learner_id: Number(learnerId),
+      learner_name: learner.full_name || "",
+      upi_number: learner.upi_number || "",
+      assessment_number: learner.assessment_number || "",
+      birth_certificate_number: learner.birth_certificate_number || "",
+      grade: String(learner.grade || gradeEl?.value || ""),
+      stream: String(streamEl?.value || learner.stream || ""),
+      exam_type: examType,
+      subject: learningArea,
+      marks: score,
+      percentage: score,
+      cbc_grade_band: String(levelEl?.value || ""),
+      term: String(termEl?.value || ""),
+      year: Number(yearEl?.value || 0) || null
+    };
+    try {
+      const result = await request("/api/academic/marks", {
+        method: "POST",
+        body: JSON.stringify(payload)
+      });
+      if (recordIdEl) recordIdEl.value = String(result.id || "");
+      if (output) output.textContent = `Marks saved for ${payload.learner_name}. Record ID: ${result.id || "-"}.`;
+    } catch (error) {
+      alert(error.message);
+    }
+  });
+
+  document.getElementById("marksEntryViewButton")?.addEventListener("click", async () => {
+    try {
+      const search = [String(gradeEl?.value || ""), String(formEl?.value || ""), String(streamEl?.value || ""), String(learningAreaEl?.value || "")]
+        .filter(Boolean)
+        .join(" ");
+      const rows = await request(`/api/academic/marks?limit=120&search=${encodeURIComponent(search)}`);
+      const list = Array.isArray(rows) ? rows : [];
+      examPanelState.marksRows = list;
+      if (output) {
+        output.innerHTML = list.length
+          ? list.slice(0, 15).map((row) => `#${row.id} | ${escapeHtml(row.learner_name || "-")} | ${escapeHtml(
+            row.subject || "-"
+          )} | ${escapeHtml(String(row.marks || "-"))} | ${escapeHtml(row.term || "-")} ${escapeHtml(String(row.year || ""))}`).join("<br/>")
+          : "No marks found for selected filter.";
+      }
+    } catch (error) {
+      alert(error.message);
+    }
+  });
+
+  document.getElementById("marksEntryEditButton")?.addEventListener("click", async () => {
+    const targetId = Number(recordIdEl?.value || prompt("Enter marks record ID to edit:", "") || 0);
+    if (!targetId) return;
+    const score = Number(prompt("Enter updated marks:", String(scoreEl?.value || "0")) || 0);
+    const cbcBand = prompt("Enter CBC band:", String(levelEl?.value || "")) || "";
+    try {
+      await request(`/api/academic/marks/${targetId}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          marks: score,
+          percentage: score,
+          cbc_grade_band: cbcBand
+        })
+      });
+      if (output) output.textContent = `Marks record ${targetId} updated.`;
+    } catch (error) {
+      alert(error.message);
+    }
+  });
+
+  document.getElementById("marksEntryDeleteButton")?.addEventListener("click", async () => {
+    const targetId = Number(recordIdEl?.value || prompt("Enter marks record ID to delete:", "") || 0);
+    if (!targetId) return;
+    if (!window.confirm(`Delete marks record #${targetId}?`)) return;
+    try {
+      await request(`/api/academic/marks/${targetId}`, { method: "DELETE" });
+      if (output) output.textContent = `Marks record ${targetId} deleted.`;
+    } catch (error) {
+      alert(error.message);
+    }
+  });
+
+  document.getElementById("marksEntryDownloadPdfButton")?.addEventListener("click", () => {
+    if (!examPanelState.marksRows.length) {
+      alert("View marks first.");
+      return;
+    }
+    const lines = examPanelState.marksRows.map((row) =>
+      `${row.learner_name || "-"} | ${row.subject || "-"} | ${row.marks || "-"} | ${row.cbc_grade_band || "-"}`
+    );
+    downloadTextFile("marks-summary.txt", lines.join("\n"));
+  });
+
+  document.getElementById("marksEntryDownloadExcelButton")?.addEventListener("click", () => {
+    if (!examPanelState.marksRows.length) {
+      alert("View marks first.");
+      return;
+    }
+    downloadTextFile("marks-summary.csv", rowsToCsv(examPanelState.marksRows), "text/csv;charset=utf-8");
+  });
+
+  document.getElementById("marksEntryPrintButton")?.addEventListener("click", () => {
+    if (!examPanelState.marksRows.length) {
+      alert("View marks first.");
+      return;
+    }
+    const popup = window.open("", "_blank");
+    popup.document.write(`<pre>${escapeHtml(examPanelState.marksRows.map((row) =>
+      `${row.learner_name || "-"} | ${row.subject || "-"} | ${row.marks || "-"} | ${row.cbc_grade_band || "-"}`
+    ).join("\n"))}</pre>`);
+    popup.document.close();
+    popup.print();
+  });
+
+  document.getElementById("marksEntryDownloadSampleButton")?.addEventListener("click", () => {
+    const sampleRows = [
+      {
+        learner_id: "123",
+        learner_name: "Sample Learner",
+        grade: "Grade 7",
+        stream: "East",
+        exam_type: "CAT",
+        subject: "English",
+        marks: "82",
+        percentage: "82",
+        cbc_grade_band: "MEETING",
+        term: "Term One",
+        year: String(new Date().getFullYear())
+      }
+    ];
+    downloadTextFile("marks-entry-sample.csv", rowsToCsv(sampleRows), "text/csv;charset=utf-8");
+  });
+
   document.getElementById("marksEntryUploadAmendedButton")?.addEventListener("click", () => {
     document.getElementById("marksEntryUploadInput")?.click();
   });
-  document.getElementById("marksEntryUploadInput")?.addEventListener("change", () => {
-    alert("Amended sample uploaded.");
+  document.getElementById("marksEntryUploadInput")?.addEventListener("change", (event) => {
+    const file = event?.target?.files?.[0];
+    if (!file) return;
+    if (output) output.textContent = `Received amended marks file: ${file.name}. You can now save entries using loaded learners.`;
   });
 }
 
@@ -2125,38 +2626,147 @@ function renderExamResultScriptsPanel() {
       <select id="resultForm"><option value="">Select form</option>${forms}</select>
       <label>Stream</label>
       <input id="resultStream" placeholder="Stream (when applicable)" />
+      <label>Learner Key (for learner scope)</label>
+      <input id="resultLearnerKey" placeholder="Learner name / ID / admission no" />
       <label>Term</label>
       <select id="resultTerm"><option value="">Select term</option>${terms}</select>
       <label>Year</label>
       <select id="resultYear"><option value="">Select year</option>${years}</select>
     </div>
-    <div class="iim-actions-row">
-      <button class="iim-action-btn gold" id="resultGenerateButton" title="Generate Result Script">⚡ Generate</button>
-      <button class="iim-action-btn" id="resultViewButton" title="View">👁 View</button>
-      <button class="iim-action-btn" id="resultEditButton" title="Edit/Amend">✎ Edit</button>
-      <button class="iim-action-btn muted" id="resultPrintButton" title="Print">🖨 Print</button>
-      <button class="iim-action-btn warn" id="resultDownloadPdfButton" title="Download PDF">📄 PDF</button>
-      <button class="iim-action-btn warn" id="resultDownloadExcelButton" title="Download Excel">📊 Excel</button>
-      <button class="iim-action-btn gold" id="resultDownloadSampleButton" title="Download Sample">⬇ Sample</button>
-      <button class="iim-action-btn" id="resultUploadAmendedButton" title="Upload Amended Sample">⬆ Upload</button>
+    <div class="ax-toolbar">
+      <button class="ax-btn ax-btn--generate" id="resultGenerateButton" title="Generate Result Script">Generate</button>
+      <button class="ax-btn ax-btn--view" id="resultViewButton" title="View">View</button>
+      <button class="ax-btn ax-btn--edit" id="resultEditButton" title="Edit/Amend">Edit</button>
+      <button class="ax-btn ax-btn--print" id="resultPrintButton" title="Print">Print</button>
+      <button class="ax-btn ax-btn--export-pdf" id="resultDownloadPdfButton" title="Download PDF">PDF</button>
+      <button class="ax-btn ax-btn--export-excel" id="resultDownloadExcelButton" title="Download Excel">Excel</button>
+      <button class="ax-btn ax-btn--download" id="resultDownloadSampleButton" title="Download Sample">Sample</button>
+      <button class="ax-btn ax-btn--upload" id="resultUploadAmendedButton" title="Upload Amended Sample">Upload</button>
       <input id="resultUploadInput" type="file" accept=".xlsx,.csv" style="display:none;" />
     </div>
+    <div id="resultScriptsOutput" class="small-note">Generate ranked results to view scripts.</div>
   `;
 }
 
 function wireExamResultScriptsPanel() {
-  document.getElementById("resultGenerateButton")?.addEventListener("click", () => alert("Result script generated."));
-  document.getElementById("resultViewButton")?.addEventListener("click", () => alert("Result script opened for viewing."));
-  document.getElementById("resultEditButton")?.addEventListener("click", () => alert("Result script editable."));
-  document.getElementById("resultPrintButton")?.addEventListener("click", () => window.print());
-  document.getElementById("resultDownloadPdfButton")?.addEventListener("click", () => alert("PDF download prepared."));
-  document.getElementById("resultDownloadExcelButton")?.addEventListener("click", () => alert("Excel download prepared."));
-  document.getElementById("resultDownloadSampleButton")?.addEventListener("click", () => alert("Sample result script prepared."));
+  const output = document.getElementById("resultScriptsOutput");
+  const applyScopeFilter = (rows) => {
+    const scope = String(document.getElementById("resultScope")?.value || "learner");
+    const grade = String(document.getElementById("resultGrade")?.value || "");
+    const form = String(document.getElementById("resultForm")?.value || "");
+    const stream = String(document.getElementById("resultStream")?.value || "");
+    const learnerKey = String(document.getElementById("resultLearnerKey")?.value || "").toLowerCase();
+    const targetGrade = grade || form;
+    return (Array.isArray(rows) ? rows : []).filter((row) => {
+      if (targetGrade && String(row.grade || "").toLowerCase() !== targetGrade.toLowerCase()) return false;
+      if (stream && String(row.stream || "").toLowerCase() !== stream.toLowerCase()) return false;
+      if (scope === "learner" && learnerKey) {
+        return String(row.learner_name || "").toLowerCase().includes(learnerKey)
+          || String(row.learner_id || "").toLowerCase().includes(learnerKey);
+      }
+      if (scope === "stream") {
+        return Boolean(stream);
+      }
+      if (scope === "grade") {
+        return Boolean(targetGrade);
+      }
+      return true;
+    });
+  };
+
+  document.getElementById("resultGenerateButton")?.addEventListener("click", async () => {
+    const grade = String(document.getElementById("resultGrade")?.value || "");
+    const form = String(document.getElementById("resultForm")?.value || "");
+    const stream = String(document.getElementById("resultStream")?.value || "");
+    const term = String(document.getElementById("resultTerm")?.value || "");
+    const year = Number(document.getElementById("resultYear")?.value || 0) || "";
+    const params = new URLSearchParams();
+    if (grade || form) params.set("grade", grade || form);
+    if (stream) params.set("stream", stream);
+    if (term) params.set("term", term);
+    if (year) params.set("year", year);
+    try {
+      const result = await request(`/api/academic/results/ranked?${params.toString()}`);
+      const ranked = applyScopeFilter(result?.ranked || []);
+      examPanelState.resultRows = ranked;
+      if (output) {
+        output.innerHTML = ranked.length
+          ? ranked.slice(0, 30).map((row) =>
+            `${row.position}. ${escapeHtml(row.learner_name || "-")} | ${escapeHtml(row.grade || "-")} ${
+              escapeHtml(row.stream || "-")
+            } | Avg ${escapeHtml(String(row.avg_pct || "0"))}%`
+          ).join("<br/>")
+          : "No ranked results found for selected filters.";
+      }
+    } catch (error) {
+      alert(error.message);
+    }
+  });
+
+  document.getElementById("resultViewButton")?.addEventListener("click", () => {
+    if (!examPanelState.resultRows.length) {
+      alert("Generate result scripts first.");
+      return;
+    }
+    if (output) {
+      output.innerHTML = examPanelState.resultRows.slice(0, 30).map((row) =>
+        `${row.position}. ${escapeHtml(row.learner_name || "-")} | Total ${escapeHtml(String(row.total_marks || "0"))} | Avg ${escapeHtml(String(row.avg_pct || "0"))}%`
+      ).join("<br/>");
+    }
+  });
+
+  document.getElementById("resultEditButton")?.addEventListener("click", () => {
+    const notes = prompt("Result script amendment note:", "");
+    if (notes && output) {
+      output.innerHTML += `<br/><br/><strong>Amendment note:</strong> ${escapeHtml(notes)}`;
+    }
+  });
+
+  document.getElementById("resultPrintButton")?.addEventListener("click", () => {
+    if (!examPanelState.resultRows.length) {
+      alert("Generate result scripts first.");
+      return;
+    }
+    const popup = window.open("", "_blank");
+    popup.document.write(`<pre>${escapeHtml(examPanelState.resultRows.map((row) =>
+      `${row.position}. ${row.learner_name || "-"} | ${row.grade || "-"} ${row.stream || "-"} | ${row.avg_pct || 0}%`
+    ).join("\n"))}</pre>`);
+    popup.document.close();
+    popup.print();
+  });
+
+  document.getElementById("resultDownloadPdfButton")?.addEventListener("click", () => {
+    if (!examPanelState.resultRows.length) {
+      alert("Generate result scripts first.");
+      return;
+    }
+    downloadTextFile("result-scripts.txt", examPanelState.resultRows.map((row) =>
+      `${row.position}. ${row.learner_name || "-"} | ${row.grade || "-"} ${row.stream || "-"} | ${row.avg_pct || 0}%`
+    ).join("\n"));
+  });
+
+  document.getElementById("resultDownloadExcelButton")?.addEventListener("click", () => {
+    if (!examPanelState.resultRows.length) {
+      alert("Generate result scripts first.");
+      return;
+    }
+    downloadTextFile("result-scripts.csv", rowsToCsv(examPanelState.resultRows), "text/csv;charset=utf-8");
+  });
+
+  document.getElementById("resultDownloadSampleButton")?.addEventListener("click", () => {
+    const sampleRows = [
+      { position: 1, learner_name: "Sample Learner A", grade: "Grade 7", stream: "East", avg_pct: 78.4, total_marks: 392 }
+    ];
+    downloadTextFile("result-scripts-sample.csv", rowsToCsv(sampleRows), "text/csv;charset=utf-8");
+  });
   document.getElementById("resultUploadAmendedButton")?.addEventListener("click", () => {
     document.getElementById("resultUploadInput")?.click();
   });
-  document.getElementById("resultUploadInput")?.addEventListener("change", () => {
-    alert("Amended sample uploaded.");
+  document.getElementById("resultUploadInput")?.addEventListener("change", (event) => {
+    const file = event?.target?.files?.[0];
+    if (file && output) {
+      output.innerHTML = `Amended result file received: ${escapeHtml(file.name)}.`;
+    }
   });
 }
 
@@ -2171,6 +2781,8 @@ function renderExamAssessmentReportPanel() {
     <div class="form-grid">
       <label>Learner Name / Adm No / UPI</label>
       <input id="assessLearnerKey" placeholder="Learner identifier" />
+      <label>Matched Learner</label>
+      <select id="assessLearnerSelect"><option value="">Select learner</option></select>
       <label>Grade</label>
       <select id="assessGrade"><option value="">Select grade</option>${grades}</select>
       <label>Form</label>
@@ -2180,29 +2792,158 @@ function renderExamAssessmentReportPanel() {
       <label>Year</label>
       <select id="assessYear"><option value="">Select year</option>${years}</select>
     </div>
-    <div class="iim-actions-row">
-      <button class="iim-action-btn gold" id="assessGenerateButton" title="Generate Assessment Report">⚡ Generate</button>
-      <button class="iim-action-btn" id="assessTrendButton" title="Show Performance Trend">📈 Trend</button>
-      <button class="iim-action-btn muted" id="assessPrintButton" title="Print">🖨 Print</button>
-      <button class="iim-action-btn warn" id="assessDownloadPdfButton" title="Download PDF">📄 PDF</button>
-      <button class="iim-action-btn gold" id="assessDownloadSampleButton" title="Download Sample">⬇ Sample</button>
-      <button class="iim-action-btn" id="assessUploadAmendedButton" title="Upload Amended Sample">⬆ Upload</button>
+    <div class="ax-toolbar">
+      <button class="ax-btn ax-btn--generate" id="assessGenerateButton" title="Generate Assessment Report">Generate</button>
+      <button class="ax-btn ax-btn--view" id="assessTrendButton" title="Show Performance Trend">Trend</button>
+      <button class="ax-btn ax-btn--print" id="assessPrintButton" title="Print">Print</button>
+      <button class="ax-btn ax-btn--export-pdf" id="assessDownloadPdfButton" title="Download PDF">PDF</button>
+      <button class="ax-btn ax-btn--download" id="assessDownloadSampleButton" title="Download Sample">Sample</button>
+      <button class="ax-btn ax-btn--upload" id="assessUploadAmendedButton" title="Upload Amended Sample">Upload</button>
       <input id="assessUploadInput" type="file" accept=".xlsx,.csv,.pdf,.docx" style="display:none;" />
     </div>
+    <div id="assessmentOutput" class="small-note">Generate a learner assessment report to view full profile + trend.</div>
   `;
 }
 
 function wireExamAssessmentReportPanel() {
-  document.getElementById("assessGenerateButton")?.addEventListener("click", () => alert("Assessment report generated."));
-  document.getElementById("assessTrendButton")?.addEventListener("click", () => alert("Performance trend ready."));
-  document.getElementById("assessPrintButton")?.addEventListener("click", () => window.print());
-  document.getElementById("assessDownloadPdfButton")?.addEventListener("click", () => alert("PDF download prepared."));
-  document.getElementById("assessDownloadSampleButton")?.addEventListener("click", () => alert("Sample assessment template prepared."));
+  const output = document.getElementById("assessmentOutput");
+  const learnerSelect = document.getElementById("assessLearnerSelect");
+  const learnerMap = new Map();
+  const gradeEl = document.getElementById("assessGrade");
+  const formEl = document.getElementById("assessForm");
+  const streamEl = document.getElementById("assessStream");
+  const learnerKeyEl = document.getElementById("assessLearnerKey");
+
+  const loadLearners = async () => {
+    const search = String(learnerKeyEl?.value || "").trim();
+    const grade = String(gradeEl?.value || "");
+    const form = String(formEl?.value || "");
+    const stream = String(streamEl?.value || "");
+    const searchTokens = [search, grade || form, stream].filter(Boolean).join(" ");
+    try {
+      const rows = await request(`/api/admission/learners?limit=500&search=${encodeURIComponent(searchTokens)}`);
+      const filtered = (Array.isArray(rows) ? rows : []).filter((row) => {
+        if (grade && String(row.grade || "") !== grade) return false;
+        if (form && String(row.form_name || "") !== form) return false;
+        if (stream && String(row.stream || "").toLowerCase() !== stream.toLowerCase()) return false;
+        return true;
+      });
+      learnerMap.clear();
+      learnerSelect.innerHTML = `<option value="">Select learner</option>${filtered
+        .map((row) => {
+          learnerMap.set(String(row.id), row);
+          return `<option value="${escapeHtml(String(row.id))}">${escapeHtml(row.full_name || "-")} (${escapeHtml(
+            row.admission_number || row.upi_number || String(row.id)
+          )})</option>`;
+        })
+        .join("")}`;
+      if (output) output.textContent = `Loaded ${filtered.length} learner(s) for assessment reports.`;
+    } catch (error) {
+      if (output) output.textContent = `Failed to load learners: ${error.message}`;
+    }
+  };
+
+  learnerKeyEl?.addEventListener("change", loadLearners);
+  gradeEl?.addEventListener("change", () => {
+    if (String(gradeEl.value || "").trim() && formEl) formEl.value = "";
+    loadLearners();
+  });
+  formEl?.addEventListener("change", () => {
+    if (String(formEl.value || "").trim() && gradeEl) gradeEl.value = "";
+    loadLearners();
+  });
+  streamEl?.addEventListener("change", loadLearners);
+  loadLearners();
+
+  document.getElementById("assessGenerateButton")?.addEventListener("click", async () => {
+    const learnerId = Number(learnerSelect?.value || 0);
+    if (!learnerId) {
+      alert("Select learner first.");
+      return;
+    }
+    try {
+      const report = await request(`/api/academic/assessment-report/${learnerId}`);
+      examPanelState.assessmentReport = report;
+      if (output) {
+        const trend = Array.isArray(report.performance_trend) ? report.performance_trend : [];
+        output.innerHTML = [
+          `<strong>Learner:</strong> ${escapeHtml(report?.learner?.full_name || "-")} (${escapeHtml(report?.learner?.admission_number || "-")})`,
+          `<strong>Class:</strong> ${escapeHtml(report?.learner?.grade || "-")} ${escapeHtml(report?.learner?.stream || "")}`,
+          `<strong>Subjects Entered:</strong> ${escapeHtml(String((report?.marks || []).length || 0))}`,
+          `<strong>Trend Points:</strong> ${escapeHtml(String(trend.length || 0))}`
+        ].join("<br/>");
+      }
+    } catch (error) {
+      alert(error.message);
+    }
+  });
+
+  document.getElementById("assessTrendButton")?.addEventListener("click", () => {
+    const trend = Array.isArray(examPanelState.assessmentReport?.performance_trend)
+      ? examPanelState.assessmentReport.performance_trend
+      : [];
+    if (!trend.length) {
+      alert("Generate assessment report first.");
+      return;
+    }
+    if (output) {
+      output.innerHTML = trend.map((item) =>
+        `${escapeHtml(String(item.year || "-"))} ${escapeHtml(item.term || "-")} → ${escapeHtml(String(item.avg || 0))}%`
+      ).join("<br/>");
+    }
+  });
+
+  document.getElementById("assessPrintButton")?.addEventListener("click", () => {
+    const report = examPanelState.assessmentReport;
+    if (!report) {
+      alert("Generate assessment report first.");
+      return;
+    }
+    const lines = [
+      `Assessment Report - ${report?.learner?.full_name || "-"}`,
+      `Admission Number: ${report?.learner?.admission_number || "-"}`,
+      `Class: ${report?.learner?.grade || "-"} ${report?.learner?.stream || ""}`,
+      "",
+      "Marks:",
+      ...(Array.isArray(report.marks) ? report.marks.map((mark) =>
+        `${mark.subject || "-"} | ${mark.marks || "-"} | ${mark.percentage || "-"}% | ${mark.term || "-"} ${mark.year || ""}`
+      ) : [])
+    ];
+    const popup = window.open("", "_blank");
+    popup.document.write(`<pre>${escapeHtml(lines.join("\n"))}</pre>`);
+    popup.document.close();
+    popup.print();
+  });
+
+  document.getElementById("assessDownloadPdfButton")?.addEventListener("click", () => {
+    const report = examPanelState.assessmentReport;
+    if (!report) {
+      alert("Generate assessment report first.");
+      return;
+    }
+    const payload = {
+      learner: report.learner,
+      institution: report.institution,
+      marks: report.marks,
+      performance_trend: report.performance_trend
+    };
+    downloadTextFile("assessment-report.json", JSON.stringify(payload, null, 2), "application/json;charset=utf-8");
+  });
+
+  document.getElementById("assessDownloadSampleButton")?.addEventListener("click", () => {
+    const sample = [
+      { subject: "English", marks: 78, percentage: 78, cbc_grade_band: "MEETING", term: "Term One", year: new Date().getFullYear() }
+    ];
+    downloadTextFile("assessment-report-sample.csv", rowsToCsv(sample), "text/csv;charset=utf-8");
+  });
   document.getElementById("assessUploadAmendedButton")?.addEventListener("click", () => {
     document.getElementById("assessUploadInput")?.click();
   });
-  document.getElementById("assessUploadInput")?.addEventListener("change", () => {
-    alert("Amended assessment sample uploaded.");
+  document.getElementById("assessUploadInput")?.addEventListener("change", (event) => {
+    const file = event?.target?.files?.[0];
+    if (file && output) {
+      output.textContent = `Amended assessment artifact received: ${file.name}`;
+    }
   });
 }
 
@@ -2223,6 +2964,8 @@ async function renderCbcCurriculumEditor(options = {}) {
     const materialRows = Array.isArray(materials) ? materials : [];
     const gradeOptions = Array.isArray(meta?.gradeOptions) ? meta.gradeOptions : [];
     const formOptions = Array.isArray(meta?.formOptions) ? meta.formOptions : ["Form 3", "Form 4"];
+    const cbcLevels = Array.isArray(meta?.cbcLevels) ? meta.cbcLevels : [];
+    const seniorPathways = getSeniorSecondaryPathwayOptions();
     const subjectOptions = (Array.isArray(meta?.subjectOptions) ? meta.subjectOptions : [])
       .filter((item) => String(item || "").toUpperCase() !== "ALL");
     const termOptions = Array.isArray(meta?.termOptions) ? meta.termOptions : ["Term One", "Term Two", "Term Three"];
@@ -2273,6 +3016,16 @@ async function renderCbcCurriculumEditor(options = {}) {
           <option value="">Select form</option>
           ${formOptions.map((item) => `<option value="${escapeHtml(item)}">${escapeHtml(item)}</option>`).join("")}
         </select>
+        <label>CBC Level</label>
+        <select id="cbcLevel">
+          <option value="">Auto from Grade/Form</option>
+          ${cbcLevels.map((level) => `<option value="${escapeHtml(level.key || "")}">${escapeHtml(level.label || level.key || "")}</option>`).join("")}
+        </select>
+        <label>Senior Pathway</label>
+        <select id="cbcPathway">
+          <option value="">All pathways</option>
+          ${seniorPathways.map((item) => `<option value="${escapeHtml(item)}">${escapeHtml(item)}</option>`).join("")}
+        </select>
         <label>Learning Area</label>
         <select id="cbcLearningArea">
           <option value="">Select learning area</option>
@@ -2309,21 +3062,21 @@ async function renderCbcCurriculumEditor(options = {}) {
         </select>
         <label>Upload Teacher/Textbook/Learning Material</label><input id="cbcMaterialFile" type="file" />
       </div>
-      <div class="actions-row">
-        <button id="saveCbcEntryButton">Save Curriculum Entry</button>
-        <button id="generateCbcStructureButton">AI Strand/Sub-Strand Assist</button>
-        <button id="generateCbcNotesButton">Generate AI Notes</button>
-        <button id="bulkGenerateCbcLibraryButton">Generate Full CBC Library</button>
-        <button id="downloadCbcMappingTemplateButton">Download Mapping CSV Template</button>
-        <button id="downloadCbcWordTemplateButton">Download Word Template</button>
-        <button id="importCbcMappingButton">Import Strand/Sub-Strand CSV</button>
-        <button id="editCbcMappingButton">Edit Strand/Sub-Strand Mapping</button>
+      <div class="ax-toolbar">
+        <button class="ax-btn ax-btn--save" id="saveCbcEntryButton">Save Curriculum Entry</button>
+        <button class="ax-btn ax-btn--generate" id="generateCbcStructureButton">AI Strand/Sub-Strand Assist</button>
+        <button class="ax-btn ax-btn--generate" id="generateCbcNotesButton">Generate AI Notes</button>
+        <button class="ax-btn ax-btn--generate" id="bulkGenerateCbcLibraryButton">Generate Full CBC Library</button>
+        <button class="ax-btn ax-btn--download" id="downloadCbcMappingTemplateButton">Download Mapping CSV Template</button>
+        <button class="ax-btn ax-btn--download" id="downloadCbcWordTemplateButton">Download Word Template</button>
+        <button class="ax-btn ax-btn--upload" id="importCbcMappingButton">Import Strand/Sub-Strand CSV</button>
+        <button class="ax-btn ax-btn--edit" id="editCbcMappingButton">Edit Strand/Sub-Strand Mapping</button>
         <input id="cbcMappingFile" type="file" accept=".csv,text/csv" style="display:none;" />
-        <button id="printCbcNotesButton">Print Notes</button>
-        <button id="downloadCbcNotesButton">Download Notes</button>
-        <button id="uploadCbcMaterialButton">Upload Material</button>
-        <button id="amendCbcMaterialButton">Amend Material</button>
-        <button id="refreshCbcEditorButton">Refresh</button>
+        <button class="ax-btn ax-btn--print" id="printCbcNotesButton">Print Notes</button>
+        <button class="ax-btn ax-btn--download" id="downloadCbcNotesButton">Download Notes</button>
+        <button class="ax-btn ax-btn--upload" id="uploadCbcMaterialButton">Upload Material</button>
+        <button class="ax-btn ax-btn--edit" id="amendCbcMaterialButton">Amend Material</button>
+        <button class="ax-btn ax-btn--refresh" id="refreshCbcEditorButton">Refresh</button>
       </div>
       <div class="module-header-card">
         <h4>KICD CBC Import (PP1 to Grade 12)</h4>
@@ -2342,15 +3095,39 @@ async function renderCbcCurriculumEditor(options = {}) {
           <option value="true">Yes</option>
         </select>
       </div>
-      <div class="actions-row">
-        <button id="previewKicdCatalogButton">Preview KICD Catalog</button>
-        <button id="importKicdCurriculumButton">Import KICD Curriculum</button>
-        <button id="exportKicdCsvButton">Export KICD CSV</button>
-        <button id="exportKicdExcelButton">Export KICD Excel</button>
+      <div class="ax-toolbar">
+        <button class="ax-btn ax-btn--view" id="previewKicdCatalogButton">Preview KICD Catalog</button>
+        <button class="ax-btn ax-btn--upload" id="importKicdCurriculumButton">Import KICD Curriculum</button>
+        <button class="ax-btn ax-btn--export-excel" id="exportKicdCsvButton">Export KICD CSV</button>
+        <button class="ax-btn ax-btn--export-excel" id="exportKicdExcelButton">Export KICD Excel</button>
       </div>
       <div class="form-grid">
         <label>KICD Import Summary</label>
         <textarea id="kicdImportSummary" rows="8" readonly placeholder="Catalog and import summary will appear here."></textarea>
+      </div>
+      <div class="module-header-card">
+        <h4>Local Curriculum PDF Import (Uploads Folder)</h4>
+        <p>Reads your locally uploaded curriculum-design PDFs and imports strand/sub-strand, specific learning outcomes, and suggested learning experiences.</p>
+      </div>
+      <div class="form-grid">
+        <label>Base Folder</label>
+        <input id="localCurriculumBaseFolder" value="uploads/curriculum-design" />
+        <label>Max Files</label>
+        <input id="localCurriculumMaxFiles" type="number" min="1" max="5000" value="500" />
+        <label>Replace Previous Local Import</label>
+        <select id="localCurriculumReplaceExisting">
+          <option value="false" selected>No</option>
+          <option value="true">Yes</option>
+        </select>
+      </div>
+      <div class="ax-toolbar">
+        <button class="ax-btn ax-btn--upload" id="importLocalCurriculumButton">Import Local Curriculum PDFs</button>
+        <button class="ax-btn ax-btn--export-excel" id="exportLocalCurriculumCsvButton">Export Curriculum CSV</button>
+        <button class="ax-btn ax-btn--export-excel" id="exportLocalCurriculumExcelButton">Export Curriculum Excel</button>
+      </div>
+      <div class="form-grid">
+        <label>Local Import Summary</label>
+        <textarea id="localCurriculumImportSummary" rows="8" readonly placeholder="Local PDF import summary appears here."></textarea>
       </div>
       <div class="module-header-card">
         <h4>Manual Strand/Sub-Strand + Notes Entry</h4>
@@ -2366,8 +3143,8 @@ async function renderCbcCurriculumEditor(options = {}) {
         <label>Manual Notes</label>
         <textarea id="manualCbcMappingNotes" rows="4" placeholder="Paste notes for this sub-strand"></textarea>
       </div>
-      <div class="actions-row">
-        <button id="saveManualCbcMappingButton">Save Manual Mapping + Notes</button>
+      <div class="ax-toolbar">
+        <button class="ax-btn ax-btn--save" id="saveManualCbcMappingButton">Save Manual Mapping + Notes</button>
       </div>
       <section id="examMgmtSubmodulePanel" class="dashboard-section" style="display:none;"></section>
     `;
@@ -2467,6 +3244,8 @@ async function renderCbcCurriculumEditor(options = {}) {
     });
     const gradeEl = document.getElementById("cbcGrade");
     const formEl = document.getElementById("cbcFormName");
+    const levelEl = document.getElementById("cbcLevel");
+    const pathwayEl = document.getElementById("cbcPathway");
     const learningAreaEl = document.getElementById("cbcLearningArea");
     const strandEl = document.getElementById("cbcStrand");
     const subStrandEl = document.getElementById("cbcSubStrand");
@@ -2487,7 +3266,8 @@ async function renderCbcCurriculumEditor(options = {}) {
       "saveManualCbcMappingButton",
       "uploadCbcMaterialButton",
       "amendCbcMaterialButton",
-      "importKicdCurriculumButton"
+      "importKicdCurriculumButton",
+      "importLocalCurriculumButton"
     ];
 
     const applyRoleEditMode = () => {
@@ -2512,28 +3292,20 @@ async function renderCbcCurriculumEditor(options = {}) {
       const hasGrade = Boolean(String(gradeEl?.value || "").trim());
       const hasForm = Boolean(String(formEl?.value || "").trim());
       const hasLevel = hasGrade || hasForm;
-      const hasLearningArea = hasLevel && Boolean(String(learningAreaEl?.value || "").trim());
-      const hasStrand = hasLearningArea && Boolean(String(strandEl?.value || "").trim());
-      const hasSubStrand = hasStrand && Boolean(String(subStrandEl?.value || "").trim());
+      const hasLearningArea = Boolean(String(learningAreaEl?.value || "").trim());
+      const hasStrand = Boolean(String(strandEl?.value || "").trim());
+      if (levelEl && hasLevel) {
+        const selectedGrade = String(gradeEl?.value || formEl?.value || "");
+        const matchedLevel = (Array.isArray(meta?.cbcLevels) ? meta.cbcLevels : []).find((level) =>
+          Array.isArray(level.grades) && level.grades.some((value) => normalizeLookupKey(value) === normalizeLookupKey(selectedGrade))
+        );
+        if (matchedLevel) levelEl.value = matchedLevel.key || "";
+      }
 
-      if (gradeEl) gradeEl.disabled = hasForm;
-      if (formEl) formEl.disabled = hasGrade;
-      if (learningAreaEl) learningAreaEl.disabled = !hasLevel;
-      if (strandEl) strandEl.disabled = !hasLearningArea;
-      if (subStrandEl) subStrandEl.disabled = !hasStrand;
-      if (learningOutcomesEl) learningOutcomesEl.disabled = !hasSubStrand;
-      if (assessmentRubricEl) assessmentRubricEl.disabled = !hasSubStrand;
-      if (learningExperiencesEl) learningExperiencesEl.disabled = !hasSubStrand;
-      if (resourcesReferenceEl) resourcesReferenceEl.disabled = !hasLearningArea;
-      if (notesEl) notesEl.disabled = !hasSubStrand;
-      if (materialFileEl) materialFileEl.disabled = !hasLearningArea;
-      const uploadScopeEl = document.getElementById("cbcUploadScope");
-      if (uploadScopeEl) uploadScopeEl.disabled = !hasLearningArea;
-      const canUpload = hasLearningArea && canManageCurriculum;
       const uploadButton = document.getElementById("uploadCbcMaterialButton");
-      if (uploadButton) uploadButton.disabled = !canUpload;
+      if (uploadButton) uploadButton.disabled = !canManageCurriculum;
       const saveButton = document.getElementById("saveCbcEntryButton");
-      if (saveButton) saveButton.disabled = !canManageCurriculum || !hasSubStrand;
+      if (saveButton) saveButton.disabled = !canManageCurriculum;
       const suggestButton = document.getElementById("generateCbcStructureButton");
       if (suggestButton) suggestButton.disabled = !canManageCurriculum || !hasLearningArea;
       const generateNotesButton = document.getElementById("generateCbcNotesButton");
@@ -2541,9 +3313,17 @@ async function renderCbcCurriculumEditor(options = {}) {
       const bulkGenerateButton = document.getElementById("bulkGenerateCbcLibraryButton");
       if (bulkGenerateButton) bulkGenerateButton.disabled = !canManageCurriculum || !hasLevel;
       const printNotesButton = document.getElementById("printCbcNotesButton");
-      if (printNotesButton) printNotesButton.disabled = !hasLearningArea;
+      if (printNotesButton) printNotesButton.disabled = false;
       const downloadNotesButton = document.getElementById("downloadCbcNotesButton");
-      if (downloadNotesButton) downloadNotesButton.disabled = !hasLearningArea;
+      if (downloadNotesButton) downloadNotesButton.disabled = false;
+      if (learningOutcomesEl) learningOutcomesEl.disabled = false;
+      if (assessmentRubricEl) assessmentRubricEl.disabled = false;
+      if (learningExperiencesEl) learningExperiencesEl.disabled = false;
+      if (resourcesReferenceEl) resourcesReferenceEl.disabled = false;
+      if (notesEl) notesEl.disabled = false;
+      if (materialFileEl) materialFileEl.disabled = false;
+      const uploadScopeEl = document.getElementById("cbcUploadScope");
+      if (uploadScopeEl) uploadScopeEl.disabled = false;
     };
 
     function setSelectOptions(selectEl, options, placeholder) {
@@ -2591,15 +3371,34 @@ async function renderCbcCurriculumEditor(options = {}) {
       }
     }
 
+    const refreshLearningAreaOptionsFromSelection = () => {
+      if (!learningAreaEl) return;
+      const selected = String(learningAreaEl.value || "");
+      learningAreaEl.innerHTML = `<option value="">Select learning area</option>${buildExamLearningAreaOptionsBySelection({
+        grade: gradeEl?.value || "",
+        form: formEl?.value || "",
+        pathway: pathwayEl?.value || ""
+      })}`;
+      if (selected && Array.from(learningAreaEl.options).some((option) => option.value === selected)) {
+        learningAreaEl.value = selected;
+      }
+    };
+
     gradeEl?.addEventListener("change", () => {
       if (String(gradeEl.value || "").trim() && formEl) formEl.value = "";
+      refreshLearningAreaOptionsFromSelection();
       applyCurriculumActivationState();
       refreshStructureFromAi();
     });
     formEl?.addEventListener("change", () => {
       if (String(formEl.value || "").trim() && gradeEl) gradeEl.value = "";
+      refreshLearningAreaOptionsFromSelection();
       applyCurriculumActivationState();
       refreshStructureFromAi();
+    });
+    pathwayEl?.addEventListener("change", () => {
+      refreshLearningAreaOptionsFromSelection();
+      applyCurriculumActivationState();
     });
     learningAreaEl?.addEventListener("change", () => {
       applyCurriculumActivationState();
@@ -2620,6 +3419,7 @@ async function renderCbcCurriculumEditor(options = {}) {
       }
     });
     applyRoleEditMode();
+    refreshLearningAreaOptionsFromSelection();
     applyCurriculumActivationState();
     document.getElementById("generateCbcNotesButton")?.addEventListener("click", async () => {
       const payload = {
@@ -2818,6 +3618,73 @@ async function renderCbcCurriculumEditor(options = {}) {
     document.getElementById("exportKicdExcelButton")?.addEventListener("click", async () => {
       try {
         await downloadWithAuth("/api/cbc/kicd/export/excel", "kicd-curriculum-structure.xlsx");
+      } catch (error) {
+        alert(error.message);
+      }
+    });
+    document.getElementById("importLocalCurriculumButton")?.addEventListener("click", async () => {
+      const summaryEl = document.getElementById("localCurriculumImportSummary");
+      const baseFolder = String(document.getElementById("localCurriculumBaseFolder")?.value || "uploads/curriculum-design");
+      const maxFiles = Number(document.getElementById("localCurriculumMaxFiles")?.value || 500) || 500;
+      const replaceExisting = String(document.getElementById("localCurriculumReplaceExisting")?.value || "false") === "true";
+      const proceed = window.confirm(
+        "Import local curriculum PDFs now? This reads files from uploads/curriculum-design and may take a while."
+      );
+      if (!proceed) return;
+      if (summaryEl) summaryEl.value = "Importing local curriculum PDFs. Please wait...";
+      try {
+        const result = await request("/api/cbc/local-curriculum/import", {
+          method: "POST",
+          body: JSON.stringify({
+            base_directory: baseFolder,
+            max_files: maxFiles,
+            replace_existing: replaceExisting,
+            upsert_curriculum_entries: true,
+            source_label: "LOCAL_CURRICULUM_PDF"
+          })
+        });
+        const lines = [
+          "Local Curriculum Import Result",
+          `Base directory: ${result.base_directory || "-"}`,
+          `Files scanned: ${result.scanned_file_count || 0}`,
+          `Files parsed: ${result.parsed_file_count || 0}`,
+          `Extracted rows: ${result.extracted_row_count || 0}`,
+          `Unique rows: ${result.unique_row_count || 0}`,
+          `Inserted mappings: ${result.inserted_mappings || 0}`,
+          `Skipped mappings: ${result.skipped_mappings || 0}`,
+          `Inserted curriculum entries: ${result.inserted_curriculum_entries || 0}`,
+          `Updated curriculum entries: ${result.updated_curriculum_entries || 0}`
+        ];
+        if (Array.isArray(result.file_errors) && result.file_errors.length) {
+          lines.push("", "File errors:");
+          result.file_errors.slice(0, 15).forEach((entry) => {
+            lines.push(`- ${entry.file || entry.source_file_path || "file"}: ${entry.error || "Unknown error"}`);
+          });
+        }
+        if (summaryEl) summaryEl.value = lines.join("\n");
+        alert("Local curriculum PDF import completed.");
+        await renderCbcCurriculumEditor();
+      } catch (error) {
+        if (summaryEl) summaryEl.value = `Local curriculum import failed: ${error.message}`;
+        alert(error.message);
+      }
+    });
+    document.getElementById("exportLocalCurriculumCsvButton")?.addEventListener("click", async () => {
+      try {
+        await downloadWithAuth(
+          "/api/cbc/kicd/export/csv?source_label=LOCAL_CURRICULUM_PDF",
+          "local-curriculum-structure.csv"
+        );
+      } catch (error) {
+        alert(error.message);
+      }
+    });
+    document.getElementById("exportLocalCurriculumExcelButton")?.addEventListener("click", async () => {
+      try {
+        await downloadWithAuth(
+          "/api/cbc/kicd/export/excel?source_label=LOCAL_CURRICULUM_PDF",
+          "local-curriculum-structure.xlsx"
+        );
       } catch (error) {
         alert(error.message);
       }

@@ -1,3 +1,5 @@
+const { CBC_LEVELS } = require("./constants");
+
 const DEFAULT_STRANDS = [
   "Foundational Literacy and Communication",
   "Inquiry and Problem Solving",
@@ -43,7 +45,13 @@ const SUBJECT_LIBRARY = {
 };
 
 function getAllCbcLearningAreas() {
-  return Object.keys(SUBJECT_LIBRARY);
+  const levelAreas = Array.isArray(CBC_LEVELS)
+    ? CBC_LEVELS.flatMap((level) => [
+      ...(Array.isArray(level.learningAreas) ? level.learningAreas : []),
+      ...Object.values(level.pathways || {}).flatMap((areas) => (Array.isArray(areas) ? areas : []))
+    ])
+    : [];
+  return Array.from(new Set([...Object.keys(SUBJECT_LIBRARY), ...levelAreas]));
 }
 
 function normalize(value) {

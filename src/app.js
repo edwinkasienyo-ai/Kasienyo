@@ -18,6 +18,7 @@ const {
   ROLE_PERMISSIONS,
   GRADES,
   FORMS,
+  CBC_LEVELS,
   TERMS,
   YEAR_JOINED_OPTIONS,
   YEAR_JOINED_WIDE_OPTIONS,
@@ -66,6 +67,7 @@ const {
   fetchKicdCatalog,
   extractKicdCurriculumFromCatalog
 } = require("./services/kicdCurriculumService");
+const { importLocalCurriculumFromPdfDirectory } = require("./services/localCurriculumImportService");
 
 /** Bump when shipping UI/API changes so schools can confirm they run the right copy. */
 const IIMS_BUILD_STAMP = process.env.IIMS_BUILD_STAMP || "ui-deploy-rev45";
@@ -2302,11 +2304,21 @@ app.get("/api/build-info", (_, res) => sendBuildInfoJson(res));
 app.get("/api/building-info", (_, res) => sendBuildInfoJson(res));
 
 app.get("/api/meta", (_, res) => {
+  const cbcLearningAreas = Array.from(
+    new Set(
+      CBC_LEVELS.flatMap((level) => [
+        ...(Array.isArray(level.learningAreas) ? level.learningAreas : []),
+        ...Object.values(level.pathways || {}).flatMap((areas) => (Array.isArray(areas) ? areas : []))
+      ])
+    )
+  );
   res.json({
     roles: ROLES,
     permissions: PERMISSIONS,
     rolePermissions: ROLE_PERMISSIONS,
     gradeOptions: GRADES,
+    cbcLevels: CBC_LEVELS,
+    cbcLearningAreas,
     yearJoinedOptions: YEAR_JOINED_OPTIONS,
     yearJoinedWideOptions: YEAR_JOINED_WIDE_OPTIONS,
     formOptions: FORMS,
@@ -7614,6 +7626,223 @@ app.post(
       document_summaries: extracted.document_summaries,
       level_errors: catalog.level_errors,
       document_errors: extracted.document_errors
+    });
+  })
+);
+
+app.post(
+  "/api/cbc/local-curriculum/import",
+  auth,
+  enforceModuleAccess(MODULE_KEYS.CBC_CURRICULUM_EDITOR),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
+  enforcePermission(PERMISSIONS.CREATE),
+  asyncHandler(async (req, res) => {
+    const baseDirectory = cleanOptionalValue(req.body?.base_directory) || path.join(process.cwd(), "uploads", "curriculum-design");
+    const replaceExisting = parseTruthy(req.body?.replace_existing);
+    const upsertCurriculumEntries = parseTruthy(req.body?.upsert_curriculum_entries ?? true);
+    const maxFiles = Math.min(Math.max(Number(req.body?.max_files || 500), 1), 5000);
+    const sourceLabel = cleanOptionalValue(req.body?.source_label) || "LOCAL_CURRICULUM_PDF";
+
+    const extracted = await importLocalCurriculumFromPdfDirectory({
+      base_directory: baseDirectory,
+      max_files: maxFiles
+    });
+    const importedRows = Array.isArray(extracted.rows) ? extracted.rows : [];
+
+    if (replaceExisting) {
+      await query(
+        `DELETE FROM cbc_structure_mappings
+         WHERE institution_id = ? AND source_label = ?`,
+        [req.user.institution_id, sourceLabel]
+      );
+    }
+
+    const existingMappings = await query(
+      `SELECT learning_area, strand, sub_strand, COALESCE(grade, '') grade, COALESCE(form_name, '') form_name
+       FROM cbc_structure_mappings
+       WHERE institution_id = ? AND source_label = ?`,
+      [req.user.institution_id, sourceLabel]
+    );
+    const existingMappingKeys = new Set(
+      existingMappings.map((row) => [
+        cleanValue(row.learning_area).toLowerCase(),
+        cleanValue(row.strand).toLowerCase(),
+        cleanValue(row.sub_strand).toLowerCase(),
+        cleanValue(row.grade).toLowerCase(),
+        cleanValue(row.form_name).toLowerCase()
+      ].join("::"))
+    );
+
+    let insertedMappings = 0;
+    let skippedMappings = 0;
+    for (const row of importedRows) {
+      const gradeOrForm = cleanValue(row.grade_label);
+      const isForm = /^form\s+\d+/i.test(gradeOrForm);
+      const grade = isForm ? null : cleanOptionalValue(gradeOrForm);
+      const formName = isForm ? cleanOptionalValue(gradeOrForm) : null;
+      const learningArea = cleanValue(row.learning_area);
+      const strand = cleanValue(row.strand);
+      const subStrand = cleanValue(row.sub_strand);
+      if (!learningArea || !strand || !subStrand) {
+        skippedMappings += 1;
+        // eslint-disable-next-line no-continue
+        continue;
+      }
+      const key = [
+        learningArea.toLowerCase(),
+        strand.toLowerCase(),
+        subStrand.toLowerCase(),
+        cleanValue(grade).toLowerCase(),
+        cleanValue(formName).toLowerCase()
+      ].join("::");
+      if (!replaceExisting && existingMappingKeys.has(key)) {
+        skippedMappings += 1;
+        // eslint-disable-next-line no-continue
+        continue;
+      }
+      const notes = [
+        row.learning_outcomes ? `Learning Outcomes:\n${row.learning_outcomes}` : "",
+        row.learning_experiences ? `Learning Experiences:\n${row.learning_experiences}` : "",
+        row.pathway ? `Pathway: ${row.pathway}` : "",
+        row.source_document ? `Source Document: ${row.source_document}` : "",
+        row.source_file_path ? `Source File Path: ${row.source_file_path}` : ""
+      ].filter(Boolean).join("\n\n");
+      await query(
+        `INSERT INTO cbc_structure_mappings
+          (institution_id, learning_area, strand, sub_strand, notes, grade, form_name, source_label, created_by_user_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          req.user.institution_id,
+          learningArea,
+          strand,
+          subStrand,
+          cleanOptionalValue(notes),
+          grade,
+          formName,
+          sourceLabel,
+          req.user.id
+        ]
+      );
+      existingMappingKeys.add(key);
+      insertedMappings += 1;
+    }
+
+    let insertedCurriculumEntries = 0;
+    let updatedCurriculumEntries = 0;
+    if (upsertCurriculumEntries) {
+      const existingEntries = await query(
+        `SELECT id, COALESCE(grade, '') grade, COALESCE(form_name, '') form_name, learning_area, strand, sub_strand,
+                specific_learning_outcomes, learning_experiences, resources_reference
+         FROM cbc_curriculum_entries
+         WHERE institution_id = ?`,
+        [req.user.institution_id]
+      );
+      const existingEntryMap = new Map(
+        existingEntries.map((entry) => [
+          [
+            cleanValue(entry.grade).toLowerCase(),
+            cleanValue(entry.form_name).toLowerCase(),
+            cleanValue(entry.learning_area).toLowerCase(),
+            cleanValue(entry.strand).toLowerCase(),
+            cleanValue(entry.sub_strand).toLowerCase()
+          ].join("::"),
+          entry
+        ])
+      );
+
+      for (const row of importedRows) {
+        const gradeOrForm = cleanValue(row.grade_label);
+        const isForm = /^form\s+\d+/i.test(gradeOrForm);
+        const grade = isForm ? null : cleanOptionalValue(gradeOrForm);
+        const formName = isForm ? cleanOptionalValue(gradeOrForm) : null;
+        const learningArea = cleanValue(row.learning_area);
+        const strand = cleanValue(row.strand);
+        const subStrand = cleanValue(row.sub_strand);
+        if (!learningArea || !strand || !subStrand) {
+          // eslint-disable-next-line no-continue
+          continue;
+        }
+        const key = [
+          cleanValue(grade).toLowerCase(),
+          cleanValue(formName).toLowerCase(),
+          learningArea.toLowerCase(),
+          strand.toLowerCase(),
+          subStrand.toLowerCase()
+        ].join("::");
+        const sourceReference = cleanOptionalValue(row.source_file_path || row.source_document);
+        const existing = existingEntryMap.get(key);
+        if (existing) {
+          const nextOutcomes = replaceExisting
+            ? cleanOptionalValue(row.learning_outcomes)
+            : cleanOptionalValue(existing.specific_learning_outcomes || row.learning_outcomes);
+          const nextExperiences = replaceExisting
+            ? cleanOptionalValue(row.learning_experiences)
+            : cleanOptionalValue(existing.learning_experiences || row.learning_experiences);
+          const nextResources = replaceExisting
+            ? sourceReference
+            : cleanOptionalValue(existing.resources_reference || sourceReference);
+          await query(
+            `UPDATE cbc_curriculum_entries
+             SET specific_learning_outcomes = COALESCE(?, specific_learning_outcomes),
+                 learning_experiences = COALESCE(?, learning_experiences),
+                 resources_reference = COALESCE(?, resources_reference),
+                 updated_at = NOW()
+             WHERE id = ?`,
+            [nextOutcomes, nextExperiences, nextResources, existing.id]
+          );
+          updatedCurriculumEntries += 1;
+        } else {
+          await query(
+            `INSERT INTO cbc_curriculum_entries
+              (institution_id, grade, form_name, learning_area, strand, sub_strand, specific_learning_outcomes,
+               learning_experiences, resources_reference, created_by_user_id)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+              req.user.institution_id,
+              grade,
+              formName,
+              learningArea,
+              strand,
+              subStrand,
+              cleanOptionalValue(row.learning_outcomes),
+              cleanOptionalValue(row.learning_experiences),
+              sourceReference,
+              req.user.id
+            ]
+          );
+          insertedCurriculumEntries += 1;
+        }
+      }
+    }
+
+    await auditLog(req.user, "IMPORT_LOCAL_CURRICULUM_PDF", "cbc_structure_mappings", null, {
+      base_directory: extracted.base_directory,
+      replace_existing: replaceExisting,
+      source_label: sourceLabel,
+      max_files: maxFiles,
+      scanned_file_count: extracted.scanned_file_count,
+      parsed_file_count: extracted.parsed_file_count,
+      unique_row_count: extracted.unique_row_count,
+      inserted_mappings: insertedMappings,
+      skipped_mappings: skippedMappings,
+      inserted_curriculum_entries: insertedCurriculumEntries,
+      updated_curriculum_entries: updatedCurriculumEntries
+    });
+
+    res.json({
+      message: "Local curriculum PDF import completed.",
+      base_directory: extracted.base_directory,
+      source_label: sourceLabel,
+      scanned_file_count: extracted.scanned_file_count,
+      parsed_file_count: extracted.parsed_file_count,
+      extracted_row_count: extracted.extracted_row_count,
+      unique_row_count: extracted.unique_row_count,
+      inserted_mappings: insertedMappings,
+      skipped_mappings: skippedMappings,
+      inserted_curriculum_entries: insertedCurriculumEntries,
+      updated_curriculum_entries: updatedCurriculumEntries,
+      file_summaries: extracted.file_summaries,
+      file_errors: extracted.file_errors
     });
   })
 );

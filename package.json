@@ -33,6 +33,7 @@
     "multer": "^2.1.1",
     "mysql2": "^3.11.3",
     "nodemailer": "^6.9.15",
+    "pdf-parse": "^1.1.1",
     "pdfkit": "^0.15.0",
     "qrcode": "^1.5.4",
     "speakeasy": "^2.0.0",
