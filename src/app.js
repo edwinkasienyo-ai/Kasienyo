@@ -7191,6 +7191,21 @@ function parseCbcMappingCsv(csvText = "") {
   return rows.filter((row) => row.learning_area && row.strand && row.sub_strand);
 }
 
+function extractKicdNarrativeSection(notes = "", heading = "") {
+  const source = String(notes || "");
+  if (!source || !heading) return "";
+  const escapedHeading = heading.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const sectionRegex = new RegExp(`${escapedHeading}:\\s*([\\s\\S]*?)(?:\\n\\n[A-Za-z ]+:|$)`, "i");
+  const match = source.match(sectionRegex);
+  return cleanOptionalValue(match?.[1] || "");
+}
+
+function csvCell(value) {
+  const raw = String(value ?? "");
+  if (!/[",\n]/.test(raw)) return raw;
+  return `"${raw.replace(/"/g, "\"\"")}"`;
+}
+
 app.get(
   "/api/cbc/curriculum/structure-mappings/template",
   auth,
@@ -7600,6 +7615,107 @@ app.post(
       level_errors: catalog.level_errors,
       document_errors: extracted.document_errors
     });
+  })
+);
+
+app.get(
+  "/api/cbc/kicd/export/csv",
+  auth,
+  enforceModuleAccess(MODULE_KEYS.CBC_CURRICULUM_EDITOR),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER]),
+  enforcePermission(PERMISSIONS.VIEW),
+  asyncHandler(async (req, res) => {
+    const sourceLabel = cleanOptionalValue(req.query?.source_label) || "KICD_AUTO";
+    const rows = await query(
+      `SELECT learning_area, strand, sub_strand, notes, COALESCE(grade, '') grade, COALESCE(form_name, '') form_name,
+              source_label, created_at, updated_at
+       FROM cbc_structure_mappings
+       WHERE institution_id = ?
+         AND (? = '*' OR source_label = ?)
+       ORDER BY learning_area, strand, sub_strand`,
+      [req.user.institution_id, sourceLabel, sourceLabel]
+    );
+    const header = [
+      "grade",
+      "form_name",
+      "learning_area",
+      "strand",
+      "sub_strand",
+      "learning_outcomes",
+      "learning_experiences",
+      "notes",
+      "source_label",
+      "created_at",
+      "updated_at"
+    ];
+    const csv = [
+      header.join(","),
+      ...rows.map((row) =>
+        [
+          row.grade || "",
+          row.form_name || "",
+          row.learning_area || "",
+          row.strand || "",
+          row.sub_strand || "",
+          extractKicdNarrativeSection(row.notes, "Learning Outcomes"),
+          extractKicdNarrativeSection(row.notes, "Learning Experiences"),
+          row.notes || "",
+          row.source_label || "",
+          row.created_at ? new Date(row.created_at).toISOString() : "",
+          row.updated_at ? new Date(row.updated_at).toISOString() : ""
+        ].map(csvCell).join(",")
+      )
+    ].join("\n");
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", "attachment; filename=\"kicd-curriculum-structure.csv\"");
+    res.send(csv);
+  })
+);
+
+app.get(
+  "/api/cbc/kicd/export/excel",
+  auth,
+  enforceModuleAccess(MODULE_KEYS.CBC_CURRICULUM_EDITOR),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER]),
+  enforcePermission(PERMISSIONS.VIEW),
+  asyncHandler(async (req, res) => {
+    const sourceLabel = cleanOptionalValue(req.query?.source_label) || "KICD_AUTO";
+    const rows = await query(
+      `SELECT learning_area, strand, sub_strand, notes, COALESCE(grade, '') grade, COALESCE(form_name, '') form_name,
+              source_label, created_at, updated_at
+       FROM cbc_structure_mappings
+       WHERE institution_id = ?
+         AND (? = '*' OR source_label = ?)
+       ORDER BY learning_area, strand, sub_strand`,
+      [req.user.institution_id, sourceLabel, sourceLabel]
+    );
+    const headers = [
+      "Grade",
+      "Form",
+      "Learning Area",
+      "Strand",
+      "Sub-Strand",
+      "Learning Outcomes",
+      "Learning Experiences",
+      "Notes",
+      "Source Label",
+      "Created At",
+      "Updated At"
+    ];
+    const dataRows = rows.map((row) => [
+      row.grade || "",
+      row.form_name || "",
+      row.learning_area || "",
+      row.strand || "",
+      row.sub_strand || "",
+      extractKicdNarrativeSection(row.notes, "Learning Outcomes"),
+      extractKicdNarrativeSection(row.notes, "Learning Experiences"),
+      row.notes || "",
+      row.source_label || "",
+      row.created_at ? new Date(row.created_at).toISOString() : "",
+      row.updated_at ? new Date(row.updated_at).toISOString() : ""
+    ]);
+    await sendSimpleExcel(res, "kicd-curriculum-structure", headers, dataRows);
   })
 );
 

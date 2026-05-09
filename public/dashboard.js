@@ -11,7 +11,8 @@ let allowedModules = [];
 let portalContext = null;
 let searchRowDrafts = {};
 let dashboardAutoRefreshHandle = null;
-const CLIENT_UI_BUNDLE_ID = "dash-bundle-main-v55-kicd-curriculum-importer";
+let currentSidebarSubmoduleId = null;
+const CLIENT_UI_BUNDLE_ID = "dash-bundle-main-v56-kicd-export-sidebar-submodules";
 const DASHBOARD_STAT_LABELS = {
   totalLearners: "Total Learners Population",
   totalActiveLearners: "Active Learners",
@@ -119,6 +120,104 @@ const MODULE_DESCRIPTIONS = {
   "system-recycle-bin": "Restore or permanently purge archived deleted records.",
   "system-cbc-editor": "Create and maintain CBC curriculum structures and metadata."
 };
+
+const SIDEBAR_SUBMODULES = {
+  "system-register": [
+    {
+      id: "system-register-institution",
+      label: "Institution Registration",
+      targetModule: "system-register",
+      options: { registrationFocus: "institution" }
+    },
+    {
+      id: "system-register-user",
+      label: "User Registration",
+      targetModule: "system-register",
+      options: { registrationFocus: "user" }
+    }
+  ],
+  admission: [
+    { id: "admission-register", label: "Admission Register", targetModule: "admission", options: { admissionFocus: "register" } },
+    { id: "admission-form", label: "Admission Form", targetModule: "admission", options: { admissionFocus: "form" } },
+    { id: "admission-letter", label: "Admission Letter", targetModule: "admission", options: { admissionFocus: "letter" } }
+  ],
+  "management-staff-service": [
+    { id: "staff-profile-teacher", label: "Teacher Profile", targetModule: "management-staff-service", options: { staffCategory: "management-teachers" } },
+    {
+      id: "staff-profile-support-staff",
+      label: "Support Staff Profile",
+      targetModule: "management-staff-service",
+      options: { staffCategory: "management-non-teaching" }
+    }
+  ],
+  attendance: [
+    { id: "attendance-teacher-register", label: "Teacher Attendance", targetModule: "attendance", options: { attendanceType: "Teacher" } },
+    {
+      id: "attendance-support-staff-register",
+      label: "Support Staff Attendance",
+      targetModule: "attendance",
+      options: { attendanceType: "Support Staff" }
+    },
+    { id: "attendance-learner-register", label: "Learner Attendance", targetModule: "attendance", options: { attendanceType: "Learner" } }
+  ],
+  "system-cbc-editor": [
+    { id: "exam-curriculum", label: "Curriculum", targetModule: "system-cbc-editor", options: { examTab: "curriculum" } },
+    {
+      id: "exam-generation",
+      label: "Exam Generation",
+      targetModule: "system-cbc-editor",
+      options: { examTab: "exam-generation" }
+    },
+    { id: "marks-entry", label: "Marks Entry", targetModule: "system-cbc-editor", options: { examTab: "marks-entry" } },
+    {
+      id: "result-scripts",
+      label: "Result Scripts",
+      targetModule: "system-cbc-editor",
+      options: { examTab: "result-scripts" }
+    },
+    {
+      id: "assessment-report",
+      label: "Assessment Report",
+      targetModule: "system-cbc-editor",
+      options: { examTab: "assessment-report" }
+    }
+  ],
+  "hr-leave": [
+    { id: "hr-leave-sub", label: "HR Management", targetModule: "hr-leave" },
+    { id: "hr-recruitment-sub", label: "HR Recruitment", targetModule: "hr-recruitment" },
+    { id: "hr-institutional-letters-sub", label: "Institutional Letters", targetModule: "hr-institutional-letters" }
+  ],
+  "finance-fee-status": [
+    { id: "finance-fee-status-sub", label: "Fee Status", targetModule: "finance-fee-status" },
+    { id: "finance-fee-structure-sub", label: "Fee Structure", targetModule: "finance-fee-structure" },
+    { id: "finance-fee-payments-sub", label: "Fee Payments", targetModule: "finance-fee-payments" },
+    { id: "finance-payroll-sub", label: "Payroll", targetModule: "finance-payroll" },
+    { id: "finance-salary-advance-sub", label: "Salary Advances", targetModule: "finance-salary-advance" },
+    { id: "finance-procurement-sub", label: "Procurement", targetModule: "finance-procurement" }
+  ],
+  "communication-announcements": [
+    { id: "communication-announcements-sub", label: "Announcements", targetModule: "communication-announcements" },
+    { id: "communication-messages-sub", label: "SMS/Communication", targetModule: "communication-messages" },
+    { id: "parents-results-sub", label: "Parents/BOM Results", targetModule: "parents-results" },
+    { id: "learner-materials-sub", label: "Learner Materials", targetModule: "learner-materials" }
+  ],
+  "welfare-members": [
+    { id: "welfare-members-sub", label: "Welfare Members", targetModule: "welfare-members" },
+    { id: "welfare-contributions-sub", label: "Welfare Contributions", targetModule: "welfare-contributions" },
+    { id: "welfare-loans-sub", label: "Welfare Loans", targetModule: "welfare-loans" }
+  ]
+};
+
+function sidebarSubmodulesFor(moduleId = "") {
+  return Array.isArray(SIDEBAR_SUBMODULES[moduleId]) ? SIDEBAR_SUBMODULES[moduleId] : [];
+}
+
+function sidebarSubmoduleParent(submoduleId = "") {
+  const target = String(submoduleId || "");
+  return Object.keys(SIDEBAR_SUBMODULES).find((parent) =>
+    sidebarSubmodulesFor(parent).some((item) => item.id === target)
+  );
+}
 
 function isSystemAdminRole() {
   const role = String(portalContext?.role || "");
@@ -569,7 +668,7 @@ function applyDashboardIdentity(meData = {}) {
   }
 }
 
-async function renderSystemRegistration() {
+async function renderSystemRegistration(options = {}) {
   setActiveSidebarButton("system-register");
   document.getElementById("moduleTitle").textContent = "Register (Institution/User)";
   if (!isSystemAdminRole()) {
@@ -1172,6 +1271,14 @@ async function renderSystemRegistration() {
         printWindow?.print();
       }, 700);
     });
+    const registrationFocus = String(options?.registrationFocus || "").toLowerCase();
+    if (registrationFocus === "institution") {
+      document.querySelector("#sysInstitutionName")?.focus();
+      document.querySelector("#sysInstitutionName")?.scrollIntoView({ behavior: "smooth", block: "center" });
+    } else if (registrationFocus === "user") {
+      document.querySelector("#sysUserFullName")?.focus();
+      document.querySelector("#sysUserFullName")?.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
   } catch (error) {
     alert(error.message);
   }
@@ -2099,13 +2206,12 @@ function wireExamAssessmentReportPanel() {
   });
 }
 
-async function renderCbcCurriculumEditor() {
+async function renderCbcCurriculumEditor(options = {}) {
   setActiveSidebarButton("system-cbc-editor");
   document.getElementById("moduleTitle").textContent = "Examination Management";
-  if (!isSystemAdminRole()) {
-    alert("Only System Developer, Admin, or Head of Institution can manage Examination Management.");
-    return loadDashboard();
-  }
+  const actorRole = normalizeRoleKey(portalContext?.role || "");
+  const canManageCurriculum = actorRole === "SUPER_SYSTEM_DEVELOPER" || actorRole === "SYSTEM_DEVELOPER";
+  const initialExamTab = String(options?.examTab || "curriculum");
   currentModule = "system-cbc-editor";
   stopDashboardAutoRefresh();
   try {
@@ -2150,6 +2256,11 @@ async function renderCbcCurriculumEditor() {
       <div class="module-header-card">
         <h4>Curriculum Sub-Module</h4>
         <p>Upload teacher notes/materials, design curriculum, and feed AI for downstream exam generation.</p>
+        ${
+          canManageCurriculum
+            ? `<p class="small-note">Curriculum edit mode: Super System Developer / System Developer.</p>`
+            : `<p class="small-note">Read-only mode: only Super System Developer/System Developer can edit curriculum structure. You can still view and print teacher notes.</p>`
+        }
       </div>
       <div class="form-grid">
         <label>Grade</label>
@@ -2190,6 +2301,12 @@ async function renderCbcCurriculumEditor() {
           ${yearOptions.map((year) => `<option value="${year}">${year}</option>`).join("")}
         </select>
         <label>AI Simplified Notes</label><textarea id="cbcNotes" rows="6" placeholder="Generate or edit notes here..."></textarea>
+        <label>Notes Upload Scope</label>
+        <select id="cbcUploadScope">
+          <option value="sub_strand">Current Sub-Strand</option>
+          <option value="strand">Whole Strand</option>
+          <option value="learning_area">Whole Learning Area</option>
+        </select>
         <label>Upload Teacher/Textbook/Learning Material</label><input id="cbcMaterialFile" type="file" />
       </div>
       <div class="actions-row">
@@ -2228,6 +2345,8 @@ async function renderCbcCurriculumEditor() {
       <div class="actions-row">
         <button id="previewKicdCatalogButton">Preview KICD Catalog</button>
         <button id="importKicdCurriculumButton">Import KICD Curriculum</button>
+        <button id="exportKicdCsvButton">Export KICD CSV</button>
+        <button id="exportKicdExcelButton">Export KICD Excel</button>
       </div>
       <div class="form-grid">
         <label>KICD Import Summary</label>
@@ -2252,41 +2371,46 @@ async function renderCbcCurriculumEditor() {
       </div>
       <section id="examMgmtSubmodulePanel" class="dashboard-section" style="display:none;"></section>
     `;
+    const activateExamTab = (tabKey = "curriculum") => {
+      const tab = String(tabKey || "curriculum");
+      document.querySelectorAll(".exam-mgmt-nav button[data-exam-tab]").forEach((btn) => {
+        btn.classList.toggle("active", String(btn.dataset.examTab || "curriculum") === tab);
+      });
+      const panel = document.getElementById("examMgmtSubmodulePanel");
+      if (!panel) return;
+      if (tab === "curriculum") {
+        panel.style.display = "none";
+        panel.innerHTML = "";
+        return;
+      }
+      panel.style.display = "block";
+      if (tab === "exam-generation") {
+        panel.innerHTML = renderExamGenerationPanel();
+        wireExamGenerationPanel();
+        return;
+      }
+      if (tab === "marks-entry") {
+        panel.innerHTML = renderExamMarksEntryPanel();
+        wireExamMarksEntryPanel();
+        return;
+      }
+      if (tab === "result-scripts") {
+        panel.innerHTML = renderExamResultScriptsPanel();
+        wireExamResultScriptsPanel();
+        return;
+      }
+      if (tab === "assessment-report") {
+        panel.innerHTML = renderExamAssessmentReportPanel();
+        wireExamAssessmentReportPanel();
+      }
+    };
     document.querySelectorAll(".exam-mgmt-nav button[data-exam-tab]").forEach((tabButton) => {
       tabButton.addEventListener("click", () => {
-        document.querySelectorAll(".exam-mgmt-nav button[data-exam-tab]").forEach((btn) => btn.classList.remove("active"));
-        tabButton.classList.add("active");
         const tab = String(tabButton.dataset.examTab || "curriculum");
-        const panel = document.getElementById("examMgmtSubmodulePanel");
-        if (!panel) return;
-        if (tab === "curriculum") {
-          panel.style.display = "none";
-          panel.innerHTML = "";
-          return;
-        }
-        panel.style.display = "block";
-        if (tab === "exam-generation") {
-          panel.innerHTML = renderExamGenerationPanel();
-          wireExamGenerationPanel();
-          return;
-        }
-        if (tab === "marks-entry") {
-          panel.innerHTML = renderExamMarksEntryPanel();
-          wireExamMarksEntryPanel();
-          return;
-        }
-        if (tab === "result-scripts") {
-          panel.innerHTML = renderExamResultScriptsPanel();
-          wireExamResultScriptsPanel();
-          return;
-        }
-        if (tab === "assessment-report") {
-          panel.innerHTML = renderExamAssessmentReportPanel();
-          wireExamAssessmentReportPanel();
-          return;
-        }
+        activateExamTab(tab);
       });
     });
+    activateExamTab(initialExamTab);
     const head = document.getElementById("tableHead");
     const body = document.getElementById("tableBody");
     if (head && body) {
@@ -2346,7 +2470,81 @@ async function renderCbcCurriculumEditor() {
     const learningAreaEl = document.getElementById("cbcLearningArea");
     const strandEl = document.getElementById("cbcStrand");
     const subStrandEl = document.getElementById("cbcSubStrand");
+    const notesEl = document.getElementById("cbcNotes");
+    const learningOutcomesEl = document.getElementById("cbcLearningOutcomes");
+    const assessmentRubricEl = document.getElementById("cbcAssessmentRubric");
+    const learningExperiencesEl = document.getElementById("cbcLearningExperiences");
+    const resourcesReferenceEl = document.getElementById("cbcResourcesReference");
+    const materialFileEl = document.getElementById("cbcMaterialFile");
     let strandMap = {};
+
+    const writeControlIds = [
+      "saveCbcEntryButton",
+      "generateCbcStructureButton",
+      "bulkGenerateCbcLibraryButton",
+      "importCbcMappingButton",
+      "editCbcMappingButton",
+      "saveManualCbcMappingButton",
+      "uploadCbcMaterialButton",
+      "amendCbcMaterialButton",
+      "importKicdCurriculumButton"
+    ];
+
+    const applyRoleEditMode = () => {
+      if (canManageCurriculum) return;
+      writeControlIds.forEach((id) => {
+        const node = document.getElementById(id);
+        if (node) node.disabled = true;
+      });
+      const mappingFileInput = document.getElementById("cbcMappingFile");
+      if (mappingFileInput) mappingFileInput.disabled = true;
+      const manualNoteInput = document.getElementById("manualCbcMappingNotes");
+      if (manualNoteInput) manualNoteInput.disabled = true;
+      const manualAreaInput = document.getElementById("manualCbcLearningArea");
+      if (manualAreaInput) manualAreaInput.disabled = true;
+      const manualStrandInput = document.getElementById("manualCbcStrand");
+      if (manualStrandInput) manualStrandInput.disabled = true;
+      const manualSubStrandInput = document.getElementById("manualCbcSubStrand");
+      if (manualSubStrandInput) manualSubStrandInput.disabled = true;
+    };
+
+    const applyCurriculumActivationState = () => {
+      const hasGrade = Boolean(String(gradeEl?.value || "").trim());
+      const hasForm = Boolean(String(formEl?.value || "").trim());
+      const hasLevel = hasGrade || hasForm;
+      const hasLearningArea = hasLevel && Boolean(String(learningAreaEl?.value || "").trim());
+      const hasStrand = hasLearningArea && Boolean(String(strandEl?.value || "").trim());
+      const hasSubStrand = hasStrand && Boolean(String(subStrandEl?.value || "").trim());
+
+      if (gradeEl) gradeEl.disabled = hasForm;
+      if (formEl) formEl.disabled = hasGrade;
+      if (learningAreaEl) learningAreaEl.disabled = !hasLevel;
+      if (strandEl) strandEl.disabled = !hasLearningArea;
+      if (subStrandEl) subStrandEl.disabled = !hasStrand;
+      if (learningOutcomesEl) learningOutcomesEl.disabled = !hasSubStrand;
+      if (assessmentRubricEl) assessmentRubricEl.disabled = !hasSubStrand;
+      if (learningExperiencesEl) learningExperiencesEl.disabled = !hasSubStrand;
+      if (resourcesReferenceEl) resourcesReferenceEl.disabled = !hasLearningArea;
+      if (notesEl) notesEl.disabled = !hasSubStrand;
+      if (materialFileEl) materialFileEl.disabled = !hasLearningArea;
+      const uploadScopeEl = document.getElementById("cbcUploadScope");
+      if (uploadScopeEl) uploadScopeEl.disabled = !hasLearningArea;
+      const canUpload = hasLearningArea && canManageCurriculum;
+      const uploadButton = document.getElementById("uploadCbcMaterialButton");
+      if (uploadButton) uploadButton.disabled = !canUpload;
+      const saveButton = document.getElementById("saveCbcEntryButton");
+      if (saveButton) saveButton.disabled = !canManageCurriculum || !hasSubStrand;
+      const suggestButton = document.getElementById("generateCbcStructureButton");
+      if (suggestButton) suggestButton.disabled = !canManageCurriculum || !hasLearningArea;
+      const generateNotesButton = document.getElementById("generateCbcNotesButton");
+      if (generateNotesButton) generateNotesButton.disabled = !hasStrand;
+      const bulkGenerateButton = document.getElementById("bulkGenerateCbcLibraryButton");
+      if (bulkGenerateButton) bulkGenerateButton.disabled = !canManageCurriculum || !hasLevel;
+      const printNotesButton = document.getElementById("printCbcNotesButton");
+      if (printNotesButton) printNotesButton.disabled = !hasLearningArea;
+      const downloadNotesButton = document.getElementById("downloadCbcNotesButton");
+      if (downloadNotesButton) downloadNotesButton.disabled = !hasLearningArea;
+    };
 
     function setSelectOptions(selectEl, options, placeholder) {
       if (!selectEl) return;
@@ -2393,13 +2591,26 @@ async function renderCbcCurriculumEditor() {
       }
     }
 
-    gradeEl?.addEventListener("change", refreshStructureFromAi);
-    formEl?.addEventListener("change", refreshStructureFromAi);
-    learningAreaEl?.addEventListener("change", refreshStructureFromAi);
+    gradeEl?.addEventListener("change", () => {
+      if (String(gradeEl.value || "").trim() && formEl) formEl.value = "";
+      applyCurriculumActivationState();
+      refreshStructureFromAi();
+    });
+    formEl?.addEventListener("change", () => {
+      if (String(formEl.value || "").trim() && gradeEl) gradeEl.value = "";
+      applyCurriculumActivationState();
+      refreshStructureFromAi();
+    });
+    learningAreaEl?.addEventListener("change", () => {
+      applyCurriculumActivationState();
+      refreshStructureFromAi();
+    });
     strandEl?.addEventListener("change", () => {
       const subOptions = Array.isArray(strandMap[strandEl.value]) ? strandMap[strandEl.value] : [];
       setSelectOptions(subStrandEl, subOptions, "Select sub-strand");
+      applyCurriculumActivationState();
     });
+    subStrandEl?.addEventListener("change", applyCurriculumActivationState);
 
     document.getElementById("generateCbcStructureButton")?.addEventListener("click", async () => {
       try {
@@ -2408,6 +2619,8 @@ async function renderCbcCurriculumEditor() {
         alert(error.message);
       }
     });
+    applyRoleEditMode();
+    applyCurriculumActivationState();
     document.getElementById("generateCbcNotesButton")?.addEventListener("click", async () => {
       const payload = {
         grade: gradeEl?.value || "",
@@ -2595,6 +2808,20 @@ async function renderCbcCurriculumEditor() {
         alert(error.message);
       }
     });
+    document.getElementById("exportKicdCsvButton")?.addEventListener("click", async () => {
+      try {
+        await downloadWithAuth("/api/cbc/kicd/export/csv", "kicd-curriculum-structure.csv");
+      } catch (error) {
+        alert(error.message);
+      }
+    });
+    document.getElementById("exportKicdExcelButton")?.addEventListener("click", async () => {
+      try {
+        await downloadWithAuth("/api/cbc/kicd/export/excel", "kicd-curriculum-structure.xlsx");
+      } catch (error) {
+        alert(error.message);
+      }
+    });
     document.getElementById("editCbcMappingButton")?.addEventListener("click", async () => {
       const learningArea = learningAreaEl?.value || "";
       if (!learningArea) {
@@ -2660,10 +2887,78 @@ async function renderCbcCurriculumEditor() {
         alert(error.message);
       }
     });
-    document.getElementById("printCbcNotesButton")?.addEventListener("click", () => {
-      const notes = document.getElementById("cbcNotes")?.value || "";
+    const buildTeacherNotesFromCurriculumEntries = () => {
+      const grade = String(gradeEl?.value || "").trim();
+      const formName = String(formEl?.value || "").trim();
+      const learningArea = String(learningAreaEl?.value || "").trim();
+      if ((!grade && !formName) || !learningArea) return "";
+      const scoped = list.filter((row) => {
+        if (String(row.learning_area || "").trim() !== learningArea) return false;
+        if (grade && String(row.grade || "").trim() !== grade) return false;
+        if (formName && String(row.form_name || "").trim() !== formName) return false;
+        return true;
+      });
+      if (!scoped.length) return "";
+      const header = [
+        "TEACHER NOTES",
+        `Level: ${grade || formName}`,
+        `Learning Area: ${learningArea}`,
+        `Generated: ${new Date().toLocaleString()}`,
+        ""
+      ];
+      const body = scoped
+        .sort((a, b) =>
+          `${a.strand || ""} ${a.sub_strand || ""}`.localeCompare(`${b.strand || ""} ${b.sub_strand || ""}`)
+        )
+        .map((row, index) => {
+          const lines = [
+            `${index + 1}. Strand: ${row.strand || "-"}`,
+            `   Sub-Strand: ${row.sub_strand || "-"}`,
+            row.specific_learning_outcomes ? `   Learning Outcomes: ${row.specific_learning_outcomes}` : "",
+            row.learning_experiences ? `   Learning Experiences: ${row.learning_experiences}` : "",
+            row.notes ? `   Notes: ${row.notes}` : ""
+          ].filter(Boolean);
+          return lines.join("\n");
+        });
+      return [...header, ...body].join("\n");
+    };
+
+    const resolveTeacherNotesText = async () => {
+      const existing = String(document.getElementById("cbcNotes")?.value || "").trim();
+      if (existing) return existing;
+      const built = buildTeacherNotesFromCurriculumEntries();
+      if (built) {
+        document.getElementById("cbcNotes").value = built;
+        return built;
+      }
+      if (gradeEl?.value && learningAreaEl?.value && strandEl?.value) {
+        try {
+          const generated = await request("/api/cbc/curriculum/ai-generate-notes", {
+            method: "POST",
+            body: JSON.stringify({
+              grade: gradeEl?.value || "",
+              form_name: formEl?.value || "",
+              learning_area: learningAreaEl?.value || "",
+              strand: strandEl?.value || "",
+              sub_strand: subStrandEl?.value || ""
+            })
+          });
+          const text = String(generated?.generated_notes || "").trim();
+          if (text) {
+            document.getElementById("cbcNotes").value = text;
+            return text;
+          }
+        } catch (_) {
+          // keep silent; caller shows a user message when no text is available.
+        }
+      }
+      return "";
+    };
+
+    document.getElementById("printCbcNotesButton")?.addEventListener("click", async () => {
+      const notes = await resolveTeacherNotesText();
       if (!notes.trim()) {
-        alert("No notes to print.");
+        alert("Select grade/form and learning area (plus strand/sub-strand) to generate printable notes.");
         return;
       }
       const popup = window.open("", "_blank");
@@ -2671,10 +2966,10 @@ async function renderCbcCurriculumEditor() {
       popup.document.close();
       popup.print();
     });
-    document.getElementById("downloadCbcNotesButton")?.addEventListener("click", () => {
-      const notes = document.getElementById("cbcNotes")?.value || "";
+    document.getElementById("downloadCbcNotesButton")?.addEventListener("click", async () => {
+      const notes = await resolveTeacherNotesText();
       if (!notes.trim()) {
-        alert("No notes to download.");
+        alert("Select grade/form and learning area (plus strand/sub-strand) to generate downloadable notes.");
         return;
       }
       const blob = new Blob([notes], { type: "text/plain;charset=utf-8" });
@@ -2691,17 +2986,35 @@ async function renderCbcCurriculumEditor() {
         alert("Select a material file first.");
         return;
       }
+      const uploadScope = String(document.getElementById("cbcUploadScope")?.value || "sub_strand");
+      const learningArea = String(learningAreaEl?.value || "").trim();
+      const selectedStrand = String(strandEl?.value || "").trim();
+      const selectedSubStrand = String(subStrandEl?.value || "").trim();
+      if (!learningArea) {
+        alert("Select grade/form and learning area first.");
+        return;
+      }
+      if (uploadScope === "strand" && !selectedStrand) {
+        alert("Select strand first for whole-strand upload.");
+        return;
+      }
+      if (uploadScope === "sub_strand" && (!selectedStrand || !selectedSubStrand)) {
+        alert("Select strand and sub-strand first for sub-strand upload.");
+        return;
+      }
+      const scopedStrand = uploadScope === "learning_area" ? "" : selectedStrand;
+      const scopedSubStrand = uploadScope === "sub_strand" ? selectedSubStrand : "";
       const formData = new FormData();
       formData.append("file", file);
       formData.append("grade", gradeEl?.value || "");
       formData.append("form_name", formEl?.value || "");
-      formData.append("learning_area", learningAreaEl?.value || "");
-      formData.append("strand", strandEl?.value || "");
-      formData.append("sub_strand", subStrandEl?.value || "");
+      formData.append("learning_area", learningArea);
+      formData.append("strand", scopedStrand);
+      formData.append("sub_strand", scopedSubStrand);
       formData.append("term", document.getElementById("cbcTerm")?.value || "");
       formData.append("year", document.getElementById("cbcYear")?.value || "");
-      formData.append("title", file.name);
-      formData.append("description", "Uploaded from CBC/CBE Management Module");
+      formData.append("title", `${file.name} (${uploadScope.replace("_", " ")})`);
+      formData.append("description", `Uploaded from CBC/CBE Management Module (${uploadScope})`);
       formData.append("resource_type", "CBC_CBE_MATERIAL_UPLOAD");
       const response = await fetch("/api/cbc/curriculum/materials/upload", {
         method: "POST",
@@ -3461,13 +3774,24 @@ async function mergeDashboardWidgetOverrides(userId) {
 }
 
 function setActiveSidebarButton(moduleId) {
+  const parentFromSubmodule = sidebarSubmoduleParent(currentSidebarSubmoduleId);
+  const activeModuleId = moduleId || parentFromSubmodule || null;
   document.querySelectorAll(".sidebar button[data-module]").forEach((button) => {
-    button.classList.toggle("active", Boolean(moduleId) && button.dataset.module === moduleId);
+    button.classList.toggle("active", Boolean(activeModuleId) && button.dataset.module === activeModuleId);
   });
   document.querySelectorAll(".quick-action-card[data-module]").forEach((card) => {
-    card.classList.toggle("active", Boolean(moduleId) && card.getAttribute("data-module") === moduleId);
+    card.classList.toggle("active", Boolean(activeModuleId) && card.getAttribute("data-module") === activeModuleId);
   });
-  applyThemeAccentByModule(moduleId || "dashboard");
+  document.querySelectorAll(".sidebar-submodule-btn[data-submodule-id]").forEach((button) => {
+    button.classList.toggle("active", Boolean(currentSidebarSubmoduleId) && button.dataset.submoduleId === currentSidebarSubmoduleId);
+  });
+  if (activeModuleId) {
+    const list = document.querySelector(`.sidebar-submodule-list[data-parent-module="${activeModuleId}"]`);
+    if (list) {
+      list.hidden = false;
+    }
+  }
+  applyThemeAccentByModule(activeModuleId || "dashboard");
 }
 
 function applyThemeAccentByModule(moduleId) {
@@ -4500,7 +4824,7 @@ function renderCrudModule(moduleKey, options = {}) {
   const admissionRegisterMarkup =
     moduleKey === "admission"
       ? `
-      <section class="admission-register-panel" aria-label="Admission register">
+      <section id="admissionRegisterPanel" class="admission-register-panel" aria-label="Admission register">
         <h3 class="admission-register-title">Admission Register</h3>
         <p class="small-note admission-register-note">
           Filter learners by institution scope, stream, grade/form, or keyword search (name, admission number). Use row actions or the toolbar below.
@@ -4566,7 +4890,7 @@ function renderCrudModule(moduleKey, options = {}) {
     </div>
     ${admissionRegisterMarkup}
     <section class="dashboard-section">
-      <h4>Admission Form & Letter</h4>
+      <h4 id="admissionFormLetterPanel">Admission Form & Letter</h4>
       <p class="small-note">Generate one-page admission forms and admission letters for selected learner IDs.</p>
       <div class="actions-row">
         <button type="button" id="admissionGenerateFormBtn" class="ax-btn ax-btn--process ax-btn--sm">Generate Admission Form</button>
@@ -4716,6 +5040,14 @@ function renderCrudModule(moduleKey, options = {}) {
     document.getElementById(`${btnPrefix}-dispatch`)?.addEventListener("click", dispatchQueuedMessages);
     document.getElementById(`${btnPrefix}-chat`)?.addEventListener("click", openCommunicationChat);
   }
+  if (moduleKey === "admission") {
+    const focusMode = String(options?.admissionFocus || "").toLowerCase();
+    if (focusMode === "form" || focusMode === "letter") {
+      document.getElementById("admissionFormLetterPanel")?.scrollIntoView({ behavior: "smooth", block: "center" });
+    } else if (focusMode === "register") {
+      document.getElementById("admissionRegisterPanel")?.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+  }
   loadModuleData(config);
   setTimeout(() => attachPostalCodeTownHelper(container), 0);
 }
@@ -4818,6 +5150,7 @@ function startDashboardAutoRefresh() {
 async function loadDashboard(options = {}) {
   const { silent = false, skipAutoRefresh = false } = options;
   currentModule = "dashboard";
+  currentSidebarSubmoduleId = null;
   const tableAreaMain = document.querySelector(".main-content .table-area");
   if (tableAreaMain) tableAreaMain.style.display = "";
   setActiveSidebarButton("dashboard");
@@ -5086,7 +5419,7 @@ function attachPostalCodeTownHelper(scopeEl) {
   });
 }
 
-async function renderStaffServiceHub() {
+async function renderStaffServiceHub(options = {}) {
   stopDashboardAutoRefresh();
   currentEditId = null;
   const tableAreaMain = document.querySelector(".main-content .table-area");
@@ -5189,7 +5522,11 @@ async function renderStaffServiceHub() {
   };
 
   catSelect?.addEventListener("change", () => mountCategory(catSelect.value));
-  mountCategory(catSelect?.value || "management-teachers");
+  const initialCategory = [ "management-teachers", "management-non-teaching" ].includes(String(options?.staffCategory || ""))
+    ? String(options.staffCategory)
+    : String(catSelect?.value || "management-teachers");
+  if (catSelect) catSelect.value = initialCategory;
+  mountCategory(initialCategory);
 }
 
 async function renderTeacherTimetableHub(mount) {
@@ -6054,7 +6391,7 @@ function normalizeAttendanceTypeForApi(rawType = "") {
   return "Learner";
 }
 
-async function renderAttendanceManagementHub() {
+async function renderAttendanceManagementHub(options = {}) {
   stopDashboardAutoRefresh();
   currentModule = "attendance";
   currentEditId = null;
@@ -6136,6 +6473,13 @@ async function renderAttendanceManagementHub() {
       <div id="attendanceRegisterTable" class="dashboard-table-wrap"></div>
     </section>
   `;
+  const initialAttendanceType = String(options?.attendanceType || "");
+  const attendanceTypeEl = document.getElementById("attendanceHubType");
+  const attendanceRegisterTypeEl = document.getElementById("attendanceRegisterType");
+  if (["Teacher", "Support Staff", "Learner"].includes(initialAttendanceType)) {
+    if (attendanceTypeEl) attendanceTypeEl.value = initialAttendanceType;
+    if (attendanceRegisterTypeEl) attendanceRegisterTypeEl.value = initialAttendanceType;
+  }
 
   const state = { people: [], selected: new Set(), learnerStatus: new Map() };
   const peopleHost = document.getElementById("attendanceHubPeople");
@@ -6343,32 +6687,95 @@ async function renderAttendanceManagementHub() {
   });
 
   await refreshRegister();
+  if (["Teacher", "Support Staff", "Learner"].includes(initialAttendanceType)) {
+    const today = new Date().toISOString().slice(0, 10);
+    const dateEl = document.getElementById("attendanceHubDate");
+    if (dateEl && !dateEl.value) dateEl.value = today;
+  }
+}
+
+async function openModule(targetModule, options = {}) {
+  if (!targetModule || !isSidebarModuleAllowed(targetModule)) return;
+  currentModule = targetModule;
+  currentEditId = null;
+  if (targetModule === "dashboard") return loadDashboard();
+  if (targetModule === "system-register") return renderSystemRegistration(options);
+  if (targetModule === "system-access-control") return renderModuleRights();
+  if (targetModule === "system-audit") return renderSecurityAudit();
+  if (targetModule === "system-registry") return renderInstitutionsRegistry();
+  if (targetModule === "system-recycle-bin") return renderRecycleBin();
+  if (targetModule === "system-cbc-editor") return renderCbcCurriculumEditor(options);
+  if (targetModule === "management-staff-service") return renderStaffServiceHub(options);
+  if (targetModule === "attendance") return renderAttendanceManagementHub(options);
+  if (targetModule === "parents-results") return loadParentOrBomResults();
+  if (targetModule === "learner-materials") return loadLearnerMaterials();
+  if (targetModule === "hr-institutional-letters") return renderInstitutionalLettersHub();
+  if (targetModule === "finance-fee-status") return renderFeeStatusHub();
+  if (targetModule === "institutional-registers") return renderInstitutionalRegistersHub();
+  if (moduleConfigs[targetModule]) return renderCrudModule(targetModule, options);
+  return null;
+}
+
+function collapseSidebarSubmoduleLists(exceptParentModule = "") {
+  document.querySelectorAll(".sidebar-submodule-list[data-parent-module]").forEach((list) => {
+    const parent = String(list.dataset.parentModule || "");
+    if (!exceptParentModule || parent !== exceptParentModule) {
+      list.hidden = true;
+    }
+  });
 }
 
 function bindSidebar() {
+  document.querySelectorAll(".sidebar-submodule-list[data-parent-module]").forEach((node) => node.remove());
   document.querySelectorAll(".sidebar button[data-module]").forEach((button) => {
-    if (!isSidebarModuleAllowed(button.dataset.module)) {
+    const moduleId = String(button.dataset.module || "");
+    if (!isSidebarModuleAllowed(moduleId)) {
       button.style.display = "none";
       return;
     }
-    button.addEventListener("click", async () => {
-      currentModule = button.dataset.module;
-      currentEditId = null;
-      if (currentModule === "dashboard") return loadDashboard();
-      if (currentModule === "system-register") return renderSystemRegistration();
-      if (currentModule === "system-access-control") return renderModuleRights();
-      if (currentModule === "system-audit") return renderSecurityAudit();
-      if (currentModule === "system-registry") return renderInstitutionsRegistry();
-      if (currentModule === "system-recycle-bin") return renderRecycleBin();
-      if (currentModule === "system-cbc-editor") return renderCbcCurriculumEditor();
-      if (currentModule === "management-staff-service") return renderStaffServiceHub();
-      if (currentModule === "attendance") return renderAttendanceManagementHub();
-      if (currentModule === "parents-results") return loadParentOrBomResults();
-      if (currentModule === "learner-materials") return loadLearnerMaterials();
-      if (currentModule === "communication-messages") return renderCrudModule(currentModule);
-      if (moduleConfigs[currentModule]) return renderCrudModule(currentModule);
-      return null;
-    });
+    button.style.display = "";
+    const submodules = sidebarSubmodulesFor(moduleId).filter((item) => isSidebarModuleAllowed(item.targetModule));
+    if (submodules.length) {
+      const list = document.createElement("div");
+      list.className = "sidebar-submodule-list";
+      list.dataset.parentModule = moduleId;
+      list.hidden = true;
+      list.innerHTML = submodules
+        .map(
+          (item) => `<button type="button" class="sidebar-submodule-btn" data-submodule-id="${escapeHtmlAttribute(item.id)}" data-target-module="${escapeHtmlAttribute(item.targetModule)}">
+            ${escapeHtml(item.label)}
+          </button>`
+        )
+        .join("");
+      button.insertAdjacentElement("afterend", list);
+      list.querySelectorAll(".sidebar-submodule-btn[data-submodule-id]").forEach((subBtn) => {
+        subBtn.onclick = async (event) => {
+          event.stopPropagation();
+          const submoduleId = String(subBtn.dataset.submoduleId || "");
+          const selected = submodules.find((item) => item.id === submoduleId);
+          if (!selected) return;
+          currentSidebarSubmoduleId = selected.id;
+          collapseSidebarSubmoduleLists(moduleId);
+          list.hidden = false;
+          setActiveSidebarButton(moduleId);
+          await openModule(selected.targetModule, selected.options || {});
+        };
+      });
+    }
+    button.onclick = async () => {
+      if (submodules.length) {
+        const list = document.querySelector(`.sidebar-submodule-list[data-parent-module="${moduleId}"]`);
+        const nextHidden = Boolean(list?.hidden);
+        collapseSidebarSubmoduleLists(nextHidden ? moduleId : "");
+        if (list) list.hidden = !nextHidden ? true : false;
+        currentSidebarSubmoduleId = null;
+        setActiveSidebarButton(moduleId);
+        return;
+      }
+      collapseSidebarSubmoduleLists("");
+      currentSidebarSubmoduleId = null;
+      await openModule(moduleId);
+    };
   });
 }
 
@@ -6432,6 +6839,7 @@ function bindTopbarButtons() {
 function renderProfileCenter(profile) {
   currentModule = "profile";
   stopDashboardAutoRefresh();
+  currentSidebarSubmoduleId = null;
   setActiveSidebarButton(null);
   const photoSrc = String(
     profile?.photo_url || profile?.profile_photo_url || profile?.avatar_url || profile?.photo || ""
@@ -6597,71 +7005,13 @@ function renderProfileCenter(profile) {
 
 function bindQuickActionCards() {
   document.querySelectorAll(".quick-action-card[data-module]").forEach((card) => {
-    card.addEventListener("click", async () => {
+    card.onclick = async () => {
       const targetModule = card.getAttribute("data-module");
       if (!targetModule || !isSidebarModuleAllowed(targetModule)) return;
-      currentModule = targetModule;
-      currentEditId = null;
-      if (targetModule === "dashboard") {
-        await loadDashboard();
-        return;
-      }
-      if (targetModule === "system-register") {
-        await renderSystemRegistration();
-        return;
-      }
-      if (targetModule === "system-access-control") {
-        await renderModuleRights();
-        return;
-      }
-      if (targetModule === "system-audit") {
-        await renderSecurityAudit();
-        return;
-      }
-      if (targetModule === "system-registry") {
-        await renderInstitutionsRegistry();
-        return;
-      }
-      if (targetModule === "system-recycle-bin") {
-        await renderRecycleBin();
-        return;
-      }
-      if (targetModule === "system-cbc-editor") {
-        await renderCbcCurriculumEditor();
-        return;
-      }
-      if (targetModule === "management-staff-service") {
-        await renderStaffServiceHub();
-        return;
-      }
-      if (targetModule === "attendance") {
-        await renderAttendanceManagementHub();
-        return;
-      }
-      if (targetModule === "parents-results") {
-        await loadParentOrBomResults();
-        return;
-      }
-      if (targetModule === "learner-materials") {
-        await loadLearnerMaterials();
-        return;
-      }
-      if (targetModule === "hr-institutional-letters") {
-        await renderInstitutionalLettersHub();
-        return;
-      }
-      if (targetModule === "finance-fee-status") {
-        await renderFeeStatusHub();
-        return;
-      }
-      if (targetModule === "institutional-registers") {
-        await renderInstitutionalRegistersHub();
-        return;
-      }
-      if (moduleConfigs[targetModule]) {
-        renderCrudModule(targetModule);
-      }
-    });
+      currentSidebarSubmoduleId = null;
+      collapseSidebarSubmoduleLists("");
+      await openModule(targetModule);
+    };
   });
 }
 

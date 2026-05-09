@@ -1601,6 +1601,26 @@ button:hover {
   border-color: rgba(255, 255, 255, 0.28);
 }
 
+.sidebar-submodule-list {
+  margin: -2px 0 6px 14px;
+  padding-left: 10px;
+  border-left: 1px dashed rgba(181, 213, 239, 0.35);
+}
+
+.sidebar-submodule-list .sidebar-submodule-btn {
+  margin: 4px 0;
+  font-size: 12px;
+  line-height: 1.2;
+  padding: 6px 8px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.sidebar-submodule-list .sidebar-submodule-btn.active {
+  background: linear-gradient(135deg, #27a5f0, #1e6fa8);
+  border-color: rgba(255, 255, 255, 0.34);
+}
+
 .sidebar #logoutButton.danger {
   flex-shrink: 0;
   margin-top: 12px;
