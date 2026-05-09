@@ -11,7 +11,7 @@ let allowedModules = [];
 let portalContext = null;
 let searchRowDrafts = {};
 let dashboardAutoRefreshHandle = null;
-const CLIENT_UI_BUNDLE_ID = "dash-bundle-main-v54-uniform-buttons-staff-profile";
+const CLIENT_UI_BUNDLE_ID = "dash-bundle-main-v55-kicd-curriculum-importer";
 const DASHBOARD_STAT_LABELS = {
   totalLearners: "Total Learners Population",
   totalActiveLearners: "Active Learners",
@@ -2209,6 +2209,31 @@ async function renderCbcCurriculumEditor() {
         <button id="refreshCbcEditorButton">Refresh</button>
       </div>
       <div class="module-header-card">
+        <h4>KICD CBC Import (PP1 to Grade 12)</h4>
+        <p>Fetch KICD curriculum designs, extract strands/sub-strands/learning outcomes/learning experiences, and auto-import.</p>
+      </div>
+      <div class="form-grid">
+        <label>KICD Levels (comma separated slugs, blank = all)</label>
+        <input id="kicdLevelsInput" placeholder="pre-primary,lower-primary,grade-seven-designs" />
+        <label>Max Documents</label>
+        <input id="kicdMaxDocuments" type="number" min="1" max="1000" value="200" />
+        <label>Max Pages per Document</label>
+        <input id="kicdMaxPagesPerDocument" type="number" min="10" max="1000" value="200" />
+        <label>Replace Previous KICD Import</label>
+        <select id="kicdReplaceExisting">
+          <option value="false" selected>No</option>
+          <option value="true">Yes</option>
+        </select>
+      </div>
+      <div class="actions-row">
+        <button id="previewKicdCatalogButton">Preview KICD Catalog</button>
+        <button id="importKicdCurriculumButton">Import KICD Curriculum</button>
+      </div>
+      <div class="form-grid">
+        <label>KICD Import Summary</label>
+        <textarea id="kicdImportSummary" rows="8" readonly placeholder="Catalog and import summary will appear here."></textarea>
+      </div>
+      <div class="module-header-card">
         <h4>Manual Strand/Sub-Strand + Notes Entry</h4>
         <p>Add your official mapping and notes manually, then save for AI and bulk generation.</p>
       </div>
@@ -2470,6 +2495,104 @@ async function renderCbcCurriculumEditor() {
         alert(error.message);
       } finally {
         event.target.value = "";
+      }
+    });
+    function collectKicdLevelFilter() {
+      return String(document.getElementById("kicdLevelsInput")?.value || "")
+        .split(",")
+        .map((item) => item.trim())
+        .filter(Boolean);
+    }
+    function buildKicdSummary(result, mode) {
+      if (!result || typeof result !== "object") {
+        return "No response payload returned.";
+      }
+      const lines = [];
+      if (mode === "catalog") {
+        lines.push("KICD Catalog Preview");
+        lines.push(`Levels checked: ${result.level_count || 0}`);
+        lines.push(`Documents discovered: ${result.document_count || 0}`);
+        const docs = Array.isArray(result.documents) ? result.documents.slice(0, 25) : [];
+        if (docs.length) {
+          lines.push("");
+          lines.push("Sample documents:");
+          docs.forEach((doc, index) => {
+            lines.push(
+              `${index + 1}. ${doc.grade_label || "-"} | ${doc.learning_area || "-"} | ${doc.source_file_id || "-"}`
+            );
+          });
+          if ((result.documents || []).length > docs.length) {
+            lines.push(`...and ${(result.documents || []).length - docs.length} more.`);
+          }
+        }
+      } else {
+        lines.push("KICD Import Result");
+        lines.push(`Catalog documents: ${result.catalog_document_count || 0}`);
+        lines.push(`Scanned documents: ${result.scanned_document_count || 0}`);
+        lines.push(`Extracted rows: ${result.extracted_row_count || 0}`);
+        lines.push(`Unique rows: ${result.unique_row_count || 0}`);
+        lines.push(`Inserted mappings: ${result.inserted_mappings || 0}`);
+        lines.push(`Skipped mappings: ${result.skipped_mappings || 0}`);
+        lines.push(`Inserted curriculum entries: ${result.inserted_curriculum_entries || 0}`);
+        lines.push(`Updated curriculum entries: ${result.updated_curriculum_entries || 0}`);
+      }
+      if (Array.isArray(result.level_errors) && result.level_errors.length) {
+        lines.push("");
+        lines.push("Level errors:");
+        result.level_errors.slice(0, 15).forEach((item) => {
+          lines.push(`- ${item.slug || "unknown"}: ${item.error || "Unknown error"}`);
+        });
+      }
+      if (Array.isArray(result.document_errors) && result.document_errors.length) {
+        lines.push("");
+        lines.push("Document errors:");
+        result.document_errors.slice(0, 15).forEach((item) => {
+          lines.push(`- ${item.learning_area || item.source_file_id || "document"}: ${item.error || "Unknown error"}`);
+        });
+      }
+      return lines.join("\n");
+    }
+    document.getElementById("previewKicdCatalogButton")?.addEventListener("click", async () => {
+      const levels = collectKicdLevelFilter();
+      const summaryEl = document.getElementById("kicdImportSummary");
+      if (summaryEl) summaryEl.value = "Loading KICD catalog...";
+      try {
+        const query = levels.length ? `?include_levels=${encodeURIComponent(levels.join(","))}` : "";
+        const result = await request(`/api/cbc/kicd/catalog${query}`);
+        if (summaryEl) summaryEl.value = buildKicdSummary(result, "catalog");
+      } catch (error) {
+        if (summaryEl) summaryEl.value = `Catalog preview failed: ${error.message}`;
+        alert(error.message);
+      }
+    });
+    document.getElementById("importKicdCurriculumButton")?.addEventListener("click", async () => {
+      const levels = collectKicdLevelFilter();
+      const summaryEl = document.getElementById("kicdImportSummary");
+      const maxDocuments = Number(document.getElementById("kicdMaxDocuments")?.value || 200) || 200;
+      const maxPagesPerDocument = Number(document.getElementById("kicdMaxPagesPerDocument")?.value || 200) || 200;
+      const replaceExisting = String(document.getElementById("kicdReplaceExisting")?.value || "false") === "true";
+      const proceed = window.confirm(
+        "Import KICD curriculum now? This may take a while depending on documents/pages configured."
+      );
+      if (!proceed) return;
+      if (summaryEl) summaryEl.value = "Importing KICD curriculum. Please wait...";
+      try {
+        const result = await request("/api/cbc/kicd/import", {
+          method: "POST",
+          body: JSON.stringify({
+            include_levels: levels,
+            max_documents: maxDocuments,
+            max_pages_per_document: maxPagesPerDocument,
+            replace_existing: replaceExisting,
+            upsert_curriculum_entries: true
+          })
+        });
+        if (summaryEl) summaryEl.value = buildKicdSummary(result, "import");
+        alert("KICD curriculum import completed.");
+        await renderCbcCurriculumEditor();
+      } catch (error) {
+        if (summaryEl) summaryEl.value = `KICD import failed: ${error.message}`;
+        alert(error.message);
       }
     });
     document.getElementById("editCbcMappingButton")?.addEventListener("click", async () => {

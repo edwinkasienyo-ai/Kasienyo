@@ -61,6 +61,11 @@ const {
   getAllCbcLearningAreas,
   buildBulkCbcEntries
 } = require("./config/cbcLibrary");
+const {
+  KICD_LEVEL_PAGES,
+  fetchKicdCatalog,
+  extractKicdCurriculumFromCatalog
+} = require("./services/kicdCurriculumService");
 
 /** Bump when shipping UI/API changes so schools can confirm they run the right copy. */
 const IIMS_BUILD_STAMP = process.env.IIMS_BUILD_STAMP || "ui-deploy-rev45";
@@ -7373,6 +7378,228 @@ app.patch(
     );
     await auditLog(req.user, "UPDATE_CBC_STRUCTURE_MAPPING", "cbc_structure_mappings", mappingId, data);
     res.json({ message: "Structure mapping updated." });
+  })
+);
+
+app.get(
+  "/api/cbc/kicd/catalog",
+  auth,
+  enforceModuleAccess(MODULE_KEYS.CBC_CURRICULUM_EDITOR),
+  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER]),
+  enforcePermission(PERMISSIONS.VIEW),
+  asyncHandler(async (req, res) => {
+    const includeLevels = Array.isArray(req.query?.include_levels)
+      ? req.query.include_levels
+      : cleanOptionalValue(req.query?.include_levels)
+        ? String(req.query.include_levels).split(",")
+        : [];
+    const catalog = await fetchKicdCatalog({ includeLevels });
+    res.json({
+      available_levels: KICD_LEVEL_PAGES,
+      ...catalog
+    });
+  })
+);
+
+app.post(
+  "/api/cbc/kicd/import",
+  auth,
+  enforceModuleAccess(MODULE_KEYS.CBC_CURRICULUM_EDITOR),
+  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
+  enforcePermission(PERMISSIONS.CREATE),
+  asyncHandler(async (req, res) => {
+    const includeLevels = Array.isArray(req.body?.include_levels)
+      ? req.body.include_levels
+      : cleanOptionalValue(req.body?.include_levels)
+        ? String(req.body.include_levels).split(",")
+        : [];
+    const replaceExisting = parseTruthy(req.body?.replace_existing);
+    const maxDocuments = Math.min(Math.max(Number(req.body?.max_documents || 200), 1), 1000);
+    const maxPagesPerDocument = Math.min(Math.max(Number(req.body?.max_pages_per_document || 200), 10), 1000);
+    const upsertCurriculumEntries = parseTruthy(req.body?.upsert_curriculum_entries ?? true);
+    const sourceLabel = "KICD_AUTO";
+
+    const catalog = await fetchKicdCatalog({ includeLevels });
+    const extracted = await extractKicdCurriculumFromCatalog(catalog, {
+      max_documents: maxDocuments,
+      max_pages_per_document: maxPagesPerDocument
+    });
+    const importedRows = Array.isArray(extracted.rows) ? extracted.rows : [];
+
+    if (replaceExisting) {
+      await query(
+        `DELETE FROM cbc_structure_mappings
+         WHERE institution_id = ? AND source_label = ?`,
+        [req.user.institution_id, sourceLabel]
+      );
+    }
+
+    const existingMappings = await query(
+      `SELECT learning_area, strand, sub_strand, COALESCE(grade, '') grade, COALESCE(form_name, '') form_name
+       FROM cbc_structure_mappings
+       WHERE institution_id = ? AND source_label = ?`,
+      [req.user.institution_id, sourceLabel]
+    );
+    const existingMappingKeys = new Set(
+      existingMappings.map((row) => [
+        cleanValue(row.learning_area).toLowerCase(),
+        cleanValue(row.strand).toLowerCase(),
+        cleanValue(row.sub_strand).toLowerCase(),
+        cleanValue(row.grade).toLowerCase(),
+        cleanValue(row.form_name).toLowerCase()
+      ].join("::"))
+    );
+
+    let insertedMappings = 0;
+    let skippedMappings = 0;
+    for (const row of importedRows) {
+      const grade = cleanOptionalValue(row.grade_label);
+      const formName = null;
+      const key = [
+        cleanValue(row.learning_area).toLowerCase(),
+        cleanValue(row.strand).toLowerCase(),
+        cleanValue(row.sub_strand).toLowerCase(),
+        cleanValue(grade).toLowerCase(),
+        cleanValue(formName).toLowerCase()
+      ].join("::");
+      if (!replaceExisting && existingMappingKeys.has(key)) {
+        skippedMappings += 1;
+        // eslint-disable-next-line no-continue
+        continue;
+      }
+      const notes = [
+        row.learning_outcomes ? `Learning Outcomes:\n${row.learning_outcomes}` : "",
+        row.learning_experiences ? `Learning Experiences:\n${row.learning_experiences}` : "",
+        row.source_document ? `Source Document: ${row.source_document}` : "",
+        row.source_preview_url ? `Source URL: ${row.source_preview_url}` : ""
+      ].filter(Boolean).join("\n\n");
+      await query(
+        `INSERT INTO cbc_structure_mappings
+          (institution_id, learning_area, strand, sub_strand, notes, grade, form_name, source_label, created_by_user_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          req.user.institution_id,
+          cleanValue(row.learning_area),
+          cleanValue(row.strand),
+          cleanValue(row.sub_strand),
+          cleanOptionalValue(notes),
+          grade,
+          formName,
+          sourceLabel,
+          req.user.id
+        ]
+      );
+      existingMappingKeys.add(key);
+      insertedMappings += 1;
+    }
+
+    let insertedCurriculumEntries = 0;
+    let updatedCurriculumEntries = 0;
+    if (upsertCurriculumEntries) {
+      const existingEntries = await query(
+        `SELECT id, COALESCE(grade, '') grade, COALESCE(form_name, '') form_name, learning_area, strand, sub_strand,
+                specific_learning_outcomes, learning_experiences, resources_reference
+         FROM cbc_curriculum_entries
+         WHERE institution_id = ?`,
+        [req.user.institution_id]
+      );
+      const existingEntryMap = new Map(
+        existingEntries.map((entry) => [
+          [
+            cleanValue(entry.grade).toLowerCase(),
+            cleanValue(entry.form_name).toLowerCase(),
+            cleanValue(entry.learning_area).toLowerCase(),
+            cleanValue(entry.strand).toLowerCase(),
+            cleanValue(entry.sub_strand).toLowerCase()
+          ].join("::"),
+          entry
+        ])
+      );
+
+      for (const row of importedRows) {
+        const grade = cleanOptionalValue(row.grade_label);
+        const formName = null;
+        const key = [
+          cleanValue(grade).toLowerCase(),
+          cleanValue(formName).toLowerCase(),
+          cleanValue(row.learning_area).toLowerCase(),
+          cleanValue(row.strand).toLowerCase(),
+          cleanValue(row.sub_strand).toLowerCase()
+        ].join("::");
+        const sourceReference = cleanOptionalValue(row.source_preview_url);
+        const existing = existingEntryMap.get(key);
+        if (existing) {
+          const nextOutcomes = replaceExisting
+            ? cleanOptionalValue(row.learning_outcomes)
+            : cleanOptionalValue(existing.specific_learning_outcomes || row.learning_outcomes);
+          const nextExperiences = replaceExisting
+            ? cleanOptionalValue(row.learning_experiences)
+            : cleanOptionalValue(existing.learning_experiences || row.learning_experiences);
+          const nextResources = replaceExisting
+            ? sourceReference
+            : cleanOptionalValue(existing.resources_reference || sourceReference);
+          await query(
+            `UPDATE cbc_curriculum_entries
+             SET specific_learning_outcomes = COALESCE(?, specific_learning_outcomes),
+                 learning_experiences = COALESCE(?, learning_experiences),
+                 resources_reference = COALESCE(?, resources_reference),
+                 updated_at = NOW()
+             WHERE id = ?`,
+            [nextOutcomes, nextExperiences, nextResources, existing.id]
+          );
+          updatedCurriculumEntries += 1;
+        } else {
+          await query(
+            `INSERT INTO cbc_curriculum_entries
+              (institution_id, grade, form_name, learning_area, strand, sub_strand, specific_learning_outcomes,
+               learning_experiences, resources_reference, created_by_user_id)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+              req.user.institution_id,
+              grade,
+              formName,
+              cleanValue(row.learning_area),
+              cleanValue(row.strand),
+              cleanValue(row.sub_strand),
+              cleanOptionalValue(row.learning_outcomes),
+              cleanOptionalValue(row.learning_experiences),
+              sourceReference,
+              req.user.id
+            ]
+          );
+          insertedCurriculumEntries += 1;
+        }
+      }
+    }
+
+    await auditLog(req.user, "IMPORT_KICD_CURRICULUM", "cbc_structure_mappings", null, {
+      include_levels: includeLevels,
+      replace_existing: replaceExisting,
+      max_documents: maxDocuments,
+      max_pages_per_document: maxPagesPerDocument,
+      scanned_document_count: extracted.scanned_document_count,
+      unique_row_count: extracted.unique_row_count,
+      inserted_mappings: insertedMappings,
+      skipped_mappings: skippedMappings,
+      inserted_curriculum_entries: insertedCurriculumEntries,
+      updated_curriculum_entries: updatedCurriculumEntries
+    });
+
+    res.json({
+      message: "KICD curriculum import completed.",
+      include_levels: includeLevels,
+      catalog_document_count: catalog.document_count,
+      scanned_document_count: extracted.scanned_document_count,
+      extracted_row_count: extracted.extracted_row_count,
+      unique_row_count: extracted.unique_row_count,
+      inserted_mappings: insertedMappings,
+      skipped_mappings: skippedMappings,
+      inserted_curriculum_entries: insertedCurriculumEntries,
+      updated_curriculum_entries: updatedCurriculumEntries,
+      document_summaries: extracted.document_summaries,
+      level_errors: catalog.level_errors,
+      document_errors: extracted.document_errors
+    });
   })
 );
 
