@@ -1397,6 +1397,33 @@ function enforceModuleAccess(moduleKey) {
   });
 }
 
+function enforceAnyModuleAccess(moduleKeys = []) {
+  const keys = Array.isArray(moduleKeys) ? moduleKeys.filter(Boolean) : [];
+  return asyncHandler(async (req, res, next) => {
+    if (Number(req.user?.is_suspended) === 1) {
+      return res.status(403).json({
+        error:
+          `You are suspended. Kindly contact the System Developer (${SYSTEM_DEVELOPER_CONTACT_EMAIL}, ${SYSTEM_DEVELOPER_CONTACT_PHONE}).`,
+        suspended: true,
+        system_developer_contact: {
+          email: SYSTEM_DEVELOPER_CONTACT_EMAIL,
+          phone: SYSTEM_DEVELOPER_CONTACT_PHONE
+        }
+      });
+    }
+    if (!keys.length) return next();
+    for (const key of keys) {
+      // eslint-disable-next-line no-await-in-loop
+      if (await hasModuleAccess(req.user, key)) {
+        return next();
+      }
+    }
+    return res.status(403).json({
+      error: `Access denied. You need rights to one of: ${keys.join(", ")}.`
+    });
+  });
+}
+
 function canManageAcrossInstitutions(user) {
   return isSuperSystemDeveloperRole(user?.role);
 }
@@ -9763,40 +9790,262 @@ app.post(
   })
 );
 
+function extractNumericToken(rawValue = "") {
+  const match = String(rawValue || "").match(/(\d+(?:\.\d+)?)/);
+  if (!match) return null;
+  const parsed = Number(match[1]);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function extractLevelNumber(rawLevel = "") {
+  const match = String(rawLevel || "").match(/(?:grade|form)\s*(\d+)/i);
+  if (match) return Number(match[1]);
+  const direct = String(rawLevel || "").match(/(\d+)/);
+  if (!direct) return null;
+  const parsed = Number(direct[1]);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function rowWithinExamCoverage({ row, selectedStrand, selectedSubStrand }) {
+  const selectedStrandNum = extractNumericToken(selectedStrand);
+  const selectedSubStrandNum = extractNumericToken(selectedSubStrand);
+  const rowStrandNum = extractNumericToken(row?.strand || "");
+  const rowSubStrandNum = extractNumericToken(row?.sub_strand || "");
+  if (selectedStrandNum === null || rowStrandNum === null) return true;
+  if (rowStrandNum < selectedStrandNum) return true;
+  if (rowStrandNum > selectedStrandNum) return false;
+  if (selectedSubStrandNum === null || rowSubStrandNum === null) return true;
+  return rowSubStrandNum <= selectedSubStrandNum;
+}
+
+function buildAdvancedExamText({
+  title,
+  learningArea,
+  levelLabel,
+  stream,
+  term,
+  academicYear,
+  examSession,
+  strand,
+  subStrand,
+  structure,
+  structureDetail,
+  percentageText,
+  referenceRows,
+  generatedNotes,
+  supplementalMaterialNotes
+}) {
+  const references = (Array.isArray(referenceRows) ? referenceRows : []).slice(0, 24).map((row, index) => {
+    const outcomes = cleanOptionalValue(row?.specific_learning_outcomes || "");
+    const experiences = cleanOptionalValue(row?.learning_experiences || "");
+    const notes = cleanOptionalValue(row?.notes || "");
+    const parts = [
+      `${index + 1}. ${cleanValue(row?.strand) || "-"} -> ${cleanValue(row?.sub_strand) || "-"}`,
+      outcomes ? `   Outcomes: ${outcomes}` : "",
+      experiences ? `   Experiences: ${experiences}` : "",
+      notes ? `   Curriculum Notes: ${notes}` : ""
+    ].filter(Boolean);
+    return parts.join("\n");
+  });
+
+  const sharedHeader = [
+    "INSTITUTION LETTERHEAD: [AUTO-INJECTED FROM INSTITUTION SETTINGS]",
+    `EXAM TITLE: ${title || `${examSession} ${learningArea}`}`.trim(),
+    `LEARNING AREA: ${learningArea || "-"}`,
+    `LEVEL: ${levelLabel || "-"}`,
+    `STREAM: ${stream || "-"}`,
+    `ACADEMIC YEAR: ${academicYear || "-"}`,
+    `TERM: ${term || "-"}`,
+    `EXAM SESSION: ${examSession || "-"}`,
+    `COVERAGE LIMIT: STRAND ${strand || "-"} | SUB-STRAND ${subStrand || "-"}`,
+    `STRUCTURE: ${structure || "unified"} ${structureDetail ? `(${structureDetail})` : ""}`.trim(),
+    `PERCENTAGE ALLOCATION: ${percentageText || "-"}`,
+    "CANDIDATE IDENTIFIER: Assessment No / UPI / Admission No",
+    "QR CODE: [AUTO-GENERATED AT PRINT/DOWNLOAD]",
+    "DISTINCT SERIAL: [AUTO-GENERATED PER LEARNER/GRADE/STREAM]",
+    ""
+  ];
+
+  const sectionTemplates = {
+    unified: [
+      "UNIFIED PAPER",
+      "1) Explain key concepts from selected strand/sub-strand and prior covered strands.",
+      "2) Apply the concept in a school/community context.",
+      "3) Distinguish related terms and provide practical examples.",
+      "4) Problem-solving / short practical item based on curriculum outcomes.",
+      "5) Extended response aligned to CBC competencies."
+    ],
+    structured: [
+      "STRUCTURED PAPER",
+      "SECTION A: Short objective questions (coverage constrained to selected scope).",
+      "SECTION B: Structured response questions requiring explanation and application.",
+      "SECTION C: Competency/performance item linked to learning outcomes."
+    ],
+    "multi-section": [
+      "MULTI-SECTION PAPER",
+      "PAPER 1: Foundational recall + comprehension questions.",
+      "PAPER 2: Application and analysis questions.",
+      "PAPER 3: Competency-based project/task questions."
+    ]
+  };
+
+  const body = sectionTemplates[structure] || sectionTemplates.unified;
+  return [
+    ...sharedHeader,
+    "AI GENERATED EXAM PAPER",
+    ...body,
+    "",
+    "AI NOTES BASIS (NO UPLOADED NOTES REQUIRED):",
+    generatedNotes || "Notes generated directly from strands/sub-strands and curriculum mappings.",
+    supplementalMaterialNotes ? `\nSUPPLEMENTAL MATERIAL INSIGHTS:\n${supplementalMaterialNotes}` : "",
+    "",
+    "CURRICULUM REFERENCE CONTEXT:",
+    references.length ? references.join("\n") : "No mapped curriculum rows found; AI fallback used from selected strand/sub-strand."
+  ].join("\n");
+}
+
 app.post(
   "/api/academic/exams/auto-generate",
   auth,
-  enforceModuleAccess(MODULE_KEYS.ACADEMIC_EXAMS),
+  enforceAnyModuleAccess([MODULE_KEYS.ACADEMIC_EXAMS, MODULE_KEYS.CBC_CURRICULUM_EDITOR]),
   enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER]),
   enforcePermission(PERMISSIONS.CREATE),
   asyncHandler(async (req, res) => {
     const {
       grade,
+      form_name,
       stream,
       subject,
+      learning_area,
       strand,
       sub_strand,
       term,
       year,
       title,
-      notes_file_path
+      notes_file_path,
+      exam_type,
+      structure,
+      structure_detail,
+      total_percentage,
+      percentage_allocation,
+      academic_year
     } = req.body;
 
-    const examText = [
-      `${title || "CBC Auto Generated Exam"} - ${subject || "General Subject"}`,
-      `Grade/Class: ${grade || "N/A"} | Stream: ${stream || "N/A"} | Term: ${term || "N/A"} ${year || ""}`,
-      `Coverage: Strand ${strand || "N/A"} - Sub-strand ${sub_strand || "N/A"}`,
-      "",
-      "Section A: Multiple Choice",
-      "1. [Auto-generated question from covered concepts]",
-      "2. [Auto-generated question from learner notes]",
-      "",
-      "Section B: Structured Questions",
-      "3. Explain the key competency learned under this strand.",
-      "4. Apply the competency in a real-life school context.",
-      "",
-      "Marking guide: Aligned to Kenya CBC mastery levels."
-    ].join("\n");
+    const selectedGrade = cleanOptionalValue(grade);
+    const selectedForm = cleanOptionalValue(form_name);
+    const selectedLearningArea = cleanValue(learning_area || subject || "");
+    const selectedStrand = cleanValue(strand || "");
+    const selectedSubStrand = cleanOptionalValue(sub_strand);
+    const selectedTerm = cleanOptionalValue(term);
+    const selectedYear = Number(year || 0) || new Date().getFullYear();
+    const selectedSession = cleanOptionalValue(exam_type);
+    if ((!selectedGrade && !selectedForm) || !selectedLearningArea || !selectedStrand) {
+      return res.status(400).json({
+        error: "grade/form_name, learning_area/subject, and strand are required for AI exam generation."
+      });
+    }
+
+    const curriculumRowsRaw = await query(
+      `SELECT id, grade, form_name, learning_area, strand, sub_strand,
+              specific_learning_outcomes, learning_experiences, notes
+       FROM cbc_curriculum_entries
+       WHERE institution_id = ?
+         AND learning_area = ?
+       ORDER BY id ASC
+       LIMIT 2500`,
+      [req.user.institution_id, selectedLearningArea]
+    );
+    const selectedLevelNumber = extractLevelNumber(selectedGrade || selectedForm);
+    const scopedCurriculumRows = curriculumRowsRaw.filter((row) => {
+      if (selectedGrade && cleanValue(row.grade) && cleanValue(row.grade) !== selectedGrade) {
+        const rowLevel = extractLevelNumber(row.grade);
+        if (!(rowLevel !== null && selectedLevelNumber !== null && rowLevel <= selectedLevelNumber && rowLevel >= selectedLevelNumber - 2)) {
+          return false;
+        }
+      }
+      if (selectedForm && cleanValue(row.form_name) && cleanValue(row.form_name) !== selectedForm) {
+        const rowLevel = extractLevelNumber(row.form_name);
+        if (!(rowLevel !== null && selectedLevelNumber !== null && rowLevel <= selectedLevelNumber && rowLevel >= selectedLevelNumber - 2)) {
+          return false;
+        }
+      }
+      return rowWithinExamCoverage({
+        row,
+        selectedStrand,
+        selectedSubStrand
+      });
+    });
+
+    let referenceRows = scopedCurriculumRows;
+    if (!referenceRows.length) {
+      const mappingRows = await query(
+        `SELECT learning_area, strand, sub_strand, notes, grade, form_name
+         FROM cbc_structure_mappings
+         WHERE institution_id = ?
+           AND learning_area = ?
+         ORDER BY id ASC
+         LIMIT 1000`,
+        [req.user.institution_id, selectedLearningArea]
+      );
+      referenceRows = mappingRows.filter((row) =>
+        rowWithinExamCoverage({
+          row,
+          selectedStrand,
+          selectedSubStrand
+        })
+      ).map((row) => ({
+        ...row,
+        specific_learning_outcomes: "",
+        learning_experiences: ""
+      }));
+    }
+
+    const materialRows = await query(
+      `SELECT title, description, strand, sub_strand, grade, stream, term
+       FROM teacher_resources
+       WHERE institution_id = ?
+         AND (grade = ? OR ? = '' OR grade IS NULL OR grade = '')
+         AND (term = ? OR ? = '' OR term IS NULL OR term = '')
+       ORDER BY id DESC
+       LIMIT 120`,
+      [req.user.institution_id, selectedGrade || selectedForm || "", selectedGrade || selectedForm || "", selectedTerm || "", selectedTerm || ""]
+    );
+    const supplementalMaterialNotes = materialRows
+      .filter((row) => {
+        if (selectedStrand && cleanValue(row.strand) && cleanValue(row.strand) !== selectedStrand) return false;
+        if (selectedSubStrand && cleanValue(row.sub_strand) && cleanValue(row.sub_strand) !== selectedSubStrand) return false;
+        return true;
+      })
+      .slice(0, 6)
+      .map((row) => [cleanValue(row.title), cleanOptionalValue(row.description)].filter(Boolean).join(": "))
+      .filter(Boolean)
+      .join("\n");
+
+    const generatedNotes = makeNotes({
+      grade: selectedGrade || null,
+      formName: selectedForm || null,
+      learningArea: selectedLearningArea,
+      strand: selectedStrand,
+      subStrand: selectedSubStrand || null
+    });
+    const percentageText = cleanOptionalValue(total_percentage || percentage_allocation) || "";
+    const examText = buildAdvancedExamText({
+      title: cleanOptionalValue(title) || `${selectedSession || "Exam"} - ${selectedLearningArea}`,
+      learningArea: selectedLearningArea,
+      levelLabel: selectedGrade || selectedForm,
+      stream: cleanOptionalValue(stream),
+      term: selectedTerm,
+      academicYear: cleanOptionalValue(academic_year) || `${selectedYear}/${selectedYear + 1}`,
+      examSession: selectedSession || "Exam",
+      strand: selectedStrand,
+      subStrand: selectedSubStrand,
+      structure: cleanOptionalValue(structure) || "unified",
+      structureDetail: cleanOptionalValue(structure_detail),
+      percentageText,
+      referenceRows,
+      generatedNotes,
+      supplementalMaterialNotes
+    });
 
     const result = await query(
       `INSERT INTO academic_exams
@@ -9804,22 +10053,28 @@ app.post(
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         req.user.institution_id,
-        title || "Auto Generated Exam",
-        grade || null,
-        stream || null,
-        subject || null,
-        strand || null,
-        sub_strand || null,
+        cleanOptionalValue(title) || `${selectedSession || "Auto Generated Exam"} - ${selectedLearningArea}`,
+        selectedGrade || selectedForm || null,
+        cleanOptionalValue(stream) || null,
+        selectedLearningArea || null,
+        selectedStrand || null,
+        selectedSubStrand || null,
         notes_file_path || null,
         examText,
-        term || null,
-        year || null,
+        selectedTerm || null,
+        selectedYear || null,
         req.user.id
       ]
     );
 
     await auditLog(req.user, "AUTO_GENERATE_EXAM", "academic_exams", result.insertId);
-    res.status(201).json({ id: result.insertId, examText });
+    res.status(201).json({
+      id: result.insertId,
+      examText,
+      notes_required: false,
+      used_curriculum_rows: referenceRows.length,
+      used_material_rows: supplementalMaterialNotes ? supplementalMaterialNotes.split("\n").length : 0
+    });
   })
 );
 
@@ -10301,6 +10556,7 @@ function buildExamSerialSegment({
 app.post(
   "/api/academic/exams/allocate-serials",
   auth,
+  enforceAnyModuleAccess([MODULE_KEYS.ACADEMIC_EXAMS, MODULE_KEYS.CBC_CURRICULUM_EDITOR]),
   enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER]),
   asyncHandler(async (req, res) => {
     const institutionId = Number(req.user.institution_id);

@@ -3865,6 +3865,22 @@ td .ax-btn::before,
   text-transform: uppercase;
 }
 
+.exam-stack-top.ax-btn.ax-btn--icon-only {
+  flex-direction: column-reverse;
+  min-height: 40px;
+  padding: 3px 5px;
+}
+
+.exam-stack-top.ax-btn.ax-btn--icon-only::after {
+  margin-top: 0;
+  margin-bottom: 2px;
+  font-size: 8px;
+}
+
+.exam-stack-top.ax-btn.ax-btn--icon-only::before {
+  margin-right: 0;
+}
+
 .dashboard-ai-assistant {
   position: fixed;
   right: 0;

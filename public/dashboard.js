@@ -371,6 +371,22 @@ function applyTemplateVisibility(scope = document) {
   });
 }
 
+function styleExamModuleButtonsAsNamedIcons(scope = document) {
+  if (!scope || typeof scope.querySelectorAll !== "function") return;
+  scope.querySelectorAll("button.ax-btn, .actions-row > button").forEach((button) => {
+    if (!button) return;
+    button.classList.add("exam-stack-top", "ax-btn--icon-only");
+    button.classList.remove("icon-symbolic");
+    const label = String(button.getAttribute("aria-label") || button.getAttribute("title") || button.textContent || "")
+      .trim()
+      .replace(/\s+/g, " ");
+    if (label) {
+      button.setAttribute("title", label);
+      button.setAttribute("aria-label", label);
+    }
+  });
+}
+
 function isSystemAdminRole() {
   const role = String(portalContext?.role || "");
   return ["SUPER_SYSTEM_DEVELOPER", "SYSTEM_DEVELOPER", "SYSTEM_ADMINISTRATOR", "ADMIN", "HEAD_OF_INSTITUTION"].includes(role);
@@ -3233,7 +3249,7 @@ function renderExamGenerationPanel() {
   return `
     <div class="module-header-card">
       <h4>Exam Generation</h4>
-      <p>Generate exams with AI from selected learning area, strand and sub-strand only. Coverage never goes beyond selected curriculum scope.</p>
+      <p>Generate exams with AI from selected learning area, strand and sub-strand only. Coverage never goes beyond selected curriculum scope. Notes upload is optional.</p>
     </div>
     <div class="form-grid">
       <label>Examination Session</label>
@@ -3293,7 +3309,7 @@ function renderExamGenerationPanel() {
     <label>Generated Exam Text (editable after generate)</label>
     <textarea id="examGenGeneratedText" rows="12" placeholder="Generated exam text appears here." readonly></textarea>
     <div id="examGenLearnerActions" class="dashboard-section"></div>
-    <div id="examGenPreview" class="small-note">Select examination session first to activate the rest of the workflow.</div>
+    <div id="examGenPreview" class="small-note">Select examination session first to activate the rest of the workflow. You do not need to upload notes for AI generation.</div>
   `;
 }
 
@@ -3626,14 +3642,20 @@ function wireExamGenerationPanel() {
         method: "POST",
         body: JSON.stringify({
           title: payload.title,
-          grade: payload.grade || payload.formName,
+          grade: payload.grade || "",
+          form_name: payload.formName || "",
           stream: payload.stream,
           subject: payload.learningArea,
+          learning_area: payload.learningArea,
           strand: payload.strand,
           sub_strand: payload.subStrand,
           term: payload.term,
           year: payload.year,
-          exam_type: payload.session
+          academic_year: payload.academicYear,
+          exam_type: payload.session,
+          structure: payload.structure,
+          structure_detail: payload.structureDetail,
+          total_percentage: Number(payload.totalPercentage || 0)
         })
       });
       const serialAllocation = await request("/api/academic/exams/allocate-serials", {
@@ -3683,7 +3705,7 @@ function wireExamGenerationPanel() {
         } serial record(s) prepared for marks entry.`;
       }
     } catch (error) {
-      alert(error.message);
+      alert(`${error.message}\nExam generation uses strands/sub-strands with AI even without uploaded notes.`);
     }
   });
 
@@ -5421,6 +5443,7 @@ async function renderCbcCurriculumEditor(options = {}) {
       });
       applyCompactIconButtons(panel);
       applyTemplateVisibility(panel);
+      styleExamModuleButtonsAsNamedIcons(panel);
       return;
     }
     if (tab === "exam-generation") {
@@ -5428,6 +5451,7 @@ async function renderCbcCurriculumEditor(options = {}) {
       wireExamGenerationPanel();
       applyCompactIconButtons(panel);
       applyTemplateVisibility(panel);
+      styleExamModuleButtonsAsNamedIcons(panel);
       return;
     }
     if (tab === "marks-entry") {
@@ -5435,6 +5459,7 @@ async function renderCbcCurriculumEditor(options = {}) {
       wireExamMarksEntryPanel();
       applyCompactIconButtons(panel);
       applyTemplateVisibility(panel);
+      styleExamModuleButtonsAsNamedIcons(panel);
       return;
     }
     if (tab === "result-scripts") {
@@ -5442,6 +5467,7 @@ async function renderCbcCurriculumEditor(options = {}) {
       wireExamResultScriptsPanel();
       applyCompactIconButtons(panel);
       applyTemplateVisibility(panel);
+      styleExamModuleButtonsAsNamedIcons(panel);
       return;
     }
     if (tab === "assessment-report") {
@@ -5449,6 +5475,7 @@ async function renderCbcCurriculumEditor(options = {}) {
       wireExamAssessmentReportPanel();
       applyCompactIconButtons(panel);
       applyTemplateVisibility(panel);
+      styleExamModuleButtonsAsNamedIcons(panel);
       return;
     }
     if (tab === "learner-performance") {
@@ -5456,6 +5483,7 @@ async function renderCbcCurriculumEditor(options = {}) {
       wireExamLearnerPerformancePanel();
       applyCompactIconButtons(panel);
       applyTemplateVisibility(panel);
+      styleExamModuleButtonsAsNamedIcons(panel);
     }
   };
 
