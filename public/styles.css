@@ -1525,28 +1525,6 @@ button:hover {
   margin-bottom: 0;
 }
 
-.sidebar-branding-mount {
-  margin: 8px 0 2px;
-  padding: 8px;
-  border-radius: 10px;
-  border: 1px dashed rgba(181, 213, 239, 0.45);
-  background: rgba(9, 38, 67, 0.45);
-}
-
-.sidebar-branding-mount h4 {
-  margin: 0 0 6px;
-  font-size: 11px;
-  color: #eaf7ff;
-}
-
-.sidebar-branding-mount .small-note {
-  color: #b5d5ef;
-}
-
-.sidebar-branding-mount .actions-row {
-  margin-top: 6px;
-}
-
 .sidebar h2 {
   margin-top: 0;
   margin-bottom: 8px;
@@ -3214,6 +3192,28 @@ tbody tr:hover {
   filter: brightness(1.05);
 }
 
+.search-action-icon.icon-symbolic,
+.iim-action-btn.icon-symbolic {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-width: 34px;
+  padding: 3px 6px;
+  line-height: 1.1;
+}
+
+.search-action-icon.icon-symbolic::after,
+.iim-action-btn.icon-symbolic::after {
+  content: attr(title);
+  font-size: 8px;
+  font-weight: 700;
+  line-height: 1;
+  margin-top: 2px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
 .search-action-icon.delete,
 .iim-action-btn.danger,
 .iim-action-btn.delete {
@@ -3827,13 +3827,13 @@ td .ax-btn::before,
   position: fixed;
   right: 16px;
   bottom: 14px;
-  width: min(340px, calc(100vw - 26px));
+  width: min(250px, calc(100vw - 26px));
   background: #ffffff;
   border: 1px solid #c9d8ea;
   border-radius: 12px;
-  box-shadow: 0 14px 28px rgba(11, 57, 120, 0.2);
+  box-shadow: 0 8px 16px rgba(11, 57, 120, 0.18);
   z-index: 35;
-  padding: 10px;
+  padding: 8px;
 }
 
 .assistant-header {
@@ -3850,7 +3850,7 @@ td .ax-btn::before,
 }
 
 .assistant-messages {
-  max-height: 220px;
+  max-height: 150px;
   overflow: auto;
   border: 1px solid #d7e3f2;
   border-radius: 8px;
@@ -3885,6 +3885,24 @@ td .ax-btn::before,
 
 .assistant-input-row input {
   flex: 1 1 auto;
+}
+
+.action-legend-row {
+  margin: 4px 0 8px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.action-legend-item {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 6px;
+  border-radius: 999px;
+  font-size: 10px;
+  color: #163b62;
+  background: #e9f3ff;
+  border: 1px solid #c9d8ea;
 }
 
 .admission-register-panel {

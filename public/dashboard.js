@@ -12,7 +12,7 @@ let portalContext = null;
 let searchRowDrafts = {};
 let dashboardAutoRefreshHandle = null;
 let currentSidebarSubmoduleId = null;
-const CLIENT_UI_BUNDLE_ID = "dash-bundle-main-v59-iconized-isolated-institution-edit";
+const CLIENT_UI_BUNDLE_ID = "dash-bundle-main-v60-institution-uploads-exam-flow";
 const examPanelState = {
   generatedExam: null,
   serials: [],
@@ -89,6 +89,7 @@ const MODULE_KEY_BY_ID = {
   "system-audit": "security-audit",
   "system-registry": "institutions-users-registry",
   "system-institution-edit": "institutions-users-registry",
+  "system-institution-uploads": "institutions-users-registry",
   "system-recycle-bin": "recycle-bin",
   "system-cbc-editor": "cbc-curriculum-editor"
 };
@@ -127,6 +128,8 @@ const MODULE_DESCRIPTIONS = {
   "system-registry": "Browse institutions and user registry details in one place.",
   "system-institution-edit":
     "Manage institution-specific letterheads, logos, and document templates per tenant (SSD only).",
+  "system-institution-uploads":
+    "Institution uploads workspace: templates, logos, letterheads, admission/assessment samples, and generated document files per institution.",
   "system-recycle-bin": "Restore or permanently purge archived deleted records.",
   "system-cbc-editor": "Create and maintain CBC curriculum structures and metadata."
 };
@@ -190,6 +193,12 @@ const SIDEBAR_SUBMODULES = {
       label: "Assessment Report",
       targetModule: "system-cbc-editor",
       options: { examTab: "assessment-report" }
+    },
+    {
+      id: "learner-performance",
+      label: "Learner Performance Record",
+      targetModule: "system-cbc-editor",
+      options: { examTab: "learner-performance" }
     }
   ],
   "hr-leave": [
@@ -261,13 +270,44 @@ function applyCompactIconButtons(scope = document) {
       node.classList.add("ax-btn", "ax-btn--sm");
       const variant = inferAxButtonVariant(text, node.className);
       node.classList.add(variant);
-      node.classList.add("ax-btn--icon-only");
       if (!node.getAttribute("title")) node.setAttribute("title", text || "Action");
       if (!node.getAttribute("aria-label")) node.setAttribute("aria-label", text || "Action");
+      const compactText = String(text || "").replace(/\s+/g, "");
+      const isSymbolOnly = compactText.length <= 2 || /^[^\p{L}\p{N}]+$/u.test(compactText);
+      node.classList.toggle("icon-symbolic", isSymbolOnly);
     } else if (node.tagName === "LABEL") {
       if (!node.getAttribute("title")) node.setAttribute("title", text || "Action");
       if (!node.getAttribute("aria-label")) node.setAttribute("aria-label", text || "Action");
     }
+  });
+  attachActionLegends(scope);
+}
+
+function attachActionLegends(scope = document) {
+  if (!scope || typeof scope.querySelectorAll !== "function") return;
+  scope.querySelectorAll(".actions-row").forEach((row) => {
+    if (row.nextElementSibling?.classList?.contains("action-legend-row")) return;
+    const buttons = Array.from(row.querySelectorAll("button"));
+    if (!buttons.length) return;
+    const seen = new Set();
+    const items = [];
+    buttons.forEach((btn) => {
+      const label = String(btn.getAttribute("aria-label") || btn.getAttribute("title") || btn.textContent || "")
+        .trim()
+        .replace(/\s+/g, " ");
+      if (!label) return;
+      if (seen.has(label.toLowerCase())) return;
+      seen.add(label.toLowerCase());
+      items.push(label);
+    });
+    if (!items.length) return;
+    const legend = document.createElement("div");
+    legend.className = "action-legend-row";
+    legend.innerHTML = items
+      .slice(0, 12)
+      .map((label) => `<span class="action-legend-item">${escapeHtml(label)}</span>`)
+      .join("");
+    row.insertAdjacentElement("afterend", legend);
   });
 }
 
@@ -1413,6 +1453,7 @@ async function renderModuleRights() {
       "finance-fee-status",
       "institutional-registers",
       "system-institution-edit",
+      "system-institution-uploads",
       ...dynamicSidebarSubmoduleKeys
     ];
     const moduleKeys = Array.from(new Set([...moduleKeysRaw, ...dashboardWidgetKeys, ...explicitSubModuleKeys])).sort((a, b) =>
@@ -1839,9 +1880,11 @@ async function renderInstitutionsRegistry() {
   }
 }
 
-async function renderInstitutionEditModule() {
-  setActiveSidebarButton("system-institution-edit");
-  document.getElementById("moduleTitle").textContent = "Institution Edit Module";
+async function renderInstitutionEditModule(options = {}) {
+  const variant = String(options?.variant || "edit");
+  const isUploadVariant = variant === "uploads";
+  setActiveSidebarButton(isUploadVariant ? "system-institution-uploads" : "system-institution-edit");
+  document.getElementById("moduleTitle").textContent = isUploadVariant ? "Institution Uploads" : "Institution Edit Module";
   if (!isSuperSystemDeveloperPortal()) {
     alert("Only Super System Developer can access Institution Edit Module.");
     return loadDashboard();
@@ -1867,7 +1910,7 @@ async function renderInstitutionEditModule() {
     ];
     document.getElementById("cards").innerHTML = `
       <div class="card stats-card metric-emphasis">
-        <h4>Institution Edit Module</h4>
+        <h4>${escapeHtml(isUploadVariant ? "Institution Uploads" : "Institution Edit Module")}</h4>
         <p>${formatNumber(institutions.length)} institutions</p>
       </div>
       <div class="card stats-card">
@@ -1881,7 +1924,7 @@ async function renderInstitutionEditModule() {
     `;
     document.getElementById("formArea").innerHTML = `
       <div class="module-header-card">
-        <h3>Institution Edit Module</h3>
+        <h3>${escapeHtml(isUploadVariant ? "Institution Uploads" : "Institution Edit Module")}</h3>
         <p>Search institution, upload templates/logos/letterheads per institution, and classify by module/sub-module so each tenant only sees its own files.</p>
       </div>
       <div class="form-grid">
@@ -1912,6 +1955,7 @@ async function renderInstitutionEditModule() {
       </div>
       <div class="actions-row">
         <button id="institutionDocDownloadSampleBtn" type="button">Download Sample</button>
+        <button id="institutionDocDownloadTemplatePackBtn" type="button">Download Template Pack</button>
         <label class="ax-btn ax-btn--upload ax-btn--sm" for="institutionDocFileInput">Select Upload</label>
         <input id="institutionDocFileInput" type="file" hidden />
         <button id="institutionDocSaveBtn" type="button">Upload & Save</button>
@@ -1994,6 +2038,20 @@ async function renderInstitutionEditModule() {
       ].join("\n");
       downloadTextFile("institution-document-template.csv", payload, "text/csv;charset=utf-8");
     });
+    document.getElementById("institutionDocDownloadTemplatePackBtn")?.addEventListener("click", () => {
+      const payload = [
+        "TEMPLATE PACK",
+        "1) admission_letter_template",
+        "2) admission_form_template",
+        "3) assessment_report_template",
+        "4) exam_script_template",
+        "5) result_script_template",
+        "6) institution_letterhead",
+        "",
+        "Upload each file after selecting institution + module + sub-module."
+      ].join("\n");
+      downloadTextFile("institution-template-pack.txt", payload, "text/plain;charset=utf-8");
+    });
     document.getElementById("institutionDocSaveBtn")?.addEventListener("click", async () => {
       const institutionId = Number(institutionEl?.value || 0);
       if (!institutionId) {
@@ -2028,6 +2086,10 @@ async function renderInstitutionEditModule() {
   } catch (error) {
     alert(error.message);
   }
+}
+
+async function renderInstitutionUploadsModule() {
+  return renderInstitutionEditModule({ variant: "uploads" });
 }
 
 async function renderRecycleBin() {
@@ -3209,6 +3271,149 @@ function wireExamAssessmentReportPanel() {
   });
 }
 
+function renderExamLearnerPerformancePanel() {
+  const { grades, forms } = buildExamGradeFormSelectOptions();
+  return `
+    <div class="module-header-card">
+      <h4>Learner Performance Record Sub-Module</h4>
+      <p>Search one learner and view full performance history grouped by grade, term, and exam session.</p>
+    </div>
+    <div class="form-grid">
+      <label>Search Learner (Name / Adm / UPI)</label>
+      <input id="perfLearnerSearch" placeholder="Type learner name or admission number" />
+      <label>Grade</label>
+      <select id="perfGrade">
+        <option value="">Select grade</option>${grades}
+      </select>
+      <label>Form</label>
+      <select id="perfForm">
+        <option value="">Select form</option>${forms}
+      </select>
+      <label>Stream</label>
+      <input id="perfStream" placeholder="Stream (optional)" />
+      <label>Matched Learner</label>
+      <select id="perfLearnerSelect"><option value="">Select learner</option></select>
+    </div>
+    <div class="ax-toolbar">
+      <button class="ax-btn ax-btn--view" id="perfLoadButton" title="Load performance record">Load</button>
+      <button class="ax-btn ax-btn--print" id="perfPrintButton" title="Print learner performance">Print</button>
+      <button class="ax-btn ax-btn--export-pdf" id="perfDownloadButton" title="Download learner performance">Download</button>
+    </div>
+    <div id="perfOutput" class="small-note">Select a learner to load the record.</div>
+  `;
+}
+
+function wireExamLearnerPerformancePanel() {
+  const output = document.getElementById("perfOutput");
+  const learnerSelect = document.getElementById("perfLearnerSelect");
+  const learnerSearch = document.getElementById("perfLearnerSearch");
+  const gradeEl = document.getElementById("perfGrade");
+  const formEl = document.getElementById("perfForm");
+  const streamEl = document.getElementById("perfStream");
+  const learnerMap = new Map();
+  const loadLearners = async () => {
+    const searchTokens = [
+      String(learnerSearch?.value || "").trim(),
+      String(gradeEl?.value || "").trim(),
+      String(formEl?.value || "").trim(),
+      String(streamEl?.value || "").trim()
+    ]
+      .filter(Boolean)
+      .join(" ");
+    try {
+      const rows = await request(`/api/admission/learners?limit=500&search=${encodeURIComponent(searchTokens)}`);
+      const filtered = (Array.isArray(rows) ? rows : []).filter((row) => {
+        if (gradeEl?.value && String(row.grade || "") !== String(gradeEl.value || "")) return false;
+        if (formEl?.value && String(row.form_name || "") !== String(formEl.value || "")) return false;
+        if (streamEl?.value && String(row.stream || "").toLowerCase() !== String(streamEl.value || "").toLowerCase()) return false;
+        return true;
+      });
+      learnerMap.clear();
+      learnerSelect.innerHTML = `<option value="">Select learner</option>${filtered
+        .map((row) => {
+          const id = String(row.id || "");
+          learnerMap.set(id, row);
+          return `<option value="${escapeHtml(id)}">${escapeHtml(row.full_name || "-")} (${escapeHtml(
+            row.admission_number || row.upi_number || id
+          )})</option>`;
+        })
+        .join("")}`;
+      if (output) output.textContent = `Loaded ${filtered.length} learner(s).`;
+    } catch (error) {
+      if (output) output.textContent = `Failed loading learners: ${error.message}`;
+    }
+  };
+  learnerSearch?.addEventListener("change", loadLearners);
+  gradeEl?.addEventListener("change", () => {
+    if (gradeEl?.value && formEl) formEl.value = "";
+    loadLearners();
+  });
+  formEl?.addEventListener("change", () => {
+    if (formEl?.value && gradeEl) gradeEl.value = "";
+    loadLearners();
+  });
+  streamEl?.addEventListener("change", loadLearners);
+  loadLearners();
+
+  const renderPerformance = (report) => {
+    const learner = report?.learner || {};
+    const marks = Array.isArray(report?.marks) ? report.marks : [];
+    const trend = Array.isArray(report?.performance_trend) ? report.performance_trend : [];
+    const byTerm = marks.reduce((acc, row) => {
+      const key = `${row.year || "Year"} ${row.term || "Term"} ${row.exam_type || "Exam"}`;
+      if (!acc[key]) acc[key] = [];
+      acc[key].push(row);
+      return acc;
+    }, {});
+    const sections = Object.entries(byTerm).map(([term, rows]) => {
+      const lines = rows
+        .map((row) => `• ${row.subject || "-"}: ${row.marks ?? "-"} (${row.percentage ?? "-"}%)`)
+        .join("<br/>");
+      return `<div><strong>${escapeHtml(term)}</strong><br/>${lines}</div>`;
+    });
+    return [
+      `<strong>Learner:</strong> ${escapeHtml(learner.full_name || "-")} (${escapeHtml(learner.admission_number || "-")})`,
+      `<strong>Current Class:</strong> ${escapeHtml(learner.grade || learner.form_name || "-")} ${escapeHtml(learner.stream || "")}`,
+      `<strong>Records:</strong> ${escapeHtml(String(marks.length))}`,
+      `<strong>Trend Points:</strong> ${escapeHtml(String(trend.length))}`,
+      sections.join("<hr/>")
+    ].join("<br/>");
+  };
+
+  let currentReport = null;
+  document.getElementById("perfLoadButton")?.addEventListener("click", async () => {
+    const learnerId = Number(learnerSelect?.value || 0);
+    if (!learnerId) {
+      alert("Select learner first.");
+      return;
+    }
+    try {
+      const report = await request(`/api/academic/assessment-report/${learnerId}`);
+      currentReport = report;
+      if (output) output.innerHTML = renderPerformance(report);
+    } catch (error) {
+      alert(error.message);
+    }
+  });
+  document.getElementById("perfPrintButton")?.addEventListener("click", () => {
+    if (!currentReport) {
+      alert("Load a learner record first.");
+      return;
+    }
+    const popup = window.open("", "_blank");
+    popup.document.write(`<pre>${escapeHtml(JSON.stringify(currentReport, null, 2))}</pre>`);
+    popup.document.close();
+    popup.print();
+  });
+  document.getElementById("perfDownloadButton")?.addEventListener("click", () => {
+    if (!currentReport) {
+      alert("Load a learner record first.");
+      return;
+    }
+    downloadTextFile("learner-performance-record.json", JSON.stringify(currentReport, null, 2), "application/json;charset=utf-8");
+  });
+}
+
 async function renderCbcCurriculumEditor(options = {}) {
   setActiveSidebarButton("system-cbc-editor");
   document.getElementById("moduleTitle").textContent = "Examination Management";
@@ -3250,15 +3455,8 @@ async function renderCbcCurriculumEditor(options = {}) {
     document.getElementById("formArea").innerHTML = `
       <div class="module-header-card">
         <h3>Examination Management</h3>
-        <p>Sub-modules: <strong>Curriculum</strong> · Exam Generation · Marks Entry · Result Scripts · Assessment Report</p>
+        <p>Sub-modules: Curriculum · Exam Generation · Marks Entry · Result Scripts · Assessment Report · Learner Performance Record. Only the selected sub-module is shown.</p>
       </div>
-      <nav class="exam-mgmt-nav actions-row" style="display:none;">
-        <button class="active" data-exam-tab="curriculum">Curriculum</button>
-        <button data-exam-tab="exam-generation">Exam Generation</button>
-        <button data-exam-tab="marks-entry">Marks Entry</button>
-        <button data-exam-tab="result-scripts">Result Scripts</button>
-        <button data-exam-tab="assessment-report">Assessment Report</button>
-      </nav>
       <section id="examCurriculumRoot">
       <div class="module-header-card">
         <h4>Curriculum Sub-Module</h4>
@@ -3416,9 +3614,6 @@ async function renderCbcCurriculumEditor(options = {}) {
     `;
     const activateExamTab = (tabKey = "curriculum") => {
       const tab = String(tabKey || "curriculum");
-      document.querySelectorAll(".exam-mgmt-nav button[data-exam-tab]").forEach((btn) => {
-        btn.classList.toggle("active", String(btn.dataset.examTab || "curriculum") === tab);
-      });
       const panel = document.getElementById("examMgmtSubmodulePanel");
       const curriculumRoot = document.getElementById("examCurriculumRoot");
       if (curriculumRoot) {
@@ -3449,14 +3644,14 @@ async function renderCbcCurriculumEditor(options = {}) {
       if (tab === "assessment-report") {
         panel.innerHTML = renderExamAssessmentReportPanel();
         wireExamAssessmentReportPanel();
+        return;
+      }
+      if (tab === "learner-performance") {
+        panel.innerHTML = renderExamLearnerPerformancePanel();
+        wireExamLearnerPerformancePanel();
+        return;
       }
     };
-    document.querySelectorAll(".exam-mgmt-nav button[data-exam-tab]").forEach((tabButton) => {
-      tabButton.addEventListener("click", () => {
-        const tab = String(tabButton.dataset.examTab || "curriculum");
-        activateExamTab(tab);
-      });
-    });
     activateExamTab(initialExamTab);
     const head = document.getElementById("tableHead");
     const body = document.getElementById("tableBody");
@@ -7978,6 +8173,7 @@ async function openModule(targetModule, options = {}) {
   if (targetModule === "system-audit") return renderSecurityAudit();
   if (targetModule === "system-registry") return renderInstitutionsRegistry();
   if (targetModule === "system-institution-edit") return renderInstitutionEditModule();
+  if (targetModule === "system-institution-uploads") return renderInstitutionUploadsModule();
   if (targetModule === "system-recycle-bin") return renderRecycleBin();
   if (targetModule === "system-cbc-editor") return renderCbcCurriculumEditor(options);
   if (targetModule === "management-staff-service") return renderStaffServiceHub(options);
@@ -8004,7 +8200,7 @@ function bindSidebar() {
   document.querySelectorAll(".sidebar-submodule-list[data-parent-module]").forEach((node) => node.remove());
   document.querySelectorAll(".sidebar button[data-module]").forEach((button) => {
     const moduleId = String(button.dataset.module || "");
-    if (moduleId === "system-institution-edit" && !isSuperSystemDeveloperPortal()) {
+    if ((moduleId === "system-institution-edit" || moduleId === "system-institution-uploads") && !isSuperSystemDeveloperPortal()) {
       button.style.display = "none";
       return;
     }
@@ -8109,29 +8305,7 @@ function renderSidebarInstitutionBranding() {
   applyCompactIconButtons(mount);
 }
 
-function buildAssistantReply(promptText = "") {
-  const prompt = String(promptText || "").trim();
-  const text = prompt.toLowerCase();
-  if (!prompt) return "Ask about module location, sub-module workflow, or data entry steps.";
-  if (text.includes("institution edit") || text.includes("letterhead") || text.includes("logo")) {
-    return "Open System Administration → Institution Edit Module. Select institution, then upload letterhead/logo/templates.";
-  }
-  if (text.includes("admission")) {
-    return "Open Admission, then choose sub-modules: Admission Register, Admission Form, or Admission Letter from the sidebar list.";
-  }
-  if (text.includes("exam") || text.includes("marks") || text.includes("result")) {
-    return "Open Examination Management. Select Curriculum, Exam Generation, Marks Entry, Result Scripts, or Assessment Report from its sub-module list.";
-  }
-  if (text.includes("access control") || text.includes("rights")) {
-    return "Open Access Control (Module Rights), select a user, then assign module/sub-module permissions and save overrides.";
-  }
-  if (text.includes("template")) {
-    return "Template controls are restricted to Super System Developer. Open the target module and use the template upload/download section.";
-  }
-  return "I can guide module navigation and workflow. For complex technical issues, consult the System Developer or Institution System Administrator.";
-}
-
-function initDashboardAssistant() {
+async function initDashboardAssistant() {
   const panel = document.getElementById("dashboardAiAssistant");
   const messagesEl = document.getElementById("assistantMessages");
   const inputEl = document.getElementById("assistantInput");
@@ -8145,14 +8319,29 @@ function initDashboardAssistant() {
     messagesEl.appendChild(item);
     messagesEl.scrollTop = messagesEl.scrollHeight;
   };
-  const submit = () => {
+  const submit = async () => {
     const prompt = String(inputEl.value || "").trim();
     if (!prompt) return;
     append("user", prompt);
-    append("ai", buildAssistantReply(prompt));
+    append("ai", "Checking system modules...");
+    const pendingNode = messagesEl.lastElementChild;
     inputEl.value = "";
+    try {
+      const response = await request("/api/dashboard/assistant", {
+        method: "POST",
+        body: JSON.stringify({ prompt })
+      });
+      if (pendingNode) pendingNode.textContent = String(response?.answer || "No assistant response.");
+    } catch (error) {
+      if (pendingNode) {
+        pendingNode.textContent =
+          "I cannot answer right now. For complex questions consult System Developer / Institution System Administrator.";
+      }
+    }
   };
-  sendBtn.addEventListener("click", submit);
+  sendBtn.addEventListener("click", () => {
+    submit();
+  });
   inputEl.addEventListener("keydown", (event) => {
     if (event.key === "Enter") {
       event.preventDefault();
@@ -8167,10 +8356,7 @@ function initDashboardAssistant() {
     sendBtn.style.display = collapsed ? "" : "none";
   });
   messagesEl.innerHTML = "";
-  append(
-    "ai",
-    "Welcome. Ask me where to find modules/sub-modules or how to complete a workflow. Complex technical issues should be escalated to System Developer/Admin."
-  );
+  append("ai", "Ask where to find modules/sub-modules. Complex issues are escalated to your system developer/admin.");
 }
 
 function bindTopbarButtons() {
@@ -8757,7 +8943,6 @@ async function init() {
   // CRITICAL: bind sidebar/topbar BEFORE the dashboard cockpit fetch so module
   // navigation always works even if /api/dashboard/summary fails.
   await safeStep("bindSidebar", async () => bindSidebar());
-  await safeStep("renderSidebarInstitutionBranding", async () => renderSidebarInstitutionBranding());
   await safeStep("bindTopbarButtons", async () => bindTopbarButtons());
   await safeStep("bindQuickActionCards", async () => bindQuickActionCards());
   await safeStep("initDashboardAssistant", async () => initDashboardAssistant());

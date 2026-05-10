@@ -1272,6 +1272,7 @@ const MODULE_KEYS = {
   REGISTER_USERS: "register-users",
   SECURITY_LOGIN_AUDIT: "security-login-audit",
   INSTITUTION_LETTERHEAD_UPLOAD: "institution-letterhead-upload",
+  INSTITUTION_UPLOADS: "institution-uploads",
   HR_INSTITUTIONAL_LETTERS: "hr-institutional-letters",
   FINANCE_FEE_STATUS: "finance-fee-status",
   INSTITUTIONAL_REGISTERS: "institutional-registers"
@@ -2400,6 +2401,69 @@ app.get("/api/meta", (_, res) => {
     otpChannels: ["console", "email", "sms", "sms_email"]
   });
 });
+
+function friendlyModuleLabel(moduleKey = "") {
+  return String(moduleKey || "")
+    .replaceAll("-", " ")
+    .replaceAll("_", " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+app.post(
+  "/api/dashboard/assistant",
+  auth,
+  enforcePermission(PERMISSIONS.VIEW),
+  asyncHandler(async (req, res) => {
+    const prompt = cleanValue(req.body?.prompt || "");
+    const normalizedPrompt = prompt.toLowerCase();
+    const allModuleKeys = Array.from(new Set(Object.values(MODULE_KEYS)));
+    const allowedModules = [];
+    for (const moduleKey of allModuleKeys) {
+      // eslint-disable-next-line no-await-in-loop
+      const allowed = await hasModuleAccess(req.user, moduleKey);
+      if (allowed) {
+        allowedModules.push(moduleKey);
+      }
+    }
+    const priorityHints = [
+      { keywords: ["institution upload", "institution document", "letterhead", "logo", "template"], module: "institutions-users-registry" },
+      { keywords: ["registration", "register institution", "register user"], module: "register-center" },
+      { keywords: ["admission", "learner"], module: "admission" },
+      { keywords: ["exam", "curriculum", "marks", "result", "assessment"], module: "cbc-curriculum-editor" },
+      { keywords: ["access control", "rights", "permission"], module: "access-control" },
+      { keywords: ["audit", "security", "logging"], module: "security-audit" },
+      { keywords: ["recycle", "restore", "purge"], module: "recycle-bin" },
+      { keywords: ["communication", "sms", "message"], module: "communication-messages" }
+    ];
+    const matched = priorityHints.find((row) => row.keywords.some((key) => normalizedPrompt.includes(key)));
+    const suggestedModules = matched
+      ? allowedModules.filter((moduleKey) => moduleKey === matched.module)
+      : allowedModules.filter((moduleKey) => normalizedPrompt && moduleKey.includes(normalizedPrompt.replace(/\s+/g, "-")));
+    const fallbackTop = allowedModules.slice(0, 6).map((key) => friendlyModuleLabel(key));
+    let answer = "";
+    if (!prompt) {
+      answer = `Ask module-location questions. You can currently access: ${fallbackTop.join(", ")}.`;
+    } else if (suggestedModules.length) {
+      answer = `Open: ${suggestedModules.map((key) => friendlyModuleLabel(key)).join(", ")}.`;
+      if (matched?.module === "cbc-curriculum-editor") {
+        answer += " Use the Examination Management sidebar sub-modules for Curriculum, Exam Generation, Marks Entry, Result Scripts, Assessment Report, and Learner Performance.";
+      }
+      if (matched?.module === "institutions-users-registry") {
+        answer += " Use Institution Edit Module / Institution Uploads to map templates and files per institution.";
+      }
+    } else {
+      answer = "I could not map that directly. Check your sidebar sub-modules; for complex actions consult System Developer or Institution System Administrator.";
+    }
+    res.json({
+      answer,
+      prompt,
+      matched_module: matched?.module || null,
+      allowed_modules: allowedModules
+    });
+  })
+);
 
 app.get("/api/health", asyncHandler(async (_, res) => {
   await query("SELECT 1");
