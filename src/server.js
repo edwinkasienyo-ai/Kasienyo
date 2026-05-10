@@ -923,6 +923,7 @@ async function ensureUserPasswordPolicyColumns() {
   }
 
   const learnerColMigrations = [
+    ["learner_serial_number", "BIGINT NULL"],
     ["learner_condition", "VARCHAR(80) NULL"],
     ["disability_type", "VARCHAR(120) NULL"],
     ["biological_parental_status", "VARCHAR(80) NULL"],
@@ -961,6 +962,60 @@ async function ensureUserPasswordPolicyColumns() {
     if (!Number(checkCol[0]?.total || 0)) {
       await query(`ALTER TABLE learners ADD COLUMN ${colName} ${ddl}`);
     }
+  }
+
+  // Backfill permanent learner serials for legacy rows (first-registered order by id).
+  const learnerSerialNullRows = await query(
+    `SELECT id
+     FROM learners
+     WHERE learner_serial_number IS NULL
+     ORDER BY id ASC`
+  );
+  if (learnerSerialNullRows.length) {
+    for (const row of learnerSerialNullRows) {
+      // eslint-disable-next-line no-await-in-loop
+      await query(
+        `UPDATE learners
+         SET learner_serial_number = ?
+         WHERE id = ? AND learner_serial_number IS NULL`,
+        [Number(row.id), Number(row.id)]
+      );
+    }
+  }
+
+  const learnerSerialDuplicateRows = await query(
+    `SELECT learner_serial_number
+     FROM learners
+     WHERE learner_serial_number IS NOT NULL
+     GROUP BY learner_serial_number
+     HAVING COUNT(*) > 1`
+  );
+  if (learnerSerialDuplicateRows.length) {
+    const allLearnersById = await query(
+      `SELECT id
+       FROM learners
+       ORDER BY id ASC`
+    );
+    for (const row of allLearnersById) {
+      // eslint-disable-next-line no-await-in-loop
+      await query(
+        `UPDATE learners
+         SET learner_serial_number = ?
+         WHERE id = ?`,
+        [Number(row.id), Number(row.id)]
+      );
+    }
+  }
+
+  const learnerSerialIndexRows = await query(
+    `SELECT COUNT(*) total
+     FROM INFORMATION_SCHEMA.STATISTICS
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = 'learners'
+       AND INDEX_NAME = 'unique_learner_serial_number'`
+  );
+  if (!Number(learnerSerialIndexRows[0]?.total || 0)) {
+    await query("ALTER TABLE learners ADD UNIQUE KEY unique_learner_serial_number (learner_serial_number)");
   }
 
   const teacherEmploymentStatusRows = await query(
@@ -1206,6 +1261,24 @@ CREATE TABLE IF NOT EXISTS institutional_registers (
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   INDEX idx_registers_inst_type (institution_id, register_type),
   CONSTRAINT fk_registers_institution FOREIGN KEY (institution_id) REFERENCES institutions(id)
+)`);
+
+  await query(`
+CREATE TABLE IF NOT EXISTS institution_documents (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  institution_id BIGINT NOT NULL,
+  module_key VARCHAR(120) NULL,
+  submodule_key VARCHAR(120) NULL,
+  document_type VARCHAR(120) NOT NULL,
+  document_title VARCHAR(255) NOT NULL,
+  notes TEXT NULL,
+  file_path VARCHAR(255) NOT NULL,
+  mime_type VARCHAR(120) NULL,
+  uploaded_by_user_id BIGINT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  INDEX idx_institution_documents_lookup (institution_id, document_type, module_key),
+  CONSTRAINT fk_institution_documents_institution FOREIGN KEY (institution_id) REFERENCES institutions(id)
 )`);
 
   await query(`

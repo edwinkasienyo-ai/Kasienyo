@@ -18,6 +18,7 @@ const {
   ROLE_PERMISSIONS,
   GRADES,
   FORMS,
+  CBC_LEVELS,
   TERMS,
   YEAR_JOINED_OPTIONS,
   YEAR_JOINED_WIDE_OPTIONS,
@@ -59,8 +60,15 @@ const {
   buildSuggestionFromMappings,
   makeNotes,
   getAllCbcLearningAreas,
-  buildBulkCbcEntries
+  buildBulkCbcEntries,
+  getJuniorSecondaryCoreSeedRows
 } = require("./config/cbcLibrary");
+const {
+  KICD_LEVEL_PAGES,
+  fetchKicdCatalog,
+  extractKicdCurriculumFromCatalog
+} = require("./services/kicdCurriculumService");
+const { importLocalCurriculumFromPdfDirectory } = require("./services/localCurriculumImportService");
 
 /** Bump when shipping UI/API changes so schools can confirm they run the right copy. */
 const IIMS_BUILD_STAMP = process.env.IIMS_BUILD_STAMP || "ui-deploy-rev45";
@@ -1050,6 +1058,42 @@ async function nextInstitutionCode({ countyCode, categoryCode }) {
   return `${countyCode}/${categoryCode}/${padThree(next)}`;
 }
 
+function formatLearnerSerial(serialNumber) {
+  const serial = Number(serialNumber || 0);
+  if (!serial || !Number.isFinite(serial)) return "";
+  return String(serial).padStart(3, "0");
+}
+
+function normalizeAdmissionSeed(seedValue = "") {
+  return String(seedValue || "")
+    .trim()
+    .replace(/[^a-z0-9/-]/gi, "")
+    .slice(0, 28)
+    .toUpperCase();
+}
+
+async function nextAdmissionNumber({ institutionId, seed = "" }) {
+  const normalizedSeed = normalizeAdmissionSeed(seed);
+  const prefix = normalizedSeed ? `ADM/${normalizedSeed}` : "ADM";
+  const rows = await query(
+    `SELECT admission_number
+     FROM learners
+     WHERE institution_id = ?
+       AND admission_number LIKE ?
+     ORDER BY id DESC
+     LIMIT 2000`,
+    [institutionId, `${prefix}%`]
+  );
+  const nextSerial = rows.reduce((maxValue, row) => {
+    const admissionNumber = cleanValue(row?.admission_number || "");
+    const match = admissionNumber.match(/(\d+)\s*$/);
+    if (!match) return maxValue;
+    const value = Number(match[1] || 0);
+    return Number.isFinite(value) && value > maxValue ? value : maxValue;
+  }, 0) + 1;
+  return `${prefix}-${String(nextSerial).padStart(3, "0")}`;
+}
+
 function generateStrongPassword(length = 12) {
   const charset = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789@#$%&*!";
   const targetLength = Math.max(Number(length) || 12, PASSWORD_MIN_LENGTH);
@@ -1228,6 +1272,7 @@ const MODULE_KEYS = {
   REGISTER_USERS: "register-users",
   SECURITY_LOGIN_AUDIT: "security-login-audit",
   INSTITUTION_LETTERHEAD_UPLOAD: "institution-letterhead-upload",
+  INSTITUTION_UPLOADS: "institution-uploads",
   HR_INSTITUTIONAL_LETTERS: "hr-institutional-letters",
   FINANCE_FEE_STATUS: "finance-fee-status",
   INSTITUTIONAL_REGISTERS: "institutional-registers"
@@ -2297,11 +2342,21 @@ app.get("/api/build-info", (_, res) => sendBuildInfoJson(res));
 app.get("/api/building-info", (_, res) => sendBuildInfoJson(res));
 
 app.get("/api/meta", (_, res) => {
+  const cbcLearningAreas = Array.from(
+    new Set(
+      CBC_LEVELS.flatMap((level) => [
+        ...(Array.isArray(level.learningAreas) ? level.learningAreas : []),
+        ...Object.values(level.pathways || {}).flatMap((areas) => (Array.isArray(areas) ? areas : []))
+      ])
+    )
+  );
   res.json({
     roles: ROLES,
     permissions: PERMISSIONS,
     rolePermissions: ROLE_PERMISSIONS,
     gradeOptions: GRADES,
+    cbcLevels: CBC_LEVELS,
+    cbcLearningAreas,
     yearJoinedOptions: YEAR_JOINED_OPTIONS,
     yearJoinedWideOptions: YEAR_JOINED_WIDE_OPTIONS,
     formOptions: FORMS,
@@ -2346,6 +2401,105 @@ app.get("/api/meta", (_, res) => {
     otpChannels: ["console", "email", "sms", "sms_email"]
   });
 });
+
+function friendlyModuleLabel(moduleKey = "") {
+  return String(moduleKey || "")
+    .replaceAll("-", " ")
+    .replaceAll("_", " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+app.post(
+  "/api/dashboard/assistant",
+  auth,
+  enforcePermission(PERMISSIONS.VIEW),
+  asyncHandler(async (req, res) => {
+    const prompt = cleanValue(req.body?.prompt || "");
+    const normalizedPrompt = prompt.toLowerCase();
+    const allModuleKeys = Array.from(new Set(Object.values(MODULE_KEYS)));
+    const moduleHints = [
+      {
+        module: "register-center",
+        keywords: ["register", "registration", "institution registration", "user registration", "hoi registration", "system administrator registration"],
+        guidance:
+          "Open Institution Registration. Sub-modules: Institution Registration, SSD/SD Registration, HOI/Admin/System Administrator Registration, User Registration."
+      },
+      {
+        module: "admission",
+        keywords: ["admission", "learner", "bio data", "learners registration", "admission register", "admission letter", "admission form"],
+        guidance:
+          "Open Admission. Sub-modules: Learners Registration, Admission Register, Admission Form, Admission Letter."
+      },
+      {
+        module: "cbc-curriculum-editor",
+        keywords: ["exam", "curriculum", "marks", "result", "assessment", "performance"],
+        guidance:
+          "Open Examination Management. Sub-modules: Curriculum, Exam Generation, Marks Entry, Result Scripts, Assessment Report, Learner Performance Record."
+      },
+      {
+        module: "institutions-users-registry",
+        keywords: ["institution uploads", "institution documents", "letterhead", "logo", "template", "institution edit"],
+        guidance:
+          "Open Institution Edit Module / Institution Uploads to select institution, upload templates/docs, and auto-map documents per tenant."
+      },
+      {
+        module: "access-control",
+        keywords: ["access", "rights", "permissions", "module rights", "authorization"],
+        guidance:
+          "Open Access Control (Module Rights), select user, then enable module/sub-module/sub-sub-module permissions and save overrides."
+      },
+      {
+        module: "security-audit",
+        keywords: ["audit", "security", "logging", "login logs"],
+        guidance:
+          "Open Security & Logging Audit to review login and activity audit records."
+      },
+      {
+        module: "communication-messages",
+        keywords: ["sms", "message", "communication", "recipient"],
+        guidance:
+          "Open SMS and Communication. Select message type and recipient role; recipient contact can auto-fill from bio-data."
+      }
+    ];
+    const allowedModules = [];
+    const lockedModules = [];
+    for (const moduleKey of allModuleKeys) {
+      // eslint-disable-next-line no-await-in-loop
+      const allowed = await hasModuleAccess(req.user, moduleKey);
+      if (allowed) {
+        allowedModules.push(moduleKey);
+      } else {
+        lockedModules.push(moduleKey);
+      }
+    }
+    const matchedHint = moduleHints.find((hint) => hint.keywords.some((key) => normalizedPrompt.includes(key)));
+    const suggestedModule = matchedHint?.module || null;
+    const canAccessSuggested = suggestedModule ? allowedModules.includes(suggestedModule) : false;
+    const fallbackTop = allowedModules.slice(0, 10).map((key) => friendlyModuleLabel(key));
+    let answer = "";
+    if (!prompt) {
+      answer = `Ask any module/sub-module question. Available modules in your scope: ${fallbackTop.join(", ")}.`;
+    } else if (matchedHint && canAccessSuggested) {
+      answer = `${matchedHint.guidance}`;
+    } else if (matchedHint && !canAccessSuggested) {
+      answer = `${matchedHint.guidance} This module is currently locked for your user rights. Request access from System Developer / Institution System Administrator.`;
+    } else {
+      const suggestion = fallbackTop.length
+        ? `Try one of: ${fallbackTop.slice(0, 6).join(", ")}.`
+        : "No module list was available for this account.";
+      answer = `I could not map that question exactly, but I can guide module and sub-module navigation. ${suggestion} For complex technical issues consult System Developer / Institution System Administrator.`;
+    }
+    res.json({
+      answer,
+      prompt,
+      matched_module: suggestedModule,
+      allowed_modules: allowedModules,
+      locked_modules: lockedModules
+    });
+  })
+);
 
 app.get("/api/health", asyncHandler(async (_, res) => {
   await query("SELECT 1");
@@ -3457,13 +3611,35 @@ app.get(
     const requestedInstitutionId = Number(req.query?.institution_id || 0) || null;
     const scopeInstitutions = await loadInstitutionScopeOptions(req.user);
     const institutionScopeId = requestedInstitutionId || Number(req.user.institution_id || 0) || Number(scopeInstitutions[0]?.id || 0) || null;
-    const institutions = scopeInstitutions
-      .filter((item) => !requestedInstitutionId || Number(item.id) === requestedInstitutionId)
-      .map((item) => ({
-        id: item.id,
-        institution_name: item.institution_name,
-        institution_code: item.institution_code
-      }));
+    const scopedInstitutionIds = scopeInstitutions
+      .map((item) => Number(item.id || 0))
+      .filter((id) => id > 0)
+      .filter((id) => !requestedInstitutionId || id === requestedInstitutionId);
+    const institutionDetailColumns = await getExistingColumns("institutions", [
+      "institution_name",
+      "institution_code",
+      "email",
+      "phone",
+      "county",
+      "category",
+      "sub_county",
+      "location",
+      "postal_address",
+      "postal_code",
+      "town",
+      "institution_type",
+      "institution_level",
+      "created_at"
+    ]);
+    const institutions = scopedInstitutionIds.length
+      ? await query(
+        `SELECT id, ${institutionDetailColumns.join(", ")}
+         FROM institutions
+         WHERE id IN (${scopedInstitutionIds.map(() => "?").join(", ")})
+         ORDER BY institution_name ASC`,
+        scopedInstitutionIds
+      )
+      : [];
     const registrationMeta = canRegisterInstitution(req.user)
       ? {
           counties: COUNTIES,
@@ -3490,7 +3666,7 @@ app.post(
   "/api/institutions/preview-code",
   auth,
   enforceModuleAccess(MODULE_KEYS.REGISTRATION),
-  enforceRole([ROLES.SYSTEM_DEVELOPER]),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER]),
   asyncHandler(async (req, res) => {
     const countyInput = cleanOptionalValue(req.body?.county);
     const countyCodeInput = cleanOptionalValue(req.body?.county_code);
@@ -3526,7 +3702,7 @@ app.post(
   accountMutationRateLimit,
   accountMutationCooldown,
   enforceModuleAccess(MODULE_KEYS.REGISTRATION),
-  enforceRole([ROLES.SYSTEM_DEVELOPER]),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER]),
   enforcePermission(PERMISSIONS.CREATE),
   asyncHandler(async (req, res) => {
     const institutionName = cleanValue(req.body?.institution_name);
@@ -3548,9 +3724,11 @@ app.post(
 
     const adminFullName = cleanValue(req.body?.admin_full_name);
     const adminUsername = cleanValue(req.body?.admin_username);
-    const adminUsernameValidationError = validateUsername(adminUsername, "admin_username");
-    if (adminUsernameValidationError) {
-      return res.status(400).json({ error: adminUsernameValidationError });
+    if (adminUsername) {
+      const adminUsernameValidationError = validateUsername(adminUsername, "admin_username");
+      if (adminUsernameValidationError) {
+        return res.status(400).json({ error: adminUsernameValidationError });
+      }
     }
     const adminPasswordInput = cleanValue(req.body?.admin_password);
     const portalRoleRaw = normalizeRole(cleanValue(req.body?.portal_role));
@@ -3576,8 +3754,9 @@ app.post(
 
     const postalDetails = getPostalDetails(postalCodeInput);
     const normalizedTown = townInput || postalDetails?.town || null;
-    const adminPassword = adminPasswordInput || generateStrongPassword(14);
-    if (adminPasswordInput) {
+    const shouldCreateAdminAccount = Boolean(adminFullName && adminUsername);
+    const adminPassword = shouldCreateAdminAccount ? (adminPasswordInput || generateStrongPassword(14)) : null;
+    if (adminPasswordInput && shouldCreateAdminAccount) {
       const weakAdminPasswordError = requireStrongPassword(adminPassword, "admin_password");
       if (weakAdminPasswordError) {
         return res.status(400).json({ error: weakAdminPasswordError });
@@ -3589,9 +3768,9 @@ app.post(
       });
     }
 
-    if (!institutionName || !adminFullName || !adminUsername) {
+    if (!institutionName) {
       return res.status(400).json({
-        error: "institution_name, admin_full_name, and admin_username are required."
+        error: "institution_name is required."
       });
     }
 
@@ -3632,41 +3811,43 @@ app.post(
       return res.status(409).json({ error: "Unable to allocate a unique institution code. Please retry." });
     }
     const institutionId = institutionInsert.insertId;
-    const passwordHash = await hashPassword(adminPassword);
+    let credentialDispatch = null;
+    if (shouldCreateAdminAccount) {
+      const passwordHash = await hashPassword(adminPassword);
+      await query(
+        `INSERT INTO users
+          (institution_id, full_name, username, password_hash, password_last_changed_at, password_expires_at, role, email, phone, is_active)
+         VALUES (?, ?, ?, ?, NOW(), DATE_ADD(NOW(), INTERVAL ? DAY), ?, ?, ?, 1)`,
+        [
+          institutionId,
+          adminFullName,
+          adminUsername,
+          passwordHash,
+          PASSWORD_ROTATION_DAYS,
+          portalRole,
+          institutionEmail,
+          institutionPhone
+        ]
+      );
 
-    await query(
-      `INSERT INTO users
-        (institution_id, full_name, username, password_hash, password_last_changed_at, password_expires_at, role, email, phone, is_active)
-       VALUES (?, ?, ?, ?, NOW(), DATE_ADD(NOW(), INTERVAL ? DAY), ?, ?, ?, 1)`,
-      [
-        institutionId,
-        adminFullName,
-        adminUsername,
-        passwordHash,
-        PASSWORD_ROTATION_DAYS,
-        portalRole,
-        institutionEmail,
-        institutionPhone
-      ]
-    );
-
-    const credentialMessage = [
-      "Welcome to IMIS for Basic Education Learning Institution.",
-      "Your institution account has been registered successfully.",
-      `Institution: ${institutionName}`,
-      `Institution Code: ${institutionCode}`,
-      `Username: ${adminUsername}`,
-      `Password: ${adminPassword}`,
-      "",
-      "Login Link: www.theimis.com",
-      "Please log in and change this password immediately after first sign-in."
-    ].join("\n");
-    const credentialDispatch = await dispatchCredentialNotice({
-      email: institutionEmail,
-      phone: institutionPhone,
-      subject: "IMIS Institution Administrator Credentials",
-      message: credentialMessage
-    });
+      const credentialMessage = [
+        "Welcome to IMIS for Basic Education Learning Institution.",
+        "Your institution account has been registered successfully.",
+        `Institution: ${institutionName}`,
+        `Institution Code: ${institutionCode}`,
+        `Username: ${adminUsername}`,
+        `Password: ${adminPassword}`,
+        "",
+        "Login Link: www.theimis.com",
+        "Please log in and change this password immediately after first sign-in."
+      ].join("\n");
+      credentialDispatch = await dispatchCredentialNotice({
+        email: institutionEmail,
+        phone: institutionPhone,
+        subject: "IMIS Institution Administrator Credentials",
+        message: credentialMessage
+      });
+    }
 
     const institutionRecord = {
       id: institutionId,
@@ -3679,7 +3860,7 @@ app.post(
     };
 
     let agreementEmailDispatch = null;
-    if (sendAgreementEmail) {
+    if (sendAgreementEmail && institutionEmail) {
       agreementEmailDispatch = await dispatchCredentialNotice({
         email: institutionEmail,
         phone: null,
@@ -3699,15 +3880,17 @@ app.post(
       category: categoryRecord.label,
       category_code: categoryRecord.code,
       postal_address: postalAddress,
-      admin_username: adminUsername,
-      admin_role: portalRole
+      admin_username: adminUsername || null,
+      admin_role: shouldCreateAdminAccount ? portalRole : null
     });
 
     res.status(201).json({
-      message: "Institution and administrator account registered successfully. Credentials dispatched via configured channels.",
+      message: shouldCreateAdminAccount
+        ? "Institution and administrator account registered successfully."
+        : "Institution registered successfully.",
       institution_id: institutionId,
       institution_code: institutionCode,
-      admin_username: adminUsername,
+      admin_username: adminUsername || null,
       admin_password: null,
       county: countyRecord.name,
       county_code: countyRecord.code,
@@ -5073,7 +5256,7 @@ app.get(
   "/api/templates/institution-streams.csv",
   auth,
   enforceModuleAccess(MODULE_KEYS.ADMISSION),
-  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.SYSTEM_ADMINISTRATOR]),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER]),
   asyncHandler(async (req, res) => {
     const csv = [
       "grade_or_form,stream_name",
@@ -5090,7 +5273,7 @@ app.get(
 app.post(
   "/api/institutions/streams/bulk",
   auth,
-  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.SYSTEM_ADMINISTRATOR]),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER]),
   asyncHandler(async (req, res) => {
     const institutionId = Number(req.user.institution_id);
     const entries = Array.isArray(req.body?.entries) ? req.body.entries : [];
@@ -5137,7 +5320,7 @@ app.get(
   "/api/templates/admission-bio-data.csv",
   auth,
   enforceModuleAccess(MODULE_KEYS.ADMISSION),
-  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.SYSTEM_ADMINISTRATOR]),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER]),
   asyncHandler(async (req, res) => {
     const csv = [
       "first_name,middle_name,last_name,other_names,admission_number,date_of_birth,date_of_admission,grade,form_name,stream,gender,parent_full_name,parent_phone,parent_email,learner_condition,disability_type,has_medical_condition,medical_condition_notes,status",
@@ -5152,7 +5335,7 @@ app.get(
 app.get(
   "/api/templates/staff-profiles.csv",
   auth,
-  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.SYSTEM_ADMINISTRATOR]),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER]),
   asyncHandler(async (req, res) => {
     const profileType = cleanValue(req.query?.type || "teacher").toLowerCase();
     const csv = profileType === "support"
@@ -5451,7 +5634,7 @@ app.get(
   "/api/institutions/:id/agreement-template",
   auth,
   enforceModuleAccess(MODULE_KEYS.REGISTRATION),
-  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER]),
   asyncHandler(async (req, res) => {
     const institutionId = Number(req.params.id);
     const institution = await loadInstitutionAgreementContext(institutionId);
@@ -5471,7 +5654,7 @@ app.put(
   accountMutationRateLimit,
   accountMutationCooldown,
   enforceModuleAccess(MODULE_KEYS.REGISTRATION),
-  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER]),
   asyncHandler(async (req, res) => {
     const institutionId = Number(req.params.id);
     const institution = await loadInstitutionAgreementContext(institutionId);
@@ -5499,7 +5682,7 @@ app.delete(
   accountMutationRateLimit,
   accountMutationCooldown,
   enforceModuleAccess(MODULE_KEYS.REGISTRATION),
-  enforceRole([ROLES.SYSTEM_DEVELOPER]),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER]),
   asyncHandler(async (req, res) => {
     const institutionId = Number(req.params.id);
     const institution = await loadInstitutionAgreementContext(institutionId);
@@ -6125,6 +6308,140 @@ app.get(
 );
 
 app.get(
+  "/api/system/institution-documents/institutions",
+  auth,
+  enforceModuleAccess(MODULE_KEYS.INSTITUTIONS_USERS_REGISTRY),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER]),
+  enforcePermission(PERMISSIONS.VIEW),
+  asyncHandler(async (_req, res) => {
+    const institutions = await query(
+      `SELECT id, institution_name, institution_code
+       FROM institutions
+       ORDER BY institution_name ASC`
+    );
+    res.json({ institutions });
+  })
+);
+
+app.get(
+  "/api/system/institution-documents",
+  auth,
+  enforceModuleAccess(MODULE_KEYS.INSTITUTIONS_USERS_REGISTRY),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER]),
+  enforcePermission(PERMISSIONS.VIEW),
+  asyncHandler(async (req, res) => {
+    const institutionId = Number(req.query?.institution_id || 0);
+    if (!institutionId) {
+      return res.status(400).json({ error: "institution_id is required." });
+    }
+    const q = `%${cleanValue(req.query?.q || "")}%`;
+    const documents = await query(
+      `SELECT d.id, d.institution_id, d.module_key, d.submodule_key, d.document_type, d.document_title,
+              d.notes, d.file_path, d.mime_type, d.created_at, i.institution_name, i.institution_code
+       FROM institution_documents d
+       INNER JOIN institutions i ON i.id = d.institution_id
+       WHERE d.institution_id = ?
+         AND (
+           ? = '%%'
+           OR d.document_type LIKE ?
+           OR d.document_title LIKE ?
+           OR d.module_key LIKE ?
+           OR d.submodule_key LIKE ?
+         )
+       ORDER BY d.id DESC
+       LIMIT 500`,
+      [institutionId, q, q, q, q, q]
+    );
+    res.json({ documents });
+  })
+);
+
+app.post(
+  "/api/system/institution-documents",
+  auth,
+  enforceModuleAccess(MODULE_KEYS.INSTITUTIONS_USERS_REGISTRY),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER]),
+  enforcePermission(PERMISSIONS.CREATE),
+  asyncHandler(async (req, res) => {
+    const institutionId = Number(req.body?.institution_id || 0);
+    const documentType = cleanValue(req.body?.document_type || "");
+    const title = cleanValue(req.body?.document_title || "");
+    const filePath = cleanOptionalValue(req.body?.file_path);
+    if (!institutionId || !documentType || !title || !filePath) {
+      return res.status(400).json({ error: "institution_id, document_type, document_title and file_path are required." });
+    }
+    const exists = await query("SELECT id FROM institutions WHERE id = ? LIMIT 1", [institutionId]);
+    if (!exists.length) {
+      return res.status(404).json({ error: "Institution not found." });
+    }
+    const result = await query(
+      `INSERT INTO institution_documents
+        (institution_id, module_key, submodule_key, document_type, document_title, notes, file_path, mime_type, uploaded_by_user_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        institutionId,
+        cleanOptionalValue(req.body?.module_key),
+        cleanOptionalValue(req.body?.submodule_key),
+        documentType,
+        title,
+        cleanOptionalValue(req.body?.notes),
+        filePath,
+        cleanOptionalValue(req.body?.mime_type),
+        Number(req.user.id || 0) || null
+      ]
+    );
+    await auditLog(req.user, "UPSERT_INSTITUTION_DOCUMENT", "institution_documents", result.insertId, {
+      institution_id: institutionId,
+      document_type: documentType,
+      module_key: cleanOptionalValue(req.body?.module_key),
+      submodule_key: cleanOptionalValue(req.body?.submodule_key)
+    });
+    res.status(201).json({ id: result.insertId, message: "Institution document mapped successfully." });
+  })
+);
+
+app.delete(
+  "/api/system/institution-documents/:id",
+  auth,
+  enforceModuleAccess(MODULE_KEYS.INSTITUTIONS_USERS_REGISTRY),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER]),
+  enforcePermission(PERMISSIONS.DELETE),
+  asyncHandler(async (req, res) => {
+    const id = Number(req.params.id || 0);
+    if (!id) return res.status(400).json({ error: "Valid document id is required." });
+    const result = await query("DELETE FROM institution_documents WHERE id = ?", [id]);
+    if (!result.affectedRows) return res.status(404).json({ error: "Institution document not found." });
+    await auditLog(req.user, "DELETE_INSTITUTION_DOCUMENT", "institution_documents", id, {});
+    res.json({ message: "Institution document removed." });
+  })
+);
+
+app.get(
+  "/api/institutions/documents",
+  auth,
+  enforceModuleAccess(MODULE_KEYS.INSTITUTIONS_USERS_REGISTRY),
+  enforcePermission(PERMISSIONS.VIEW),
+  asyncHandler(async (req, res) => {
+    const institutionId = Number(req.user.institution_id || 0);
+    if (!institutionId) {
+      return res.status(400).json({ error: "institution scope is missing." });
+    }
+    const documentType = cleanOptionalValue(req.query?.document_type);
+    const moduleKey = cleanOptionalValue(req.query?.module_key);
+    const rows = await query(
+      `SELECT id, module_key, submodule_key, document_type, document_title, notes, file_path, mime_type, created_at
+       FROM institution_documents
+       WHERE institution_id = ?
+         AND (? IS NULL OR document_type = ?)
+         AND (? IS NULL OR module_key = ?)
+       ORDER BY id DESC`,
+      [institutionId, documentType, documentType, moduleKey, moduleKey]
+    );
+    res.json({ documents: rows });
+  })
+);
+
+app.get(
   "/api/system/registry/institutions/:id/view",
   auth,
   enforceModuleAccess(MODULE_KEYS.INSTITUTIONS_USERS_REGISTRY),
@@ -6132,9 +6449,28 @@ app.get(
   asyncHandler(async (req, res) => {
     const institutionId = Number(req.params.id);
     if (!institutionId) return res.status(400).json({ error: "Valid institution id is required." });
+    const institutionColumns = await getExistingColumns("institutions", [
+      "institution_name",
+      "institution_code",
+      "email",
+      "phone",
+      "county",
+      "sub_county",
+      "location",
+      "village",
+      "postal_address",
+      "postal_code",
+      "town",
+      "institution_type",
+      "institution_level",
+      "is_active",
+      "is_suspended",
+      "status_reason",
+      "suspended_reason",
+      "created_at"
+    ]);
     const rows = await query(
-      `SELECT id, institution_name, institution_code, email, phone, county, sub_county, location, village,
-              postal_address, is_active, is_suspended, status_reason, suspended_reason, created_at
+      `SELECT id, ${institutionColumns.join(", ")}
        FROM institutions
        WHERE id = ?
        LIMIT 1`,
@@ -6160,29 +6496,141 @@ app.patch(
   asyncHandler(async (req, res) => {
     const institutionId = Number(req.params.id);
     if (!institutionId) return res.status(400).json({ error: "Valid institution id is required." });
-    const rows = await query("SELECT id, institution_name, email, phone FROM institutions WHERE id = ? LIMIT 1", [institutionId]);
+    const institutionColumns = await getExistingColumns("institutions", [
+      "institution_name",
+      "institution_code",
+      "email",
+      "phone",
+      "county",
+      "sub_county",
+      "location",
+      "village",
+      "postal_address",
+      "postal_code",
+      "town",
+      "institution_type",
+      "institution_level"
+    ]);
+    const rows = await query(
+      `SELECT id, ${institutionColumns.join(", ")}
+       FROM institutions
+       WHERE id = ?
+       LIMIT 1`,
+      [institutionId]
+    );
     if (!rows.length) return res.status(404).json({ error: "Institution not found." });
     const editInstitutionScopeError = await assertInstitutionScopeAccess(req, institutionId, "You can only edit institutions in your assigned scope.");
     if (editInstitutionScopeError) {
       return res.status(editInstitutionScopeError.status).json({ error: editInstitutionScopeError.error });
     }
+    const existingInstitution = rows[0];
     const institution_name = cleanOptionalValue(req.body?.institution_name);
     const email = cleanOptionalValue(req.body?.email);
     const phone = cleanOptionalValue(req.body?.phone);
-    await query(
-      `UPDATE institutions
-       SET institution_name = COALESCE(?, institution_name),
-           email = COALESCE(?, email),
-           phone = COALESCE(?, phone)
-       WHERE id = ?`,
-      [institution_name, email, phone, institutionId]
-    );
+    const county = cleanOptionalValue(req.body?.county);
+    const sub_county = cleanOptionalValue(req.body?.sub_county);
+    const location = cleanOptionalValue(req.body?.location);
+    const village = cleanOptionalValue(req.body?.village);
+    const postal_address = cleanOptionalValue(req.body?.postal_address);
+    const postal_code = cleanOptionalValue(req.body?.postal_code);
+    const town = cleanOptionalValue(req.body?.town);
+    const institution_type = cleanOptionalValue(req.body?.institution_type);
+    const institution_level = cleanOptionalValue(req.body?.institution_level);
+    const nextInstitutionName = institution_name ?? existingInstitution.institution_name;
+    const nextInstitutionEmail = email ?? existingInstitution.email;
+    const nextInstitutionPhone = phone ?? existingInstitution.phone;
+    const updatePairs = [];
+    const updateParams = [];
+    const updatable = {
+      institution_name,
+      email,
+      phone,
+      county,
+      sub_county,
+      location,
+      village,
+      postal_address,
+      postal_code,
+      town,
+      institution_type,
+      institution_level
+    };
+    Object.entries(updatable).forEach(([column, value]) => {
+      if (!institutionColumns.includes(column)) return;
+      updatePairs.push(`${column} = COALESCE(?, ${column})`);
+      updateParams.push(value);
+    });
+    if (updatePairs.length) {
+      await query(
+        `UPDATE institutions
+         SET ${updatePairs.join(", ")}
+         WHERE id = ?`,
+        [...updateParams, institutionId]
+      );
+    }
+    const shouldDispatchFreshWelcome =
+      (institution_name !== null && cleanValue(institution_name) !== cleanValue(existingInstitution.institution_name)) ||
+      (email !== null && cleanValue(email) !== cleanValue(existingInstitution.email)) ||
+      (phone !== null && cleanValue(phone) !== cleanValue(existingInstitution.phone));
+    let usersNotified = 0;
+    if (shouldDispatchFreshWelcome) {
+      const institutionUsers = await query(
+        `SELECT id, username, full_name, role, email, phone
+         FROM users
+         WHERE institution_id = ?
+         ORDER BY id ASC`,
+        [institutionId]
+      );
+      for (const user of institutionUsers) {
+        const generatedPassword = generateStrongPassword(12);
+        const passwordHash = await hashPassword(generatedPassword);
+        // eslint-disable-next-line no-await-in-loop
+        await query(
+          `UPDATE users
+           SET password_hash = ?,
+               password_last_changed_at = NOW(),
+               password_expires_at = DATE_ADD(NOW(), INTERVAL ? DAY),
+               must_change_password = 1,
+               failed_login_attempts = 0,
+               locked_until = NULL,
+               last_failed_login_at = NULL
+           WHERE id = ?`,
+          [passwordHash, PASSWORD_ROTATION_DAYS, Number(user.id || 0)]
+        );
+        const message = [
+          "WELCOME TO IMIS SYSTEM FOR BASIC EDUCATION LEARNING INSTITUTIONS.",
+          `Institution: ${nextInstitutionName || "Institution"}`,
+          `Institution Code: ${existingInstitution.institution_code || "-"}`,
+          `Username: ${user.username || "-"}`,
+          `Temporary Password: ${generatedPassword}`,
+          `Role: ${user.role || "-"}`,
+          `Institution Contact Email: ${nextInstitutionEmail || "-"}`,
+          `Institution Contact Phone: ${nextInstitutionPhone || "-"}`,
+          "",
+          "Please sign in and change this password immediately."
+        ].join("\n");
+        // eslint-disable-next-line no-await-in-loop
+        await dispatchCredentialNotice({
+          email: cleanOptionalValue(user.email),
+          phone: cleanOptionalValue(user.phone),
+          subject: "IMIS Updated Institution Welcome Credentials",
+          message
+        });
+        usersNotified += 1;
+      }
+    }
     await auditLog(req.user, "UPDATE_REGISTRY_INSTITUTION", "institutions", institutionId, {
       institution_name,
       email,
-      phone
+      phone,
+      users_notified: usersNotified,
+      fresh_welcome_dispatched: shouldDispatchFreshWelcome
     });
-    res.json({ message: "Institution saved successfully." });
+    res.json({
+      message: "Institution saved successfully.",
+      users_notified: usersNotified,
+      fresh_welcome_dispatched: shouldDispatchFreshWelcome
+    });
   })
 );
 
@@ -6319,23 +6767,111 @@ app.patch(
     if (editUserScopeError) {
       return res.status(editUserScopeError.status).json({ error: editUserScopeError.error });
     }
+    const userRows = await query(
+      `SELECT id, institution_id, username, role, full_name, email, phone
+       FROM users
+       WHERE id = ?
+       LIMIT 1`,
+      [userId]
+    );
+    if (!userRows.length) return res.status(404).json({ error: "User not found." });
+    const user = userRows[0];
+    const username = cleanOptionalValue(req.body?.username);
     const full_name = cleanOptionalValue(req.body?.full_name);
     const email = cleanOptionalValue(req.body?.email);
     const phone = cleanOptionalValue(req.body?.phone);
-    await query(
-      `UPDATE users
-       SET full_name = COALESCE(?, full_name),
-           email = COALESCE(?, email),
-           phone = COALESCE(?, phone)
-       WHERE id = ?`,
-      [full_name, email, phone, userId]
-    );
+    if (username !== null) {
+      const usernameValidationError = validateUsername(username, "username");
+      if (usernameValidationError) {
+        return res.status(400).json({ error: usernameValidationError });
+      }
+      const duplicate = await query(
+        `SELECT id
+         FROM users
+         WHERE institution_id = ? AND username = ? AND id <> ?
+         LIMIT 1`,
+        [user.institution_id, username, userId]
+      );
+      if (duplicate.length) {
+        return res.status(409).json({ error: "Username already exists for this institution." });
+      }
+    }
+    const nextName = full_name ?? user.full_name;
+    const nextEmail = email ?? user.email;
+    const nextPhone = phone ?? user.phone;
+    const detailsChanged =
+      (full_name !== null && cleanValue(full_name) !== cleanValue(user.full_name)) ||
+      (email !== null && cleanValue(email) !== cleanValue(user.email)) ||
+      (phone !== null && cleanValue(phone) !== cleanValue(user.phone)) ||
+      (username !== null && cleanValue(username) !== cleanValue(user.username));
+    let generatedPassword = null;
+    let credentialDispatch = null;
+    if (detailsChanged) {
+      generatedPassword = generateStrongPassword(12);
+      const passwordHash = await hashPassword(generatedPassword);
+      await query(
+        `UPDATE users
+         SET full_name = COALESCE(?, full_name),
+             username = COALESCE(?, username),
+             email = COALESCE(?, email),
+             phone = COALESCE(?, phone),
+             password_hash = ?,
+             password_last_changed_at = NOW(),
+             password_expires_at = DATE_ADD(NOW(), INTERVAL ? DAY),
+             must_change_password = 1,
+             failed_login_attempts = 0,
+             locked_until = NULL,
+             last_failed_login_at = NULL
+         WHERE id = ?`,
+        [full_name, username, email, phone, passwordHash, PASSWORD_ROTATION_DAYS, userId]
+      );
+      const institutionRows = await query(
+        "SELECT institution_name, institution_code FROM institutions WHERE id = ? LIMIT 1",
+        [user.institution_id]
+      );
+      const institutionName = cleanValue(institutionRows[0]?.institution_name || "-");
+      const institutionCode = cleanValue(institutionRows[0]?.institution_code || "-");
+      credentialDispatch = await dispatchCredentialNotice({
+        email: nextEmail,
+        phone: nextPhone,
+        subject: "IMIS Updated Welcome Credentials",
+        message: [
+          "Your profile details were updated in IMIS.",
+          `Institution: ${institutionName}`,
+          `Institution Code: ${institutionCode}`,
+          `Username: ${username || user.username || "-"}`,
+          `Temporary Password: ${generatedPassword}`,
+          `Role: ${user.role || "-"}`,
+          `Name: ${nextName || "-"}`,
+          "",
+          "Use the new password and change it immediately at first login."
+        ].join("\n")
+      });
+    } else {
+      await query(
+        `UPDATE users
+         SET full_name = COALESCE(?, full_name),
+             username = COALESCE(?, username),
+             email = COALESCE(?, email),
+             phone = COALESCE(?, phone)
+         WHERE id = ?`,
+        [full_name, username, email, phone, userId]
+      );
+    }
     await auditLog(req.user, "UPDATE_REGISTRY_USER", "users", userId, {
+      username,
       full_name,
       email,
-      phone
+      phone,
+      details_changed: detailsChanged,
+      fresh_welcome_dispatched: detailsChanged
     });
-    res.json({ message: "User saved successfully." });
+    res.json({
+      message: "User saved successfully.",
+      fresh_welcome_dispatched: detailsChanged,
+      generated_password: canManageAcrossInstitutions(req.user) ? generatedPassword : null,
+      credential_dispatch: credentialDispatch
+    });
   })
 );
 
@@ -7186,10 +7722,25 @@ function parseCbcMappingCsv(csvText = "") {
   return rows.filter((row) => row.learning_area && row.strand && row.sub_strand);
 }
 
+function extractKicdNarrativeSection(notes = "", heading = "") {
+  const source = String(notes || "");
+  if (!source || !heading) return "";
+  const escapedHeading = heading.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const sectionRegex = new RegExp(`${escapedHeading}:\\s*([\\s\\S]*?)(?:\\n\\n[A-Za-z ]+:|$)`, "i");
+  const match = source.match(sectionRegex);
+  return cleanOptionalValue(match?.[1] || "");
+}
+
+function csvCell(value) {
+  const raw = String(value ?? "");
+  if (!/[",\n]/.test(raw)) return raw;
+  return `"${raw.replace(/"/g, "\"\"")}"`;
+}
+
 app.get(
   "/api/cbc/curriculum/structure-mappings/template",
   auth,
-  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER]),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER]),
   enforcePermission(PERMISSIONS.VIEW),
   asyncHandler(async (_, res) => {
     const csv = [
@@ -7206,7 +7757,7 @@ app.get(
 app.get(
   "/api/cbc/curriculum/structure-mappings/template-doc",
   auth,
-  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER]),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER]),
   enforcePermission(PERMISSIONS.VIEW),
   asyncHandler(async (_, res) => {
     const docText = [
@@ -7373,6 +7924,676 @@ app.patch(
     );
     await auditLog(req.user, "UPDATE_CBC_STRUCTURE_MAPPING", "cbc_structure_mappings", mappingId, data);
     res.json({ message: "Structure mapping updated." });
+  })
+);
+
+app.get(
+  "/api/cbc/kicd/catalog",
+  auth,
+  enforceModuleAccess(MODULE_KEYS.CBC_CURRICULUM_EDITOR),
+  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER]),
+  enforcePermission(PERMISSIONS.VIEW),
+  asyncHandler(async (req, res) => {
+    const includeLevels = Array.isArray(req.query?.include_levels)
+      ? req.query.include_levels
+      : cleanOptionalValue(req.query?.include_levels)
+        ? String(req.query.include_levels).split(",")
+        : [];
+    const catalog = await fetchKicdCatalog({ includeLevels });
+    res.json({
+      available_levels: KICD_LEVEL_PAGES,
+      ...catalog
+    });
+  })
+);
+
+app.post(
+  "/api/cbc/kicd/import",
+  auth,
+  enforceModuleAccess(MODULE_KEYS.CBC_CURRICULUM_EDITOR),
+  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
+  enforcePermission(PERMISSIONS.CREATE),
+  asyncHandler(async (req, res) => {
+    const includeLevels = Array.isArray(req.body?.include_levels)
+      ? req.body.include_levels
+      : cleanOptionalValue(req.body?.include_levels)
+        ? String(req.body.include_levels).split(",")
+        : [];
+    const replaceExisting = parseTruthy(req.body?.replace_existing);
+    const maxDocuments = Math.min(Math.max(Number(req.body?.max_documents || 200), 1), 1000);
+    const maxPagesPerDocument = Math.min(Math.max(Number(req.body?.max_pages_per_document || 200), 10), 1000);
+    const upsertCurriculumEntries = parseTruthy(req.body?.upsert_curriculum_entries ?? true);
+    const sourceLabel = "KICD_AUTO";
+
+    const catalog = await fetchKicdCatalog({ includeLevels });
+    const extracted = await extractKicdCurriculumFromCatalog(catalog, {
+      max_documents: maxDocuments,
+      max_pages_per_document: maxPagesPerDocument
+    });
+    const importedRows = Array.isArray(extracted.rows) ? extracted.rows : [];
+
+    if (replaceExisting) {
+      await query(
+        `DELETE FROM cbc_structure_mappings
+         WHERE institution_id = ? AND source_label = ?`,
+        [req.user.institution_id, sourceLabel]
+      );
+    }
+
+    const existingMappings = await query(
+      `SELECT learning_area, strand, sub_strand, COALESCE(grade, '') grade, COALESCE(form_name, '') form_name
+       FROM cbc_structure_mappings
+       WHERE institution_id = ? AND source_label = ?`,
+      [req.user.institution_id, sourceLabel]
+    );
+    const existingMappingKeys = new Set(
+      existingMappings.map((row) => [
+        cleanValue(row.learning_area).toLowerCase(),
+        cleanValue(row.strand).toLowerCase(),
+        cleanValue(row.sub_strand).toLowerCase(),
+        cleanValue(row.grade).toLowerCase(),
+        cleanValue(row.form_name).toLowerCase()
+      ].join("::"))
+    );
+
+    let insertedMappings = 0;
+    let skippedMappings = 0;
+    for (const row of importedRows) {
+      const grade = cleanOptionalValue(row.grade_label);
+      const formName = null;
+      const key = [
+        cleanValue(row.learning_area).toLowerCase(),
+        cleanValue(row.strand).toLowerCase(),
+        cleanValue(row.sub_strand).toLowerCase(),
+        cleanValue(grade).toLowerCase(),
+        cleanValue(formName).toLowerCase()
+      ].join("::");
+      if (!replaceExisting && existingMappingKeys.has(key)) {
+        skippedMappings += 1;
+        // eslint-disable-next-line no-continue
+        continue;
+      }
+      const notes = [
+        row.learning_outcomes ? `Learning Outcomes:\n${row.learning_outcomes}` : "",
+        row.learning_experiences ? `Learning Experiences:\n${row.learning_experiences}` : "",
+        row.source_document ? `Source Document: ${row.source_document}` : "",
+        row.source_preview_url ? `Source URL: ${row.source_preview_url}` : ""
+      ].filter(Boolean).join("\n\n");
+      await query(
+        `INSERT INTO cbc_structure_mappings
+          (institution_id, learning_area, strand, sub_strand, notes, grade, form_name, source_label, created_by_user_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          req.user.institution_id,
+          cleanValue(row.learning_area),
+          cleanValue(row.strand),
+          cleanValue(row.sub_strand),
+          cleanOptionalValue(notes),
+          grade,
+          formName,
+          sourceLabel,
+          req.user.id
+        ]
+      );
+      existingMappingKeys.add(key);
+      insertedMappings += 1;
+    }
+
+    let insertedCurriculumEntries = 0;
+    let updatedCurriculumEntries = 0;
+    if (upsertCurriculumEntries) {
+      const existingEntries = await query(
+        `SELECT id, COALESCE(grade, '') grade, COALESCE(form_name, '') form_name, learning_area, strand, sub_strand,
+                specific_learning_outcomes, learning_experiences, resources_reference
+         FROM cbc_curriculum_entries
+         WHERE institution_id = ?`,
+        [req.user.institution_id]
+      );
+      const existingEntryMap = new Map(
+        existingEntries.map((entry) => [
+          [
+            cleanValue(entry.grade).toLowerCase(),
+            cleanValue(entry.form_name).toLowerCase(),
+            cleanValue(entry.learning_area).toLowerCase(),
+            cleanValue(entry.strand).toLowerCase(),
+            cleanValue(entry.sub_strand).toLowerCase()
+          ].join("::"),
+          entry
+        ])
+      );
+
+      for (const row of importedRows) {
+        const grade = cleanOptionalValue(row.grade_label);
+        const formName = null;
+        const key = [
+          cleanValue(grade).toLowerCase(),
+          cleanValue(formName).toLowerCase(),
+          cleanValue(row.learning_area).toLowerCase(),
+          cleanValue(row.strand).toLowerCase(),
+          cleanValue(row.sub_strand).toLowerCase()
+        ].join("::");
+        const sourceReference = cleanOptionalValue(row.source_preview_url);
+        const existing = existingEntryMap.get(key);
+        if (existing) {
+          const nextOutcomes = replaceExisting
+            ? cleanOptionalValue(row.learning_outcomes)
+            : cleanOptionalValue(existing.specific_learning_outcomes || row.learning_outcomes);
+          const nextExperiences = replaceExisting
+            ? cleanOptionalValue(row.learning_experiences)
+            : cleanOptionalValue(existing.learning_experiences || row.learning_experiences);
+          const nextResources = replaceExisting
+            ? sourceReference
+            : cleanOptionalValue(existing.resources_reference || sourceReference);
+          await query(
+            `UPDATE cbc_curriculum_entries
+             SET specific_learning_outcomes = COALESCE(?, specific_learning_outcomes),
+                 learning_experiences = COALESCE(?, learning_experiences),
+                 resources_reference = COALESCE(?, resources_reference),
+                 updated_at = NOW()
+             WHERE id = ?`,
+            [nextOutcomes, nextExperiences, nextResources, existing.id]
+          );
+          updatedCurriculumEntries += 1;
+        } else {
+          await query(
+            `INSERT INTO cbc_curriculum_entries
+              (institution_id, grade, form_name, learning_area, strand, sub_strand, specific_learning_outcomes,
+               learning_experiences, resources_reference, created_by_user_id)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+              req.user.institution_id,
+              grade,
+              formName,
+              cleanValue(row.learning_area),
+              cleanValue(row.strand),
+              cleanValue(row.sub_strand),
+              cleanOptionalValue(row.learning_outcomes),
+              cleanOptionalValue(row.learning_experiences),
+              sourceReference,
+              req.user.id
+            ]
+          );
+          insertedCurriculumEntries += 1;
+        }
+      }
+    }
+
+    await auditLog(req.user, "IMPORT_KICD_CURRICULUM", "cbc_structure_mappings", null, {
+      include_levels: includeLevels,
+      replace_existing: replaceExisting,
+      max_documents: maxDocuments,
+      max_pages_per_document: maxPagesPerDocument,
+      scanned_document_count: extracted.scanned_document_count,
+      unique_row_count: extracted.unique_row_count,
+      inserted_mappings: insertedMappings,
+      skipped_mappings: skippedMappings,
+      inserted_curriculum_entries: insertedCurriculumEntries,
+      updated_curriculum_entries: updatedCurriculumEntries
+    });
+
+    res.json({
+      message: "KICD curriculum import completed.",
+      include_levels: includeLevels,
+      catalog_document_count: catalog.document_count,
+      scanned_document_count: extracted.scanned_document_count,
+      extracted_row_count: extracted.extracted_row_count,
+      unique_row_count: extracted.unique_row_count,
+      inserted_mappings: insertedMappings,
+      skipped_mappings: skippedMappings,
+      inserted_curriculum_entries: insertedCurriculumEntries,
+      updated_curriculum_entries: updatedCurriculumEntries,
+      document_summaries: extracted.document_summaries,
+      level_errors: catalog.level_errors,
+      document_errors: extracted.document_errors
+    });
+  })
+);
+
+app.post(
+  "/api/cbc/curriculum/pretechnical-seed",
+  auth,
+  enforceModuleAccess(MODULE_KEYS.CBC_CURRICULUM_EDITOR),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
+  enforcePermission(PERMISSIONS.CREATE),
+  asyncHandler(async (req, res) => {
+    const replaceExisting = parseTruthy(req.body?.replace_existing);
+    const sourceLabel = "PHOTO_JSS_CORE";
+    const seedRows = getJuniorSecondaryCoreSeedRows();
+    if (replaceExisting) {
+      await query(
+        `DELETE FROM cbc_structure_mappings
+         WHERE institution_id = ? AND source_label = ?`,
+        [req.user.institution_id, sourceLabel]
+      );
+    }
+    const existingRows = await query(
+      `SELECT learning_area, strand, sub_strand, COALESCE(grade, '') grade
+       FROM cbc_structure_mappings
+       WHERE institution_id = ? AND source_label = ?`,
+      [req.user.institution_id, sourceLabel]
+    );
+    const existingKeys = new Set(
+      existingRows.map((row) => [
+        cleanValue(row.grade).toLowerCase(),
+        cleanValue(row.learning_area).toLowerCase(),
+        cleanValue(row.strand).toLowerCase(),
+        cleanValue(row.sub_strand).toLowerCase()
+      ].join("::"))
+    );
+    let insertedMappings = 0;
+    let skippedMappings = 0;
+    for (const row of seedRows) {
+      const key = [
+        cleanValue(row.grade).toLowerCase(),
+        cleanValue(row.learning_area).toLowerCase(),
+        cleanValue(row.strand).toLowerCase(),
+        cleanValue(row.sub_strand).toLowerCase()
+      ].join("::");
+      if (!replaceExisting && existingKeys.has(key)) {
+        skippedMappings += 1;
+        // eslint-disable-next-line no-continue
+        continue;
+      }
+      await query(
+        `INSERT INTO cbc_structure_mappings
+          (institution_id, learning_area, strand, sub_strand, notes, grade, form_name, source_label, created_by_user_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          req.user.institution_id,
+          row.learning_area,
+          row.strand,
+          row.sub_strand,
+          cleanOptionalValue(row.notes),
+          cleanOptionalValue(row.grade),
+          null,
+          sourceLabel,
+          req.user.id
+        ]
+      );
+      existingKeys.add(key);
+      insertedMappings += 1;
+    }
+
+    const existingEntries = await query(
+      `SELECT id, COALESCE(grade, '') grade, learning_area, strand, sub_strand
+       FROM cbc_curriculum_entries
+       WHERE institution_id = ?`,
+      [req.user.institution_id]
+    );
+    const existingEntryKeys = new Set(
+      existingEntries.map((entry) => [
+        cleanValue(entry.grade).toLowerCase(),
+        cleanValue(entry.learning_area).toLowerCase(),
+        cleanValue(entry.strand).toLowerCase(),
+        cleanValue(entry.sub_strand).toLowerCase()
+      ].join("::"))
+    );
+    let insertedCurriculumEntries = 0;
+    for (const row of seedRows) {
+      const key = [
+        cleanValue(row.grade).toLowerCase(),
+        cleanValue(row.learning_area).toLowerCase(),
+        cleanValue(row.strand).toLowerCase(),
+        cleanValue(row.sub_strand).toLowerCase()
+      ].join("::");
+      if (existingEntryKeys.has(key)) {
+        // eslint-disable-next-line no-continue
+        continue;
+      }
+      await query(
+        `INSERT INTO cbc_curriculum_entries
+          (institution_id, grade, form_name, learning_area, strand, sub_strand, specific_learning_outcomes,
+           learning_experiences, notes, created_by_user_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          req.user.institution_id,
+          cleanOptionalValue(row.grade),
+          null,
+          row.learning_area,
+          row.strand,
+          row.sub_strand,
+          "",
+          "",
+          "",
+          req.user.id
+        ]
+      );
+      existingEntryKeys.add(key);
+      insertedCurriculumEntries += 1;
+    }
+
+    await auditLog(req.user, "SEED_JSS_PRETECHNICAL_STRANDS", "cbc_structure_mappings", null, {
+      source_label: sourceLabel,
+      replace_existing: replaceExisting,
+      inserted_mappings: insertedMappings,
+      skipped_mappings: skippedMappings,
+      inserted_curriculum_entries: insertedCurriculumEntries
+    });
+    res.json({
+      message: "Grade 7-9 Pre-Technical + Social Studies strands/sub-strands seeded successfully.",
+      source_label: sourceLabel,
+      inserted_mappings: insertedMappings,
+      skipped_mappings: skippedMappings,
+      inserted_curriculum_entries: insertedCurriculumEntries
+    });
+  })
+);
+
+app.post(
+  "/api/cbc/local-curriculum/import",
+  auth,
+  enforceModuleAccess(MODULE_KEYS.CBC_CURRICULUM_EDITOR),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
+  enforcePermission(PERMISSIONS.CREATE),
+  asyncHandler(async (req, res) => {
+    const baseDirectory = cleanOptionalValue(req.body?.base_directory) || path.join(process.cwd(), "uploads", "curriculum-design");
+    const replaceExisting = parseTruthy(req.body?.replace_existing);
+    const upsertCurriculumEntries = parseTruthy(req.body?.upsert_curriculum_entries ?? true);
+    const maxFiles = Math.min(Math.max(Number(req.body?.max_files || 500), 1), 5000);
+    const sourceLabel = cleanOptionalValue(req.body?.source_label) || "LOCAL_CURRICULUM_PDF";
+
+    const extracted = await importLocalCurriculumFromPdfDirectory({
+      base_directory: baseDirectory,
+      max_files: maxFiles
+    });
+    const importedRows = Array.isArray(extracted.rows) ? extracted.rows : [];
+
+    if (replaceExisting) {
+      await query(
+        `DELETE FROM cbc_structure_mappings
+         WHERE institution_id = ? AND source_label = ?`,
+        [req.user.institution_id, sourceLabel]
+      );
+    }
+
+    const existingMappings = await query(
+      `SELECT learning_area, strand, sub_strand, COALESCE(grade, '') grade, COALESCE(form_name, '') form_name
+       FROM cbc_structure_mappings
+       WHERE institution_id = ? AND source_label = ?`,
+      [req.user.institution_id, sourceLabel]
+    );
+    const existingMappingKeys = new Set(
+      existingMappings.map((row) => [
+        cleanValue(row.learning_area).toLowerCase(),
+        cleanValue(row.strand).toLowerCase(),
+        cleanValue(row.sub_strand).toLowerCase(),
+        cleanValue(row.grade).toLowerCase(),
+        cleanValue(row.form_name).toLowerCase()
+      ].join("::"))
+    );
+
+    let insertedMappings = 0;
+    let skippedMappings = 0;
+    for (const row of importedRows) {
+      const gradeOrForm = cleanValue(row.grade_label);
+      const isForm = /^form\s+\d+/i.test(gradeOrForm);
+      const grade = isForm ? null : cleanOptionalValue(gradeOrForm);
+      const formName = isForm ? cleanOptionalValue(gradeOrForm) : null;
+      const learningArea = cleanValue(row.learning_area);
+      const strand = cleanValue(row.strand);
+      const subStrand = cleanValue(row.sub_strand);
+      if (!learningArea || !strand || !subStrand) {
+        skippedMappings += 1;
+        // eslint-disable-next-line no-continue
+        continue;
+      }
+      const key = [
+        learningArea.toLowerCase(),
+        strand.toLowerCase(),
+        subStrand.toLowerCase(),
+        cleanValue(grade).toLowerCase(),
+        cleanValue(formName).toLowerCase()
+      ].join("::");
+      if (!replaceExisting && existingMappingKeys.has(key)) {
+        skippedMappings += 1;
+        // eslint-disable-next-line no-continue
+        continue;
+      }
+      const notes = [
+        row.learning_outcomes ? `Learning Outcomes:\n${row.learning_outcomes}` : "",
+        row.learning_experiences ? `Learning Experiences:\n${row.learning_experiences}` : "",
+        row.pathway ? `Pathway: ${row.pathway}` : "",
+        row.source_document ? `Source Document: ${row.source_document}` : "",
+        row.source_file_path ? `Source File Path: ${row.source_file_path}` : ""
+      ].filter(Boolean).join("\n\n");
+      await query(
+        `INSERT INTO cbc_structure_mappings
+          (institution_id, learning_area, strand, sub_strand, notes, grade, form_name, source_label, created_by_user_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          req.user.institution_id,
+          learningArea,
+          strand,
+          subStrand,
+          cleanOptionalValue(notes),
+          grade,
+          formName,
+          sourceLabel,
+          req.user.id
+        ]
+      );
+      existingMappingKeys.add(key);
+      insertedMappings += 1;
+    }
+
+    let insertedCurriculumEntries = 0;
+    let updatedCurriculumEntries = 0;
+    if (upsertCurriculumEntries) {
+      const existingEntries = await query(
+        `SELECT id, COALESCE(grade, '') grade, COALESCE(form_name, '') form_name, learning_area, strand, sub_strand,
+                specific_learning_outcomes, learning_experiences, resources_reference
+         FROM cbc_curriculum_entries
+         WHERE institution_id = ?`,
+        [req.user.institution_id]
+      );
+      const existingEntryMap = new Map(
+        existingEntries.map((entry) => [
+          [
+            cleanValue(entry.grade).toLowerCase(),
+            cleanValue(entry.form_name).toLowerCase(),
+            cleanValue(entry.learning_area).toLowerCase(),
+            cleanValue(entry.strand).toLowerCase(),
+            cleanValue(entry.sub_strand).toLowerCase()
+          ].join("::"),
+          entry
+        ])
+      );
+
+      for (const row of importedRows) {
+        const gradeOrForm = cleanValue(row.grade_label);
+        const isForm = /^form\s+\d+/i.test(gradeOrForm);
+        const grade = isForm ? null : cleanOptionalValue(gradeOrForm);
+        const formName = isForm ? cleanOptionalValue(gradeOrForm) : null;
+        const learningArea = cleanValue(row.learning_area);
+        const strand = cleanValue(row.strand);
+        const subStrand = cleanValue(row.sub_strand);
+        if (!learningArea || !strand || !subStrand) {
+          // eslint-disable-next-line no-continue
+          continue;
+        }
+        const key = [
+          cleanValue(grade).toLowerCase(),
+          cleanValue(formName).toLowerCase(),
+          learningArea.toLowerCase(),
+          strand.toLowerCase(),
+          subStrand.toLowerCase()
+        ].join("::");
+        const sourceReference = cleanOptionalValue(row.source_file_path || row.source_document);
+        const existing = existingEntryMap.get(key);
+        if (existing) {
+          const nextOutcomes = replaceExisting
+            ? cleanOptionalValue(row.learning_outcomes)
+            : cleanOptionalValue(existing.specific_learning_outcomes || row.learning_outcomes);
+          const nextExperiences = replaceExisting
+            ? cleanOptionalValue(row.learning_experiences)
+            : cleanOptionalValue(existing.learning_experiences || row.learning_experiences);
+          const nextResources = replaceExisting
+            ? sourceReference
+            : cleanOptionalValue(existing.resources_reference || sourceReference);
+          await query(
+            `UPDATE cbc_curriculum_entries
+             SET specific_learning_outcomes = COALESCE(?, specific_learning_outcomes),
+                 learning_experiences = COALESCE(?, learning_experiences),
+                 resources_reference = COALESCE(?, resources_reference),
+                 updated_at = NOW()
+             WHERE id = ?`,
+            [nextOutcomes, nextExperiences, nextResources, existing.id]
+          );
+          updatedCurriculumEntries += 1;
+        } else {
+          await query(
+            `INSERT INTO cbc_curriculum_entries
+              (institution_id, grade, form_name, learning_area, strand, sub_strand, specific_learning_outcomes,
+               learning_experiences, resources_reference, created_by_user_id)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+              req.user.institution_id,
+              grade,
+              formName,
+              learningArea,
+              strand,
+              subStrand,
+              cleanOptionalValue(row.learning_outcomes),
+              cleanOptionalValue(row.learning_experiences),
+              sourceReference,
+              req.user.id
+            ]
+          );
+          insertedCurriculumEntries += 1;
+        }
+      }
+    }
+
+    await auditLog(req.user, "IMPORT_LOCAL_CURRICULUM_PDF", "cbc_structure_mappings", null, {
+      base_directory: extracted.base_directory,
+      replace_existing: replaceExisting,
+      source_label: sourceLabel,
+      max_files: maxFiles,
+      scanned_file_count: extracted.scanned_file_count,
+      parsed_file_count: extracted.parsed_file_count,
+      unique_row_count: extracted.unique_row_count,
+      inserted_mappings: insertedMappings,
+      skipped_mappings: skippedMappings,
+      inserted_curriculum_entries: insertedCurriculumEntries,
+      updated_curriculum_entries: updatedCurriculumEntries
+    });
+
+    res.json({
+      message: "Local curriculum PDF import completed.",
+      base_directory: extracted.base_directory,
+      source_label: sourceLabel,
+      scanned_file_count: extracted.scanned_file_count,
+      parsed_file_count: extracted.parsed_file_count,
+      extracted_row_count: extracted.extracted_row_count,
+      unique_row_count: extracted.unique_row_count,
+      inserted_mappings: insertedMappings,
+      skipped_mappings: skippedMappings,
+      inserted_curriculum_entries: insertedCurriculumEntries,
+      updated_curriculum_entries: updatedCurriculumEntries,
+      file_summaries: extracted.file_summaries,
+      file_errors: extracted.file_errors
+    });
+  })
+);
+
+app.get(
+  "/api/cbc/kicd/export/csv",
+  auth,
+  enforceModuleAccess(MODULE_KEYS.CBC_CURRICULUM_EDITOR),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER]),
+  enforcePermission(PERMISSIONS.VIEW),
+  asyncHandler(async (req, res) => {
+    const sourceLabel = cleanOptionalValue(req.query?.source_label) || "KICD_AUTO";
+    const rows = await query(
+      `SELECT learning_area, strand, sub_strand, notes, COALESCE(grade, '') grade, COALESCE(form_name, '') form_name,
+              source_label, created_at, updated_at
+       FROM cbc_structure_mappings
+       WHERE institution_id = ?
+         AND (? = '*' OR source_label = ?)
+       ORDER BY learning_area, strand, sub_strand`,
+      [req.user.institution_id, sourceLabel, sourceLabel]
+    );
+    const header = [
+      "grade",
+      "form_name",
+      "learning_area",
+      "strand",
+      "sub_strand",
+      "learning_outcomes",
+      "learning_experiences",
+      "notes",
+      "source_label",
+      "created_at",
+      "updated_at"
+    ];
+    const csv = [
+      header.join(","),
+      ...rows.map((row) =>
+        [
+          row.grade || "",
+          row.form_name || "",
+          row.learning_area || "",
+          row.strand || "",
+          row.sub_strand || "",
+          extractKicdNarrativeSection(row.notes, "Learning Outcomes"),
+          extractKicdNarrativeSection(row.notes, "Learning Experiences"),
+          row.notes || "",
+          row.source_label || "",
+          row.created_at ? new Date(row.created_at).toISOString() : "",
+          row.updated_at ? new Date(row.updated_at).toISOString() : ""
+        ].map(csvCell).join(",")
+      )
+    ].join("\n");
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", "attachment; filename=\"kicd-curriculum-structure.csv\"");
+    res.send(csv);
+  })
+);
+
+app.get(
+  "/api/cbc/kicd/export/excel",
+  auth,
+  enforceModuleAccess(MODULE_KEYS.CBC_CURRICULUM_EDITOR),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER]),
+  enforcePermission(PERMISSIONS.VIEW),
+  asyncHandler(async (req, res) => {
+    const sourceLabel = cleanOptionalValue(req.query?.source_label) || "KICD_AUTO";
+    const rows = await query(
+      `SELECT learning_area, strand, sub_strand, notes, COALESCE(grade, '') grade, COALESCE(form_name, '') form_name,
+              source_label, created_at, updated_at
+       FROM cbc_structure_mappings
+       WHERE institution_id = ?
+         AND (? = '*' OR source_label = ?)
+       ORDER BY learning_area, strand, sub_strand`,
+      [req.user.institution_id, sourceLabel, sourceLabel]
+    );
+    const headers = [
+      "Grade",
+      "Form",
+      "Learning Area",
+      "Strand",
+      "Sub-Strand",
+      "Learning Outcomes",
+      "Learning Experiences",
+      "Notes",
+      "Source Label",
+      "Created At",
+      "Updated At"
+    ];
+    const dataRows = rows.map((row) => [
+      row.grade || "",
+      row.form_name || "",
+      row.learning_area || "",
+      row.strand || "",
+      row.sub_strand || "",
+      extractKicdNarrativeSection(row.notes, "Learning Outcomes"),
+      extractKicdNarrativeSection(row.notes, "Learning Experiences"),
+      row.notes || "",
+      row.source_label || "",
+      row.created_at ? new Date(row.created_at).toISOString() : "",
+      row.updated_at ? new Date(row.updated_at).toISOString() : ""
+    ]);
+    await sendSimpleExcel(res, "kicd-curriculum-structure", headers, dataRows);
   })
 );
 
@@ -8244,6 +9465,7 @@ moduleConfigs.forEach((config) => {
     asyncHandler(async (req, res) => {
       const scopedFilter = getScopedFilter(config, req.user);
       const data = pickFields(req.body, config.fields);
+      let assignLearnerSerialAfterInsert = false;
       data.institution_id = req.user.institution_id;
       data.created_by_user_id = req.user.id;
       if (scopedFilter.where && config.scopedByRole?.column) {
@@ -8300,6 +9522,9 @@ moduleConfigs.forEach((config) => {
       }
 
       if (config.table === "learners") {
+        if (Object.prototype.hasOwnProperty.call(data, "learner_serial_number")) {
+          delete data.learner_serial_number;
+        }
         const gradePart = cleanValue(data.grade || "");
         const formPart = cleanValue(data.form_name || "");
         if (gradePart && formPart) {
@@ -8321,6 +9546,11 @@ moduleConfigs.forEach((config) => {
         if (mc !== "yes") {
           data.medical_condition_notes = null;
         }
+        const learnerSerialColumn = await getExistingColumns("learners", ["learner_serial_number"]);
+        if (learnerSerialColumn.includes("learner_serial_number")) {
+          // Use insert id as permanent learner serial (first-registered sequence, never reassigned).
+          assignLearnerSerialAfterInsert = true;
+        }
       }
 
       const columns = Object.keys(data);
@@ -8330,6 +9560,14 @@ moduleConfigs.forEach((config) => {
       const placeholders = columns.map(() => "?").join(", ");
       const sql = `INSERT INTO ${config.table} (${columns.join(", ")}) VALUES (${placeholders})`;
       const result = await query(sql, Object.values(data));
+      if (config.table === "learners" && assignLearnerSerialAfterInsert) {
+        await query(
+          `UPDATE learners
+           SET learner_serial_number = COALESCE(learner_serial_number, ?)
+           WHERE id = ? AND institution_id = ?`,
+          [Number(result.insertId || 0), Number(result.insertId || 0), req.user.institution_id]
+        );
+      }
       await auditLog(req.user, "CREATE", config.table, result.insertId, data);
       res.status(201).json({ id: result.insertId, message: "Record created." });
     })
@@ -8627,6 +9865,63 @@ app.post(
 );
 
 app.get(
+  "/api/admission/learners/next-admission-number",
+  auth,
+  enforceModuleAccess(MODULE_KEYS.ADMISSION),
+  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.SYSTEM_ADMINISTRATOR, ROLES.TEACHER]),
+  asyncHandler(async (req, res) => {
+    const seed = cleanOptionalValue(req.query?.seed);
+    const admissionNumber = await nextAdmissionNumber({
+      institutionId: Number(req.user.institution_id),
+      seed: seed || ""
+    });
+    res.json({ admission_number: admissionNumber });
+  })
+);
+
+app.get(
+  "/api/admission/learners/next-learner-code",
+  auth,
+  enforceModuleAccess(MODULE_KEYS.ADMISSION),
+  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.SYSTEM_ADMINISTRATOR, ROLES.TEACHER]),
+  asyncHandler(async (req, res) => {
+    const learnerSerialColumns = await getExistingColumns("learners", ["learner_serial_number"]);
+    const useSerialColumn = learnerSerialColumns.includes("learner_serial_number");
+    const [row] = await query(
+      `SELECT MAX(${useSerialColumn ? "COALESCE(learner_serial_number, id)" : "id"}) AS max_serial
+       FROM learners
+       WHERE institution_id = ?`,
+      [Number(req.user.institution_id || 0)]
+    );
+    const nextSerial = Number(row?.max_serial || 0) + 1;
+    const learnerCode = `LC-${padThree(nextSerial)}`;
+    res.json({
+      next_serial: nextSerial,
+      learner_code: learnerCode
+    });
+  })
+);
+
+app.post(
+  "/api/admission/learners/next-admission-number",
+  auth,
+  enforceModuleAccess(MODULE_KEYS.ADMISSION),
+  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.SYSTEM_ADMINISTRATOR, ROLES.TEACHER]),
+  enforcePermission(PERMISSIONS.CREATE),
+  asyncHandler(async (req, res) => {
+    const mode = cleanValue(req.body?.mode || "auto").toLowerCase();
+    const seed = mode.includes("seed")
+      ? cleanOptionalValue(req.body?.seed || "")
+      : "";
+    const admissionNumber = await nextAdmissionNumber({
+      institutionId: Number(req.user.institution_id),
+      seed
+    });
+    res.json({ admission_number: admissionNumber, mode });
+  })
+);
+
+app.get(
   "/api/admission/learners/:id/admission-form",
   auth,
   enforceModuleAccess(MODULE_KEYS.ADMISSION),
@@ -8648,12 +9943,28 @@ app.get(
       return res.status(404).json({ error: "Learner not found." });
     }
     const learner = rows[0];
-    const referenceNo = `ADM-FORM-${learner.id}-${dayjs().format("YYYYMMDDHHmmss")}`;
+    let resolvedLetterhead = cleanOptionalValue(learner.letterhead_file_path);
+    if (!resolvedLetterhead) {
+      const letterheadDocs = await query(
+        `SELECT file_path
+         FROM institution_documents
+         WHERE institution_id = ?
+           AND document_type IN ('institution_letterhead', 'admission_form_template')
+         ORDER BY id DESC
+         LIMIT 1`,
+        [learner.institution_id]
+      );
+      resolvedLetterhead = cleanOptionalValue(letterheadDocs[0]?.file_path);
+    }
+    const learnerSerialLabel = formatLearnerSerial(learner.learner_serial_number || learner.id);
+    const referenceNo = `ADM-FORM-${learnerSerialLabel || learner.id}-${dayjs().format("YYYYMMDDHHmmss")}`;
     res.json({
       reference_no: referenceNo,
+      learner_serial_number: learner.learner_serial_number || null,
+      learner_serial_label: learnerSerialLabel || null,
       generated_at: dayjs().format("YYYY-MM-DD HH:mm:ss"),
       title: "Institution Admission Form",
-      letterhead_file_path: learner.letterhead_file_path || null,
+      letterhead_file_path: resolvedLetterhead || null,
       learner_details: learner,
       parent_guardian_details: {
         parent_full_name: learner.parent_full_name,
@@ -8709,11 +10020,32 @@ app.get(
       return res.status(404).json({ error: "Learner not found." });
     }
     const learner = rows[0];
+    let resolvedLetterhead = cleanOptionalValue(learner.letterhead_file_path);
+    let resolvedTemplateFile = cleanOptionalValue(learner.admission_letter_template_file_url);
+    if (!resolvedLetterhead || !resolvedTemplateFile) {
+      const institutionDocs = await query(
+        `SELECT document_type, file_path
+         FROM institution_documents
+         WHERE institution_id = ?
+           AND document_type IN ('institution_letterhead', 'admission_letter_template')
+         ORDER BY id DESC`,
+        [learner.institution_id]
+      );
+      if (!resolvedLetterhead) {
+        const letterhead = institutionDocs.find((row) => cleanValue(row.document_type) === "institution_letterhead");
+        resolvedLetterhead = cleanOptionalValue(letterhead?.file_path);
+      }
+      if (!resolvedTemplateFile) {
+        const admissionLetter = institutionDocs.find((row) => cleanValue(row.document_type) === "admission_letter_template");
+        resolvedTemplateFile = cleanOptionalValue(admissionLetter?.file_path);
+      }
+    }
     const baseTemplate = cleanOptionalValue(learner.admission_letter_template_text) || [
       "Dear {{LEARNER_NAME}},",
       "",
       "We are pleased to offer you admission to {{INSTITUTION_NAME}}.",
       "Admission Number: {{ADMISSION_NUMBER}}",
+      "Learner Serial Number: {{LEARNER_SERIAL_NUMBER}}",
       "Grade/Form: {{GRADE_FORM}}",
       "Stream: {{STREAM}}",
       "",
@@ -8729,17 +10061,20 @@ app.get(
       .replaceAll("{{INSTITUTION_NAME}}", cleanValue(learner.institution_name || "-"))
       .replaceAll("{{INSTITUTION_CODE}}", cleanValue(learner.institution_code || "-"))
       .replaceAll("{{ADMISSION_NUMBER}}", cleanValue(learner.admission_number || "-"))
+      .replaceAll("{{LEARNER_SERIAL_NUMBER}}", cleanValue(formatLearnerSerial(learner.learner_serial_number || learner.id) || "-"))
       .replaceAll("{{GRADE_FORM}}", cleanValue(learner.grade || learner.form_name || "-"))
       .replaceAll("{{STREAM}}", cleanValue(learner.stream || "-"))
       .replaceAll("{{REPORTING_DATE}}", dayjs().add(7, "day").format("YYYY-MM-DD"))
       .replaceAll("{{DATE_TIME}}", dayjs().format("YYYY-MM-DD HH:mm:ss"));
     res.json({
       learner_id: learner.id,
+      learner_serial_number: learner.learner_serial_number || null,
+      learner_serial_label: formatLearnerSerial(learner.learner_serial_number || learner.id) || null,
       learner_name: learner.full_name,
       admission_number: learner.admission_number,
       generated_at: dayjs().format("YYYY-MM-DD HH:mm:ss"),
-      letterhead_file_path: learner.letterhead_file_path || null,
-      template_file_url: learner.admission_letter_template_file_url || null,
+      letterhead_file_path: resolvedLetterhead || null,
+      template_file_url: resolvedTemplateFile || null,
       letter_text: renderedLetter
     });
   })
@@ -8947,7 +10282,7 @@ function buildExamSerialSegment({
   term,
   year,
   stream,
-  learnerId
+  learnerSerialNumber
 }) {
   const bits = [
     String(grade || form || "GRADE").slice(0, 8).toUpperCase(),
@@ -8956,7 +10291,7 @@ function buildExamSerialSegment({
     String(term || "T").replace(/[^A-Z0-9]/gi, "").slice(0, 2).toUpperCase(),
     String(year || new Date().getFullYear()),
     stream ? String(stream).slice(0, 2).toUpperCase() : "XX",
-    learnerId ? `L${learnerId}` : "BULK"
+    learnerSerialNumber ? `L${formatLearnerSerial(learnerSerialNumber)}` : "BULK"
   ];
   return bits.join("-");
 }
@@ -8979,9 +10314,13 @@ app.post(
     if (!(grade || form) || !learningArea || !examType) {
       return res.status(400).json({ error: "grade/form, learning_area/subject and exam_type are required." });
     }
+    const learnerSerialColumns = await getExistingColumns("learners", ["learner_serial_number"]);
+    const hasLearnerSerialColumn = learnerSerialColumns.includes("learner_serial_number");
     const learners = mode === "per_learner"
       ? await query(
-          `SELECT id, full_name, admission_number, grade, stream
+          `SELECT id, full_name, admission_number, grade, stream${
+            hasLearnerSerialColumn ? ", learner_serial_number" : ""
+          }
            FROM learners
            WHERE institution_id = ?
              AND (grade = ? OR grade = ? OR ? = '')
@@ -8989,16 +10328,17 @@ app.post(
            ORDER BY full_name ASC`,
           [institutionId, grade || "", form || "", grade || form || "", stream || "", stream || ""]
         )
-      : [{ id: null, full_name: "BULK", admission_number: "BULK" }];
+      : [{ id: null, full_name: "BULK", admission_number: "BULK", learner_serial_number: null }];
     const serials = learners.map((learner) => ({
       learner_id: learner.id,
+      learner_serial_number: learner.learner_serial_number || null,
       learner_name: learner.full_name,
       admission_number: learner.admission_number,
       grade: learner.grade || grade || form,
       stream: learner.stream || stream || null,
       serial: buildExamSerialSegment({
         grade, form, learningArea, examType, term, year, stream,
-        learnerId: learner.id
+        learnerSerialNumber: learner.learner_serial_number || learner.id
       })
     }));
     res.json({ count: serials.length, mode, serials });
@@ -9466,6 +10806,56 @@ app.get(
     res.json({
       message:
         "Parent/Teacher chat endpoint placeholder is enabled. Plug a websocket service for live chat."
+    });
+  })
+);
+
+app.post(
+  "/api/communication/messages/recipient-preview",
+  auth,
+  enforceModuleAccess(MODULE_KEYS.COMMUNICATION_MESSAGES),
+  enforceRole([ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
+  enforcePermission(PERMISSIONS.VIEW),
+  asyncHandler(async (req, res) => {
+    const recipientRole = cleanValue(req.body?.recipient_role);
+    if (!recipientRole) {
+      return res.status(400).json({ error: "recipient_role is required." });
+    }
+    const contacts = await resolveCommunicationRecipients({
+      institutionId: req.user.institution_id,
+      recipientRole,
+      recipientContact: ""
+    });
+    res.json({
+      recipient_role: recipientRole,
+      total_contacts: contacts.length,
+      first_contact: contacts[0] || null,
+      contacts: contacts.slice(0, 20)
+    });
+  })
+);
+
+app.get(
+  "/api/communication/messages/recipient-preview",
+  auth,
+  enforceModuleAccess(MODULE_KEYS.COMMUNICATION_MESSAGES),
+  enforceRole([ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
+  enforcePermission(PERMISSIONS.VIEW),
+  asyncHandler(async (req, res) => {
+    const recipientRole = cleanValue(req.query?.recipient_role);
+    if (!recipientRole) {
+      return res.status(400).json({ error: "recipient_role is required." });
+    }
+    const contacts = await resolveCommunicationRecipients({
+      institutionId: req.user.institution_id,
+      recipientRole,
+      recipientContact: ""
+    });
+    res.json({
+      recipient_role: recipientRole,
+      total_contacts: contacts.length,
+      first_contact: contacts[0] || null,
+      contacts: contacts.slice(0, 20)
     });
   })
 );

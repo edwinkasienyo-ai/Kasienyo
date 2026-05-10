@@ -11,7 +11,15 @@ let allowedModules = [];
 let portalContext = null;
 let searchRowDrafts = {};
 let dashboardAutoRefreshHandle = null;
-const CLIENT_UI_BUNDLE_ID = "dash-bundle-main-v54-uniform-buttons-staff-profile";
+let currentSidebarSubmoduleId = null;
+const CLIENT_UI_BUNDLE_ID = "dash-bundle-main-v64-registration-registry-upgrade";
+const examPanelState = {
+  generatedExam: null,
+  serials: [],
+  marksRows: [],
+  resultRows: [],
+  assessmentReport: null
+};
 const DASHBOARD_STAT_LABELS = {
   totalLearners: "Total Learners Population",
   totalActiveLearners: "Active Learners",
@@ -80,6 +88,8 @@ const MODULE_KEY_BY_ID = {
   "system-access-control": "access-control",
   "system-audit": "security-audit",
   "system-registry": "institutions-users-registry",
+  "system-institution-edit": "institutions-users-registry",
+  "system-institution-uploads": "institutions-users-registry",
   "system-recycle-bin": "recycle-bin",
   "system-cbc-editor": "cbc-curriculum-editor"
 };
@@ -112,13 +122,250 @@ const MODULE_DESCRIPTIONS = {
   "welfare-contributions": "Track periodic welfare member contributions.",
   "welfare-loans": "Administer welfare loan requests, approvals, and repayment status.",
   laws: "Store and retrieve institutional policies and legal documents.",
-  "system-register": "Register institutions and users inside the system after sign-in (role-scoped).",
+  "system-register": "Institution Registration and role-based user registration with strict sub-module isolation.",
   "system-access-control": "Assign module rights and review role-based access permissions.",
   "system-audit": "Review security and login audit trails for accountability.",
   "system-registry": "Browse institutions and user registry details in one place.",
+  "system-institution-edit":
+    "Institution Upgrade: edit/save/delete institution profile and institution user details (SSD only).",
+  "system-institution-uploads":
+    "Institution uploads workspace: templates, logos, letterheads, admission/assessment samples, and generated document files per institution.",
   "system-recycle-bin": "Restore or permanently purge archived deleted records.",
   "system-cbc-editor": "Create and maintain CBC curriculum structures and metadata."
 };
+
+const SIDEBAR_SUBMODULES = {
+  "system-register": [
+    {
+      id: "system-register-institution",
+      label: "Institution Registration",
+      targetModule: "system-register",
+      options: { registrationFocus: "institution" },
+      roles: ["SUPER_SYSTEM_DEVELOPER"]
+    },
+    {
+      id: "system-register-developers",
+      label: "SSD/SD Registration",
+      targetModule: "system-register",
+      options: { registrationFocus: "developers" },
+      roles: ["SUPER_SYSTEM_DEVELOPER"]
+    },
+    {
+      id: "system-register-hoi-admin",
+      label: "HOI/Admin/Sys Admin Registration",
+      targetModule: "system-register",
+      options: { registrationFocus: "hoi-admin" },
+      roles: ["SUPER_SYSTEM_DEVELOPER"]
+    },
+    {
+      id: "system-register-user",
+      label: "User Registration",
+      targetModule: "system-register",
+      options: { registrationFocus: "user" }
+    }
+  ],
+  admission: [
+    {
+      id: "admission-learners-registration",
+      label: "Learners Registration",
+      targetModule: "admission",
+      options: { admissionFocus: "bio" }
+    },
+    { id: "admission-register", label: "Admission Register", targetModule: "admission", options: { admissionFocus: "register" } },
+    { id: "admission-form", label: "Admission Form", targetModule: "admission", options: { admissionFocus: "form" } },
+    { id: "admission-letter", label: "Admission Letter", targetModule: "admission", options: { admissionFocus: "letter" } }
+  ],
+  "management-staff-service": [
+    { id: "staff-profile-teacher", label: "Teacher Profile", targetModule: "management-staff-service", options: { staffCategory: "management-teachers" } },
+    {
+      id: "staff-profile-support-staff",
+      label: "Support Staff Profile",
+      targetModule: "management-staff-service",
+      options: { staffCategory: "management-non-teaching" }
+    }
+  ],
+  attendance: [
+    { id: "attendance-teacher-register", label: "Teacher Attendance", targetModule: "attendance", options: { attendanceType: "Teacher" } },
+    {
+      id: "attendance-support-staff-register",
+      label: "Support Staff Attendance",
+      targetModule: "attendance",
+      options: { attendanceType: "Support Staff" }
+    },
+    { id: "attendance-learner-register", label: "Learner Attendance", targetModule: "attendance", options: { attendanceType: "Learner" } }
+  ],
+  "system-cbc-editor": [
+    { id: "exam-curriculum", label: "Curriculum", targetModule: "system-cbc-editor", options: { examTab: "curriculum" } },
+    {
+      id: "exam-generation",
+      label: "Exam Generation",
+      targetModule: "system-cbc-editor",
+      options: { examTab: "exam-generation" }
+    },
+    { id: "marks-entry", label: "Marks Entry", targetModule: "system-cbc-editor", options: { examTab: "marks-entry" } },
+    {
+      id: "result-scripts",
+      label: "Result Scripts",
+      targetModule: "system-cbc-editor",
+      options: { examTab: "result-scripts" }
+    },
+    {
+      id: "assessment-report",
+      label: "Assessment Report",
+      targetModule: "system-cbc-editor",
+      options: { examTab: "assessment-report" }
+    },
+    {
+      id: "learner-performance",
+      label: "Learner Performance Record",
+      targetModule: "system-cbc-editor",
+      options: { examTab: "learner-performance" }
+    }
+  ],
+  "hr-leave": [
+    { id: "hr-leave-sub", label: "HR Management", targetModule: "hr-leave" },
+    { id: "hr-recruitment-sub", label: "HR Recruitment", targetModule: "hr-recruitment" },
+    { id: "hr-institutional-letters-sub", label: "Institutional Letters", targetModule: "hr-institutional-letters" }
+  ],
+  "finance-fee-status": [
+    { id: "finance-fee-status-sub", label: "Fee Status", targetModule: "finance-fee-status" },
+    { id: "finance-fee-structure-sub", label: "Fee Structure", targetModule: "finance-fee-structure" },
+    { id: "finance-fee-payments-sub", label: "Fee Payments", targetModule: "finance-fee-payments" },
+    { id: "finance-payroll-sub", label: "Payroll", targetModule: "finance-payroll" },
+    { id: "finance-salary-advance-sub", label: "Salary Advances", targetModule: "finance-salary-advance" },
+    { id: "finance-procurement-sub", label: "Procurement", targetModule: "finance-procurement" }
+  ],
+  "communication-announcements": [
+    { id: "communication-announcements-sub", label: "Announcements", targetModule: "communication-announcements" },
+    { id: "communication-messages-sub", label: "SMS/Communication", targetModule: "communication-messages" },
+    { id: "parents-results-sub", label: "Parents/BOM Results", targetModule: "parents-results" },
+    { id: "learner-materials-sub", label: "Learner Materials", targetModule: "learner-materials" }
+  ],
+  "welfare-members": [
+    { id: "welfare-members-sub", label: "Welfare Members", targetModule: "welfare-members" },
+    { id: "welfare-contributions-sub", label: "Welfare Contributions", targetModule: "welfare-contributions" },
+    { id: "welfare-loans-sub", label: "Welfare Loans", targetModule: "welfare-loans" }
+  ]
+};
+
+function sidebarSubmodulesFor(moduleId = "") {
+  return Array.isArray(SIDEBAR_SUBMODULES[moduleId]) ? SIDEBAR_SUBMODULES[moduleId] : [];
+}
+
+function isSidebarSubmoduleAllowed(submodule = {}) {
+  const requiredRoles = Array.isArray(submodule?.roles) ? submodule.roles : [];
+  if (!requiredRoles.length) return true;
+  const actorRole = normalizeRoleKey(portalContext?.role || "");
+  return requiredRoles.includes(actorRole);
+}
+
+function sidebarSubmoduleParent(submoduleId = "") {
+  const target = String(submoduleId || "");
+  return Object.keys(SIDEBAR_SUBMODULES).find((parent) =>
+    sidebarSubmodulesFor(parent).some((item) => item.id === target)
+  );
+}
+
+function isSuperSystemDeveloperPortal() {
+  return normalizeRoleKey(portalContext?.role || "") === "SUPER_SYSTEM_DEVELOPER";
+}
+
+function inferAxButtonVariant(label = "", existingClasses = "") {
+  const source = `${String(label || "")} ${String(existingClasses || "")}`.toLowerCase();
+  if (source.includes("delete") || source.includes("remove") || source.includes("purge")) return "ax-btn--delete";
+  if (source.includes("save")) return "ax-btn--save";
+  if (source.includes("edit") || source.includes("amend") || source.includes("modify")) return "ax-btn--edit";
+  if (source.includes("refresh")) return "ax-btn--refresh";
+  if (source.includes("print")) return "ax-btn--print";
+  if (source.includes("excel")) return "ax-btn--export-excel";
+  if (source.includes("pdf")) return "ax-btn--export-pdf";
+  if (source.includes("download")) return "ax-btn--download";
+  if (source.includes("upload")) return "ax-btn--upload";
+  if (source.includes("register") || source.includes("create")) return "ax-btn--register";
+  if (source.includes("dispatch") || source.includes("generate") || source.includes("process") || source.includes("send")) return "ax-btn--process";
+  if (source.includes("clear") || source.includes("reset")) return "ax-btn--reset";
+  if (source.includes("view") || source.includes("open")) return "ax-btn--view";
+  return "ax-btn--view";
+}
+
+function applyCompactIconButtons(scope = document) {
+  if (!scope || typeof scope.querySelectorAll !== "function") return;
+  const preserveButtonIds = new Set([
+    "searchButton",
+    "assistantSendButton",
+    "assistantToggleButton",
+    "updateHeroImageButton",
+    "changeCredentialsButton",
+    "logoutButton"
+  ]);
+  scope.querySelectorAll("button, label.ax-btn").forEach((node) => {
+    if (node.closest(".sidebar-scroll")) return;
+    if (preserveButtonIds.has(String(node.id || ""))) return;
+    const text = String(node.textContent || "").trim();
+    if (node.tagName === "BUTTON") {
+      node.classList.add("ax-btn", "ax-btn--sm");
+      const variant = inferAxButtonVariant(text, node.className);
+      node.classList.add(variant);
+      if (!node.getAttribute("title")) node.setAttribute("title", text || "Action");
+      if (!node.getAttribute("aria-label")) node.setAttribute("aria-label", text || "Action");
+      const explicitKeep =
+        node.getAttribute("data-keep-button-style") === "1" ||
+        /search|upload|hero|profile/i.test(String(node.id || "")) ||
+        /search|upload|hero|profile/i.test(text);
+      if (!explicitKeep) {
+        node.classList.add("ax-btn--icon-only");
+      } else {
+        node.classList.remove("ax-btn--icon-only");
+      }
+      const compactText = String(text || "").replace(/\s+/g, "");
+      const isSymbolOnly =
+        node.classList.contains("ax-btn--icon-only") ||
+        compactText.length <= 2 ||
+        /^[^\p{L}\p{N}]+$/u.test(compactText);
+      node.classList.toggle("icon-symbolic", isSymbolOnly);
+    } else if (node.tagName === "LABEL") {
+      if (!node.getAttribute("title")) node.setAttribute("title", text || "Action");
+      if (!node.getAttribute("aria-label")) node.setAttribute("aria-label", text || "Action");
+    }
+  });
+  attachActionLegends(scope);
+}
+
+function attachActionLegends(scope = document) {
+  if (!scope || typeof scope.querySelectorAll !== "function") return;
+  scope.querySelectorAll(".actions-row").forEach((row) => {
+    if (row.nextElementSibling?.classList?.contains("action-legend-row")) return;
+    const buttons = Array.from(row.querySelectorAll("button"));
+    if (!buttons.length) return;
+    const seen = new Set();
+    const items = [];
+    buttons.forEach((btn) => {
+      const label = String(btn.getAttribute("aria-label") || btn.getAttribute("title") || btn.textContent || "")
+        .trim()
+        .replace(/\s+/g, " ");
+      if (!label) return;
+      if (seen.has(label.toLowerCase())) return;
+      seen.add(label.toLowerCase());
+      items.push(label);
+    });
+    if (!items.length) return;
+    const legend = document.createElement("div");
+    legend.className = "action-legend-row";
+    legend.innerHTML = items
+      .slice(0, 12)
+      .map((label) => `<span class="action-legend-item">${escapeHtml(label)}</span>`)
+      .join("");
+    row.insertAdjacentElement("afterend", legend);
+  });
+}
+
+function applyTemplateVisibility(scope = document) {
+  if (!scope || typeof scope.querySelectorAll !== "function") return;
+  if (isSuperSystemDeveloperPortal()) return;
+  scope.querySelectorAll("[data-template-control='true']").forEach((node) => {
+    node.style.display = "none";
+  });
+}
 
 function isSystemAdminRole() {
   const role = String(portalContext?.role || "");
@@ -569,32 +816,43 @@ function applyDashboardIdentity(meData = {}) {
   }
 }
 
-async function renderSystemRegistration() {
+async function renderSystemRegistration(options = {}) {
   setActiveSidebarButton("system-register");
-  document.getElementById("moduleTitle").textContent = "Register (Institution/User)";
+  document.getElementById("moduleTitle").textContent = "Institution Registration";
   if (!isSystemAdminRole()) {
     alert("Only Super/System Developer, System Administrator, HoI/Administrator can access registration center.");
     return loadDashboard();
   }
   try {
-    const [options, users] = await Promise.all([
+    const [registrarOptions, users] = await Promise.all([
       request("/api/users/registrar-options"),
       request("/api/users")
     ]);
-    const institutionRows = Array.isArray(options?.institutions) ? options.institutions : [];
+    const institutionRows = Array.isArray(registrarOptions?.institutions) ? registrarOptions.institutions : [];
     const userRows = Array.isArray(users) ? users : [];
     const actorRole = normalizeRoleKey(portalContext?.role || "");
-    const roleOptionsRaw = Array.isArray(options?.assignable_roles) ? options.assignable_roles : [];
+    const roleOptionsRaw = Array.isArray(registrarOptions?.assignable_roles) ? registrarOptions.assignable_roles : [];
     const roleOptions = roleOptionsRaw.filter((role) => {
       if (normalizeRoleKey(role) !== "SUPER_SYSTEM_DEVELOPER") return true;
       return actorRole === "SUPER_SYSTEM_DEVELOPER";
     });
-    const canRegisterInstitution = Boolean(options?.can_register_institution);
-    const canManageAllInstitutions = Boolean(options?.can_manage_all_institutions);
-    const canRegisterUsers = Boolean(options?.can_register_users);
-    const registrationMeta = options?.registration_meta || null;
+    const developerRoles = roleOptions.filter((role) =>
+      ["SUPER_SYSTEM_DEVELOPER", "SYSTEM_DEVELOPER"].includes(normalizeRoleKey(role))
+    );
+    const hoiAdminRoles = roleOptions.filter((role) =>
+      ["HEAD_OF_INSTITUTION", "ADMIN", "SYSTEM_ADMINISTRATOR"].includes(normalizeRoleKey(role))
+    );
+    const userRegistrationRoles = roleOptions.filter((role) =>
+      !["SUPER_SYSTEM_DEVELOPER", "SYSTEM_DEVELOPER", "HEAD_OF_INSTITUTION", "ADMIN", "SYSTEM_ADMINISTRATOR"].includes(
+        normalizeRoleKey(role)
+      )
+    );
+    const canRegisterInstitution = Boolean(registrarOptions?.can_register_institution);
+    const canManageAllInstitutions = Boolean(registrarOptions?.can_manage_all_institutions);
+    const canRegisterUsers = Boolean(registrarOptions?.can_register_users);
+    const registrationMeta = registrarOptions?.registration_meta || null;
     const defaultInstitutionId =
-      Number(options?.institution_scope_id || 0) ||
+      Number(registrarOptions?.institution_scope_id || 0) ||
       Number(portalContext?.institution_id || 0) ||
       Number(institutionRows[0]?.id || 0) ||
       0;
@@ -603,6 +861,12 @@ async function renderSystemRegistration() {
       institutionRows[0] ||
       null;
     const defaultRole = roleOptions[0] || "";
+    const defaultDeveloperRole = developerRoles.find((role) => normalizeRoleKey(role) === "SYSTEM_DEVELOPER") || developerRoles[0] || "";
+    const defaultHoiAdminRole = hoiAdminRoles.find((role) => normalizeRoleKey(role) === "HEAD_OF_INSTITUTION") || hoiAdminRoles[0] || "";
+    const defaultUserRole = userRegistrationRoles[0] || roleOptions.find((role) => normalizeRoleKey(role) === "TEACHER") || "";
+    const institutionRowsSorted = [...institutionRows].sort((a, b) =>
+      String(a?.institution_name || "").localeCompare(String(b?.institution_name || ""))
+    );
     const canSelectInstitutionForUser = canManageAllInstitutions;
     let latestInstitutionId = Number(defaultInstitution?.id || 0) || null;
     const composePrefixedPhone = (prefixElementId, localElementId) => {
@@ -626,6 +890,10 @@ async function renderSystemRegistration() {
             email: row?.email || "",
             phone: row?.phone || ""
           }).replace(/"/g, "&quot;")}, 'edit')">✎</button>
+          <button class="search-action-icon save" title="Save" onclick="performRegistryRowAction('user', { id: ${rowId} }, 'save')">💾</button>
+          <button class="search-action-icon print" title="Print" onclick="performRegistryRowAction('user', { id: ${rowId} }, 'print')">🖨</button>
+          <button class="search-action-icon pdf" title="PDF" onclick="performRegistryRowAction('user', { id: ${rowId} }, 'pdf')">📄</button>
+          <button class="search-action-icon download" title="Download" onclick="performRegistryRowAction('user', { id: ${rowId} }, 'download')">⬇</button>
           <button class="search-action-icon delete" title="Delete" onclick="performRegistryRowAction('user', { id: ${rowId} }, 'delete')">🗑</button>
         </div>
       `;
@@ -648,19 +916,25 @@ async function renderSystemRegistration() {
 
     document.getElementById("formArea").innerHTML = `
       <div class="module-header-card">
-        <h3>Register (Institution/User)</h3>
-        <p>Super/System Developer can register institutions and users. HoI/System Administrator registers users in their institution scope.</p>
+        <h3>Institution Registration</h3>
+        <p>Use sub-modules: Institution Registration, SSD/SD Registration, HOI/Admin/System Administrator Registration, and User Registration.</p>
       </div>
 
       ${canRegisterInstitution ? `
-      <section class="registration-compact-card register-section-compact">
+      <section id="registrationInstitutionSection" class="registration-compact-card register-section-compact">
         <div class="section-card-header">
-          <h3>Register Institution (System Developer only)</h3>
-          <p class="small-note">Institution code is auto-generated from county + category with strict non-duplicate sequencing.</p>
+          <h3>Institution Registration</h3>
+          <p class="small-note">SSD/SD only. Institution code auto-generates from county + institution level using first-come sequencing.</p>
         </div>
         <div class="form-grid registration-compact-grid">
           <label>Institution Name</label>
           <input id="sysInstitutionName" placeholder="Institution name" />
+          <label>Institution Type</label>
+          <select id="sysInstitutionType">
+            <option value="">Select type</option>
+            <option value="Private">Private</option>
+            <option value="Public">Public</option>
+          </select>
           <label>County</label>
           ${
             registrationMeta?.counties?.length
@@ -669,23 +943,28 @@ async function renderSystemRegistration() {
                   ${registrationMeta.counties
                     .map((c) => `<option value="${escapeHtml(c.name)}" data-county-code="${escapeHtml(c.code)}">${escapeHtml(c.name)} (${escapeHtml(c.code)})</option>`)
                     .join("")}
+                  <option value="Other" data-county-code="048">Other (048)</option>
                 </select>`
               : `<input id="sysInstitutionCounty" placeholder="County" />`
           }
           <label>Institution's Code</label>
           <input id="sysInstitutionCodePreview" class="readonly-field" readonly placeholder="Auto-generated code" />
           <input id="sysInstitutionCountyCode" type="hidden" />
-          <label>Category</label>
-          ${
-            registrationMeta?.categories?.length
-              ? `<select id="sysInstitutionCategory">
-                  <option value="">Select category</option>
-                  ${registrationMeta.categories
-                    .map((c) => `<option value="${escapeHtml(c.label)}">${escapeHtml(c.label)} (${escapeHtml(c.code)})</option>`)
-                    .join("")}
-                </select>`
-              : `<input id="sysInstitutionCategory" placeholder="Category" />`
-          }
+          <label>Institution Level</label>
+          <select id="sysInstitutionLevel">
+            <option value="">Select level</option>
+            <option value="P">Primary (P)</option>
+            <option value="PJ">Primary/Junior (PJ)</option>
+            <option value="JS">Junior Secondary (JS)</option>
+            <option value="SS">Senior Secondary (SS)</option>
+          </select>
+          <label style="display:none;">Category</label>
+          <select id="sysInstitutionCategory" style="display:none;">
+            <option value="Primary">Primary (P)</option>
+            <option value="Primary/Junior">Primary/Junior (PJ)</option>
+            <option value="Junior Secondary">Junior Secondary (JS)</option>
+            <option value="Senior Secondary">Senior Secondary (SS)</option>
+          </select>
           <label>Sub County</label>
           <input id="sysInstitutionSubCounty" placeholder="Sub county" />
           <label>Location</label>
@@ -710,33 +989,6 @@ async function renderSystemRegistration() {
           <input id="sysInstitutionManualPostalCode" placeholder="Enter postal code manually" style="display:none;" />
           <label>Town</label>
           <input id="sysInstitutionTown" placeholder="Town" />
-          <label>Email</label>
-          <input id="sysInstitutionEmail" placeholder="Institution email" />
-          <label>Phone Prefix</label>
-          <select id="sysInstitutionPhonePrefix">
-            <option value="+254">+254</option>
-            <option value="07">07</option>
-            <option value="01">01</option>
-            <option value="+">+</option>
-          </select>
-          <label>Phone Digits</label>
-          <input id="sysInstitutionPhoneLocal" maxlength="25" placeholder="Remaining digits (max 25)" />
-          <label>Head of Institution / Deputy Name</label>
-          <input id="sysInstitutionAdminName" placeholder="Full name" />
-          <label>Admin Username</label>
-          <input id="sysInstitutionAdminUsername" placeholder="Username" />
-          <label>Admin Role</label>
-          <select id="sysInstitutionAdminRole">
-            <option value="ADMIN">HoI/Administrator</option>
-            <option value="HEAD_OF_INSTITUTION">Deputy HoI</option>
-          </select>
-          <label>Admin Password (optional)</label>
-          <input id="sysInstitutionAdminPassword" type="password" placeholder="Leave blank to auto-generate secure password" />
-          <label>Email agreement</label>
-          <select id="sysInstitutionSendAgreement">
-            <option value="false">No</option>
-            <option value="true">Yes</option>
-          </select>
         </div>
         <div class="agreement-toolbar-row" id="sysAgreementActionsRow">
           <button id="sysSendAgreementButton" style="display:none;">Send Agreement</button>
@@ -744,7 +996,7 @@ async function renderSystemRegistration() {
           <button id="sysDownloadAgreementButton">Download PDF</button>
           <button id="sysPrintAgreementButton">Print PDF</button>
         </div>
-        <div class="form-grid registration-compact-grid">
+        <div class="form-grid registration-compact-grid" data-template-control="true">
           <label>Agreement Template Institution</label>
           <select id="sysAgreementInstitutionId">
             ${institutionRows
@@ -754,9 +1006,9 @@ async function renderSystemRegistration() {
           <label>Upload Agreement Letter Sample (PDF)</label>
           <input id="sysAgreementTemplateFile" type="file" accept="application/pdf" />
           <label>Agreement Template Text</label>
-          <textarea id="sysAgreementTemplateText" placeholder="Optional agreement body template"></textarea>
+          <textarea id="sysAgreementTemplateText" class="template-spacious" rows="10" placeholder="Optional agreement body template"></textarea>
         </div>
-        <div class="agreement-toolbar-row">
+        <div class="agreement-toolbar-row" data-template-control="true">
           <button id="sysSaveAgreementTemplateButton">Save Template</button>
           <button id="sysLoadAgreementTemplateButton">Open Template</button>
           <button id="sysDeleteAgreementTemplateButton" class="danger-button">Delete Template</button>
@@ -768,9 +1020,30 @@ async function renderSystemRegistration() {
         <div class="registration-compact-actions">
           <button id="sysRegisterInstitutionButton">Register Institution</button>
         </div>
+        <div class="module-header-card">
+          <h4>Registered Institutions</h4>
+          <p class="small-note">Search by county, name, level, and type. Edit opens Institution Registration for amendment.</p>
+        </div>
+        <div class="form-grid registration-compact-grid">
+          <label>Search by County</label>
+          <input id="registeredInstitutionSearchCounty" placeholder="County" />
+          <label>Search by Name</label>
+          <input id="registeredInstitutionSearchName" placeholder="Institution name" />
+          <label>Search by Level</label>
+          <input id="registeredInstitutionSearchLevel" placeholder="P/PJ/JS/SS" />
+          <label>Search by Type</label>
+          <input id="registeredInstitutionSearchType" placeholder="Public/Private" />
+        </div>
+        <div class="iim-actions-row">
+          <button id="registeredInstitutionRefreshButton" class="iim-action-btn">↻ Refresh</button>
+          <button id="registeredInstitutionPrintButton" class="iim-action-btn">🖨 Print</button>
+          <button id="registeredInstitutionPdfButton" class="iim-action-btn warn">📄 PDF</button>
+          <button id="registeredInstitutionExcelButton" class="iim-action-btn warn">⬇ Excel</button>
+        </div>
+        <div id="registeredInstitutionsTableHost"></div>
       </section>
       ` : `
-      <section class="registration-compact-card register-section-compact">
+      <section id="registrationInstitutionSection" class="registration-compact-card register-section-compact">
         <div class="section-card-header">
           <h3>Register Institution</h3>
           <p class="small-note">Visible but not active for this role.</p>
@@ -779,9 +1052,144 @@ async function renderSystemRegistration() {
       </section>
       `}
 
-      <section class="registration-compact-card register-section-compact">
+      <section id="registrationDeveloperSection" class="registration-compact-card register-section-compact">
         <div class="section-card-header">
-          <h3>Register User (Inside Institution Scope)</h3>
+          <h3>Super System Developer and System Developer Registration</h3>
+          <p class="small-note">Only Super System Developer can register SSD/SD accounts.</p>
+        </div>
+        <div class="form-grid registration-compact-grid">
+          <label>Institution</label>
+          <select id="sysDevInstitutionId">
+            ${institutionRowsSorted
+              .map((item) => `<option value="${item.id}" ${Number(item.id) === Number(defaultInstitutionId) ? "selected" : ""}>${escapeHtml(item.institution_name || "Institution")} (${escapeHtml(item.institution_code || "-")})</option>`)
+              .join("")}
+          </select>
+          <label>Name</label>
+          <input id="sysDevFullName" placeholder="Full name" />
+          <label>Prefix</label>
+          <select id="sysDevPhonePrefix">
+            <option value="+254">+254</option>
+            <option value="07">07</option>
+            <option value="01">01</option>
+            <option value="+">+</option>
+          </select>
+          <label>Mobile Digits</label>
+          <input id="sysDevPhoneLocal" placeholder="Mobile number digits" />
+          <label>Postal Address</label>
+          <input id="sysDevPostalAddress" placeholder="P.O. Box..." />
+          <label>Postal Code</label>
+          <input id="sysDevPostalCode" placeholder="Postal code" />
+          <label>Town</label>
+          <input id="sysDevTown" placeholder="Town" />
+          <label>Role</label>
+          <select id="sysDevRole">
+            ${developerRoles.map((role) => `<option value="${escapeHtml(role)}" ${role === defaultDeveloperRole ? "selected" : ""}>${escapeHtml(toLabel(role))}</option>`).join("")}
+          </select>
+          <label>Username</label>
+          <input id="sysDevUsername" placeholder="Username" />
+          <label>Password Mode</label>
+          <select id="sysDevAutoPassword">
+            <option value="true">Auto</option>
+            <option value="false">Manual</option>
+          </select>
+          <label>Manual Password</label>
+          <input id="sysDevPassword" type="text" placeholder="Enter manual password if Auto=No" />
+          <label>Email</label>
+          <input id="sysDevEmail" placeholder="Email" />
+        </div>
+        <div class="registration-compact-actions">
+          <button id="sysRegisterDeveloperButton">Register SSD/SD</button>
+        </div>
+        <div class="module-header-card">
+          <h4>Registered Super System Developers and System Developers</h4>
+        </div>
+        <div id="registeredDevelopersTableHost"></div>
+      </section>
+
+      <section id="registrationHoiAdminSection" class="registration-compact-card register-section-compact">
+        <div class="section-card-header">
+          <h3>HOI/Administrator/System Administrator Registration</h3>
+          <p class="small-note">Select institution first to activate role and user details.</p>
+        </div>
+        <div class="form-grid registration-compact-grid">
+          <label>Institution (A-Z)</label>
+          <select id="sysHoiInstitutionId">
+            <option value="">Select institution</option>
+            ${institutionRowsSorted
+              .map((item) => `<option value="${item.id}">${escapeHtml(item.institution_name || "Institution")} (${escapeHtml(item.institution_code || "-")})</option>`)
+              .join("")}
+          </select>
+          <label>Institution Code</label>
+          <input id="sysHoiInstitutionCode" readonly class="readonly-field" />
+          <label>Role</label>
+          <select id="sysHoiRole" disabled>
+            ${hoiAdminRoles.map((role) => `<option value="${escapeHtml(role)}" ${role === defaultHoiAdminRole ? "selected" : ""}>${escapeHtml(toLabel(role))}</option>`).join("")}
+          </select>
+          <label>Full Name</label>
+          <input id="sysHoiFullName" placeholder="Full name" disabled />
+          <label>Email</label>
+          <input id="sysHoiEmail" placeholder="Email" disabled />
+          <label>Phone Prefix</label>
+          <select id="sysHoiPhonePrefix" disabled>
+            <option value="+254">+254</option>
+            <option value="07">07</option>
+            <option value="01">01</option>
+            <option value="+">+</option>
+          </select>
+          <label>Mobile Digits</label>
+          <input id="sysHoiPhoneLocal" placeholder="Mobile digits" disabled />
+          <label>Username</label>
+          <input id="sysHoiUsername" placeholder="Username" disabled />
+          <label>Auto Password</label>
+          <select id="sysHoiAutoPassword" disabled>
+            <option value="true">Yes</option>
+            <option value="false">No</option>
+          </select>
+          <label>Password (Manual if Auto=No)</label>
+          <input id="sysHoiPassword" type="text" placeholder="Manual password" disabled />
+          <label>Delivery Mode</label>
+          <select id="sysHoiWelcomeDispatch" disabled>
+            <option value="SMS">SMS</option>
+            <option value="EMAIL">Email</option>
+            <option value="BOTH">Email & SMS</option>
+          </select>
+          <label>Generate Agreement Letter</label>
+          <select id="sysHoiGenerateAgreement" disabled>
+            <option value="false">No</option>
+            <option value="true">Yes</option>
+          </select>
+          <label>Agreement Mode</label>
+          <select id="sysHoiAgreementMode" disabled>
+            <option value="EMAIL">Email</option>
+            <option value="PRINT">Print</option>
+            <option value="PDF">PDF</option>
+          </select>
+          <label>Agreement Letter Sample Upload</label>
+          <input id="sysHoiAgreementSample" type="file" accept=".pdf,.doc,.docx,.txt" disabled />
+        </div>
+        <div class="registration-compact-actions">
+          <button id="sysRegisterHoiAdminButton">Register HOI/Admin/System Admin</button>
+        </div>
+        <div class="module-header-card">
+          <h4>HOI/Administrator and System Administrator Profile</h4>
+          <p class="small-note">HOI rows highlighted green, System Administrator rows highlighted yellow.</p>
+        </div>
+        <div class="form-grid registration-compact-grid">
+          <label>Search Institution</label>
+          <input id="hoiProfileSearchInstitution" placeholder="Institution" />
+          <label>Search County</label>
+          <input id="hoiProfileSearchCounty" placeholder="County" />
+          <label>Search Level</label>
+          <input id="hoiProfileSearchLevel" placeholder="Level" />
+          <label>Search Category</label>
+          <input id="hoiProfileSearchCategory" placeholder="Role/category" />
+        </div>
+        <div id="registeredHoiAdminsTableHost"></div>
+      </section>
+
+      <section id="registrationUserSection" class="registration-compact-card register-section-compact">
+        <div class="section-card-header">
+          <h3>User Registration</h3>
           <p class="small-note">Auto-generated password can be sent through Email, SMS, or both with legal onboarding text.</p>
         </div>
         <div class="form-grid registration-compact-grid">
@@ -799,7 +1207,7 @@ async function renderSystemRegistration() {
           <input id="sysUserUsername" placeholder="Username" />
           <label>Role</label>
           <select id="sysUserRole">
-            ${roleOptions.map((role) => `<option value="${escapeHtml(role)}">${escapeHtml(toLabel(role))}</option>`).join("")}
+            ${(userRegistrationRoles.length ? userRegistrationRoles : roleOptions).map((role) => `<option value="${escapeHtml(role)}" ${role === defaultUserRole ? "selected" : ""}>${escapeHtml(toLabel(role))}</option>`).join("")}
           </select>
           <label>Email</label>
           <input id="sysUserEmail" placeholder="Email" />
@@ -833,10 +1241,16 @@ async function renderSystemRegistration() {
         </div>
       </section>
 
-      <section class="registration-compact-card register-section-compact">
+      <section id="registrationUsersListSection" class="registration-compact-card register-section-compact">
         <div class="section-card-header">
-          <h3>Registered Users</h3>
-          <p class="small-note">All users in your scope are listed below with compact actions.</p>
+          <h3>Users Register</h3>
+          <p class="small-note">List of registered users aligned per institution with action icons.</p>
+        </div>
+        <div class="form-grid registration-compact-grid">
+          <label>Search User Name</label>
+          <input id="registeredUsersSearchName" placeholder="User name" />
+          <label>Search Institution</label>
+          <input id="registeredUsersSearchInstitution" placeholder="Institution" />
         </div>
         <div class="search-inline-actions">
           <button class="search-action-icon edit" id="bulkEditUserButton" title="Edit User">✎ Edit User</button>
@@ -860,6 +1274,73 @@ async function renderSystemRegistration() {
       </section>
     `;
 
+    const institutionDataRows = institutionRowsSorted.map((item) => ({
+      id: Number(item.id || 0),
+      institution_name: item.institution_name || "-",
+      institution_code: item.institution_code || "-",
+      county: item.county || "",
+      institution_level: item.category_code || item.category || "",
+      institution_type: item.institution_type || ""
+    }));
+    const renderRegisteredInstitutionsTable = () => {
+      const host = document.getElementById("registeredInstitutionsTableHost");
+      if (!host) return;
+      const searchCounty = String(document.getElementById("registeredInstitutionSearchCounty")?.value || "").trim().toLowerCase();
+      const searchName = String(document.getElementById("registeredInstitutionSearchName")?.value || "").trim().toLowerCase();
+      const searchLevel = String(document.getElementById("registeredInstitutionSearchLevel")?.value || "").trim().toLowerCase();
+      const searchType = String(document.getElementById("registeredInstitutionSearchType")?.value || "").trim().toLowerCase();
+      const filtered = institutionDataRows.filter((row) => {
+        if (searchCounty && !String(row.county || "").toLowerCase().includes(searchCounty)) return false;
+        if (searchName && !String(row.institution_name || "").toLowerCase().includes(searchName)) return false;
+        if (searchLevel && !String(row.institution_level || "").toLowerCase().includes(searchLevel)) return false;
+        if (searchType && !String(row.institution_type || "").toLowerCase().includes(searchType)) return false;
+        return true;
+      });
+      host.innerHTML = buildDashboardTable(
+        ["Institution", "Code", "County", "Level", "Type", "Actions"],
+        filtered.map((row) => [
+          row.institution_name,
+          row.institution_code,
+          row.county || "-",
+          row.institution_level || "-",
+          row.institution_type || "-",
+          `<div class="search-inline-actions">
+            <button class="search-action-icon view" onclick="performRegistryRowAction('institution', { id: ${Number(row.id || 0)} }, 'view')" title="View">👁</button>
+            <button class="search-action-icon edit" onclick="performRegistryRowAction('institution', { id: ${Number(row.id || 0)} }, 'edit')" title="Edit">✎</button>
+            <button class="search-action-icon save" onclick="performRegistryRowAction('institution', { id: ${Number(row.id || 0)} }, 'save')" title="Save">💾</button>
+            <button class="search-action-icon delete" onclick="performRegistryRowAction('institution', { id: ${Number(row.id || 0)} }, 'delete')" title="Delete">🗑</button>
+            <button class="search-action-icon print" onclick="performRegistryRowAction('institution', { id: ${Number(row.id || 0)} }, 'print')" title="Print">🖨</button>
+            <button class="search-action-icon pdf" onclick="performRegistryRowAction('institution', { id: ${Number(row.id || 0)} }, 'pdf')" title="PDF">📄</button>
+          </div>`
+        ])
+      );
+    };
+
+    const renderRoleScopedTable = (hostId, rowsInput, titleRoleFilter = () => true) => {
+      const host = document.getElementById(hostId);
+      if (!host) return;
+      const rowsScoped = (Array.isArray(rowsInput) ? rowsInput : []).filter(titleRoleFilter);
+      host.innerHTML = buildDashboardTable(
+        ["Name", "Role", "Institution", "Code", "Actions"],
+        rowsScoped.map((row) => {
+          const roleKey = normalizeRoleKey(row.role || "");
+          const roleClass =
+            roleKey === "HEAD_OF_INSTITUTION" || roleKey === "ADMIN"
+              ? "role-chip role-chip--hoi"
+              : roleKey === "SYSTEM_ADMINISTRATOR"
+                ? "role-chip role-chip--sysadmin"
+                : "role-chip";
+          return [
+            row.full_name || "-",
+            `<span class="${roleClass}">${escapeHtml(formatRoleDisplay(row.role || "-"))}</span>`,
+            row.institution_name || "-",
+            row.institution_code || "-",
+            renderRegistryUserActions(row)
+          ];
+        })
+      );
+    };
+
     resetDataTable("Registration center loaded.");
 
     const institutionSelect = document.getElementById("sysUserInstitutionId");
@@ -867,6 +1348,7 @@ async function renderSystemRegistration() {
     const agreementInstitutionSelect = document.getElementById("sysAgreementInstitutionId");
     const countySelect = document.getElementById("sysInstitutionCounty");
     const countyCodeInput = document.getElementById("sysInstitutionCountyCode");
+    const levelSelect = document.getElementById("sysInstitutionLevel");
     const categorySelect = document.getElementById("sysInstitutionCategory");
     const institutionCodePreview = document.getElementById("sysInstitutionCodePreview");
     const postalCodeSelect = document.getElementById("sysInstitutionPostalCode");
@@ -942,6 +1424,20 @@ async function renderSystemRegistration() {
       }
     };
 
+    const syncLevelCategory = () => {
+      if (!levelSelect || !categorySelect) return;
+      const level = String(levelSelect.value || "").trim().toUpperCase();
+      const mapByLevel = {
+        P: "Primary",
+        PJ: "Primary/Junior",
+        JS: "Junior Secondary",
+        SS: "Senior Secondary"
+      };
+      if (mapByLevel[level]) {
+        categorySelect.value = mapByLevel[level];
+      }
+    };
+
     const toggleAgreementActionState = () => {
       const canSendAgreement = String(sendAgreementSelect?.value || "false") === "true";
       if (sendAgreementButton) sendAgreementButton.style.display = canSendAgreement ? "inline-flex" : "none";
@@ -966,6 +1462,10 @@ async function renderSystemRegistration() {
     institutionSelect?.addEventListener("change", updateUserInstitutionCodePreview);
     updateUserInstitutionCodePreview();
     countySelect?.addEventListener("change", refreshInstitutionCodePreview);
+    levelSelect?.addEventListener("change", () => {
+      syncLevelCategory();
+      refreshInstitutionCodePreview();
+    });
     categorySelect?.addEventListener("change", refreshInstitutionCodePreview);
     postalCodeSelect?.addEventListener("change", () => {
       togglePostalManualEntry();
@@ -976,6 +1476,7 @@ async function renderSystemRegistration() {
     document.getElementById("sysInstitutionPostalAddress")?.addEventListener("input", updateAgreementPreview);
     document.getElementById("sysInstitutionAdminName")?.addEventListener("input", updateAgreementPreview);
     togglePostalManualEntry();
+    syncLevelCategory();
     toggleAgreementActionState();
     updateAgreementPreview();
     if (!canSelectInstitutionForUser && institutionSelect) {
@@ -987,6 +1488,8 @@ async function renderSystemRegistration() {
         const postalCodeValue = String(postalCodeSelect?.value || "").trim();
         const payload = {
           institution_name: String(document.getElementById("sysInstitutionName")?.value || "").trim(),
+          institution_type: String(document.getElementById("sysInstitutionType")?.value || "").trim() || null,
+          institution_level: String(document.getElementById("sysInstitutionLevel")?.value || "").trim() || null,
           county: String(countySelect?.value || "").trim(),
           county_code: String(countyCodeInput?.value || "").trim(),
           category: String(categorySelect?.value || "").trim(),
@@ -998,14 +1501,7 @@ async function renderSystemRegistration() {
           postal_code_manual: postalCodeValue === "__manual__"
             ? String(manualPostalInput?.value || "").trim()
             : undefined,
-          town: String(document.getElementById("sysInstitutionTown")?.value || "").trim(),
-          email: String(document.getElementById("sysInstitutionEmail")?.value || "").trim(),
-          phone: composePrefixedPhone("sysInstitutionPhonePrefix", "sysInstitutionPhoneLocal"),
-          admin_full_name: String(document.getElementById("sysInstitutionAdminName")?.value || "").trim(),
-          admin_username: String(document.getElementById("sysInstitutionAdminUsername")?.value || "").trim(),
-          admin_password: String(document.getElementById("sysInstitutionAdminPassword")?.value || ""),
-          portal_role: String(document.getElementById("sysInstitutionAdminRole")?.value || "ADMIN"),
-          send_agreement_email: String(sendAgreementSelect?.value || "false") === "true"
+          town: String(document.getElementById("sysInstitutionTown")?.value || "").trim()
         };
         const result = await request("/api/institutions", {
           method: "POST",
@@ -1063,6 +1559,178 @@ async function renderSystemRegistration() {
       await performRegistryRowAction("user", { id: userId }, "delete");
     });
     document.getElementById("bulkRefreshUserButton")?.addEventListener("click", renderSystemRegistration);
+    ["registeredInstitutionSearchCounty", "registeredInstitutionSearchName", "registeredInstitutionSearchLevel", "registeredInstitutionSearchType"]
+      .forEach((id) => document.getElementById(id)?.addEventListener("input", renderRegisteredInstitutionsTable));
+    document.getElementById("registeredInstitutionRefreshButton")?.addEventListener("click", renderRegisteredInstitutionsTable);
+    document.getElementById("registeredInstitutionPrintButton")?.addEventListener("click", () => window.print());
+    document.getElementById("registeredInstitutionPdfButton")?.addEventListener("click", () => {
+      window.open("/api/system/registry/export/pdf", "_blank");
+    });
+    document.getElementById("registeredInstitutionExcelButton")?.addEventListener("click", () => {
+      window.open("/api/system/registry/export/excel", "_blank");
+    });
+    renderRegisteredInstitutionsTable();
+
+    const registerDeveloperButton = document.getElementById("sysRegisterDeveloperButton");
+    if (registerDeveloperButton) {
+      if (actorRole !== "SUPER_SYSTEM_DEVELOPER") {
+        registerDeveloperButton.disabled = true;
+      }
+      registerDeveloperButton.addEventListener("click", async () => {
+        try {
+          const autoGenerate = String(document.getElementById("sysDevAutoPassword")?.value || "true") === "true";
+          const payload = {
+            institution_id: Number(document.getElementById("sysDevInstitutionId")?.value || 0) || undefined,
+            full_name: String(document.getElementById("sysDevFullName")?.value || "").trim(),
+            username: String(document.getElementById("sysDevUsername")?.value || "").trim(),
+            role: String(document.getElementById("sysDevRole")?.value || defaultDeveloperRole),
+            email: String(document.getElementById("sysDevEmail")?.value || "").trim(),
+            phone: composePrefixedPhone("sysDevPhonePrefix", "sysDevPhoneLocal"),
+            auto_generate_password: autoGenerate,
+            password: autoGenerate ? null : String(document.getElementById("sysDevPassword")?.value || ""),
+            send_welcome_via: "BOTH"
+          };
+          const result = await request("/api/users", {
+            method: "POST",
+            body: JSON.stringify(payload)
+          });
+          const generated = result?.generated_password ? ` Temporary Password: ${result.generated_password}` : "";
+          alert(`Developer account registered.${generated}`);
+          await renderSystemRegistration({ registrationFocus: "developers" });
+        } catch (error) {
+          alert(error.message);
+        }
+      });
+    }
+    renderRoleScopedTable("registeredDevelopersTableHost", userRows, (row) =>
+      ["SUPER_SYSTEM_DEVELOPER", "SYSTEM_DEVELOPER"].includes(normalizeRoleKey(row.role || ""))
+    );
+
+    const hoiInstitutionSelect = document.getElementById("sysHoiInstitutionId");
+    const hoiInstitutionCode = document.getElementById("sysHoiInstitutionCode");
+    const hoiDependentIds = [
+      "sysHoiRole",
+      "sysHoiFullName",
+      "sysHoiEmail",
+      "sysHoiPhonePrefix",
+      "sysHoiPhoneLocal",
+      "sysHoiUsername",
+      "sysHoiAutoPassword",
+      "sysHoiPassword",
+      "sysHoiWelcomeDispatch",
+      "sysHoiGenerateAgreement",
+      "sysHoiAgreementMode",
+      "sysHoiAgreementSample"
+    ];
+    const syncHoiActivation = () => {
+      const selectedInstitutionId = Number(hoiInstitutionSelect?.value || 0);
+      const selectedInstitution = institutionRowsSorted.find((item) => Number(item.id) === selectedInstitutionId) || null;
+      if (hoiInstitutionCode) hoiInstitutionCode.value = selectedInstitution?.institution_code || "";
+      hoiDependentIds.forEach((id) => {
+        const node = document.getElementById(id);
+        if (node) node.disabled = !selectedInstitutionId;
+      });
+    };
+    hoiInstitutionSelect?.addEventListener("change", syncHoiActivation);
+    syncHoiActivation();
+
+    document.getElementById("sysRegisterHoiAdminButton")?.addEventListener("click", async () => {
+      try {
+        const autoGenerate = String(document.getElementById("sysHoiAutoPassword")?.value || "true") === "true";
+        const institutionId = Number(document.getElementById("sysHoiInstitutionId")?.value || 0);
+        if (!institutionId) {
+          alert("Select institution first.");
+          return;
+        }
+        const payload = {
+          institution_id: institutionId,
+          full_name: String(document.getElementById("sysHoiFullName")?.value || "").trim(),
+          username: String(document.getElementById("sysHoiUsername")?.value || "").trim(),
+          role: String(document.getElementById("sysHoiRole")?.value || defaultHoiAdminRole),
+          email: String(document.getElementById("sysHoiEmail")?.value || "").trim(),
+          phone: composePrefixedPhone("sysHoiPhonePrefix", "sysHoiPhoneLocal"),
+          auto_generate_password: autoGenerate,
+          password: autoGenerate ? null : String(document.getElementById("sysHoiPassword")?.value || ""),
+          send_welcome_via: String(document.getElementById("sysHoiWelcomeDispatch")?.value || "BOTH")
+        };
+        const result = await request("/api/users", {
+          method: "POST",
+          body: JSON.stringify(payload)
+        });
+        const roleSelected = normalizeRoleKey(payload.role || "");
+        if (roleSelected === "HEAD_OF_INSTITUTION" || roleSelected === "ADMIN") {
+          const wantsAgreement = String(document.getElementById("sysHoiGenerateAgreement")?.value || "false") === "true";
+          if (wantsAgreement) {
+            const mode = String(document.getElementById("sysHoiAgreementMode")?.value || "EMAIL");
+            if (mode === "EMAIL") {
+              await request(`/api/institutions/${institutionId}/agreement/send`, { method: "POST" });
+            } else {
+              window.open(`/api/institutions/${institutionId}/agreement.pdf`, "_blank");
+            }
+          }
+        }
+        const generated = result?.generated_password ? ` Temporary Password: ${result.generated_password}` : "";
+        alert(`HOI/Admin/System Administrator registered.${generated}`);
+        await renderSystemRegistration({ registrationFocus: "hoi-admin" });
+      } catch (error) {
+        alert(error.message);
+      }
+    });
+
+    ["hoiProfileSearchInstitution", "hoiProfileSearchCounty", "hoiProfileSearchLevel", "hoiProfileSearchCategory"]
+      .forEach((id) => {
+        document.getElementById(id)?.addEventListener("input", () => {
+          const institutionQ = String(document.getElementById("hoiProfileSearchInstitution")?.value || "").trim().toLowerCase();
+          const countyQ = String(document.getElementById("hoiProfileSearchCounty")?.value || "").trim().toLowerCase();
+          const levelQ = String(document.getElementById("hoiProfileSearchLevel")?.value || "").trim().toLowerCase();
+          const categoryQ = String(document.getElementById("hoiProfileSearchCategory")?.value || "").trim().toLowerCase();
+          const filtered = userRows.filter((row) => {
+            const roleKey = normalizeRoleKey(row.role || "");
+            if (!["HEAD_OF_INSTITUTION", "ADMIN", "SYSTEM_ADMINISTRATOR"].includes(roleKey)) return false;
+            if (institutionQ && !String(row.institution_name || "").toLowerCase().includes(institutionQ)) return false;
+            if (countyQ && !String(row.county || "").toLowerCase().includes(countyQ)) return false;
+            const levelValue = String(row.category || "").toLowerCase();
+            if (levelQ && !levelValue.includes(levelQ)) return false;
+            if (categoryQ && !String(formatRoleDisplay(row.role || "")).toLowerCase().includes(categoryQ)) return false;
+            return true;
+          });
+          renderRoleScopedTable("registeredHoiAdminsTableHost", filtered, () => true);
+        });
+      });
+    renderRoleScopedTable("registeredHoiAdminsTableHost", userRows, (row) =>
+      ["HEAD_OF_INSTITUTION", "ADMIN", "SYSTEM_ADMINISTRATOR"].includes(normalizeRoleKey(row.role || ""))
+    );
+
+    const renderFilteredUsersRegister = () => {
+      const hostTable = document.querySelector("#registrationUsersListSection .dashboard-table-wrap table tbody");
+      if (!hostTable) return;
+      const qName = String(document.getElementById("registeredUsersSearchName")?.value || "").trim().toLowerCase();
+      const qInstitution = String(document.getElementById("registeredUsersSearchInstitution")?.value || "").trim().toLowerCase();
+      const rowsFiltered = userRows.filter((row) => {
+        if (qName && !String(row.full_name || "").toLowerCase().includes(qName)) return false;
+        if (qInstitution && !String(row.institution_name || "").toLowerCase().includes(qInstitution)) return false;
+        return true;
+      });
+      const host = document.querySelector("#registrationUsersListSection .dashboard-table-wrap");
+      if (!host) return;
+      host.innerHTML = buildDashboardTable(
+        ["Name", "Username", "Role", "Institution", "Email", "Phone", "Created", "Actions"],
+        rowsFiltered.map((row) => [
+          row.full_name || "-",
+          row.username || "-",
+          formatRoleDisplay(row.role || "-"),
+          row.institution_name || row.institution_id || "-",
+          row.email || "-",
+          row.phone || "-",
+          formatDateTime(row.created_at),
+          renderRegistryUserActions(row)
+        ])
+      );
+      applyCompactIconButtons(document.getElementById("registrationUsersListSection"));
+    };
+    document.getElementById("registeredUsersSearchName")?.addEventListener("input", renderFilteredUsersRegister);
+    document.getElementById("registeredUsersSearchInstitution")?.addEventListener("input", renderFilteredUsersRegister);
+    renderFilteredUsersRegister();
 
     document.getElementById("sysSaveAgreementTemplateButton")?.addEventListener("click", async () => {
       try {
@@ -1172,6 +1840,50 @@ async function renderSystemRegistration() {
         printWindow?.print();
       }, 700);
     });
+    const institutionSection = document.getElementById("registrationInstitutionSection");
+    const developerSection = document.getElementById("registrationDeveloperSection");
+    const hoiAdminSection = document.getElementById("registrationHoiAdminSection");
+    const userSection = document.getElementById("registrationUserSection");
+    const usersListSection = document.getElementById("registrationUsersListSection");
+    const registrationFocus = String(options?.registrationFocus || "").toLowerCase();
+    const hideAllSections = () => {
+      [institutionSection, developerSection, hoiAdminSection, userSection, usersListSection].forEach((section) => {
+        if (section) section.style.display = "none";
+      });
+    };
+    if (registrationFocus === "institution") {
+      hideAllSections();
+      if (institutionSection) institutionSection.style.display = "";
+      document.querySelector("#sysInstitutionName")?.focus();
+      document.querySelector("#sysInstitutionName")?.scrollIntoView({ behavior: "smooth", block: "center" });
+    } else if (registrationFocus === "developers") {
+      hideAllSections();
+      if (developerSection) developerSection.style.display = "";
+      document.querySelector("#sysDevFullName")?.focus();
+      document.querySelector("#sysDevFullName")?.scrollIntoView({ behavior: "smooth", block: "center" });
+    } else if (registrationFocus === "hoi-admin") {
+      hideAllSections();
+      if (hoiAdminSection) hoiAdminSection.style.display = "";
+      document.querySelector("#sysHoiInstitutionId")?.focus();
+      document.querySelector("#sysHoiInstitutionId")?.scrollIntoView({ behavior: "smooth", block: "center" });
+    } else if (registrationFocus === "user") {
+      hideAllSections();
+      if (userSection) userSection.style.display = "";
+      if (usersListSection) usersListSection.style.display = "";
+      document.querySelector("#sysUserFullName")?.focus();
+      document.querySelector("#sysUserFullName")?.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+    if (actorRole !== "SUPER_SYSTEM_DEVELOPER" && developerSection) {
+      developerSection.style.display = "none";
+    }
+    if (actorRole !== "SUPER_SYSTEM_DEVELOPER" && institutionSection) {
+      institutionSection.style.display = "none";
+    }
+    if (actorRole !== "SUPER_SYSTEM_DEVELOPER" && hoiAdminSection) {
+      hoiAdminSection.style.display = "none";
+    }
+    applyCompactIconButtons(document.getElementById("formArea"));
+    applyTemplateVisibility(document.getElementById("formArea"));
   } catch (error) {
     alert(error.message);
   }
@@ -1216,6 +1928,10 @@ async function renderModuleRights() {
       "dashboard-fee-collection",
       "dashboard-outstanding-balances"
     ];
+    const dynamicSidebarSubmoduleKeys = Object.values(SIDEBAR_SUBMODULES)
+      .flatMap((rows) => (Array.isArray(rows) ? rows : []))
+      .map((row) => String(row.id || ""))
+      .filter(Boolean);
     const explicitSubModuleKeys = [
       "admission-register",
       "admission-form",
@@ -1227,12 +1943,23 @@ async function renderModuleRights() {
       "staff-profile-teacher",
       "staff-profile-support-staff",
       "register-institution",
+      "system-register-institution",
+      "system-register-developers",
+      "system-register-hoi-admin",
       "register-users",
+      "system-register-user",
+      "registered-institutions",
+      "registered-developers",
+      "registered-hoi-admins",
+      "users-register",
       "security-login-audit",
       "institution-letterhead-upload",
       "hr-institutional-letters",
       "finance-fee-status",
-      "institutional-registers"
+      "institutional-registers",
+      "system-institution-edit",
+      "system-institution-uploads",
+      ...dynamicSidebarSubmoduleKeys
     ];
     const moduleKeys = Array.from(new Set([...moduleKeysRaw, ...dashboardWidgetKeys, ...explicitSubModuleKeys])).sort((a, b) =>
       String(a).localeCompare(String(b))
@@ -1457,6 +2184,7 @@ async function renderModuleRights() {
     document.getElementById("moduleAccessSelectDownloadButton")?.addEventListener("click", () => setAllForPermission("DOWNLOAD", true));
 
     await loadOverrides();
+    applyCompactIconButtons(document.getElementById("formArea"));
     resetDataTable("Module access matrix loaded.");
   } catch (error) {
     alert(error.message);
@@ -1485,6 +2213,11 @@ async function renderSecurityAudit() {
   try {
     const logs = await request("/api/system/audit-logs?limit=240");
     const rows = Array.isArray(logs?.logs) ? logs.logs : [];
+    const actorRole = normalizeRoleKey(portalContext?.role || "");
+    const roleScopeNote =
+      actorRole === "SUPER_SYSTEM_DEVELOPER"
+        ? "Super System Developer: global/all institution logs"
+        : "Institution scope only: you can see logs for your institution users";
     document.getElementById("cards").innerHTML = `
       <div class="card stats-card metric-emphasis">
         <h4>Audit Events</h4>
@@ -1498,32 +2231,71 @@ async function renderSecurityAudit() {
         <h4>OTP Failures (24h)</h4>
         <p>${formatNumber(logs?.metrics?.otp_fail_events_24h || 0)}</p>
       </div>
+      <div class="card stats-card">
+        <h4>Scope</h4>
+        <p>${escapeHtml(roleScopeNote)}</p>
+      </div>
     `;
     document.getElementById("formArea").innerHTML = `
       <div class="module-header-card">
         <h3>Security & Logging Audit</h3>
-        <p>Super/System Developer reviews assigned/global institutions; HoI/System Administrator reviews institution-scoped activity. Entries include username, institution code, IP address, machine identifier, logging status, login time, activities, and logout time where recorded.</p>
+        <p>Advanced audit workspace with filters and event cards. Entries include username, institution code, IP address, machine identifier, login status, login time, activity done, and logout time.</p>
+      </div>
+      <div class="form-grid">
+        <label>Filter Username</label>
+        <input id="auditFilterUsername" placeholder="username" />
+        <label>Filter Institution Code</label>
+        <input id="auditFilterInstitutionCode" placeholder="institution code" />
+        <label>Filter Action</label>
+        <input id="auditFilterAction" placeholder="action/event" />
       </div>
       <div class="actions-row">
-        <button id="auditScrollLeftButton">◀</button>
-        <button id="auditScrollRightButton">▶</button>
         <button id="refreshAuditLogButton">Refresh</button>
+        <button id="auditExportViewButton">Print View</button>
       </div>
-      <div id="auditStripScroller" class="dashboard-table-wrap" style="overflow-x:auto; white-space:nowrap;">
-        <div id="auditStripList">
-          ${rows.length ? rows.map((row) => toAuditStripMarkup(row)).join("") : '<p class="small-note">No audit log entries found.</p>'}
-        </div>
+      <div id="auditAdvancedGrid" class="audit-advanced-grid">
+        ${rows.length ? rows.map((row) => `
+          <article class="audit-advanced-card"
+            data-audit-username="${escapeHtmlAttribute(String(row.username || ""))}"
+            data-audit-institution="${escapeHtmlAttribute(String(row.institution_code || ""))}"
+            data-audit-action="${escapeHtmlAttribute(String(row.activity_done || row.action || ""))}">
+            <div class="audit-advanced-head">
+              <strong>${escapeHtml(row.username || row.actor_role || "User")}</strong>
+              <span class="audit-event-tag">${escapeHtml(row.activity_done || row.action || "-")}</span>
+            </div>
+            <div class="audit-advanced-body">
+              <div><span>Institution:</span> ${escapeHtml(row.institution_code || "-")}</div>
+              <div><span>IP:</span> ${escapeHtml(row.ip_address || "-")}</div>
+              <div><span>Machine:</span> ${escapeHtml(row.machine_name || "-")}</div>
+              <div><span>Login:</span> ${escapeHtml(formatDateTime(row.login_time || row.created_at))}</div>
+              <div><span>Logout:</span> ${escapeHtml(formatDateTime(row.logout_time))}</div>
+            </div>
+          </article>
+        `).join("") : '<p class="small-note">No audit log entries found.</p>'}
       </div>
     `;
     resetDataTable("Audit strips loaded above.");
-    const scroller = document.getElementById("auditStripScroller");
-    document.getElementById("auditScrollLeftButton")?.addEventListener("click", () => {
-      scroller?.scrollBy({ left: -520, behavior: "smooth" });
-    });
-    document.getElementById("auditScrollRightButton")?.addEventListener("click", () => {
-      scroller?.scrollBy({ left: 520, behavior: "smooth" });
+    const applyAuditFilters = () => {
+      const usernameQ = String(document.getElementById("auditFilterUsername")?.value || "").trim().toLowerCase();
+      const institutionQ = String(document.getElementById("auditFilterInstitutionCode")?.value || "").trim().toLowerCase();
+      const actionQ = String(document.getElementById("auditFilterAction")?.value || "").trim().toLowerCase();
+      document.querySelectorAll("#auditAdvancedGrid .audit-advanced-card").forEach((card) => {
+        const usernameVal = String(card.getAttribute("data-audit-username") || "").toLowerCase();
+        const institutionVal = String(card.getAttribute("data-audit-institution") || "").toLowerCase();
+        const actionVal = String(card.getAttribute("data-audit-action") || "").toLowerCase();
+        const visible =
+          (!usernameQ || usernameVal.includes(usernameQ)) &&
+          (!institutionQ || institutionVal.includes(institutionQ)) &&
+          (!actionQ || actionVal.includes(actionQ));
+        card.style.display = visible ? "" : "none";
+      });
+    };
+    ["auditFilterUsername", "auditFilterInstitutionCode", "auditFilterAction"].forEach((id) => {
+      document.getElementById(id)?.addEventListener("input", applyAuditFilters);
     });
     document.getElementById("refreshAuditLogButton")?.addEventListener("click", renderSecurityAudit);
+    document.getElementById("auditExportViewButton")?.addEventListener("click", () => window.print());
+    applyCompactIconButtons(document.getElementById("formArea"));
   } catch (error) {
     alert(error.message);
   }
@@ -1566,11 +2338,17 @@ async function renderInstitutionsRegistry() {
     const institutionActions = (row) => {
       const rowId = Number(row?.id || 0);
       if (!rowId) return "-";
+      const encoded = JSON.stringify({
+        id: rowId,
+        institution_name: row?.institution_name || "",
+        email: row?.email || "",
+        phone: row?.phone || ""
+      }).replace(/"/g, "&quot;");
       return `
         <div class="search-inline-actions">
           <button class="search-action-icon view" onclick="performRegistryRowAction('institution', { id: ${rowId} }, 'view')" title="View">👁</button>
-          <button class="search-action-icon edit" onclick="performRegistryRowAction('institution', { id: ${rowId} }, 'edit')" title="Edit">✎</button>
-          <button class="search-action-icon save" onclick="performRegistryRowAction('institution', { id: ${rowId} }, 'save')" title="Save">💾</button>
+          <button class="search-action-icon edit" onclick="performRegistryRowAction('institution', ${encoded}, 'edit')" title="Edit">✎</button>
+          <button class="search-action-icon save" onclick="performRegistryRowAction('institution', ${encoded}, 'save')" title="Save">💾</button>
           <button class="search-action-icon print" onclick="performRegistryRowAction('institution', { id: ${rowId} }, 'print')" title="Print">🖨</button>
           <button class="search-action-icon pdf" onclick="performRegistryRowAction('institution', { id: ${rowId} }, 'pdf')" title="PDF">📄</button>
           <button class="search-action-icon delete" onclick="performRegistryRowAction('institution', { id: ${rowId} }, 'delete')" title="Delete">🗑</button>
@@ -1583,11 +2361,17 @@ async function renderInstitutionsRegistry() {
     const userActions = (row) => {
       const rowId = Number(row?.id || 0);
       if (!rowId) return "-";
+      const encoded = JSON.stringify({
+        id: rowId,
+        full_name: row?.full_name || "",
+        email: row?.email || "",
+        phone: row?.phone || ""
+      }).replace(/"/g, "&quot;");
       return `
         <div class="search-inline-actions">
           <button class="search-action-icon view" onclick="performRegistryRowAction('user', { id: ${rowId} }, 'view')" title="View">👁</button>
-          <button class="search-action-icon edit" onclick="performRegistryRowAction('user', { id: ${rowId} }, 'edit')" title="Edit">✎</button>
-          <button class="search-action-icon save" onclick="performRegistryRowAction('user', { id: ${rowId} }, 'save')" title="Save">💾</button>
+          <button class="search-action-icon edit" onclick="performRegistryRowAction('user', ${encoded}, 'edit')" title="Edit">✎</button>
+          <button class="search-action-icon save" onclick="performRegistryRowAction('user', ${encoded}, 'save')" title="Save">💾</button>
           <button class="search-action-icon print" onclick="performRegistryRowAction('user', { id: ${rowId} }, 'print')" title="Print">🖨</button>
           <button class="search-action-icon pdf" onclick="performRegistryRowAction('user', { id: ${rowId} }, 'pdf')" title="PDF">📄</button>
           <button class="search-action-icon delete" onclick="performRegistryRowAction('user', { id: ${rowId} }, 'delete')" title="Delete">🗑</button>
@@ -1601,11 +2385,17 @@ async function renderInstitutionsRegistry() {
       <div class="module-header-card">
         <h3>Registry</h3>
       </div>
-      <div class="form-grid">
+      <div class="form-grid registry-top-controls">
         <label>Registry Scope</label>
         <select id="registryScopeSelect">
           ${scopeOptions.map((option) => `<option value="${option.key}">${escapeHtml(option.label)}</option>`).join("")}
         </select>
+        <div class="search-inline-actions registry-top-actions">
+          <button class="search-action-icon view" id="registryRefreshButton" title="Refresh">↻</button>
+          <button class="search-action-icon print" id="registryPrintButton" title="Print">🖨</button>
+          <button class="search-action-icon pdf" id="registryPdfButton" title="PDF">📄</button>
+          <button class="search-action-icon download" id="registryExcelButton" title="Excel">⬇</button>
+        </div>
       </div>
       <div id="registryScopeTable"></div>
     `;
@@ -1648,11 +2438,482 @@ async function renderInstitutionsRegistry() {
 
     const scopeSelect = document.getElementById("registryScopeSelect");
     scopeSelect?.addEventListener("change", () => renderRegistryScope(scopeSelect.value));
+    document.getElementById("registryRefreshButton")?.addEventListener("click", () => renderRegistryScope(scopeSelect?.value || initialScope));
+    document.getElementById("registryPrintButton")?.addEventListener("click", () => window.print());
+    document.getElementById("registryPdfButton")?.addEventListener("click", () => {
+      if ((scopeSelect?.value || initialScope) === "institution") {
+        window.open("/api/system/registry/export/pdf", "_blank");
+      } else {
+        window.open("/api/users/export/pdf", "_blank");
+      }
+    });
+    document.getElementById("registryExcelButton")?.addEventListener("click", () => {
+      if ((scopeSelect?.value || initialScope) === "institution") {
+        window.open("/api/system/registry/export/excel", "_blank");
+      } else {
+        window.open("/api/users/export/excel", "_blank");
+      }
+    });
     renderRegistryScope(initialScope);
+    applyCompactIconButtons(document.getElementById("formArea"));
     resetDataTable("Registry records loaded above.");
   } catch (error) {
     alert(error.message);
   }
+}
+
+async function renderInstitutionEditModule(options = {}) {
+  const variant = String(options?.variant || "edit");
+  const isUploadVariant = variant === "uploads";
+  setActiveSidebarButton(isUploadVariant ? "system-institution-uploads" : "system-institution-edit");
+  document.getElementById("moduleTitle").textContent = isUploadVariant ? "Institution Uploads" : "Institution Upgrade";
+  if (!isSuperSystemDeveloperPortal()) {
+    alert("Only Super System Developer can access Institution Upgrade.");
+    return loadDashboard();
+  }
+  try {
+    if (!isUploadVariant) {
+      const registry = await request("/api/system/registry");
+      const institutions = Array.isArray(registry?.institutions) ? registry.institutions : [];
+      const users = Array.isArray(registry?.users) ? registry.users : [];
+      const sortedInstitutions = [...institutions].sort((a, b) =>
+        String(a?.institution_name || "").localeCompare(String(b?.institution_name || ""))
+      );
+      document.getElementById("cards").innerHTML = `
+        <div class="card stats-card metric-emphasis">
+          <h4>Institution Upgrade</h4>
+          <p>${formatNumber(sortedInstitutions.length)} institution(s)</p>
+        </div>
+        <div class="card stats-card">
+          <h4>Institution Users</h4>
+          <p>${formatNumber(users.length)}</p>
+        </div>
+        <div class="card stats-card">
+          <h4>Scope</h4>
+          <p>Super System Developer only</p>
+        </div>
+      `;
+      document.getElementById("formArea").innerHTML = `
+        <div class="module-header-card">
+          <h3>Institution Upgrade</h3>
+          <p>Select an institution, then use Edit/Save/Delete to manage institution profile and institution user details.</p>
+        </div>
+        <div class="form-grid">
+          <label>Institution</label>
+          <select id="institutionUpgradeInstitutionId">
+            <option value="">Select institution</option>
+            ${sortedInstitutions.map((row) => `<option value="${Number(row.id || 0)}">${escapeHtml(row.institution_name || "-")} (${escapeHtml(row.institution_code || "-")})</option>`).join("")}
+          </select>
+        </div>
+        <div class="actions-row">
+          <button id="institutionUpgradeEditButton" type="button">Edit Institution</button>
+          <button id="institutionUpgradeSaveButton" type="button">Save Institution</button>
+          <button id="institutionUpgradeDeleteButton" type="button">Delete Institution</button>
+        </div>
+        <div class="form-grid">
+          <label>Institution Name</label>
+          <input id="institutionUpgradeName" disabled />
+          <label>Institution Code</label>
+          <input id="institutionUpgradeCode" class="readonly-field" readonly />
+          <label>County</label>
+          <input id="institutionUpgradeCounty" disabled />
+          <label>Sub County</label>
+          <input id="institutionUpgradeSubCounty" disabled />
+          <label>Location</label>
+          <input id="institutionUpgradeLocation" disabled />
+          <label>Postal Address</label>
+          <input id="institutionUpgradePostalAddress" disabled />
+          <label>Postal Code</label>
+          <input id="institutionUpgradePostalCode" disabled />
+          <label>Town</label>
+          <input id="institutionUpgradeTown" disabled />
+          <label>Email</label>
+          <input id="institutionUpgradeEmail" disabled />
+          <label>Phone</label>
+          <input id="institutionUpgradePhone" disabled />
+        </div>
+        <div class="module-header-card">
+          <h4>Institution User Details</h4>
+        </div>
+        <div class="form-grid">
+          <label>Institution User</label>
+          <select id="institutionUpgradeUserId">
+            <option value="">Select user</option>
+          </select>
+        </div>
+        <div class="actions-row">
+          <button id="institutionUpgradeUserEditButton" type="button">Edit User</button>
+          <button id="institutionUpgradeUserSaveButton" type="button">Save User</button>
+          <button id="institutionUpgradeUserDeleteButton" type="button">Delete User</button>
+        </div>
+        <div class="form-grid">
+          <label>Full Name</label>
+          <input id="institutionUpgradeUserName" disabled />
+          <label>Username</label>
+          <input id="institutionUpgradeUsername" disabled />
+          <label>Email</label>
+          <input id="institutionUpgradeUserEmail" disabled />
+          <label>Phone</label>
+          <input id="institutionUpgradeUserPhone" disabled />
+          <label>Role</label>
+          <input id="institutionUpgradeUserRole" disabled />
+        </div>
+      `;
+      const institutionSelect = document.getElementById("institutionUpgradeInstitutionId");
+      const userSelect = document.getElementById("institutionUpgradeUserId");
+      const institutionFields = {
+        name: document.getElementById("institutionUpgradeName"),
+        code: document.getElementById("institutionUpgradeCode"),
+        county: document.getElementById("institutionUpgradeCounty"),
+        sub_county: document.getElementById("institutionUpgradeSubCounty"),
+        location: document.getElementById("institutionUpgradeLocation"),
+        postal_address: document.getElementById("institutionUpgradePostalAddress"),
+        postal_code: document.getElementById("institutionUpgradePostalCode"),
+        town: document.getElementById("institutionUpgradeTown"),
+        email: document.getElementById("institutionUpgradeEmail"),
+        phone: document.getElementById("institutionUpgradePhone")
+      };
+      const userFields = {
+        full_name: document.getElementById("institutionUpgradeUserName"),
+        username: document.getElementById("institutionUpgradeUsername"),
+        email: document.getElementById("institutionUpgradeUserEmail"),
+        phone: document.getElementById("institutionUpgradeUserPhone"),
+        role: document.getElementById("institutionUpgradeUserRole")
+      };
+      const setInstitutionEditMode = (enabled) => {
+        ["name", "county", "sub_county", "location", "postal_address", "postal_code", "town", "email", "phone"].forEach((key) => {
+          if (institutionFields[key]) institutionFields[key].disabled = !enabled;
+        });
+      };
+      const setUserEditMode = (enabled) => {
+        ["full_name", "username", "email", "phone", "role"].forEach((key) => {
+          if (userFields[key]) userFields[key].disabled = !enabled;
+        });
+      };
+      const userMap = new Map();
+      const refreshUsersForInstitution = (institutionId) => {
+        const scopedUsers = users.filter((row) => Number(row.institution_id || 0) === Number(institutionId || 0));
+        userMap.clear();
+        userSelect.innerHTML = `<option value="">Select user</option>${scopedUsers
+          .map((row) => {
+            const id = Number(row.id || 0);
+            userMap.set(id, row);
+            return `<option value="${id}">${escapeHtml(row.full_name || row.username || `User ${id}`)} (${escapeHtml(
+              row.username || "-"
+            )})</option>`;
+          })
+          .join("")}`;
+      };
+      const loadInstitution = async (institutionId) => {
+        if (!institutionId) {
+          Object.values(institutionFields).forEach((field) => {
+            if (field) field.value = "";
+          });
+          refreshUsersForInstitution(0);
+          return;
+        }
+        const response = await request(`/api/system/registry/institutions/${institutionId}/view`);
+        const institution = response?.institution || {};
+        institutionFields.name.value = institution.institution_name || "";
+        institutionFields.code.value = institution.institution_code || "";
+        institutionFields.county.value = institution.county || "";
+        institutionFields.sub_county.value = institution.sub_county || "";
+        institutionFields.location.value = institution.location || "";
+        institutionFields.postal_address.value = institution.postal_address || "";
+        institutionFields.postal_code.value = institution.postal_code || "";
+        institutionFields.town.value = institution.town || "";
+        institutionFields.email.value = institution.email || "";
+        institutionFields.phone.value = institution.phone || "";
+        refreshUsersForInstitution(institutionId);
+      };
+      const loadUser = (userId) => {
+        const row = userMap.get(Number(userId || 0)) || {};
+        userFields.full_name.value = row.full_name || "";
+        userFields.username.value = row.username || "";
+        userFields.email.value = row.email || "";
+        userFields.phone.value = row.phone || "";
+        userFields.role.value = row.role || "";
+      };
+      institutionSelect?.addEventListener("change", async () => {
+        setInstitutionEditMode(false);
+        setUserEditMode(false);
+        await loadInstitution(Number(institutionSelect.value || 0));
+      });
+      userSelect?.addEventListener("change", () => {
+        setUserEditMode(false);
+        loadUser(Number(userSelect.value || 0));
+      });
+      document.getElementById("institutionUpgradeEditButton")?.addEventListener("click", () => setInstitutionEditMode(true));
+      document.getElementById("institutionUpgradeSaveButton")?.addEventListener("click", async () => {
+        const institutionId = Number(institutionSelect?.value || 0);
+        if (!institutionId) {
+          alert("Select institution first.");
+          return;
+        }
+        await request(`/api/system/registry/institutions/${institutionId}`, {
+          method: "PATCH",
+          body: JSON.stringify({
+            institution_name: institutionFields.name.value,
+            county: institutionFields.county.value,
+            sub_county: institutionFields.sub_county.value,
+            location: institutionFields.location.value,
+            postal_address: institutionFields.postal_address.value,
+            postal_code: institutionFields.postal_code.value,
+            town: institutionFields.town.value,
+            email: institutionFields.email.value,
+            phone: institutionFields.phone.value
+          })
+        });
+        alert("Institution details saved.");
+        setInstitutionEditMode(false);
+        await loadInstitution(institutionId);
+      });
+      document.getElementById("institutionUpgradeDeleteButton")?.addEventListener("click", async () => {
+        const institutionId = Number(institutionSelect?.value || 0);
+        if (!institutionId) {
+          alert("Select institution first.");
+          return;
+        }
+        await performRegistryRowAction("institution", { id: institutionId }, "delete");
+      });
+      document.getElementById("institutionUpgradeUserEditButton")?.addEventListener("click", () => setUserEditMode(true));
+      document.getElementById("institutionUpgradeUserSaveButton")?.addEventListener("click", async () => {
+        const userId = Number(userSelect?.value || 0);
+        if (!userId) {
+          alert("Select user first.");
+          return;
+        }
+        await request(`/api/system/registry/users/${userId}`, {
+          method: "PATCH",
+          body: JSON.stringify({
+            full_name: userFields.full_name.value,
+            username: userFields.username.value,
+            email: userFields.email.value,
+            phone: userFields.phone.value
+          })
+        });
+        alert("Institution user details saved.");
+        setUserEditMode(false);
+      });
+      document.getElementById("institutionUpgradeUserDeleteButton")?.addEventListener("click", async () => {
+        const userId = Number(userSelect?.value || 0);
+        if (!userId) {
+          alert("Select user first.");
+          return;
+        }
+        await performRegistryRowAction("user", { id: userId }, "delete");
+      });
+      setInstitutionEditMode(false);
+      setUserEditMode(false);
+      applyCompactIconButtons(document.getElementById("formArea"));
+      return;
+    }
+
+    const response = await request("/api/system/institution-documents/institutions");
+    const institutions = Array.isArray(response?.institutions) ? response.institutions : [];
+    const moduleOptions = Object.keys(MODULE_DESCRIPTIONS)
+      .filter((key) => !key.startsWith("dashboard"))
+      .sort((a, b) => a.localeCompare(b));
+    const documentTypeOptions = [
+      "institution_photo",
+      "institution_logo",
+      "institution_letterhead",
+      "admission_registration_form_template",
+      "admission_form_template",
+      "admission_letter_template",
+      "assessment_report_template",
+      "exam_script_template",
+      "result_script_template",
+      "rules_and_regulations_template",
+      "other"
+    ];
+    document.getElementById("cards").innerHTML = `
+      <div class="card stats-card metric-emphasis">
+        <h4>${escapeHtml(isUploadVariant ? "Institution Uploads" : "Institution Edit Module")}</h4>
+        <p>${formatNumber(institutions.length)} institutions</p>
+      </div>
+      <div class="card stats-card">
+        <h4>Scope</h4>
+        <p>Super System Developer only</p>
+      </div>
+      <div class="card stats-card">
+        <h4>Auto-Pick</h4>
+        <p>Documents are linked to selected institution immediately.</p>
+      </div>
+    `;
+    document.getElementById("formArea").innerHTML = `
+      <div class="module-header-card">
+        <h3>${escapeHtml(isUploadVariant ? "Institution Uploads" : "Institution Edit Module")}</h3>
+        <p>Search institution, upload templates/logos/letterheads per institution, and classify by module/sub-module so each tenant only sees its own files.</p>
+      </div>
+      <div class="form-grid">
+        <label>Search Institution</label>
+        <input id="institutionDocSearchInput" placeholder="Type institution name/code..." />
+        <label>Institution</label>
+        <select id="institutionDocInstitutionId">
+          <option value="">Select institution</option>
+          ${institutions.map((row) => `<option value="${Number(row.id || 0)}">${escapeHtml(row.institution_name || "-")} (${escapeHtml(row.institution_code || "-")})</option>`).join("")}
+        </select>
+        <label>Module</label>
+        <select id="institutionDocModuleKey">
+          <option value="">Select module</option>
+          ${moduleOptions.map((key) => `<option value="${escapeHtmlAttribute(key)}">${escapeHtml(toLabel(key))}</option>`).join("")}
+        </select>
+        <label>Sub-module</label>
+        <select id="institutionDocSubmoduleKey">
+          <option value="">Select sub-module</option>
+        </select>
+        <label>Sub-sub-module / Area</label>
+        <input id="institutionDocSubSubmoduleKey" placeholder="Optional sub-sub-module or area" />
+        <label>Document Type</label>
+        <select id="institutionDocType">
+          ${documentTypeOptions.map((entry) => `<option value="${escapeHtmlAttribute(entry)}">${escapeHtml(toLabel(entry))}</option>`).join("")}
+        </select>
+        <label>Document Title</label>
+        <input id="institutionDocTitle" placeholder="Friendly title" />
+        <label>Notes / Usage</label>
+        <textarea id="institutionDocNotes" rows="3" placeholder="Usage notes"></textarea>
+      </div>
+      <div class="actions-row">
+        <button id="institutionDocDownloadSampleBtn" type="button">Download Sample</button>
+        <button id="institutionDocDownloadTemplatePackBtn" type="button">Download Template Pack</button>
+        <label class="ax-btn ax-btn--upload ax-btn--sm" for="institutionDocFileInput">Select Upload</label>
+        <input id="institutionDocFileInput" type="file" hidden />
+        <button id="institutionDocSaveBtn" type="button">Upload & Save</button>
+        <button id="institutionDocRefreshBtn" type="button">Refresh List</button>
+      </div>
+      <div id="institutionDocTableHolder"></div>
+    `;
+    const searchEl = document.getElementById("institutionDocSearchInput");
+    const institutionEl = document.getElementById("institutionDocInstitutionId");
+    const moduleEl = document.getElementById("institutionDocModuleKey");
+    const submoduleEl = document.getElementById("institutionDocSubmoduleKey");
+    const subSubmoduleEl = document.getElementById("institutionDocSubSubmoduleKey");
+    const tableHolder = document.getElementById("institutionDocTableHolder");
+
+    const refreshSubmodules = () => {
+      const moduleKey = String(moduleEl?.value || "");
+      const list = Array.isArray(SIDEBAR_SUBMODULES[moduleKey]) ? SIDEBAR_SUBMODULES[moduleKey] : [];
+      if (!submoduleEl) return;
+      submoduleEl.innerHTML = `<option value="">Select sub-module</option>${list
+        .map((entry) => `<option value="${escapeHtmlAttribute(entry.id)}">${escapeHtml(entry.label)}</option>`)
+        .join("")}`;
+    };
+
+    const refreshDocuments = async () => {
+      const institutionId = Number(institutionEl?.value || 0);
+      if (!institutionId) {
+        tableHolder.innerHTML = '<p class="small-note">Select institution to view document mappings.</p>';
+        return;
+      }
+      const q = String(searchEl?.value || "").trim();
+      const docs = await request(
+        `/api/system/institution-documents?institution_id=${institutionId}&q=${encodeURIComponent(q)}`
+      );
+      const rows = Array.isArray(docs?.documents) ? docs.documents : [];
+      tableHolder.innerHTML = buildDashboardTable(
+        ["ID", "Title", "Type", "Module", "Sub-module", "File", "Uploaded", "Actions"],
+        rows.map((row) => [
+          row.id,
+          row.document_title || "-",
+          row.document_type || "-",
+          toLabel(row.module_key || "-"),
+          row.submodule_key ? toLabel(row.submodule_key) : "-",
+          row.file_path || "-",
+          formatDateTime(row.created_at),
+          `<div class="search-inline-actions">
+            <button class="search-action-icon view" data-inst-doc-view="${Number(row.id || 0)}" title="View">👁</button>
+            <button class="search-action-icon delete" data-inst-doc-delete="${Number(row.id || 0)}" title="Delete">🗑</button>
+          </div>`
+        ])
+      );
+      tableHolder.querySelectorAll("[data-inst-doc-view]").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const id = Number(btn.getAttribute("data-inst-doc-view") || 0);
+          const row = rows.find((entry) => Number(entry.id || 0) === id);
+          if (!row?.file_path) return;
+          window.open(row.file_path, "_blank");
+        });
+      });
+      tableHolder.querySelectorAll("[data-inst-doc-delete]").forEach((btn) => {
+        btn.addEventListener("click", async () => {
+          const id = Number(btn.getAttribute("data-inst-doc-delete") || 0);
+          if (!id || !window.confirm("Delete this institution document mapping?")) return;
+          await request(`/api/system/institution-documents/${id}`, { method: "DELETE" });
+          await refreshDocuments();
+        });
+      });
+      applyCompactIconButtons(document.getElementById("formArea"));
+    };
+
+    moduleEl?.addEventListener("change", refreshSubmodules);
+    institutionEl?.addEventListener("change", refreshDocuments);
+    searchEl?.addEventListener("input", () => {
+      window.clearTimeout(searchEl.__institutionDocTimer);
+      searchEl.__institutionDocTimer = window.setTimeout(() => refreshDocuments().catch(() => {}), 250);
+    });
+    document.getElementById("institutionDocRefreshBtn")?.addEventListener("click", refreshDocuments);
+    document.getElementById("institutionDocDownloadSampleBtn")?.addEventListener("click", () => {
+      const payload = [
+        "institution_code,module_key,submodule_key,document_type,document_title,notes,file_path",
+        "001/PJ/001,admission,admission-letter,admission_letter_template,Admission Letter Template,Update placeholders,/uploads/sample-admission-letter.docx"
+      ].join("\n");
+      downloadTextFile("institution-document-template.csv", payload, "text/csv;charset=utf-8");
+    });
+    document.getElementById("institutionDocDownloadTemplatePackBtn")?.addEventListener("click", () => {
+      const payload = [
+        "TEMPLATE PACK",
+        "1) admission_letter_template",
+        "2) admission_form_template",
+        "3) assessment_report_template",
+        "4) exam_script_template",
+        "5) result_script_template",
+        "6) institution_letterhead",
+        "",
+        "Upload each file after selecting institution + module + sub-module."
+      ].join("\n");
+      downloadTextFile("institution-template-pack.txt", payload, "text/plain;charset=utf-8");
+    });
+    document.getElementById("institutionDocSaveBtn")?.addEventListener("click", async () => {
+      const institutionId = Number(institutionEl?.value || 0);
+      if (!institutionId) {
+        alert("Select institution first.");
+        return;
+      }
+      const uploadFile = document.getElementById("institutionDocFileInput")?.files?.[0] || null;
+      if (!uploadFile) {
+        alert("Select a file to upload.");
+        return;
+      }
+      const uploaded = await uploadFileWithAuth(uploadFile);
+      await request("/api/system/institution-documents", {
+        method: "POST",
+        body: JSON.stringify({
+          institution_id: institutionId,
+          module_key: String(moduleEl?.value || "").trim() || null,
+          submodule_key: [String(submoduleEl?.value || "").trim(), String(subSubmoduleEl?.value || "").trim()]
+            .filter(Boolean)
+            .join(" / ") || null,
+          document_type: String(document.getElementById("institutionDocType")?.value || "").trim() || "other",
+          document_title: String(document.getElementById("institutionDocTitle")?.value || "").trim() || uploadFile.name,
+          notes: String(document.getElementById("institutionDocNotes")?.value || "").trim() || null,
+          file_path: uploaded?.filePath || null
+        })
+      });
+      alert("Institution document uploaded and mapped successfully.");
+      document.getElementById("institutionDocFileInput").value = "";
+      await refreshDocuments();
+    });
+    refreshSubmodules();
+    await refreshDocuments();
+    applyCompactIconButtons(document.getElementById("formArea"));
+  } catch (error) {
+    alert(error.message);
+  }
+}
+
+async function renderInstitutionUploadsModule() {
+  return renderInstitutionEditModule({ variant: "uploads" });
 }
 
 async function renderRecycleBin() {
@@ -1784,6 +3045,7 @@ async function renderRecycleBin() {
       alert(JSON.stringify(item, null, 2));
     });
     document.getElementById("refreshRecycleBinButton")?.addEventListener("click", renderRecycleBin);
+    applyCompactIconButtons(document.getElementById("formArea"));
   } catch (error) {
     alert(error.message);
   }
@@ -1799,9 +3061,70 @@ function buildExamGradeFormSelectOptions() {
 }
 
 function buildExamLearningAreaOptions() {
-  const subjectOptions = (Array.isArray(meta?.subjectOptions) ? meta.subjectOptions : [])
+  return buildExamLearningAreaOptionsBySelection({});
+}
+
+function normalizeLookupKey(value = "") {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "");
+}
+
+function collectAllCbcLearningAreas() {
+  if (Array.isArray(meta?.cbcLearningAreas) && meta.cbcLearningAreas.length) {
+    return meta.cbcLearningAreas;
+  }
+  const levels = Array.isArray(meta?.cbcLevels) ? meta.cbcLevels : [];
+  return levels.flatMap((level) => [
+    ...(Array.isArray(level.learningAreas) ? level.learningAreas : []),
+    ...Object.values(level.pathways || {}).flatMap((areas) => (Array.isArray(areas) ? areas : []))
+  ]);
+}
+
+function getSeniorSecondaryPathwayOptions() {
+  const levels = Array.isArray(meta?.cbcLevels) ? meta.cbcLevels : [];
+  const senior = levels.find((level) => normalizeLookupKey(level.key || level.label) === "seniorsecondary");
+  return Object.keys(senior?.pathways || {});
+}
+
+function buildExamLearningAreaOptionsBySelection(selection = {}) {
+  const fallback = (Array.isArray(meta?.subjectOptions) ? meta.subjectOptions : [])
     .filter((item) => String(item || "").toUpperCase() !== "ALL");
-  return subjectOptions.map((s) => `<option value="${escapeHtml(s)}">${escapeHtml(s)}</option>`).join("");
+  const levels = Array.isArray(meta?.cbcLevels) ? meta.cbcLevels : [];
+  if (!levels.length) {
+    return fallback.map((s) => `<option value="${escapeHtml(s)}">${escapeHtml(s)}</option>`).join("");
+  }
+  const grade = String(selection?.grade || "");
+  const form = String(selection?.form || "");
+  const pathway = String(selection?.pathway || "");
+  const chosen = grade || form;
+  const chosenKey = normalizeLookupKey(chosen);
+  const selectedLevel = levels.find((level) =>
+    Array.isArray(level.grades)
+    && level.grades.some((item) => normalizeLookupKey(item) === chosenKey)
+  );
+  const areas = [];
+  if (selectedLevel) {
+    areas.push(...(Array.isArray(selectedLevel.learningAreas) ? selectedLevel.learningAreas : []));
+    const pathways = selectedLevel.pathways || {};
+    const selectedPathwayKey = normalizeLookupKey(pathway);
+    if (selectedPathwayKey && Object.keys(pathways).length) {
+      const matchedPathway = Object.keys(pathways).find((name) => normalizeLookupKey(name) === selectedPathwayKey);
+      if (matchedPathway) {
+        areas.splice(0, areas.length);
+        areas.push(...(Array.isArray(pathways[matchedPathway]) ? pathways[matchedPathway] : []));
+      }
+    } else {
+      Object.values(pathways).forEach((items) => {
+        if (Array.isArray(items)) areas.push(...items);
+      });
+    }
+  } else {
+    areas.push(...collectAllCbcLearningAreas());
+  }
+  const deduped = Array.from(new Set(areas.map((item) => String(item || "").trim()).filter(Boolean)));
+  return deduped.map((s) => `<option value="${escapeHtml(s)}">${escapeHtml(s)}</option>`).join("");
 }
 
 function buildExamTermYearOptions() {
@@ -1816,7 +3139,8 @@ function buildExamTermYearOptions() {
 function renderExamGenerationPanel() {
   const { grades, forms } = buildExamGradeFormSelectOptions();
   const { terms, years } = buildExamTermYearOptions();
-  const learningAreas = buildExamLearningAreaOptions();
+  const learningAreas = buildExamLearningAreaOptionsBySelection({});
+  const pathways = getSeniorSecondaryPathwayOptions();
   const examTypes = (Array.isArray(meta?.examTypes) ? meta.examTypes : ["Head Start", "Mid Term", "End Term", "Mock"]);
   return `
     <div class="module-header-card">
@@ -1833,6 +3157,11 @@ function renderExamGenerationPanel() {
       <select id="examGenGrade"><option value="">Select grade</option>${grades}</select>
       <label>Form</label>
       <select id="examGenForm"><option value="">Select form</option>${forms}</select>
+      <label>Senior Pathway</label>
+      <select id="examGenPathway">
+        <option value="">All pathways</option>
+        ${pathways.map((name) => `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`).join("")}
+      </select>
       <label>Learning Area</label>
       <select id="examGenLearningArea"><option value="">Select learning area</option>${learningAreas}</select>
       <label>Strand</label>
@@ -1859,16 +3188,18 @@ function renderExamGenerationPanel() {
         <option value="per_learner">Per Learner (distinct serial per learner)</option>
       </select>
     </div>
-    <div class="iim-actions-row">
-      <button class="iim-action-btn gold" id="examGenGenerateButton" title="Generate Exam (AI)">⚡ Generate</button>
-      <button class="iim-action-btn success" id="examGenSaveButton" title="Save">💾 Save</button>
-      <button class="iim-action-btn" id="examGenEditButton" title="Edit">✎ Edit</button>
-      <button class="iim-action-btn success" id="examGenSubmitButton" title="Submit">✅ Submit</button>
-      <button class="iim-action-btn" id="examGenViewButton" title="View">👁 View</button>
-      <button class="iim-action-btn warn" id="examGenDownloadButton" title="Download">📄 Download</button>
-      <button class="iim-action-btn warn" id="examGenBulkDownloadButton" title="Bulk Download">📦 Bulk PDF</button>
-      <button class="iim-action-btn muted" id="examGenAnswerSheetButton" title="Generate Answer Sheet">🗒 Answer Sheet</button>
+    <div class="ax-toolbar">
+      <button class="ax-btn ax-btn--generate" id="examGenGenerateButton" title="Generate Exam (AI)">Generate</button>
+      <button class="ax-btn ax-btn--save" id="examGenSaveButton" title="Save">Save</button>
+      <button class="ax-btn ax-btn--edit" id="examGenEditButton" title="Edit">Edit</button>
+      <button class="ax-btn ax-btn--submit" id="examGenSubmitButton" title="Submit">Submit</button>
+      <button class="ax-btn ax-btn--view" id="examGenViewButton" title="View">View</button>
+      <button class="ax-btn ax-btn--download" id="examGenDownloadButton" title="Download">Download</button>
+      <button class="ax-btn ax-btn--export-pdf" id="examGenBulkDownloadButton" title="Bulk Download">Bulk PDF</button>
+      <button class="ax-btn ax-btn--defaults" id="examGenAnswerSheetButton" title="Generate Answer Sheet">Answer Sheet</button>
     </div>
+    <label>Generated Exam Text</label>
+    <textarea id="examGenGeneratedText" rows="8" placeholder="Generated exam text will appear here."></textarea>
     <div id="examGenPreview" class="small-note">Configure the selections above, then press <em>Generate Exam (AI)</em>. Each exam carries a distinct serial number.</div>
   `;
 }
@@ -1888,47 +3219,259 @@ function buildExamSerialNumber({ grade, form, learningArea, examType, term, year
     .join("-");
 }
 
+function downloadTextFile(filename, text, mimeType = "text/plain;charset=utf-8") {
+  const blob = new Blob([String(text || "")], { type: mimeType });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+function csvEscape(value) {
+  const raw = String(value ?? "");
+  if (!/[",\n]/.test(raw)) return raw;
+  return `"${raw.replace(/"/g, "\"\"")}"`;
+}
+
+function rowsToCsv(rows, headers) {
+  if (!Array.isArray(rows) || !rows.length) return "";
+  const columns = Array.isArray(headers) && headers.length ? headers : Object.keys(rows[0]);
+  return [
+    columns.join(","),
+    ...rows.map((row) => columns.map((column) => csvEscape(row[column])).join(","))
+  ].join("\n");
+}
+
 function wireExamGenerationPanel() {
-  const generate = () => {
+  const getPayload = () => {
     const grade = String(document.getElementById("examGenGrade")?.value || "");
     const form = String(document.getElementById("examGenForm")?.value || "");
+    const pathway = String(document.getElementById("examGenPathway")?.value || "");
     if (grade && form) {
       alert("Choose either Grade or Form, not both.");
       return null;
     }
     const examType = String(document.getElementById("examGenType")?.value || "");
     const learningArea = String(document.getElementById("examGenLearningArea")?.value || "");
+    const strand = String(document.getElementById("examGenStrand")?.value || "");
+    const subStrand = String(document.getElementById("examGenSubStrand")?.value || "");
     const term = String(document.getElementById("examGenTerm")?.value || "");
     const year = String(document.getElementById("examGenYear")?.value || "");
     const stream = String(document.getElementById("examGenStream")?.value || "");
+    const mode = String(document.getElementById("examGenMode")?.value || "bulk_class");
+    const section = String(document.getElementById("examGenSection")?.value || "A");
     if (!examType || (!grade && !form) || !learningArea || !term || !year) {
       alert("Examination type, grade or form, learning area, term and year are required.");
       return null;
     }
-    const serial = buildExamSerialNumber({ grade, form, learningArea, examType, term, year, stream });
-    return { serial, grade, form, examType, learningArea, term, year, stream };
+    return {
+      title: `${examType} - ${learningArea}`,
+      grade,
+      form_name: form,
+      stream,
+      subject: learningArea,
+      learning_area: learningArea,
+      strand,
+      sub_strand: subStrand,
+      term,
+      year: Number(year),
+      exam_type: examType,
+      mode,
+      section,
+      pathway
+    };
   };
-  document.getElementById("examGenGenerateButton")?.addEventListener("click", () => {
-    const result = generate();
-    if (!result) return;
+
+  const updateLearningAreaOptions = () => {
+    const grade = String(document.getElementById("examGenGrade")?.value || "");
+    const form = String(document.getElementById("examGenForm")?.value || "");
+    const pathway = String(document.getElementById("examGenPathway")?.value || "");
+    const learningAreaEl = document.getElementById("examGenLearningArea");
+    if (!learningAreaEl) return;
+    const selected = String(learningAreaEl.value || "");
+    learningAreaEl.innerHTML = `<option value="">Select learning area</option>${buildExamLearningAreaOptionsBySelection({
+      grade,
+      form,
+      pathway
+    })}`;
+    if (selected && Array.from(learningAreaEl.options).some((option) => option.value === selected)) {
+      learningAreaEl.value = selected;
+    }
+  };
+
+  const gradeEl = document.getElementById("examGenGrade");
+  const formEl = document.getElementById("examGenForm");
+  gradeEl?.addEventListener("change", () => {
+    if (String(gradeEl.value || "").trim() && formEl) formEl.value = "";
+    updateLearningAreaOptions();
+  });
+  formEl?.addEventListener("change", () => {
+    if (String(formEl.value || "").trim() && gradeEl) gradeEl.value = "";
+    updateLearningAreaOptions();
+  });
+  document.getElementById("examGenPathway")?.addEventListener("change", updateLearningAreaOptions);
+  updateLearningAreaOptions();
+
+  document.getElementById("examGenGenerateButton")?.addEventListener("click", async () => {
+    const payload = getPayload();
+    if (!payload) return;
     const preview = document.getElementById("examGenPreview");
-    if (preview) {
-      preview.innerHTML = `Generated exam serial: <strong>${escapeHtml(result.serial)}</strong> · Strand-aligned content prepared.`;
+    try {
+      const generated = await request("/api/academic/exams/auto-generate", {
+        method: "POST",
+        body: JSON.stringify(payload)
+      });
+      const serialAllocation = await request("/api/academic/exams/allocate-serials", {
+        method: "POST",
+        body: JSON.stringify(payload)
+      });
+      examPanelState.generatedExam = {
+        id: generated.id,
+        examText: generated.examText,
+        payload
+      };
+      examPanelState.serials = Array.isArray(serialAllocation.serials) ? serialAllocation.serials : [];
+      const generatedTextEl = document.getElementById("examGenGeneratedText");
+      if (generatedTextEl) {
+        generatedTextEl.value = String(generated.examText || "");
+      }
+      if (preview) {
+        const serialExample = examPanelState.serials[0]?.serial || buildExamSerialNumber({
+          grade: payload.grade,
+          form: payload.form_name,
+          learningArea: payload.learning_area,
+          examType: payload.exam_type,
+          term: payload.term,
+          year: payload.year,
+          stream: payload.stream
+        });
+        preview.innerHTML = `Generated exam ID <strong>${escapeHtml(String(generated.id || "-"))}</strong> · Serial sample <strong>${escapeHtml(serialExample)}</strong> · ${
+          examPanelState.serials.length
+        } serial(s) allocated.`;
+      }
+    } catch (error) {
+      alert(error.message);
     }
   });
-  document.getElementById("examGenSaveButton")?.addEventListener("click", () => alert("Exam draft saved locally."));
-  document.getElementById("examGenEditButton")?.addEventListener("click", () => alert("Exam draft is editable in the form above."));
-  document.getElementById("examGenSubmitButton")?.addEventListener("click", () => alert("Exam submitted for printing/distribution."));
-  document.getElementById("examGenViewButton")?.addEventListener("click", () => alert("Exam preview opened."));
-  document.getElementById("examGenDownloadButton")?.addEventListener("click", () => alert("Exam download prepared. Use Bulk Download for whole grade."));
-  document.getElementById("examGenBulkDownloadButton")?.addEventListener("click", () => alert("Bulk download prepared."));
-  document.getElementById("examGenAnswerSheetButton")?.addEventListener("click", () => alert("Answer sheet generated alongside the exam."));
+
+  document.getElementById("examGenSaveButton")?.addEventListener("click", async () => {
+    const generatedText = String(document.getElementById("examGenGeneratedText")?.value || "").trim();
+    if (!examPanelState.generatedExam?.id) {
+      alert("Generate an exam first.");
+      return;
+    }
+    try {
+      await request(`/api/academic/exams/${examPanelState.generatedExam.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          generated_exam_text: generatedText || examPanelState.generatedExam.examText
+        })
+      });
+      alert("Exam draft saved.");
+    } catch (error) {
+      alert(error.message);
+    }
+  });
+
+  document.getElementById("examGenEditButton")?.addEventListener("click", async () => {
+    const examId = Number(prompt("Enter exam ID to edit:", String(examPanelState.generatedExam?.id || "")) || 0);
+    if (!examId) return;
+    const nextTitle = prompt("Update title (leave blank to keep):", "") || "";
+    try {
+      await request(`/api/academic/exams/${examId}`, {
+        method: "PATCH",
+        body: JSON.stringify({ title: nextTitle || undefined })
+      });
+      alert("Exam updated.");
+    } catch (error) {
+      alert(error.message);
+    }
+  });
+
+  document.getElementById("examGenSubmitButton")?.addEventListener("click", () => {
+    if (!examPanelState.generatedExam?.id) {
+      alert("Generate an exam first.");
+      return;
+    }
+    alert(`Exam ${examPanelState.generatedExam.id} submitted for printing/distribution.`);
+  });
+
+  document.getElementById("examGenViewButton")?.addEventListener("click", async () => {
+    try {
+      const rows = await request("/api/academic/exams?limit=25");
+      const latest = Array.isArray(rows) ? rows.slice(0, 10) : [];
+      const preview = document.getElementById("examGenPreview");
+      if (preview) {
+        preview.innerHTML = latest.length
+          ? latest
+            .map((row) => `#${row.id} | ${row.title || "-"} | ${row.grade || row.stream || "-"} | ${row.subject || "-"} | ${row.term || "-"} ${row.year || ""}`)
+            .join("<br/>")
+          : "No saved exams found.";
+      }
+    } catch (error) {
+      alert(error.message);
+    }
+  });
+
+  document.getElementById("examGenDownloadButton")?.addEventListener("click", () => {
+    const text = String(document.getElementById("examGenGeneratedText")?.value || examPanelState.generatedExam?.examText || "");
+    if (!text.trim()) {
+      alert("Generate an exam first.");
+      return;
+    }
+    downloadTextFile("generated-exam.txt", text);
+  });
+
+  document.getElementById("examGenBulkDownloadButton")?.addEventListener("click", () => {
+    if (!examPanelState.serials.length) {
+      alert("Generate an exam first to allocate serials.");
+      return;
+    }
+    const csv = rowsToCsv(examPanelState.serials, [
+      "serial",
+      "learner_id",
+      "learner_name",
+      "admission_number",
+      "grade",
+      "stream"
+    ]);
+    downloadTextFile("exam-serials.csv", csv, "text/csv;charset=utf-8");
+  });
+
+  document.getElementById("examGenAnswerSheetButton")?.addEventListener("click", () => {
+    const payload = examPanelState.generatedExam?.payload;
+    if (!payload) {
+      alert("Generate an exam first.");
+      return;
+    }
+    const text = [
+      "ANSWER SHEET",
+      `Exam: ${payload.title}`,
+      `Level: ${payload.grade || payload.form_name}`,
+      `Learning Area: ${payload.learning_area}`,
+      `Term/Year: ${payload.term} ${payload.year}`,
+      "",
+      "Learner Name: ____________________________",
+      "Admission Number: ________________________",
+      "Stream: _________________________________",
+      "",
+      "Answer Section:",
+      "1.",
+      "2.",
+      "3.",
+      "4."
+    ].join("\n");
+    downloadTextFile("answer-sheet.txt", text);
+  });
 }
 
 function renderExamMarksEntryPanel() {
   const { grades, forms } = buildExamGradeFormSelectOptions();
   const { terms, years } = buildExamTermYearOptions();
-  const learningAreas = buildExamLearningAreaOptions();
+  const learningAreas = buildExamLearningAreaOptionsBySelection({});
+  const examTypes = (Array.isArray(meta?.examTypes) ? meta.examTypes : ["Head Start", "Mid Term", "End Term", "Mock"]);
   return `
     <div class="module-header-card">
       <h4>Marks Entry Sub-Module</h4>
@@ -1943,10 +3486,17 @@ function renderExamMarksEntryPanel() {
       <select id="marksEntryForm"><option value="">Select form</option>${forms}</select>
       <label>Stream</label>
       <input id="marksEntryStream" placeholder="Stream (where necessary)" />
+      <label>Learner</label>
+      <select id="marksEntryLearner"><option value="">Select learner</option></select>
       <label>Learning Area</label>
       <select id="marksEntryLearningArea"><option value="">Select learning area</option>${learningAreas}</select>
-      <label>Exam Title</label>
-      <input id="marksEntryExamTitle" placeholder="Exam title" />
+      <label>Exam Type</label>
+      <select id="marksEntryExamType">
+        <option value="">Select exam type</option>
+        ${examTypes.map((item) => `<option value="${escapeHtml(item)}">${escapeHtml(item)}</option>`).join("")}
+      </select>
+      <label>Record ID (for edit/delete)</label>
+      <input id="marksEntryRecordId" type="number" min="1" placeholder="Existing record ID" />
       <label>Term</label>
       <select id="marksEntryTerm"><option value="">Select term</option>${terms}</select>
       <label>Year</label>
@@ -1962,37 +3512,244 @@ function renderExamMarksEntryPanel() {
         <option value="BELOW">Below Expectation</option>
       </select>
     </div>
-    <div class="iim-actions-row">
-      <button class="iim-action-btn" id="marksEntryViewButton" title="View">👁 View</button>
-      <button class="iim-action-btn success" id="marksEntrySaveButton" title="Save">💾 Save</button>
-      <button class="iim-action-btn" id="marksEntryEditButton" title="Edit">✎ Edit</button>
-      <button class="iim-action-btn delete" id="marksEntryDeleteButton" title="Delete">🗑 Delete</button>
-      <button class="iim-action-btn warn" id="marksEntryDownloadPdfButton" title="Download PDF">📄 PDF</button>
-      <button class="iim-action-btn warn" id="marksEntryDownloadExcelButton" title="Download Excel">📊 Excel</button>
-      <button class="iim-action-btn muted" id="marksEntryPrintButton" title="Print">🖨 Print</button>
-      <button class="iim-action-btn gold" id="marksEntryDownloadSampleButton" title="Download Sample">⬇ Sample</button>
-      <button class="iim-action-btn" id="marksEntryUploadAmendedButton" title="Upload Amended Sample">⬆ Upload</button>
-      <input id="marksEntryUploadInput" type="file" accept=".xlsx,.csv" style="display:none;" />
+    <div class="ax-toolbar">
+      <button class="ax-btn ax-btn--view" id="marksEntryViewButton" title="View">View</button>
+      <button class="ax-btn ax-btn--save" id="marksEntrySaveButton" title="Save">Save</button>
+      <button class="ax-btn ax-btn--edit" id="marksEntryEditButton" title="Edit">Edit</button>
+      <button class="ax-btn ax-btn--delete" id="marksEntryDeleteButton" title="Delete">Delete</button>
+      <button class="ax-btn ax-btn--export-pdf" id="marksEntryDownloadPdfButton" title="Download PDF">PDF</button>
+      <button class="ax-btn ax-btn--export-excel" id="marksEntryDownloadExcelButton" title="Download Excel">Excel</button>
+      <button class="ax-btn ax-btn--print" id="marksEntryPrintButton" title="Print">Print</button>
+      <button class="ax-btn ax-btn--download" id="marksEntryDownloadSampleButton" title="Download Sample" data-template-control="true">Sample</button>
+      <button class="ax-btn ax-btn--upload" id="marksEntryUploadAmendedButton" title="Upload Amended Sample" data-template-control="true">Upload</button>
+      <input id="marksEntryUploadInput" type="file" accept=".xlsx,.csv" style="display:none;" data-template-control="true" />
+      <button class="ax-btn ax-btn--refresh" id="marksEntryRefreshLearnersButton" title="Refresh Learners">Refresh Learners</button>
     </div>
+    <div id="marksEntryOutput" class="small-note">Use Save to store marks for selected learner.</div>
   `;
 }
 
 function wireExamMarksEntryPanel() {
-  document.getElementById("marksEntryViewButton")?.addEventListener("click", () => alert("Marks view opened."));
-  document.getElementById("marksEntrySaveButton")?.addEventListener("click", () => alert("Marks entry saved."));
-  document.getElementById("marksEntryEditButton")?.addEventListener("click", () => alert("Marks entry now editable."));
-  document.getElementById("marksEntryDeleteButton")?.addEventListener("click", () => {
-    if (window.confirm("Delete this marks entry?")) alert("Marks entry deleted.");
+  const output = document.getElementById("marksEntryOutput");
+  const learnerSelect = document.getElementById("marksEntryLearner");
+  const gradeEl = document.getElementById("marksEntryGrade");
+  const formEl = document.getElementById("marksEntryForm");
+  const streamEl = document.getElementById("marksEntryStream");
+  const examTypeEl = document.getElementById("marksEntryExamType");
+  const learningAreaEl = document.getElementById("marksEntryLearningArea");
+  const scoreEl = document.getElementById("marksEntryScore");
+  const termEl = document.getElementById("marksEntryTerm");
+  const yearEl = document.getElementById("marksEntryYear");
+  const levelEl = document.getElementById("marksEntryCbcLevel");
+  const recordIdEl = document.getElementById("marksEntryRecordId");
+
+  const learnerMap = new Map();
+  const refreshLearningAreas = () => {
+    if (!learningAreaEl) return;
+    const selected = String(learningAreaEl.value || "");
+    learningAreaEl.innerHTML = `<option value="">Select learning area</option>${buildExamLearningAreaOptionsBySelection({
+      grade: gradeEl?.value || "",
+      form: formEl?.value || ""
+    })}`;
+    if (selected && Array.from(learningAreaEl.options).some((option) => option.value === selected)) {
+      learningAreaEl.value = selected;
+    }
+  };
+  refreshLearningAreas();
+
+  gradeEl?.addEventListener("change", () => {
+    if (String(gradeEl.value || "").trim() && formEl) formEl.value = "";
+    refreshLearningAreas();
   });
-  document.getElementById("marksEntryDownloadPdfButton")?.addEventListener("click", () => alert("PDF download prepared."));
-  document.getElementById("marksEntryDownloadExcelButton")?.addEventListener("click", () => alert("Excel download prepared."));
-  document.getElementById("marksEntryPrintButton")?.addEventListener("click", () => window.print());
-  document.getElementById("marksEntryDownloadSampleButton")?.addEventListener("click", () => alert("Sample marks template prepared for download."));
+  formEl?.addEventListener("change", () => {
+    if (String(formEl.value || "").trim() && gradeEl) gradeEl.value = "";
+    refreshLearningAreas();
+  });
+
+  const loadLearners = async () => {
+    const grade = String(gradeEl?.value || "");
+    const form = String(formEl?.value || "");
+    const stream = String(streamEl?.value || "");
+    const searchTokens = [grade, form, stream].filter(Boolean).join(" ");
+    try {
+      const rows = await request(`/api/admission/learners?limit=500&search=${encodeURIComponent(searchTokens)}`);
+      const learners = (Array.isArray(rows) ? rows : []).filter((row) => {
+        if (grade && String(row.grade || "") !== grade) return false;
+        if (form && String(row.form_name || "") !== form) return false;
+        if (stream && String(row.stream || "").toLowerCase() !== stream.toLowerCase()) return false;
+        return true;
+      });
+      learnerMap.clear();
+      learnerSelect.innerHTML = `<option value="">Select learner</option>${learners
+        .map((row) => {
+          learnerMap.set(String(row.id), row);
+          const learnerCode = formatLearnerCode(row.learner_serial_number || row.id) || "-";
+          return `<option value="${escapeHtml(String(row.id))}">${escapeHtml(row.full_name || "-")} (${escapeHtml(
+            row.admission_number || row.upi_number || String(row.id)
+          )}) • ${escapeHtml(learnerCode)}</option>`;
+        })
+        .join("")}`;
+      if (output) output.textContent = `Loaded ${learners.length} learner(s) for marks entry.`;
+    } catch (error) {
+      if (output) output.textContent = `Failed to load learners: ${error.message}`;
+    }
+  };
+
+  document.getElementById("marksEntryRefreshLearnersButton")?.addEventListener("click", loadLearners);
+  loadLearners();
+
+  document.getElementById("marksEntrySaveButton")?.addEventListener("click", async () => {
+    const learnerId = String(learnerSelect?.value || "");
+    const learner = learnerMap.get(learnerId);
+    if (!learnerId || !learner) {
+      alert("Select a learner first.");
+      return;
+    }
+    const score = Number(scoreEl?.value || 0);
+    const examType = String(examTypeEl?.value || "");
+    const learningArea = String(learningAreaEl?.value || "");
+    if (!examType || !learningArea || !Number.isFinite(score)) {
+      alert("Exam type, learning area and marks are required.");
+      return;
+    }
+    const payload = {
+      learner_id: Number(learnerId),
+      learner_name: learner.full_name || "",
+      upi_number: learner.upi_number || "",
+      assessment_number: learner.assessment_number || "",
+      birth_certificate_number: learner.birth_certificate_number || "",
+      grade: String(learner.grade || gradeEl?.value || ""),
+      stream: String(streamEl?.value || learner.stream || ""),
+      exam_type: examType,
+      subject: learningArea,
+      marks: score,
+      percentage: score,
+      cbc_grade_band: String(levelEl?.value || ""),
+      term: String(termEl?.value || ""),
+      year: Number(yearEl?.value || 0) || null
+    };
+    try {
+      const result = await request("/api/academic/marks", {
+        method: "POST",
+        body: JSON.stringify(payload)
+      });
+      if (recordIdEl) recordIdEl.value = String(result.id || "");
+      if (output) output.textContent = `Marks saved for ${payload.learner_name}. Record ID: ${result.id || "-"}.`;
+    } catch (error) {
+      alert(error.message);
+    }
+  });
+
+  document.getElementById("marksEntryViewButton")?.addEventListener("click", async () => {
+    try {
+      const search = [String(gradeEl?.value || ""), String(formEl?.value || ""), String(streamEl?.value || ""), String(learningAreaEl?.value || "")]
+        .filter(Boolean)
+        .join(" ");
+      const rows = await request(`/api/academic/marks?limit=120&search=${encodeURIComponent(search)}`);
+      const list = Array.isArray(rows) ? rows : [];
+      examPanelState.marksRows = list;
+      if (output) {
+        output.innerHTML = list.length
+          ? list.slice(0, 15).map((row) => `#${row.id} | ${escapeHtml(row.learner_name || "-")} | ${escapeHtml(
+            row.subject || "-"
+          )} | ${escapeHtml(String(row.marks || "-"))} | ${escapeHtml(row.term || "-")} ${escapeHtml(String(row.year || ""))}`).join("<br/>")
+          : "No marks found for selected filter.";
+      }
+    } catch (error) {
+      alert(error.message);
+    }
+  });
+
+  document.getElementById("marksEntryEditButton")?.addEventListener("click", async () => {
+    const targetId = Number(recordIdEl?.value || prompt("Enter marks record ID to edit:", "") || 0);
+    if (!targetId) return;
+    const score = Number(prompt("Enter updated marks:", String(scoreEl?.value || "0")) || 0);
+    const cbcBand = prompt("Enter CBC band:", String(levelEl?.value || "")) || "";
+    try {
+      await request(`/api/academic/marks/${targetId}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          marks: score,
+          percentage: score,
+          cbc_grade_band: cbcBand
+        })
+      });
+      if (output) output.textContent = `Marks record ${targetId} updated.`;
+    } catch (error) {
+      alert(error.message);
+    }
+  });
+
+  document.getElementById("marksEntryDeleteButton")?.addEventListener("click", async () => {
+    const targetId = Number(recordIdEl?.value || prompt("Enter marks record ID to delete:", "") || 0);
+    if (!targetId) return;
+    if (!window.confirm(`Delete marks record #${targetId}?`)) return;
+    try {
+      await request(`/api/academic/marks/${targetId}`, { method: "DELETE" });
+      if (output) output.textContent = `Marks record ${targetId} deleted.`;
+    } catch (error) {
+      alert(error.message);
+    }
+  });
+
+  document.getElementById("marksEntryDownloadPdfButton")?.addEventListener("click", () => {
+    if (!examPanelState.marksRows.length) {
+      alert("View marks first.");
+      return;
+    }
+    const lines = examPanelState.marksRows.map((row) =>
+      `${row.learner_name || "-"} | ${row.subject || "-"} | ${row.marks || "-"} | ${row.cbc_grade_band || "-"}`
+    );
+    downloadTextFile("marks-summary.txt", lines.join("\n"));
+  });
+
+  document.getElementById("marksEntryDownloadExcelButton")?.addEventListener("click", () => {
+    if (!examPanelState.marksRows.length) {
+      alert("View marks first.");
+      return;
+    }
+    downloadTextFile("marks-summary.csv", rowsToCsv(examPanelState.marksRows), "text/csv;charset=utf-8");
+  });
+
+  document.getElementById("marksEntryPrintButton")?.addEventListener("click", () => {
+    if (!examPanelState.marksRows.length) {
+      alert("View marks first.");
+      return;
+    }
+    const popup = window.open("", "_blank");
+    popup.document.write(`<pre>${escapeHtml(examPanelState.marksRows.map((row) =>
+      `${row.learner_name || "-"} | ${row.subject || "-"} | ${row.marks || "-"} | ${row.cbc_grade_band || "-"}`
+    ).join("\n"))}</pre>`);
+    popup.document.close();
+    popup.print();
+  });
+
+  document.getElementById("marksEntryDownloadSampleButton")?.addEventListener("click", () => {
+    const sampleRows = [
+      {
+        learner_id: "123",
+        learner_name: "Sample Learner",
+        grade: "Grade 7",
+        stream: "East",
+        exam_type: "CAT",
+        subject: "English",
+        marks: "82",
+        percentage: "82",
+        cbc_grade_band: "MEETING",
+        term: "Term One",
+        year: String(new Date().getFullYear())
+      }
+    ];
+    downloadTextFile("marks-entry-sample.csv", rowsToCsv(sampleRows), "text/csv;charset=utf-8");
+  });
+
   document.getElementById("marksEntryUploadAmendedButton")?.addEventListener("click", () => {
     document.getElementById("marksEntryUploadInput")?.click();
   });
-  document.getElementById("marksEntryUploadInput")?.addEventListener("change", () => {
-    alert("Amended sample uploaded.");
+  document.getElementById("marksEntryUploadInput")?.addEventListener("change", (event) => {
+    const file = event?.target?.files?.[0];
+    if (!file) return;
+    if (output) output.textContent = `Received amended marks file: ${file.name}. You can now save entries using loaded learners.`;
   });
 }
 
@@ -2018,38 +3775,147 @@ function renderExamResultScriptsPanel() {
       <select id="resultForm"><option value="">Select form</option>${forms}</select>
       <label>Stream</label>
       <input id="resultStream" placeholder="Stream (when applicable)" />
+      <label>Learner Key (for learner scope)</label>
+      <input id="resultLearnerKey" placeholder="Learner name / ID / admission no" />
       <label>Term</label>
       <select id="resultTerm"><option value="">Select term</option>${terms}</select>
       <label>Year</label>
       <select id="resultYear"><option value="">Select year</option>${years}</select>
     </div>
-    <div class="iim-actions-row">
-      <button class="iim-action-btn gold" id="resultGenerateButton" title="Generate Result Script">⚡ Generate</button>
-      <button class="iim-action-btn" id="resultViewButton" title="View">👁 View</button>
-      <button class="iim-action-btn" id="resultEditButton" title="Edit/Amend">✎ Edit</button>
-      <button class="iim-action-btn muted" id="resultPrintButton" title="Print">🖨 Print</button>
-      <button class="iim-action-btn warn" id="resultDownloadPdfButton" title="Download PDF">📄 PDF</button>
-      <button class="iim-action-btn warn" id="resultDownloadExcelButton" title="Download Excel">📊 Excel</button>
-      <button class="iim-action-btn gold" id="resultDownloadSampleButton" title="Download Sample">⬇ Sample</button>
-      <button class="iim-action-btn" id="resultUploadAmendedButton" title="Upload Amended Sample">⬆ Upload</button>
-      <input id="resultUploadInput" type="file" accept=".xlsx,.csv" style="display:none;" />
+    <div class="ax-toolbar">
+      <button class="ax-btn ax-btn--generate" id="resultGenerateButton" title="Generate Result Script">Generate</button>
+      <button class="ax-btn ax-btn--view" id="resultViewButton" title="View">View</button>
+      <button class="ax-btn ax-btn--edit" id="resultEditButton" title="Edit/Amend">Edit</button>
+      <button class="ax-btn ax-btn--print" id="resultPrintButton" title="Print">Print</button>
+      <button class="ax-btn ax-btn--export-pdf" id="resultDownloadPdfButton" title="Download PDF">PDF</button>
+      <button class="ax-btn ax-btn--export-excel" id="resultDownloadExcelButton" title="Download Excel">Excel</button>
+      <button class="ax-btn ax-btn--download" id="resultDownloadSampleButton" title="Download Sample" data-template-control="true">Sample</button>
+      <button class="ax-btn ax-btn--upload" id="resultUploadAmendedButton" title="Upload Amended Sample" data-template-control="true">Upload</button>
+      <input id="resultUploadInput" type="file" accept=".xlsx,.csv" style="display:none;" data-template-control="true" />
     </div>
+    <div id="resultScriptsOutput" class="small-note">Generate ranked results to view scripts.</div>
   `;
 }
 
 function wireExamResultScriptsPanel() {
-  document.getElementById("resultGenerateButton")?.addEventListener("click", () => alert("Result script generated."));
-  document.getElementById("resultViewButton")?.addEventListener("click", () => alert("Result script opened for viewing."));
-  document.getElementById("resultEditButton")?.addEventListener("click", () => alert("Result script editable."));
-  document.getElementById("resultPrintButton")?.addEventListener("click", () => window.print());
-  document.getElementById("resultDownloadPdfButton")?.addEventListener("click", () => alert("PDF download prepared."));
-  document.getElementById("resultDownloadExcelButton")?.addEventListener("click", () => alert("Excel download prepared."));
-  document.getElementById("resultDownloadSampleButton")?.addEventListener("click", () => alert("Sample result script prepared."));
+  const output = document.getElementById("resultScriptsOutput");
+  const applyScopeFilter = (rows) => {
+    const scope = String(document.getElementById("resultScope")?.value || "learner");
+    const grade = String(document.getElementById("resultGrade")?.value || "");
+    const form = String(document.getElementById("resultForm")?.value || "");
+    const stream = String(document.getElementById("resultStream")?.value || "");
+    const learnerKey = String(document.getElementById("resultLearnerKey")?.value || "").toLowerCase();
+    const targetGrade = grade || form;
+    return (Array.isArray(rows) ? rows : []).filter((row) => {
+      if (targetGrade && String(row.grade || "").toLowerCase() !== targetGrade.toLowerCase()) return false;
+      if (stream && String(row.stream || "").toLowerCase() !== stream.toLowerCase()) return false;
+      if (scope === "learner" && learnerKey) {
+        return String(row.learner_name || "").toLowerCase().includes(learnerKey)
+          || String(row.learner_id || "").toLowerCase().includes(learnerKey);
+      }
+      if (scope === "stream") {
+        return Boolean(stream);
+      }
+      if (scope === "grade") {
+        return Boolean(targetGrade);
+      }
+      return true;
+    });
+  };
+
+  document.getElementById("resultGenerateButton")?.addEventListener("click", async () => {
+    const grade = String(document.getElementById("resultGrade")?.value || "");
+    const form = String(document.getElementById("resultForm")?.value || "");
+    const stream = String(document.getElementById("resultStream")?.value || "");
+    const term = String(document.getElementById("resultTerm")?.value || "");
+    const year = Number(document.getElementById("resultYear")?.value || 0) || "";
+    const params = new URLSearchParams();
+    if (grade || form) params.set("grade", grade || form);
+    if (stream) params.set("stream", stream);
+    if (term) params.set("term", term);
+    if (year) params.set("year", year);
+    try {
+      const result = await request(`/api/academic/results/ranked?${params.toString()}`);
+      const ranked = applyScopeFilter(result?.ranked || []);
+      examPanelState.resultRows = ranked;
+      if (output) {
+        output.innerHTML = ranked.length
+          ? ranked.slice(0, 30).map((row) =>
+            `${row.position}. ${escapeHtml(row.learner_name || "-")} | ${escapeHtml(row.grade || "-")} ${
+              escapeHtml(row.stream || "-")
+            } | Avg ${escapeHtml(String(row.avg_pct || "0"))}%`
+          ).join("<br/>")
+          : "No ranked results found for selected filters.";
+      }
+    } catch (error) {
+      alert(error.message);
+    }
+  });
+
+  document.getElementById("resultViewButton")?.addEventListener("click", () => {
+    if (!examPanelState.resultRows.length) {
+      alert("Generate result scripts first.");
+      return;
+    }
+    if (output) {
+      output.innerHTML = examPanelState.resultRows.slice(0, 30).map((row) =>
+        `${row.position}. ${escapeHtml(row.learner_name || "-")} | Total ${escapeHtml(String(row.total_marks || "0"))} | Avg ${escapeHtml(String(row.avg_pct || "0"))}%`
+      ).join("<br/>");
+    }
+  });
+
+  document.getElementById("resultEditButton")?.addEventListener("click", () => {
+    const notes = prompt("Result script amendment note:", "");
+    if (notes && output) {
+      output.innerHTML += `<br/><br/><strong>Amendment note:</strong> ${escapeHtml(notes)}`;
+    }
+  });
+
+  document.getElementById("resultPrintButton")?.addEventListener("click", () => {
+    if (!examPanelState.resultRows.length) {
+      alert("Generate result scripts first.");
+      return;
+    }
+    const popup = window.open("", "_blank");
+    popup.document.write(`<pre>${escapeHtml(examPanelState.resultRows.map((row) =>
+      `${row.position}. ${row.learner_name || "-"} | ${row.grade || "-"} ${row.stream || "-"} | ${row.avg_pct || 0}%`
+    ).join("\n"))}</pre>`);
+    popup.document.close();
+    popup.print();
+  });
+
+  document.getElementById("resultDownloadPdfButton")?.addEventListener("click", () => {
+    if (!examPanelState.resultRows.length) {
+      alert("Generate result scripts first.");
+      return;
+    }
+    downloadTextFile("result-scripts.txt", examPanelState.resultRows.map((row) =>
+      `${row.position}. ${row.learner_name || "-"} | ${row.grade || "-"} ${row.stream || "-"} | ${row.avg_pct || 0}%`
+    ).join("\n"));
+  });
+
+  document.getElementById("resultDownloadExcelButton")?.addEventListener("click", () => {
+    if (!examPanelState.resultRows.length) {
+      alert("Generate result scripts first.");
+      return;
+    }
+    downloadTextFile("result-scripts.csv", rowsToCsv(examPanelState.resultRows), "text/csv;charset=utf-8");
+  });
+
+  document.getElementById("resultDownloadSampleButton")?.addEventListener("click", () => {
+    const sampleRows = [
+      { position: 1, learner_name: "Sample Learner A", grade: "Grade 7", stream: "East", avg_pct: 78.4, total_marks: 392 }
+    ];
+    downloadTextFile("result-scripts-sample.csv", rowsToCsv(sampleRows), "text/csv;charset=utf-8");
+  });
   document.getElementById("resultUploadAmendedButton")?.addEventListener("click", () => {
     document.getElementById("resultUploadInput")?.click();
   });
-  document.getElementById("resultUploadInput")?.addEventListener("change", () => {
-    alert("Amended sample uploaded.");
+  document.getElementById("resultUploadInput")?.addEventListener("change", (event) => {
+    const file = event?.target?.files?.[0];
+    if (file && output) {
+      output.innerHTML = `Amended result file received: ${escapeHtml(file.name)}.`;
+    }
   });
 }
 
@@ -2064,6 +3930,8 @@ function renderExamAssessmentReportPanel() {
     <div class="form-grid">
       <label>Learner Name / Adm No / UPI</label>
       <input id="assessLearnerKey" placeholder="Learner identifier" />
+      <label>Matched Learner</label>
+      <select id="assessLearnerSelect"><option value="">Select learner</option></select>
       <label>Grade</label>
       <select id="assessGrade"><option value="">Select grade</option>${grades}</select>
       <label>Form</label>
@@ -2073,39 +3941,313 @@ function renderExamAssessmentReportPanel() {
       <label>Year</label>
       <select id="assessYear"><option value="">Select year</option>${years}</select>
     </div>
-    <div class="iim-actions-row">
-      <button class="iim-action-btn gold" id="assessGenerateButton" title="Generate Assessment Report">⚡ Generate</button>
-      <button class="iim-action-btn" id="assessTrendButton" title="Show Performance Trend">📈 Trend</button>
-      <button class="iim-action-btn muted" id="assessPrintButton" title="Print">🖨 Print</button>
-      <button class="iim-action-btn warn" id="assessDownloadPdfButton" title="Download PDF">📄 PDF</button>
-      <button class="iim-action-btn gold" id="assessDownloadSampleButton" title="Download Sample">⬇ Sample</button>
-      <button class="iim-action-btn" id="assessUploadAmendedButton" title="Upload Amended Sample">⬆ Upload</button>
-      <input id="assessUploadInput" type="file" accept=".xlsx,.csv,.pdf,.docx" style="display:none;" />
+    <div class="ax-toolbar">
+      <button class="ax-btn ax-btn--generate" id="assessGenerateButton" title="Generate Assessment Report">Generate</button>
+      <button class="ax-btn ax-btn--view" id="assessTrendButton" title="Show Performance Trend">Trend</button>
+      <button class="ax-btn ax-btn--print" id="assessPrintButton" title="Print">Print</button>
+      <button class="ax-btn ax-btn--export-pdf" id="assessDownloadPdfButton" title="Download PDF">PDF</button>
+      <button class="ax-btn ax-btn--download" id="assessDownloadSampleButton" title="Download Sample" data-template-control="true">Sample</button>
+      <button class="ax-btn ax-btn--upload" id="assessUploadAmendedButton" title="Upload Amended Sample" data-template-control="true">Upload</button>
+      <input id="assessUploadInput" type="file" accept=".xlsx,.csv,.pdf,.docx" style="display:none;" data-template-control="true" />
     </div>
+    <div id="assessmentOutput" class="small-note">Generate a learner assessment report to view full profile + trend.</div>
   `;
 }
 
 function wireExamAssessmentReportPanel() {
-  document.getElementById("assessGenerateButton")?.addEventListener("click", () => alert("Assessment report generated."));
-  document.getElementById("assessTrendButton")?.addEventListener("click", () => alert("Performance trend ready."));
-  document.getElementById("assessPrintButton")?.addEventListener("click", () => window.print());
-  document.getElementById("assessDownloadPdfButton")?.addEventListener("click", () => alert("PDF download prepared."));
-  document.getElementById("assessDownloadSampleButton")?.addEventListener("click", () => alert("Sample assessment template prepared."));
+  const output = document.getElementById("assessmentOutput");
+  const learnerSelect = document.getElementById("assessLearnerSelect");
+  const learnerMap = new Map();
+  const gradeEl = document.getElementById("assessGrade");
+  const formEl = document.getElementById("assessForm");
+  const streamEl = document.getElementById("assessStream");
+  const learnerKeyEl = document.getElementById("assessLearnerKey");
+
+  const loadLearners = async () => {
+    const search = String(learnerKeyEl?.value || "").trim();
+    const grade = String(gradeEl?.value || "");
+    const form = String(formEl?.value || "");
+    const stream = String(streamEl?.value || "");
+    const searchTokens = [search, grade || form, stream].filter(Boolean).join(" ");
+    try {
+      const rows = await request(`/api/admission/learners?limit=500&search=${encodeURIComponent(searchTokens)}`);
+      const filtered = (Array.isArray(rows) ? rows : []).filter((row) => {
+        if (grade && String(row.grade || "") !== grade) return false;
+        if (form && String(row.form_name || "") !== form) return false;
+        if (stream && String(row.stream || "").toLowerCase() !== stream.toLowerCase()) return false;
+        return true;
+      });
+      learnerMap.clear();
+      learnerSelect.innerHTML = `<option value="">Select learner</option>${filtered
+        .map((row) => {
+          learnerMap.set(String(row.id), row);
+          const learnerCode = formatLearnerCode(row.learner_serial_number || row.id) || "-";
+          return `<option value="${escapeHtml(String(row.id))}">${escapeHtml(row.full_name || "-")} (${escapeHtml(
+            row.admission_number || row.upi_number || String(row.id)
+          )}) • ${escapeHtml(learnerCode)}</option>`;
+        })
+        .join("")}`;
+      if (output) output.textContent = `Loaded ${filtered.length} learner(s) for assessment reports.`;
+    } catch (error) {
+      if (output) output.textContent = `Failed to load learners: ${error.message}`;
+    }
+  };
+
+  learnerKeyEl?.addEventListener("change", loadLearners);
+  gradeEl?.addEventListener("change", () => {
+    if (String(gradeEl.value || "").trim() && formEl) formEl.value = "";
+    loadLearners();
+  });
+  formEl?.addEventListener("change", () => {
+    if (String(formEl.value || "").trim() && gradeEl) gradeEl.value = "";
+    loadLearners();
+  });
+  streamEl?.addEventListener("change", loadLearners);
+  loadLearners();
+
+  document.getElementById("assessGenerateButton")?.addEventListener("click", async () => {
+    const learnerId = Number(learnerSelect?.value || 0);
+    if (!learnerId) {
+      alert("Select learner first.");
+      return;
+    }
+    try {
+      const report = await request(`/api/academic/assessment-report/${learnerId}`);
+      examPanelState.assessmentReport = report;
+      if (output) {
+        const trend = Array.isArray(report.performance_trend) ? report.performance_trend : [];
+        output.innerHTML = [
+          `<strong>Learner:</strong> ${escapeHtml(report?.learner?.full_name || "-")} (${escapeHtml(report?.learner?.admission_number || "-")})`,
+          `<strong>Class:</strong> ${escapeHtml(report?.learner?.grade || "-")} ${escapeHtml(report?.learner?.stream || "")}`,
+          `<strong>Subjects Entered:</strong> ${escapeHtml(String((report?.marks || []).length || 0))}`,
+          `<strong>Trend Points:</strong> ${escapeHtml(String(trend.length || 0))}`
+        ].join("<br/>");
+      }
+    } catch (error) {
+      alert(error.message);
+    }
+  });
+
+  document.getElementById("assessTrendButton")?.addEventListener("click", () => {
+    const trend = Array.isArray(examPanelState.assessmentReport?.performance_trend)
+      ? examPanelState.assessmentReport.performance_trend
+      : [];
+    if (!trend.length) {
+      alert("Generate assessment report first.");
+      return;
+    }
+    if (output) {
+      output.innerHTML = trend.map((item) =>
+        `${escapeHtml(String(item.year || "-"))} ${escapeHtml(item.term || "-")} → ${escapeHtml(String(item.avg || 0))}%`
+      ).join("<br/>");
+    }
+  });
+
+  document.getElementById("assessPrintButton")?.addEventListener("click", () => {
+    const report = examPanelState.assessmentReport;
+    if (!report) {
+      alert("Generate assessment report first.");
+      return;
+    }
+    const lines = [
+      `Assessment Report - ${report?.learner?.full_name || "-"}`,
+      `Admission Number: ${report?.learner?.admission_number || "-"}`,
+      `Class: ${report?.learner?.grade || "-"} ${report?.learner?.stream || ""}`,
+      "",
+      "Marks:",
+      ...(Array.isArray(report.marks) ? report.marks.map((mark) =>
+        `${mark.subject || "-"} | ${mark.marks || "-"} | ${mark.percentage || "-"}% | ${mark.term || "-"} ${mark.year || ""}`
+      ) : [])
+    ];
+    const popup = window.open("", "_blank");
+    popup.document.write(`<pre>${escapeHtml(lines.join("\n"))}</pre>`);
+    popup.document.close();
+    popup.print();
+  });
+
+  document.getElementById("assessDownloadPdfButton")?.addEventListener("click", () => {
+    const report = examPanelState.assessmentReport;
+    if (!report) {
+      alert("Generate assessment report first.");
+      return;
+    }
+    const payload = {
+      learner: report.learner,
+      institution: report.institution,
+      marks: report.marks,
+      performance_trend: report.performance_trend
+    };
+    downloadTextFile("assessment-report.json", JSON.stringify(payload, null, 2), "application/json;charset=utf-8");
+  });
+
+  document.getElementById("assessDownloadSampleButton")?.addEventListener("click", () => {
+    const sample = [
+      { subject: "English", marks: 78, percentage: 78, cbc_grade_band: "MEETING", term: "Term One", year: new Date().getFullYear() }
+    ];
+    downloadTextFile("assessment-report-sample.csv", rowsToCsv(sample), "text/csv;charset=utf-8");
+  });
   document.getElementById("assessUploadAmendedButton")?.addEventListener("click", () => {
     document.getElementById("assessUploadInput")?.click();
   });
-  document.getElementById("assessUploadInput")?.addEventListener("change", () => {
-    alert("Amended assessment sample uploaded.");
+  document.getElementById("assessUploadInput")?.addEventListener("change", (event) => {
+    const file = event?.target?.files?.[0];
+    if (file && output) {
+      output.textContent = `Amended assessment artifact received: ${file.name}`;
+    }
   });
 }
 
-async function renderCbcCurriculumEditor() {
+function renderExamLearnerPerformancePanel() {
+  const { grades, forms } = buildExamGradeFormSelectOptions();
+  return `
+    <div class="module-header-card">
+      <h4>Learner Performance Record Sub-Module</h4>
+      <p>Search one learner and view full performance history grouped by grade, term, and exam session.</p>
+    </div>
+    <div class="form-grid">
+      <label>Search Learner (Name / Adm / UPI)</label>
+      <input id="perfLearnerSearch" placeholder="Type learner name or admission number" />
+      <label>Grade</label>
+      <select id="perfGrade">
+        <option value="">Select grade</option>${grades}
+      </select>
+      <label>Form</label>
+      <select id="perfForm">
+        <option value="">Select form</option>${forms}
+      </select>
+      <label>Stream</label>
+      <input id="perfStream" placeholder="Stream (optional)" />
+      <label>Matched Learner</label>
+      <select id="perfLearnerSelect"><option value="">Select learner</option></select>
+    </div>
+    <div class="ax-toolbar">
+      <button class="ax-btn ax-btn--view" id="perfLoadButton" title="Load performance record">Load</button>
+      <button class="ax-btn ax-btn--print" id="perfPrintButton" title="Print learner performance">Print</button>
+      <button class="ax-btn ax-btn--export-pdf" id="perfDownloadButton" title="Download learner performance">Download</button>
+    </div>
+    <div id="perfOutput" class="small-note">Select a learner to load the record.</div>
+  `;
+}
+
+function wireExamLearnerPerformancePanel() {
+  const output = document.getElementById("perfOutput");
+  const learnerSelect = document.getElementById("perfLearnerSelect");
+  const learnerSearch = document.getElementById("perfLearnerSearch");
+  const gradeEl = document.getElementById("perfGrade");
+  const formEl = document.getElementById("perfForm");
+  const streamEl = document.getElementById("perfStream");
+  const learnerMap = new Map();
+  const loadLearners = async () => {
+    const searchTokens = [
+      String(learnerSearch?.value || "").trim(),
+      String(gradeEl?.value || "").trim(),
+      String(formEl?.value || "").trim(),
+      String(streamEl?.value || "").trim()
+    ]
+      .filter(Boolean)
+      .join(" ");
+    try {
+      const rows = await request(`/api/admission/learners?limit=500&search=${encodeURIComponent(searchTokens)}`);
+      const filtered = (Array.isArray(rows) ? rows : []).filter((row) => {
+        if (gradeEl?.value && String(row.grade || "") !== String(gradeEl.value || "")) return false;
+        if (formEl?.value && String(row.form_name || "") !== String(formEl.value || "")) return false;
+        if (streamEl?.value && String(row.stream || "").toLowerCase() !== String(streamEl.value || "").toLowerCase()) return false;
+        return true;
+      });
+      learnerMap.clear();
+      learnerSelect.innerHTML = `<option value="">Select learner</option>${filtered
+        .map((row) => {
+          const id = String(row.id || "");
+          learnerMap.set(id, row);
+          const learnerCode = formatLearnerCode(row.learner_serial_number || row.id) || "-";
+          return `<option value="${escapeHtml(id)}">${escapeHtml(row.full_name || "-")} (${escapeHtml(
+            row.admission_number || row.upi_number || id
+          )}) • ${escapeHtml(learnerCode)}</option>`;
+        })
+        .join("")}`;
+      if (output) output.textContent = `Loaded ${filtered.length} learner(s).`;
+    } catch (error) {
+      if (output) output.textContent = `Failed loading learners: ${error.message}`;
+    }
+  };
+  learnerSearch?.addEventListener("change", loadLearners);
+  gradeEl?.addEventListener("change", () => {
+    if (gradeEl?.value && formEl) formEl.value = "";
+    loadLearners();
+  });
+  formEl?.addEventListener("change", () => {
+    if (formEl?.value && gradeEl) gradeEl.value = "";
+    loadLearners();
+  });
+  streamEl?.addEventListener("change", loadLearners);
+  loadLearners();
+
+  const renderPerformance = (report) => {
+    const learner = report?.learner || {};
+    const marks = Array.isArray(report?.marks) ? report.marks : [];
+    const trend = Array.isArray(report?.performance_trend) ? report.performance_trend : [];
+    const byTerm = marks.reduce((acc, row) => {
+      const key = `${row.year || "Year"} ${row.term || "Term"} ${row.exam_type || "Exam"}`;
+      if (!acc[key]) acc[key] = [];
+      acc[key].push(row);
+      return acc;
+    }, {});
+    const sections = Object.entries(byTerm).map(([term, rows]) => {
+      const lines = rows
+        .map((row) => `• ${row.subject || "-"}: ${row.marks ?? "-"} (${row.percentage ?? "-"}%)`)
+        .join("<br/>");
+      return `<div><strong>${escapeHtml(term)}</strong><br/>${lines}</div>`;
+    });
+    return [
+      `<strong>Learner:</strong> ${escapeHtml(learner.full_name || "-")} (${escapeHtml(learner.admission_number || "-")})`,
+      `<strong>Current Class:</strong> ${escapeHtml(learner.grade || learner.form_name || "-")} ${escapeHtml(learner.stream || "")}`,
+      `<strong>Records:</strong> ${escapeHtml(String(marks.length))}`,
+      `<strong>Trend Points:</strong> ${escapeHtml(String(trend.length))}`,
+      sections.join("<hr/>")
+    ].join("<br/>");
+  };
+
+  let currentReport = null;
+  document.getElementById("perfLoadButton")?.addEventListener("click", async () => {
+    const learnerId = Number(learnerSelect?.value || 0);
+    if (!learnerId) {
+      alert("Select learner first.");
+      return;
+    }
+    try {
+      const report = await request(`/api/academic/assessment-report/${learnerId}`);
+      currentReport = report;
+      if (output) output.innerHTML = renderPerformance(report);
+    } catch (error) {
+      alert(error.message);
+    }
+  });
+  document.getElementById("perfPrintButton")?.addEventListener("click", () => {
+    if (!currentReport) {
+      alert("Load a learner record first.");
+      return;
+    }
+    const popup = window.open("", "_blank");
+    popup.document.write(`<pre>${escapeHtml(JSON.stringify(currentReport, null, 2))}</pre>`);
+    popup.document.close();
+    popup.print();
+  });
+  document.getElementById("perfDownloadButton")?.addEventListener("click", () => {
+    if (!currentReport) {
+      alert("Load a learner record first.");
+      return;
+    }
+    downloadTextFile("learner-performance-record.json", JSON.stringify(currentReport, null, 2), "application/json;charset=utf-8");
+  });
+}
+
+async function renderCbcCurriculumEditor(options = {}) {
   setActiveSidebarButton("system-cbc-editor");
   document.getElementById("moduleTitle").textContent = "Examination Management";
-  if (!isSystemAdminRole()) {
-    alert("Only System Developer, Admin, or Head of Institution can manage Examination Management.");
-    return loadDashboard();
-  }
+  const actorRole = normalizeRoleKey(portalContext?.role || "");
+  const isSuperSystemDeveloper = actorRole === "SUPER_SYSTEM_DEVELOPER";
+  const canManageCurriculum = actorRole === "SUPER_SYSTEM_DEVELOPER" || actorRole === "SYSTEM_DEVELOPER";
+  const initialExamTab = String(options?.examTab || "curriculum");
   currentModule = "system-cbc-editor";
   stopDashboardAutoRefresh();
   try {
@@ -2117,6 +4259,8 @@ async function renderCbcCurriculumEditor() {
     const materialRows = Array.isArray(materials) ? materials : [];
     const gradeOptions = Array.isArray(meta?.gradeOptions) ? meta.gradeOptions : [];
     const formOptions = Array.isArray(meta?.formOptions) ? meta.formOptions : ["Form 3", "Form 4"];
+    const cbcLevels = Array.isArray(meta?.cbcLevels) ? meta.cbcLevels : [];
+    const seniorPathways = getSeniorSecondaryPathwayOptions();
     const subjectOptions = (Array.isArray(meta?.subjectOptions) ? meta.subjectOptions : [])
       .filter((item) => String(item || "").toUpperCase() !== "ALL");
     const termOptions = Array.isArray(meta?.termOptions) ? meta.termOptions : ["Term One", "Term Two", "Term Three"];
@@ -2138,18 +4282,17 @@ async function renderCbcCurriculumEditor() {
     document.getElementById("formArea").innerHTML = `
       <div class="module-header-card">
         <h3>Examination Management</h3>
-        <p>Sub-modules: <strong>Curriculum</strong> · Exam Generation · Marks Entry · Result Scripts · Assessment Report</p>
+        <p>Sub-modules: Curriculum · Exam Generation · Marks Entry · Result Scripts · Assessment Report · Learner Performance Record. Only the selected sub-module is shown.</p>
       </div>
-      <nav class="exam-mgmt-nav actions-row">
-        <button class="active" data-exam-tab="curriculum">Curriculum</button>
-        <button data-exam-tab="exam-generation">Exam Generation</button>
-        <button data-exam-tab="marks-entry">Marks Entry</button>
-        <button data-exam-tab="result-scripts">Result Scripts</button>
-        <button data-exam-tab="assessment-report">Assessment Report</button>
-      </nav>
+      <section id="examCurriculumRoot">
       <div class="module-header-card">
         <h4>Curriculum Sub-Module</h4>
         <p>Upload teacher notes/materials, design curriculum, and feed AI for downstream exam generation.</p>
+        ${
+          canManageCurriculum
+            ? `<p class="small-note">Curriculum edit mode: Super System Developer / System Developer.</p>`
+            : `<p class="small-note">Read-only mode: only Super System Developer/System Developer can edit curriculum structure. You can still view and print teacher notes.</p>`
+        }
       </div>
       <div class="form-grid">
         <label>Grade</label>
@@ -2161,6 +4304,16 @@ async function renderCbcCurriculumEditor() {
         <select id="cbcFormName">
           <option value="">Select form</option>
           ${formOptions.map((item) => `<option value="${escapeHtml(item)}">${escapeHtml(item)}</option>`).join("")}
+        </select>
+        <label>CBC Level</label>
+        <select id="cbcLevel">
+          <option value="">Auto from Grade/Form</option>
+          ${cbcLevels.map((level) => `<option value="${escapeHtml(level.key || "")}">${escapeHtml(level.label || level.key || "")}</option>`).join("")}
+        </select>
+        <label>Senior Pathway</label>
+        <select id="cbcPathway">
+          <option value="">All pathways</option>
+          ${seniorPathways.map((item) => `<option value="${escapeHtml(item)}">${escapeHtml(item)}</option>`).join("")}
         </select>
         <label>Learning Area</label>
         <select id="cbcLearningArea">
@@ -2190,23 +4343,81 @@ async function renderCbcCurriculumEditor() {
           ${yearOptions.map((year) => `<option value="${year}">${year}</option>`).join("")}
         </select>
         <label>AI Simplified Notes</label><textarea id="cbcNotes" rows="6" placeholder="Generate or edit notes here..."></textarea>
+        <label>Notes Upload Scope</label>
+        <select id="cbcUploadScope">
+          <option value="sub_strand">Current Sub-Strand</option>
+          <option value="strand">Whole Strand</option>
+          <option value="learning_area">Whole Learning Area</option>
+        </select>
         <label>Upload Teacher/Textbook/Learning Material</label><input id="cbcMaterialFile" type="file" />
       </div>
-      <div class="actions-row">
-        <button id="saveCbcEntryButton">Save Curriculum Entry</button>
-        <button id="generateCbcStructureButton">AI Strand/Sub-Strand Assist</button>
-        <button id="generateCbcNotesButton">Generate AI Notes</button>
-        <button id="bulkGenerateCbcLibraryButton">Generate Full CBC Library</button>
-        <button id="downloadCbcMappingTemplateButton">Download Mapping CSV Template</button>
-        <button id="downloadCbcWordTemplateButton">Download Word Template</button>
-        <button id="importCbcMappingButton">Import Strand/Sub-Strand CSV</button>
-        <button id="editCbcMappingButton">Edit Strand/Sub-Strand Mapping</button>
+      <div class="ax-toolbar">
+        <button class="ax-btn ax-btn--add" id="seedPretechnicalStrandsButton">Load Grade 7-9 Pre-Technical + Social Studies Strands</button>
+        <button class="ax-btn ax-btn--save" id="saveCbcEntryButton">Save Curriculum Entry</button>
+        <button class="ax-btn ax-btn--generate" id="generateCbcStructureButton">AI Strand/Sub-Strand Assist</button>
+        <button class="ax-btn ax-btn--generate" id="generateCbcNotesButton">Generate AI Notes</button>
+        <button class="ax-btn ax-btn--generate" id="bulkGenerateCbcLibraryButton">Generate Full CBC Library</button>
+        <button class="ax-btn ax-btn--download" id="downloadCbcMappingTemplateButton">Download Mapping CSV Template</button>
+        <button class="ax-btn ax-btn--download" id="downloadCbcWordTemplateButton">Download Word Template</button>
+        <button class="ax-btn ax-btn--upload" id="importCbcMappingButton">Import Strand/Sub-Strand CSV</button>
+        <button class="ax-btn ax-btn--edit" id="editCbcMappingButton">Edit Strand/Sub-Strand Mapping</button>
         <input id="cbcMappingFile" type="file" accept=".csv,text/csv" style="display:none;" />
-        <button id="printCbcNotesButton">Print Notes</button>
-        <button id="downloadCbcNotesButton">Download Notes</button>
-        <button id="uploadCbcMaterialButton">Upload Material</button>
-        <button id="amendCbcMaterialButton">Amend Material</button>
-        <button id="refreshCbcEditorButton">Refresh</button>
+        <button class="ax-btn ax-btn--print" id="printCbcNotesButton">Print Notes</button>
+        <button class="ax-btn ax-btn--download" id="downloadCbcNotesButton">Download Notes</button>
+        <button class="ax-btn ax-btn--upload" id="uploadCbcMaterialButton">Upload Material</button>
+        <button class="ax-btn ax-btn--edit" id="amendCbcMaterialButton">Amend Material</button>
+        <button class="ax-btn ax-btn--refresh" id="refreshCbcEditorButton">Refresh</button>
+      </div>
+      <div class="module-header-card">
+        <h4>KICD CBC Import (PP1 to Grade 12)</h4>
+        <p>Fetch KICD curriculum designs, extract strands/sub-strands/learning outcomes/learning experiences, and auto-import.</p>
+      </div>
+      <div class="form-grid">
+        <label>KICD Levels (comma separated slugs, blank = all)</label>
+        <input id="kicdLevelsInput" placeholder="pre-primary,lower-primary,grade-seven-designs" />
+        <label>Max Documents</label>
+        <input id="kicdMaxDocuments" type="number" min="1" max="1000" value="200" />
+        <label>Max Pages per Document</label>
+        <input id="kicdMaxPagesPerDocument" type="number" min="10" max="1000" value="200" />
+        <label>Replace Previous KICD Import</label>
+        <select id="kicdReplaceExisting">
+          <option value="false" selected>No</option>
+          <option value="true">Yes</option>
+        </select>
+      </div>
+      <div class="ax-toolbar">
+        <button class="ax-btn ax-btn--view" id="previewKicdCatalogButton">Preview KICD Catalog</button>
+        <button class="ax-btn ax-btn--upload" id="importKicdCurriculumButton">Import KICD Curriculum</button>
+        <button class="ax-btn ax-btn--export-excel" id="exportKicdCsvButton">Export KICD CSV</button>
+        <button class="ax-btn ax-btn--export-excel" id="exportKicdExcelButton">Export KICD Excel</button>
+      </div>
+      <div class="form-grid">
+        <label>KICD Import Summary</label>
+        <textarea id="kicdImportSummary" rows="8" readonly placeholder="Catalog and import summary will appear here."></textarea>
+      </div>
+      <div class="module-header-card">
+        <h4>Local Curriculum PDF Import (Uploads Folder)</h4>
+        <p>Reads your locally uploaded curriculum-design PDFs and imports strand/sub-strand, specific learning outcomes, and suggested learning experiences.</p>
+      </div>
+      <div class="form-grid">
+        <label>Base Folder</label>
+        <input id="localCurriculumBaseFolder" value="uploads/curriculum-design" />
+        <label>Max Files</label>
+        <input id="localCurriculumMaxFiles" type="number" min="1" max="5000" value="500" />
+        <label>Replace Previous Local Import</label>
+        <select id="localCurriculumReplaceExisting">
+          <option value="false" selected>No</option>
+          <option value="true">Yes</option>
+        </select>
+      </div>
+      <div class="ax-toolbar">
+        <button class="ax-btn ax-btn--upload" id="importLocalCurriculumButton">Import Local Curriculum PDFs</button>
+        <button class="ax-btn ax-btn--export-excel" id="exportLocalCurriculumCsvButton">Export Curriculum CSV</button>
+        <button class="ax-btn ax-btn--export-excel" id="exportLocalCurriculumExcelButton">Export Curriculum Excel</button>
+      </div>
+      <div class="form-grid">
+        <label>Local Import Summary</label>
+        <textarea id="localCurriculumImportSummary" rows="8" readonly placeholder="Local PDF import summary appears here."></textarea>
       </div>
       <div class="module-header-card">
         <h4>Manual Strand/Sub-Strand + Notes Entry</h4>
@@ -2222,46 +4433,63 @@ async function renderCbcCurriculumEditor() {
         <label>Manual Notes</label>
         <textarea id="manualCbcMappingNotes" rows="4" placeholder="Paste notes for this sub-strand"></textarea>
       </div>
-      <div class="actions-row">
-        <button id="saveManualCbcMappingButton">Save Manual Mapping + Notes</button>
+      <div class="ax-toolbar">
+        <button class="ax-btn ax-btn--save" id="saveManualCbcMappingButton">Save Manual Mapping + Notes</button>
       </div>
+      </section>
       <section id="examMgmtSubmodulePanel" class="dashboard-section" style="display:none;"></section>
     `;
-    document.querySelectorAll(".exam-mgmt-nav button[data-exam-tab]").forEach((tabButton) => {
-      tabButton.addEventListener("click", () => {
-        document.querySelectorAll(".exam-mgmt-nav button[data-exam-tab]").forEach((btn) => btn.classList.remove("active"));
-        tabButton.classList.add("active");
-        const tab = String(tabButton.dataset.examTab || "curriculum");
-        const panel = document.getElementById("examMgmtSubmodulePanel");
-        if (!panel) return;
-        if (tab === "curriculum") {
-          panel.style.display = "none";
-          panel.innerHTML = "";
-          return;
-        }
-        panel.style.display = "block";
-        if (tab === "exam-generation") {
-          panel.innerHTML = renderExamGenerationPanel();
-          wireExamGenerationPanel();
-          return;
-        }
-        if (tab === "marks-entry") {
-          panel.innerHTML = renderExamMarksEntryPanel();
-          wireExamMarksEntryPanel();
-          return;
-        }
-        if (tab === "result-scripts") {
-          panel.innerHTML = renderExamResultScriptsPanel();
-          wireExamResultScriptsPanel();
-          return;
-        }
-        if (tab === "assessment-report") {
-          panel.innerHTML = renderExamAssessmentReportPanel();
-          wireExamAssessmentReportPanel();
-          return;
-        }
-      });
-    });
+    const activateExamTab = (tabKey = "curriculum") => {
+      const tab = String(tabKey || "curriculum");
+      const panel = document.getElementById("examMgmtSubmodulePanel");
+      const curriculumRoot = document.getElementById("examCurriculumRoot");
+      if (curriculumRoot) {
+        curriculumRoot.hidden = tab !== "curriculum";
+      }
+      if (!panel) return;
+      if (tab === "curriculum") {
+        panel.style.display = "none";
+        panel.innerHTML = "";
+        return;
+      }
+      panel.style.display = "block";
+      if (tab === "exam-generation") {
+        panel.innerHTML = renderExamGenerationPanel();
+        wireExamGenerationPanel();
+        applyCompactIconButtons(panel);
+        applyTemplateVisibility(panel);
+        return;
+      }
+      if (tab === "marks-entry") {
+        panel.innerHTML = renderExamMarksEntryPanel();
+        wireExamMarksEntryPanel();
+        applyCompactIconButtons(panel);
+        applyTemplateVisibility(panel);
+        return;
+      }
+      if (tab === "result-scripts") {
+        panel.innerHTML = renderExamResultScriptsPanel();
+        wireExamResultScriptsPanel();
+        applyCompactIconButtons(panel);
+        applyTemplateVisibility(panel);
+        return;
+      }
+      if (tab === "assessment-report") {
+        panel.innerHTML = renderExamAssessmentReportPanel();
+        wireExamAssessmentReportPanel();
+        applyCompactIconButtons(panel);
+        applyTemplateVisibility(panel);
+        return;
+      }
+      if (tab === "learner-performance") {
+        panel.innerHTML = renderExamLearnerPerformancePanel();
+        wireExamLearnerPerformancePanel();
+        applyCompactIconButtons(panel);
+        applyTemplateVisibility(panel);
+        return;
+      }
+    };
+    activateExamTab(initialExamTab);
     const head = document.getElementById("tableHead");
     const body = document.getElementById("tableBody");
     if (head && body) {
@@ -2318,10 +4546,104 @@ async function renderCbcCurriculumEditor() {
     });
     const gradeEl = document.getElementById("cbcGrade");
     const formEl = document.getElementById("cbcFormName");
+    const levelEl = document.getElementById("cbcLevel");
+    const pathwayEl = document.getElementById("cbcPathway");
     const learningAreaEl = document.getElementById("cbcLearningArea");
     const strandEl = document.getElementById("cbcStrand");
     const subStrandEl = document.getElementById("cbcSubStrand");
+    const notesEl = document.getElementById("cbcNotes");
+    const learningOutcomesEl = document.getElementById("cbcLearningOutcomes");
+    const assessmentRubricEl = document.getElementById("cbcAssessmentRubric");
+    const learningExperiencesEl = document.getElementById("cbcLearningExperiences");
+    const resourcesReferenceEl = document.getElementById("cbcResourcesReference");
+    const materialFileEl = document.getElementById("cbcMaterialFile");
     let strandMap = {};
+
+    const writeControlIds = [
+      "seedPretechnicalStrandsButton",
+      "saveCbcEntryButton",
+      "generateCbcStructureButton",
+      "bulkGenerateCbcLibraryButton",
+      "importCbcMappingButton",
+      "editCbcMappingButton",
+      "saveManualCbcMappingButton",
+      "uploadCbcMaterialButton",
+      "amendCbcMaterialButton",
+      "importKicdCurriculumButton",
+      "importLocalCurriculumButton"
+    ];
+
+    const applyRoleEditMode = () => {
+      if (canManageCurriculum) return;
+      writeControlIds.forEach((id) => {
+        const node = document.getElementById(id);
+        if (node) node.disabled = true;
+      });
+      const mappingFileInput = document.getElementById("cbcMappingFile");
+      if (mappingFileInput) mappingFileInput.disabled = true;
+      const manualNoteInput = document.getElementById("manualCbcMappingNotes");
+      if (manualNoteInput) manualNoteInput.disabled = true;
+      const manualAreaInput = document.getElementById("manualCbcLearningArea");
+      if (manualAreaInput) manualAreaInput.disabled = true;
+      const manualStrandInput = document.getElementById("manualCbcStrand");
+      if (manualStrandInput) manualStrandInput.disabled = true;
+      const manualSubStrandInput = document.getElementById("manualCbcSubStrand");
+      if (manualSubStrandInput) manualSubStrandInput.disabled = true;
+    };
+
+    const applyTemplateVisibilityByRole = () => {
+      if (isSuperSystemDeveloper) return;
+      [
+        "downloadCbcMappingTemplateButton",
+        "downloadCbcWordTemplateButton",
+        "importCbcMappingButton",
+        "cbcMappingFile",
+        "importLocalCurriculumButton"
+      ].forEach((id) => {
+        const node = document.getElementById(id);
+        if (node) node.style.display = "none";
+      });
+    };
+
+    const applyCurriculumActivationState = () => {
+      const hasGrade = Boolean(String(gradeEl?.value || "").trim());
+      const hasForm = Boolean(String(formEl?.value || "").trim());
+      const hasLevel = hasGrade || hasForm;
+      const hasLearningArea = Boolean(String(learningAreaEl?.value || "").trim());
+      const hasStrand = Boolean(String(strandEl?.value || "").trim());
+      if (levelEl && hasLevel) {
+        const selectedGrade = String(gradeEl?.value || formEl?.value || "");
+        const matchedLevel = (Array.isArray(meta?.cbcLevels) ? meta.cbcLevels : []).find((level) =>
+          Array.isArray(level.grades) && level.grades.some((value) => normalizeLookupKey(value) === normalizeLookupKey(selectedGrade))
+        );
+        if (matchedLevel) levelEl.value = matchedLevel.key || "";
+      }
+      if (gradeEl) gradeEl.disabled = hasForm;
+      if (formEl) formEl.disabled = hasGrade;
+
+      const uploadButton = document.getElementById("uploadCbcMaterialButton");
+      if (uploadButton) uploadButton.disabled = !canManageCurriculum;
+      const saveButton = document.getElementById("saveCbcEntryButton");
+      if (saveButton) saveButton.disabled = !canManageCurriculum;
+      const suggestButton = document.getElementById("generateCbcStructureButton");
+      if (suggestButton) suggestButton.disabled = !canManageCurriculum || !hasLearningArea;
+      const generateNotesButton = document.getElementById("generateCbcNotesButton");
+      if (generateNotesButton) generateNotesButton.disabled = !hasStrand;
+      const bulkGenerateButton = document.getElementById("bulkGenerateCbcLibraryButton");
+      if (bulkGenerateButton) bulkGenerateButton.disabled = !canManageCurriculum || !hasLevel;
+      const printNotesButton = document.getElementById("printCbcNotesButton");
+      if (printNotesButton) printNotesButton.disabled = false;
+      const downloadNotesButton = document.getElementById("downloadCbcNotesButton");
+      if (downloadNotesButton) downloadNotesButton.disabled = false;
+      if (learningOutcomesEl) learningOutcomesEl.disabled = false;
+      if (assessmentRubricEl) assessmentRubricEl.disabled = false;
+      if (learningExperiencesEl) learningExperiencesEl.disabled = false;
+      if (resourcesReferenceEl) resourcesReferenceEl.disabled = false;
+      if (notesEl) notesEl.disabled = false;
+      if (materialFileEl) materialFileEl.disabled = false;
+      const uploadScopeEl = document.getElementById("cbcUploadScope");
+      if (uploadScopeEl) uploadScopeEl.disabled = false;
+    };
 
     function setSelectOptions(selectEl, options, placeholder) {
       if (!selectEl) return;
@@ -2368,17 +4690,75 @@ async function renderCbcCurriculumEditor() {
       }
     }
 
-    gradeEl?.addEventListener("change", refreshStructureFromAi);
-    formEl?.addEventListener("change", refreshStructureFromAi);
-    learningAreaEl?.addEventListener("change", refreshStructureFromAi);
+    const refreshLearningAreaOptionsFromSelection = () => {
+      if (!learningAreaEl) return;
+      const selected = String(learningAreaEl.value || "");
+      learningAreaEl.innerHTML = `<option value="">Select learning area</option>${buildExamLearningAreaOptionsBySelection({
+        grade: gradeEl?.value || "",
+        form: formEl?.value || "",
+        pathway: pathwayEl?.value || ""
+      })}`;
+      if (selected && Array.from(learningAreaEl.options).some((option) => option.value === selected)) {
+        learningAreaEl.value = selected;
+      }
+    };
+
+    gradeEl?.addEventListener("change", () => {
+      if (String(gradeEl.value || "").trim() && formEl) formEl.value = "";
+      refreshLearningAreaOptionsFromSelection();
+      applyCurriculumActivationState();
+      refreshStructureFromAi();
+    });
+    formEl?.addEventListener("change", () => {
+      if (String(formEl.value || "").trim() && gradeEl) gradeEl.value = "";
+      refreshLearningAreaOptionsFromSelection();
+      applyCurriculumActivationState();
+      refreshStructureFromAi();
+    });
+    pathwayEl?.addEventListener("change", () => {
+      refreshLearningAreaOptionsFromSelection();
+      applyCurriculumActivationState();
+    });
+    learningAreaEl?.addEventListener("change", () => {
+      applyCurriculumActivationState();
+      refreshStructureFromAi();
+    });
     strandEl?.addEventListener("change", () => {
       const subOptions = Array.isArray(strandMap[strandEl.value]) ? strandMap[strandEl.value] : [];
       setSelectOptions(subStrandEl, subOptions, "Select sub-strand");
+      applyCurriculumActivationState();
     });
+    subStrandEl?.addEventListener("change", applyCurriculumActivationState);
 
     document.getElementById("generateCbcStructureButton")?.addEventListener("click", async () => {
       try {
         await refreshStructureFromAi();
+      } catch (error) {
+        alert(error.message);
+      }
+    });
+    applyRoleEditMode();
+    applyTemplateVisibilityByRole();
+    refreshLearningAreaOptionsFromSelection();
+    applyCurriculumActivationState();
+    document.getElementById("seedPretechnicalStrandsButton")?.addEventListener("click", async () => {
+      const proceed = window.confirm(
+        "Load Grade 7, 8 and 9 Pre-Technical + Social Studies strands/sub-strands from the provided lists?"
+      );
+      if (!proceed) return;
+      try {
+        const result = await request("/api/cbc/curriculum/pretechnical-seed", {
+          method: "POST",
+          body: JSON.stringify({
+            replace_existing: false
+          })
+        });
+        alert(
+          `${result.message || "Seed complete."}\nInserted mappings: ${result.inserted_mappings || 0}\nSkipped: ${
+            result.skipped_mappings || 0
+          }`
+        );
+        await renderCbcCurriculumEditor();
       } catch (error) {
         alert(error.message);
       }
@@ -2472,6 +4852,185 @@ async function renderCbcCurriculumEditor() {
         event.target.value = "";
       }
     });
+    function collectKicdLevelFilter() {
+      return String(document.getElementById("kicdLevelsInput")?.value || "")
+        .split(",")
+        .map((item) => item.trim())
+        .filter(Boolean);
+    }
+    function buildKicdSummary(result, mode) {
+      if (!result || typeof result !== "object") {
+        return "No response payload returned.";
+      }
+      const lines = [];
+      if (mode === "catalog") {
+        lines.push("KICD Catalog Preview");
+        lines.push(`Levels checked: ${result.level_count || 0}`);
+        lines.push(`Documents discovered: ${result.document_count || 0}`);
+        const docs = Array.isArray(result.documents) ? result.documents.slice(0, 25) : [];
+        if (docs.length) {
+          lines.push("");
+          lines.push("Sample documents:");
+          docs.forEach((doc, index) => {
+            lines.push(
+              `${index + 1}. ${doc.grade_label || "-"} | ${doc.learning_area || "-"} | ${doc.source_file_id || "-"}`
+            );
+          });
+          if ((result.documents || []).length > docs.length) {
+            lines.push(`...and ${(result.documents || []).length - docs.length} more.`);
+          }
+        }
+      } else {
+        lines.push("KICD Import Result");
+        lines.push(`Catalog documents: ${result.catalog_document_count || 0}`);
+        lines.push(`Scanned documents: ${result.scanned_document_count || 0}`);
+        lines.push(`Extracted rows: ${result.extracted_row_count || 0}`);
+        lines.push(`Unique rows: ${result.unique_row_count || 0}`);
+        lines.push(`Inserted mappings: ${result.inserted_mappings || 0}`);
+        lines.push(`Skipped mappings: ${result.skipped_mappings || 0}`);
+        lines.push(`Inserted curriculum entries: ${result.inserted_curriculum_entries || 0}`);
+        lines.push(`Updated curriculum entries: ${result.updated_curriculum_entries || 0}`);
+      }
+      if (Array.isArray(result.level_errors) && result.level_errors.length) {
+        lines.push("");
+        lines.push("Level errors:");
+        result.level_errors.slice(0, 15).forEach((item) => {
+          lines.push(`- ${item.slug || "unknown"}: ${item.error || "Unknown error"}`);
+        });
+      }
+      if (Array.isArray(result.document_errors) && result.document_errors.length) {
+        lines.push("");
+        lines.push("Document errors:");
+        result.document_errors.slice(0, 15).forEach((item) => {
+          lines.push(`- ${item.learning_area || item.source_file_id || "document"}: ${item.error || "Unknown error"}`);
+        });
+      }
+      return lines.join("\n");
+    }
+    document.getElementById("previewKicdCatalogButton")?.addEventListener("click", async () => {
+      const levels = collectKicdLevelFilter();
+      const summaryEl = document.getElementById("kicdImportSummary");
+      if (summaryEl) summaryEl.value = "Loading KICD catalog...";
+      try {
+        const query = levels.length ? `?include_levels=${encodeURIComponent(levels.join(","))}` : "";
+        const result = await request(`/api/cbc/kicd/catalog${query}`);
+        if (summaryEl) summaryEl.value = buildKicdSummary(result, "catalog");
+      } catch (error) {
+        if (summaryEl) summaryEl.value = `Catalog preview failed: ${error.message}`;
+        alert(error.message);
+      }
+    });
+    document.getElementById("importKicdCurriculumButton")?.addEventListener("click", async () => {
+      const levels = collectKicdLevelFilter();
+      const summaryEl = document.getElementById("kicdImportSummary");
+      const maxDocuments = Number(document.getElementById("kicdMaxDocuments")?.value || 200) || 200;
+      const maxPagesPerDocument = Number(document.getElementById("kicdMaxPagesPerDocument")?.value || 200) || 200;
+      const replaceExisting = String(document.getElementById("kicdReplaceExisting")?.value || "false") === "true";
+      const proceed = window.confirm(
+        "Import KICD curriculum now? This may take a while depending on documents/pages configured."
+      );
+      if (!proceed) return;
+      if (summaryEl) summaryEl.value = "Importing KICD curriculum. Please wait...";
+      try {
+        const result = await request("/api/cbc/kicd/import", {
+          method: "POST",
+          body: JSON.stringify({
+            include_levels: levels,
+            max_documents: maxDocuments,
+            max_pages_per_document: maxPagesPerDocument,
+            replace_existing: replaceExisting,
+            upsert_curriculum_entries: true
+          })
+        });
+        if (summaryEl) summaryEl.value = buildKicdSummary(result, "import");
+        alert("KICD curriculum import completed.");
+        await renderCbcCurriculumEditor();
+      } catch (error) {
+        if (summaryEl) summaryEl.value = `KICD import failed: ${error.message}`;
+        alert(error.message);
+      }
+    });
+    document.getElementById("exportKicdCsvButton")?.addEventListener("click", async () => {
+      try {
+        await downloadWithAuth("/api/cbc/kicd/export/csv", "kicd-curriculum-structure.csv");
+      } catch (error) {
+        alert(error.message);
+      }
+    });
+    document.getElementById("exportKicdExcelButton")?.addEventListener("click", async () => {
+      try {
+        await downloadWithAuth("/api/cbc/kicd/export/excel", "kicd-curriculum-structure.xlsx");
+      } catch (error) {
+        alert(error.message);
+      }
+    });
+    document.getElementById("importLocalCurriculumButton")?.addEventListener("click", async () => {
+      const summaryEl = document.getElementById("localCurriculumImportSummary");
+      const baseFolder = String(document.getElementById("localCurriculumBaseFolder")?.value || "uploads/curriculum-design");
+      const maxFiles = Number(document.getElementById("localCurriculumMaxFiles")?.value || 500) || 500;
+      const replaceExisting = String(document.getElementById("localCurriculumReplaceExisting")?.value || "false") === "true";
+      const proceed = window.confirm(
+        "Import local curriculum PDFs now? This reads files from uploads/curriculum-design and may take a while."
+      );
+      if (!proceed) return;
+      if (summaryEl) summaryEl.value = "Importing local curriculum PDFs. Please wait...";
+      try {
+        const result = await request("/api/cbc/local-curriculum/import", {
+          method: "POST",
+          body: JSON.stringify({
+            base_directory: baseFolder,
+            max_files: maxFiles,
+            replace_existing: replaceExisting,
+            upsert_curriculum_entries: true,
+            source_label: "LOCAL_CURRICULUM_PDF"
+          })
+        });
+        const lines = [
+          "Local Curriculum Import Result",
+          `Base directory: ${result.base_directory || "-"}`,
+          `Files scanned: ${result.scanned_file_count || 0}`,
+          `Files parsed: ${result.parsed_file_count || 0}`,
+          `Extracted rows: ${result.extracted_row_count || 0}`,
+          `Unique rows: ${result.unique_row_count || 0}`,
+          `Inserted mappings: ${result.inserted_mappings || 0}`,
+          `Skipped mappings: ${result.skipped_mappings || 0}`,
+          `Inserted curriculum entries: ${result.inserted_curriculum_entries || 0}`,
+          `Updated curriculum entries: ${result.updated_curriculum_entries || 0}`
+        ];
+        if (Array.isArray(result.file_errors) && result.file_errors.length) {
+          lines.push("", "File errors:");
+          result.file_errors.slice(0, 15).forEach((entry) => {
+            lines.push(`- ${entry.file || entry.source_file_path || "file"}: ${entry.error || "Unknown error"}`);
+          });
+        }
+        if (summaryEl) summaryEl.value = lines.join("\n");
+        alert("Local curriculum PDF import completed.");
+        await renderCbcCurriculumEditor();
+      } catch (error) {
+        if (summaryEl) summaryEl.value = `Local curriculum import failed: ${error.message}`;
+        alert(error.message);
+      }
+    });
+    document.getElementById("exportLocalCurriculumCsvButton")?.addEventListener("click", async () => {
+      try {
+        await downloadWithAuth(
+          "/api/cbc/kicd/export/csv?source_label=LOCAL_CURRICULUM_PDF",
+          "local-curriculum-structure.csv"
+        );
+      } catch (error) {
+        alert(error.message);
+      }
+    });
+    document.getElementById("exportLocalCurriculumExcelButton")?.addEventListener("click", async () => {
+      try {
+        await downloadWithAuth(
+          "/api/cbc/kicd/export/excel?source_label=LOCAL_CURRICULUM_PDF",
+          "local-curriculum-structure.xlsx"
+        );
+      } catch (error) {
+        alert(error.message);
+      }
+    });
     document.getElementById("editCbcMappingButton")?.addEventListener("click", async () => {
       const learningArea = learningAreaEl?.value || "";
       if (!learningArea) {
@@ -2537,10 +5096,78 @@ async function renderCbcCurriculumEditor() {
         alert(error.message);
       }
     });
-    document.getElementById("printCbcNotesButton")?.addEventListener("click", () => {
-      const notes = document.getElementById("cbcNotes")?.value || "";
+    const buildTeacherNotesFromCurriculumEntries = () => {
+      const grade = String(gradeEl?.value || "").trim();
+      const formName = String(formEl?.value || "").trim();
+      const learningArea = String(learningAreaEl?.value || "").trim();
+      if ((!grade && !formName) || !learningArea) return "";
+      const scoped = list.filter((row) => {
+        if (String(row.learning_area || "").trim() !== learningArea) return false;
+        if (grade && String(row.grade || "").trim() !== grade) return false;
+        if (formName && String(row.form_name || "").trim() !== formName) return false;
+        return true;
+      });
+      if (!scoped.length) return "";
+      const header = [
+        "TEACHER NOTES",
+        `Level: ${grade || formName}`,
+        `Learning Area: ${learningArea}`,
+        `Generated: ${new Date().toLocaleString()}`,
+        ""
+      ];
+      const body = scoped
+        .sort((a, b) =>
+          `${a.strand || ""} ${a.sub_strand || ""}`.localeCompare(`${b.strand || ""} ${b.sub_strand || ""}`)
+        )
+        .map((row, index) => {
+          const lines = [
+            `${index + 1}. Strand: ${row.strand || "-"}`,
+            `   Sub-Strand: ${row.sub_strand || "-"}`,
+            row.specific_learning_outcomes ? `   Learning Outcomes: ${row.specific_learning_outcomes}` : "",
+            row.learning_experiences ? `   Learning Experiences: ${row.learning_experiences}` : "",
+            row.notes ? `   Notes: ${row.notes}` : ""
+          ].filter(Boolean);
+          return lines.join("\n");
+        });
+      return [...header, ...body].join("\n");
+    };
+
+    const resolveTeacherNotesText = async () => {
+      const existing = String(document.getElementById("cbcNotes")?.value || "").trim();
+      if (existing) return existing;
+      const built = buildTeacherNotesFromCurriculumEntries();
+      if (built) {
+        document.getElementById("cbcNotes").value = built;
+        return built;
+      }
+      if (gradeEl?.value && learningAreaEl?.value && strandEl?.value) {
+        try {
+          const generated = await request("/api/cbc/curriculum/ai-generate-notes", {
+            method: "POST",
+            body: JSON.stringify({
+              grade: gradeEl?.value || "",
+              form_name: formEl?.value || "",
+              learning_area: learningAreaEl?.value || "",
+              strand: strandEl?.value || "",
+              sub_strand: subStrandEl?.value || ""
+            })
+          });
+          const text = String(generated?.generated_notes || "").trim();
+          if (text) {
+            document.getElementById("cbcNotes").value = text;
+            return text;
+          }
+        } catch (_) {
+          // keep silent; caller shows a user message when no text is available.
+        }
+      }
+      return "";
+    };
+
+    document.getElementById("printCbcNotesButton")?.addEventListener("click", async () => {
+      const notes = await resolveTeacherNotesText();
       if (!notes.trim()) {
-        alert("No notes to print.");
+        alert("Select grade/form and learning area (plus strand/sub-strand) to generate printable notes.");
         return;
       }
       const popup = window.open("", "_blank");
@@ -2548,10 +5175,10 @@ async function renderCbcCurriculumEditor() {
       popup.document.close();
       popup.print();
     });
-    document.getElementById("downloadCbcNotesButton")?.addEventListener("click", () => {
-      const notes = document.getElementById("cbcNotes")?.value || "";
+    document.getElementById("downloadCbcNotesButton")?.addEventListener("click", async () => {
+      const notes = await resolveTeacherNotesText();
       if (!notes.trim()) {
-        alert("No notes to download.");
+        alert("Select grade/form and learning area (plus strand/sub-strand) to generate downloadable notes.");
         return;
       }
       const blob = new Blob([notes], { type: "text/plain;charset=utf-8" });
@@ -2568,17 +5195,35 @@ async function renderCbcCurriculumEditor() {
         alert("Select a material file first.");
         return;
       }
+      const uploadScope = String(document.getElementById("cbcUploadScope")?.value || "sub_strand");
+      const learningArea = String(learningAreaEl?.value || "").trim();
+      const selectedStrand = String(strandEl?.value || "").trim();
+      const selectedSubStrand = String(subStrandEl?.value || "").trim();
+      if (!learningArea) {
+        alert("Select grade/form and learning area first.");
+        return;
+      }
+      if (uploadScope === "strand" && !selectedStrand) {
+        alert("Select strand first for whole-strand upload.");
+        return;
+      }
+      if (uploadScope === "sub_strand" && (!selectedStrand || !selectedSubStrand)) {
+        alert("Select strand and sub-strand first for sub-strand upload.");
+        return;
+      }
+      const scopedStrand = uploadScope === "learning_area" ? "" : selectedStrand;
+      const scopedSubStrand = uploadScope === "sub_strand" ? selectedSubStrand : "";
       const formData = new FormData();
       formData.append("file", file);
       formData.append("grade", gradeEl?.value || "");
       formData.append("form_name", formEl?.value || "");
-      formData.append("learning_area", learningAreaEl?.value || "");
-      formData.append("strand", strandEl?.value || "");
-      formData.append("sub_strand", subStrandEl?.value || "");
+      formData.append("learning_area", learningArea);
+      formData.append("strand", scopedStrand);
+      formData.append("sub_strand", scopedSubStrand);
       formData.append("term", document.getElementById("cbcTerm")?.value || "");
       formData.append("year", document.getElementById("cbcYear")?.value || "");
-      formData.append("title", file.name);
-      formData.append("description", "Uploaded from CBC/CBE Management Module");
+      formData.append("title", `${file.name} (${uploadScope.replace("_", " ")})`);
+      formData.append("description", `Uploaded from CBC/CBE Management Module (${uploadScope})`);
       formData.append("resource_type", "CBC_CBE_MATERIAL_UPLOAD");
       const response = await fetch("/api/cbc/curriculum/materials/upload", {
         method: "POST",
@@ -2610,6 +5255,8 @@ async function renderCbcCurriculumEditor() {
       }
     });
     document.getElementById("refreshCbcEditorButton")?.addEventListener("click", renderCbcCurriculumEditor);
+    applyCompactIconButtons(document.getElementById("formArea"));
+    applyTemplateVisibility(document.getElementById("formArea"));
   } catch (error) {
     alert(error.message);
   }
@@ -2617,7 +5264,7 @@ async function renderCbcCurriculumEditor() {
 
 const moduleConfigs = {
   admission: {
-    title: "Admission Module - Learners Bio Data",
+    title: "Admission Module - Learners Registration",
     endpoint: "/api/admission/learners",
     fields: [
       { name: "first_name", label: "Learner First Name *" },
@@ -2633,6 +5280,7 @@ const moduleConfigs = {
       },
       { name: "admission_number_seed", label: "Admission Serial Seed (for next auto generation)" },
       { name: "admission_number", label: "Admission Number *" },
+      { name: "learner_serial_number", label: "Permanent Learner Serial (system generated)" },
       { name: "date_of_admission", label: "Date of Admission", type: "date" },
       { name: "age_display", label: "Age (Auto: years and months)" },
       { name: "grade", label: "Grade (CBC / Primary / Junior)", type: "select", optionsKey: "gradeOptions" },
@@ -2681,6 +5329,7 @@ const moduleConfigs = {
       { name: "parent2_residence", label: "Parent/Guardian 2 Residence" },
       { name: "parent2_occupation", label: "Parent/Guardian 2 Occupation" },
       { name: "conduct_status", label: "Conduct Status" },
+      { name: "learner_code", label: "Learners Code (auto generated)" },
       { name: "learner_password_hash", label: "Learner password hash (technical)" }
     ]
   },
@@ -3193,6 +5842,12 @@ function formatNumber(value) {
   return Number.isFinite(amount) ? amount.toLocaleString() : "0";
 }
 
+function formatLearnerCode(serialLike) {
+  const parsed = Number(serialLike || 0);
+  if (!Number.isFinite(parsed) || parsed <= 0) return "";
+  return `LC-${String(Math.trunc(parsed)).padStart(3, "0")}`;
+}
+
 function formatMoney(value) {
   const amount = Number(value ?? 0);
   const safe = Number.isFinite(amount) ? amount : 0;
@@ -3338,13 +5993,24 @@ async function mergeDashboardWidgetOverrides(userId) {
 }
 
 function setActiveSidebarButton(moduleId) {
+  const parentFromSubmodule = sidebarSubmoduleParent(currentSidebarSubmoduleId);
+  const activeModuleId = moduleId || parentFromSubmodule || null;
   document.querySelectorAll(".sidebar button[data-module]").forEach((button) => {
-    button.classList.toggle("active", Boolean(moduleId) && button.dataset.module === moduleId);
+    button.classList.toggle("active", Boolean(activeModuleId) && button.dataset.module === activeModuleId);
   });
   document.querySelectorAll(".quick-action-card[data-module]").forEach((card) => {
-    card.classList.toggle("active", Boolean(moduleId) && card.getAttribute("data-module") === moduleId);
+    card.classList.toggle("active", Boolean(activeModuleId) && card.getAttribute("data-module") === activeModuleId);
   });
-  applyThemeAccentByModule(moduleId || "dashboard");
+  document.querySelectorAll(".sidebar-submodule-btn[data-submodule-id]").forEach((button) => {
+    button.classList.toggle("active", Boolean(currentSidebarSubmoduleId) && button.dataset.submoduleId === currentSidebarSubmoduleId);
+  });
+  if (activeModuleId) {
+    const list = document.querySelector(`.sidebar-submodule-list[data-parent-module="${activeModuleId}"]`);
+    if (list) {
+      list.hidden = false;
+    }
+  }
+  applyThemeAccentByModule(activeModuleId || "dashboard");
 }
 
 function applyThemeAccentByModule(moduleId) {
@@ -3373,6 +6039,9 @@ function applyThemeAccentByModule(moduleId) {
 function buildInput(field) {
   const id = `field-${field.name}`;
   const value = "";
+  if (field.name === "learner_serial_number" || field.name === "learner_code") {
+    return `<label>${field.label}</label><input id="${id}" type="text" placeholder="${field.label}" value="${value}" readonly />`;
+  }
   if (field.type === "textarea") {
     return `<label>${field.label}</label><textarea id="${id}" rows="3" placeholder="${field.label}">${value}</textarea>`;
   }
@@ -3468,11 +6137,27 @@ async function saveCurrentModule() {
         alert("Enter the serial seed before using 'Feed serial for next auto generation'.");
         return;
       }
-      payload.admission_number = `ADM/${seed}-${Date.now()}`.slice(0, 80);
+      try {
+        const serial = await request("/api/admission/learners/next-admission-number", {
+          method: "POST",
+          body: JSON.stringify({ mode: "seed", seed })
+        });
+        payload.admission_number = String(serial?.admission_number || "").trim();
+      } catch (error) {
+        alert(error.message);
+        return;
+      }
     } else if (admissionMode.includes("system auto")) {
-      const serialSeed = String(payload.admission_number_seed || "").trim().replace(/\s+/g, "");
-      const prefix = serialSeed ? `ADM/${serialSeed}-` : "ADM/";
-      payload.admission_number = `${prefix}${Date.now()}`.slice(0, 80);
+      try {
+        const serial = await request("/api/admission/learners/next-admission-number", {
+          method: "POST",
+          body: JSON.stringify({ mode: "auto" })
+        });
+        payload.admission_number = String(serial?.admission_number || "").trim();
+      } catch (error) {
+        alert(error.message);
+        return;
+      }
     } else if (!String(payload.admission_number || "").trim()) {
       alert("Admission number is required when manual generation is selected.");
       return;
@@ -3574,6 +6259,12 @@ async function saveCurrentModule() {
     }
     clearForm(config);
     await loadModuleData(config);
+    if (currentModule === "admission") {
+      const panel = document.querySelector(".admission-bio-panel");
+      if (panel) {
+        await refreshAdmissionLearnerCodePreview(panel);
+      }
+    }
   } catch (error) {
     alert(error.message);
   }
@@ -3591,6 +6282,10 @@ async function editRow(id) {
     currentEditId = row.id;
     config.fields.forEach((field) => setFieldValue(field, row[field.name]));
     if (currentModule === "admission") {
+      const learnerCodeEl = document.getElementById("field-learner_code");
+      if (learnerCodeEl) {
+        learnerCodeEl.value = formatLearnerCode(row.learner_serial_number || row.id);
+      }
       const bio = document.querySelector(".admission-bio-panel");
       if (bio) {
         refreshAdmissionGradeFormExclusiveState(bio);
@@ -3659,6 +6354,7 @@ function renderTable(rows) {
   if (!rows.length) {
     head.innerHTML = "";
     body.innerHTML = '<tr><td class="table-empty-state">No records found.</td></tr>';
+    applyCompactIconButtons(document.querySelector(".table-area"));
     return;
   }
 
@@ -3681,6 +6377,7 @@ function renderTable(rows) {
     `
     )
     .join("");
+  applyCompactIconButtons(document.querySelector(".table-area"));
 }
 
 function renderModuleSummary(config, rows = []) {
@@ -3785,6 +6482,7 @@ function renderAdmissionRegisterTable() {
   head.innerHTML = `<tr>
     <th>#</th>
     <th>Admission No.</th>
+    <th>Learners Code</th>
     <th>Full name</th>
     <th>Grade</th>
     <th>Form</th>
@@ -3794,7 +6492,7 @@ function renderAdmissionRegisterTable() {
     <th>Actions</th>
   </tr>`;
   if (!rows.length) {
-    body.innerHTML = `<tr><td colspan="9" class="table-empty-state">No learners match the current filters.</td></tr>`;
+    body.innerHTML = `<tr><td colspan="10" class="table-empty-state">No learners match the current filters.</td></tr>`;
     return;
   }
   body.innerHTML = rows
@@ -3804,6 +6502,7 @@ function renderAdmissionRegisterTable() {
       return `<tr>
         <td>${idx + 1}</td>
         <td>${escapeHtml(row.admission_number || "-")}</td>
+        <td>${escapeHtml(formatLearnerCode(row.learner_serial_number || row.id) || "-")}</td>
         <td>${escapeHtml(row.full_name || "-")}</td>
         <td>${escapeHtml(row.grade || "-")}</td>
         <td>${escapeHtml(row.form_name || "-")}</td>
@@ -4005,12 +6704,99 @@ function wireAdmissionLearnerPhotoUpload(scopeEl) {
     }
     await uploadSelectedFile(file);
   });
-  cameraOpenBtn?.addEventListener("click", () => cameraInput?.click());
+  cameraOpenBtn?.addEventListener("click", async () => {
+    const canUseLiveCamera = Boolean(navigator?.mediaDevices?.getUserMedia);
+    if (!canUseLiveCamera) {
+      cameraInput?.click();
+      return;
+    }
+    let stream = null;
+    const overlay = document.createElement("div");
+    overlay.className = "camera-capture-overlay";
+    overlay.innerHTML = `
+      <div class="camera-capture-card">
+        <h4>Capture Learner Photo</h4>
+        <video id="cameraCaptureVideo" autoplay playsinline></video>
+        <div class="actions-row">
+          <button type="button" id="cameraCaptureTakeBtn">Capture</button>
+          <button type="button" id="cameraCaptureCloseBtn">Close</button>
+        </div>
+      </div>
+    `;
+    const stopStream = () => {
+      if (stream) {
+        stream.getTracks().forEach((track) => track.stop());
+      }
+      overlay.remove();
+    };
+    try {
+      document.body.appendChild(overlay);
+      stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" }, audio: false });
+      const videoEl = overlay.querySelector("#cameraCaptureVideo");
+      if (!videoEl) throw new Error("Camera preview not available.");
+      videoEl.srcObject = stream;
+      overlay.querySelector("#cameraCaptureCloseBtn")?.addEventListener("click", stopStream);
+      overlay.querySelector("#cameraCaptureTakeBtn")?.addEventListener("click", async () => {
+        try {
+          const canvas = document.createElement("canvas");
+          const width = Number(videoEl.videoWidth || 640);
+          const height = Number(videoEl.videoHeight || 480);
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext("2d");
+          ctx.drawImage(videoEl, 0, 0, width, height);
+          const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.92));
+          if (!blob) {
+            alert("Failed to capture camera photo.");
+            return;
+          }
+          const capturedFile = new File([blob], `learner-photo-${Date.now()}.jpg`, { type: "image/jpeg" });
+          await uploadSelectedFile(capturedFile);
+          stopStream();
+        } catch (error) {
+          alert(error.message || "Camera capture failed.");
+        }
+      });
+    } catch (error) {
+      stopStream();
+      alert(`Live camera not available (${error.message || "Unknown error"}). Falling back to file picker.`);
+      cameraInput?.click();
+    }
+  });
   cameraInput?.addEventListener("change", async () => {
     const captured = cameraInput.files?.[0];
     if (!captured) return;
     await uploadSelectedFile(captured);
   });
+}
+
+async function refreshAdmissionLearnerCodePreview(scopeEl) {
+  const codeEl = scopeEl?.querySelector?.("#field-learner_code");
+  if (!codeEl) return;
+  try {
+    const preview = await request("/api/admission/learners/next-learner-code");
+    codeEl.value = String(preview?.learner_code || "");
+  } catch (_) {
+    codeEl.value = "";
+  }
+}
+
+function wireAdmissionLearnerCodeField(scopeEl) {
+  const codeEl = scopeEl?.querySelector?.("#field-learner_code");
+  const serialEl = scopeEl?.querySelector?.("#field-learner_serial_number");
+  if (!codeEl || codeEl.dataset.bound === "1") return;
+  codeEl.dataset.bound = "1";
+  const syncFromSerial = () => {
+    const serialVal = Number(serialEl?.value || 0);
+    if (serialVal > 0) {
+      codeEl.value = formatLearnerCode(serialVal);
+    }
+  };
+  serialEl?.addEventListener("input", syncFromSerial);
+  syncFromSerial();
+  if (!codeEl.value) {
+    refreshAdmissionLearnerCodePreview(scopeEl).catch(() => {});
+  }
 }
 
 function populateAdmissionGradeFormFilterOptions() {
@@ -4127,27 +6913,97 @@ function wireAdmissionExtendedActions() {
       alert(error.message);
     }
   });
+  const searchLearnersForAdmissionDocs = async () => {
+    const mode = String(document.getElementById("admissionDocSearchMode")?.value || "learner");
+    const value = String(document.getElementById("admissionDocSearchValue")?.value || "").trim();
+    const query = value;
+    const learnerSelect = document.getElementById("admissionDocLearnerSelect");
+    if (!learnerSelect) return [];
+    const rows = await request(`/api/admission/learners?limit=500&search=${encodeURIComponent(query)}`);
+    let filtered = Array.isArray(rows) ? rows : [];
+    if (mode === "gradeform") {
+      filtered = filtered.filter((row) => {
+        const grade = String(row.grade || "").toLowerCase();
+        const form = String(row.form_name || "").toLowerCase();
+        return !value || grade.includes(value.toLowerCase()) || form.includes(value.toLowerCase());
+      });
+    } else if (mode === "stream") {
+      filtered = filtered.filter((row) => !value || String(row.stream || "").toLowerCase().includes(value.toLowerCase()));
+    } else if (mode === "name") {
+      filtered = filtered.filter((row) => !value || String(row.full_name || "").toLowerCase().includes(value.toLowerCase()));
+    } else if (mode === "learner") {
+      filtered = filtered.filter((row) =>
+        !value ||
+        String(row.id || "").includes(value) ||
+        String(row.admission_number || "").toLowerCase().includes(value.toLowerCase()) ||
+        String(row.upi_number || "").toLowerCase().includes(value.toLowerCase())
+      );
+    }
+    learnerSelect.innerHTML = `<option value="">Select learner</option>${filtered
+      .map((row) => `<option value="${Number(row.id || 0)}">${escapeHtml(row.full_name || "-")} (${escapeHtml(
+        row.admission_number || row.upi_number || String(row.id || "-")
+      )}) • ${escapeHtml(formatLearnerCode(row.learner_serial_number || row.id) || "-")}</option>`)
+      .join("")}`;
+    return filtered;
+  };
+  document.getElementById("admissionDocSearchBtn")?.addEventListener("click", async () => {
+    try {
+      const rows = await searchLearnersForAdmissionDocs();
+      if (!rows.length) alert("No learner matched the selected search.");
+    } catch (error) {
+      alert(error.message);
+    }
+  });
   document.getElementById("admissionGenerateFormBtn")?.addEventListener("click", async () => {
     try {
-      const learnerId = Number(prompt("Enter learner ID for admission form:") || 0);
-      if (!learnerId) return;
+      const learnerId = Number(document.getElementById("admissionDocLearnerSelect")?.value || 0);
+      if (!learnerId) {
+        alert("Select learner first.");
+        return;
+      }
       const result = await request(`/api/admission/learners/${learnerId}/admission-form`);
       const outputEl = document.getElementById("admissionGeneratedOutput");
       if (outputEl) outputEl.textContent = JSON.stringify(result, null, 2);
+      const mode = (prompt("Choose output mode: PRINT or DOWNLOAD", "PRINT") || "").trim().toUpperCase();
+      if (mode === "PRINT") window.print();
+      if (mode === "DOWNLOAD") {
+        downloadTextFile(`admission-form-${learnerId}.json`, JSON.stringify(result, null, 2), "application/json;charset=utf-8");
+      }
     } catch (error) {
       alert(error.message);
     }
   });
   document.getElementById("admissionGenerateLetterBtn")?.addEventListener("click", async () => {
     try {
-      const learnerId = Number(prompt("Enter learner ID for admission letter:") || 0);
-      if (!learnerId) return;
+      const learnerId = Number(document.getElementById("admissionDocLearnerSelect")?.value || 0);
+      if (!learnerId) {
+        alert("Select learner first.");
+        return;
+      }
       const result = await request(`/api/admission/learners/${learnerId}/admission-letter`);
       const outputEl = document.getElementById("admissionGeneratedOutput");
       if (outputEl) outputEl.textContent = result?.letter_text || JSON.stringify(result, null, 2);
+      const mode = (prompt("Choose output mode: PRINT or DOWNLOAD", "PRINT") || "").trim().toUpperCase();
+      if (mode === "PRINT") window.print();
+      if (mode === "DOWNLOAD") {
+        downloadTextFile(
+          `admission-letter-${learnerId}.txt`,
+          String(result?.letter_text || JSON.stringify(result, null, 2)),
+          "text/plain;charset=utf-8"
+        );
+      }
     } catch (error) {
       alert(error.message);
     }
+  });
+  document.getElementById("admissionDocPrintBtn")?.addEventListener("click", () => window.print());
+  document.getElementById("admissionDocDownloadBtn")?.addEventListener("click", () => {
+    const content = document.getElementById("admissionGeneratedOutput")?.textContent || "";
+    if (!content.trim()) {
+      alert("Generate form or letter first.");
+      return;
+    }
+    downloadTextFile("admission-generated-output.txt", content, "text/plain;charset=utf-8");
   });
   document.getElementById("admissionPreviewOutputBtn")?.addEventListener("click", () => {
     const content = document.getElementById("admissionGeneratedOutput")?.textContent || "";
@@ -4168,6 +7024,7 @@ function wireAdmissionModuleUi(container, config) {
   wireAdmissionMedicalToggle(container);
   wireAdmissionAgeField(container);
   wireAdmissionNameAutoFill(container);
+  wireAdmissionLearnerCodeField(container);
   attachAdmissionPostalFromSelect(container);
   wireAdmissionLearnerPhotoUpload(container);
   wireAdmissionRegisterToolbar(config);
@@ -4377,7 +7234,7 @@ function renderCrudModule(moduleKey, options = {}) {
   const admissionRegisterMarkup =
     moduleKey === "admission"
       ? `
-      <section class="admission-register-panel" aria-label="Admission register">
+      <section id="admissionRegisterPanel" class="admission-register-panel" aria-label="Admission register">
         <h3 class="admission-register-title">Admission Register</h3>
         <p class="small-note admission-register-note">
           Filter learners by institution scope, stream, grade/form, or keyword search (name, admission number). Use row actions or the toolbar below.
@@ -4420,13 +7277,19 @@ function renderCrudModule(moduleKey, options = {}) {
       : "";
 
   if (moduleKey === "admission") {
+    const focusMode = String(options?.admissionFocus || "").toLowerCase();
+    const showBio = !focusMode || focusMode === "bio";
+    const showRegister = !focusMode || focusMode === "register";
+    const showFormLetter = !focusMode || focusMode === "form" || focusMode === "letter";
+    const showFormAction = !focusMode || focusMode === "form";
+    const showLetterAction = !focusMode || focusMode === "letter";
     container.innerHTML = `
     <div class="section-card-header">
       <h3>${escapeHtml(config.title)}</h3>
       <p class="small-note">${escapeHtml(MODULE_DESCRIPTIONS[moduleKey] || "Manage records and actions for this module.")}</p>
     </div>
-    <div class="admission-bio-panel">
-      <h4 class="admission-bio-title">Learners Bio Data</h4>
+    <div id="admissionLearnersRegistrationPanel" class="admission-bio-panel" style="${showBio ? "" : "display:none;"}">
+      <h4 class="admission-bio-title">Learners Registration</h4>
       <p class="small-note admission-mutual-note">Select <strong>either</strong> Grade <strong>or</strong> Form (not both). Postal code fills the town automatically.</p>
       <div class="form-grid form-grid-admission">
         ${config.fields.map(buildInput).join("")}
@@ -4434,25 +7297,42 @@ function renderCrudModule(moduleKey, options = {}) {
       <div class="actions-row actions-row--compact">
         <button id="${saveId}" type="button" class="ax-btn ax-btn--save ax-btn--sm">Save</button>
         <button id="${clearId}" type="button" class="ax-btn ax-btn--reset ax-btn--sm">Clear</button>
-        <button id="${procId}" type="button" class="ax-btn ax-btn--process ax-btn--sm">Proceed</button>
         <button id="${pdfId}" type="button" class="ax-btn ax-btn--download ax-btn--sm">PDF</button>
         <button id="${xlsId}" type="button" class="ax-btn ax-btn--download ax-btn--sm">Excel</button>
         <button id="${printId}" type="button" class="ax-btn ax-btn--print ax-btn--sm">Print</button>
         <button id="${viewId}" type="button" class="ax-btn ax-btn--refresh ax-btn--sm">Refresh</button>
       </div>
     </div>
-    ${admissionRegisterMarkup}
-    <section class="dashboard-section">
-      <h4>Admission Form & Letter</h4>
-      <p class="small-note">Generate one-page admission forms and admission letters for selected learner IDs.</p>
+    ${admissionRegisterMarkup.replace('class="admission-register-panel"', `class="admission-register-panel" style="${showRegister ? "" : "display:none;"}"`)}
+    <section id="admissionFormLetterSection" class="dashboard-section" style="${showFormLetter ? "" : "display:none;"}">
+      <h4 id="admissionFormLetterPanel">${showFormAction && !showLetterAction ? "Admission Form" : showLetterAction && !showFormAction ? "Admission Letter" : "Admission Form & Letter"}</h4>
+      <p class="small-note">Search learners by learner ID, name, grade/form, or stream. Select learner first, then generate, print, or download.</p>
+      <div class="form-grid">
+        <label>Search Mode</label>
+        <select id="admissionDocSearchMode">
+          <option value="learner">Per Learner</option>
+          <option value="name">By Name</option>
+          <option value="gradeform">By Grade/Form</option>
+          <option value="stream">By Stream</option>
+        </select>
+        <label>Search Value</label>
+        <input id="admissionDocSearchValue" placeholder="Learner ID, name, grade/form, or stream" />
+        <label>Matched Learners</label>
+        <select id="admissionDocLearnerSelect">
+          <option value="">Select learner</option>
+        </select>
+      </div>
       <div class="actions-row">
-        <button type="button" id="admissionGenerateFormBtn" class="ax-btn ax-btn--process ax-btn--sm">Generate Admission Form</button>
-        <button type="button" id="admissionGenerateLetterBtn" class="ax-btn ax-btn--process ax-btn--sm">Generate Admission Letter</button>
+        <button type="button" id="admissionDocSearchBtn" class="ax-btn ax-btn--view ax-btn--sm">Search Learner</button>
+        <button type="button" id="admissionGenerateFormBtn" class="ax-btn ax-btn--process ax-btn--sm" style="${showFormAction ? "" : "display:none;"}">Generate Admission Form</button>
+        <button type="button" id="admissionGenerateLetterBtn" class="ax-btn ax-btn--process ax-btn--sm" style="${showLetterAction ? "" : "display:none;"}">Generate Admission Letter</button>
+        <button type="button" id="admissionDocPrintBtn" class="ax-btn ax-btn--print ax-btn--sm">Print Output</button>
+        <button type="button" id="admissionDocDownloadBtn" class="ax-btn ax-btn--download ax-btn--sm">Download Output</button>
         <button type="button" id="admissionPreviewOutputBtn" class="ax-btn ax-btn--view ax-btn--sm">Preview Last Output</button>
       </div>
       <pre id="admissionGeneratedOutput" class="small-note" style="max-height:240px;overflow:auto;white-space:pre-wrap;"></pre>
     </section>
-    <section class="dashboard-section">
+    <section id="admissionTemplatesSection" class="dashboard-section" data-template-control="true" style="${showFormLetter ? "" : "display:none;"}">
       <h4>Templates & Letterhead</h4>
       <div class="actions-row">
         <button type="button" id="admissionDownloadBioTemplateBtn" class="ax-btn ax-btn--download ax-btn--sm">Download Bio Data Template</button>
@@ -4464,7 +7344,7 @@ function renderCrudModule(moduleKey, options = {}) {
         <label>Institution Letterhead File Path</label>
         <input id="admissionLetterheadPath" placeholder="/uploads/....png" />
         <label>Admission Letter Template (optional text)</label>
-        <textarea id="admissionLetterTemplateText" rows="4" placeholder="Use placeholders {{LEARNER_NAME}}, {{INSTITUTION_NAME}}, {{ADMISSION_NUMBER}}, {{GRADE_FORM}}, {{STREAM}}, {{REPORTING_DATE}}"></textarea>
+        <textarea id="admissionLetterTemplateText" class="template-spacious" rows="12" placeholder="Use placeholders {{LEARNER_NAME}}, {{INSTITUTION_NAME}}, {{ADMISSION_NUMBER}}, {{GRADE_FORM}}, {{STREAM}}, {{REPORTING_DATE}}"></textarea>
       </div>
       <div class="actions-row">
         <label class="ax-btn ax-btn--view ax-btn--sm" for="admissionLetterTemplateFileUpload">Upload Letter Template File</label>
@@ -4503,14 +7383,10 @@ function renderCrudModule(moduleKey, options = {}) {
   if (moduleKey === "admission") {
     if (tableAreaMain) tableAreaMain.style.display = "none";
     wireAdmissionModuleUi(container, config);
-    document.getElementById(procId).onclick = async () => {
-      try {
-        await loadModuleData(config);
-        alert("Admission register refreshed from the server.");
-      } catch (error) {
-        alert(error.message);
-      }
-    };
+    if (!isSuperSystemDeveloperPortal()) {
+      const templateSection = document.getElementById("admissionTemplatesSection");
+      if (templateSection) templateSection.style.display = "none";
+    }
   } else {
     if (tableAreaMain) tableAreaMain.style.display = "";
     document.getElementById(procId).onclick = () => alert("Processing completed for this module.");
@@ -4592,7 +7468,34 @@ function renderCrudModule(moduleKey, options = {}) {
   if (moduleKey === "communication-messages") {
     document.getElementById(`${btnPrefix}-dispatch`)?.addEventListener("click", dispatchQueuedMessages);
     document.getElementById(`${btnPrefix}-chat`)?.addEventListener("click", openCommunicationChat);
+    const recipientRoleEl = document.getElementById("field-recipient_role");
+    const recipientContactEl = document.getElementById("field-recipient_contact");
+    recipientRoleEl?.addEventListener("change", async () => {
+      const role = String(recipientRoleEl.value || "").trim();
+      if (!role || !recipientContactEl) return;
+      try {
+        const info = await request(`/api/communication/messages/recipient-preview?recipient_role=${encodeURIComponent(role)}`);
+        recipientContactEl.value = info?.first_contact || "";
+        recipientContactEl.placeholder = info?.total_contacts
+          ? `${info.total_contacts} contact(s) matched`
+          : "No contacts found for this role";
+      } catch (_) {
+        /* ignore preview lookup failure and allow manual entry */
+      }
+    });
   }
+  if (moduleKey === "admission") {
+    const focusMode = String(options?.admissionFocus || "").toLowerCase();
+    if (focusMode === "form" || focusMode === "letter") {
+      document.getElementById("admissionFormLetterPanel")?.scrollIntoView({ behavior: "smooth", block: "center" });
+    } else if (focusMode === "register") {
+      document.getElementById("admissionRegisterPanel")?.scrollIntoView({ behavior: "smooth", block: "center" });
+    } else if (focusMode === "bio") {
+      document.getElementById("admissionLearnersRegistrationPanel")?.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+  }
+  applyCompactIconButtons(container);
+  applyTemplateVisibility(container);
   loadModuleData(config);
   setTimeout(() => attachPostalCodeTownHelper(container), 0);
 }
@@ -4695,6 +7598,7 @@ function startDashboardAutoRefresh() {
 async function loadDashboard(options = {}) {
   const { silent = false, skipAutoRefresh = false } = options;
   currentModule = "dashboard";
+  currentSidebarSubmoduleId = null;
   const tableAreaMain = document.querySelector(".main-content .table-area");
   if (tableAreaMain) tableAreaMain.style.display = "";
   setActiveSidebarButton("dashboard");
@@ -4901,6 +7805,7 @@ async function loadParentOrBomResults() {
   document.getElementById("exportParentPdf").onclick = () =>
     window.open("/api/parent/results/export/pdf", "_blank");
   document.getElementById("printParent").onclick = () => window.print();
+  applyCompactIconButtons(document.getElementById("formArea"));
 
   try {
     const rows = await request("/api/parent/results");
@@ -4913,29 +7818,85 @@ async function loadParentOrBomResults() {
 
 async function loadLearnerMaterials() {
   setActiveSidebarButton("learner-materials");
-  document.getElementById("moduleTitle").textContent = "Learner Learning Materials and Marks";
+  document.getElementById("moduleTitle").textContent = "Learner Materials Module";
   document.getElementById("cards").innerHTML = `
     <div class="card stats-card metric-emphasis">
-      <h4>Learner Portal</h4>
-      <p>Materials, revision content, and marks</p>
+      <h4>Learner Materials</h4>
+      <p>Curriculum-driven notes and assessment resources</p>
     </div>
   `;
   document.getElementById("formArea").innerHTML = `
-    <h3>Learner Portal Resources</h3>
-    <p class="small-note">Refresh to load the latest learning resources and performance records.</p>
+    <h3>Learner Materials Module</h3>
+    <p class="small-note">Generate notes from curriculum data, then print/download immediately.</p>
+    <div class="form-grid">
+      <label>Material Type</label>
+      <select id="learnerMaterialType">
+        <option value="notes">Notes</option>
+        <option value="past_exam">Past Exams</option>
+        <option value="revision_sheet">Revision Sheet</option>
+      </select>
+      <label>Grade</label>
+      <select id="learnerMaterialGrade">
+        <option value="">Select grade</option>
+        ${(Array.isArray(meta?.gradeOptions) ? meta.gradeOptions : []).map((row) => `<option value="${escapeHtml(row)}">${escapeHtml(row)}</option>`).join("")}
+      </select>
+      <label>Learning Area</label>
+      <input id="learnerMaterialLearningArea" placeholder="e.g. Pre-Technical Studies" />
+      <label>Strand</label>
+      <input id="learnerMaterialStrand" placeholder="e.g. 2.0 Communication in Pre-Technical Studies" />
+      <label>Sub-strand (optional)</label>
+      <input id="learnerMaterialSubStrand" placeholder="e.g. 2.3 ICT Tools in Communication" />
+    </div>
     <div class="actions-row">
+      <button id="generateLearnerMaterial">Generate</button>
       <button id="refreshLearner">Refresh</button>
       <button id="printLearner">Print</button>
+      <button id="downloadLearnerMaterial">Download</button>
     </div>
+    <textarea id="learnerGeneratedMaterial" rows="12" placeholder="Generated material appears here..."></textarea>
   `;
+  const outputEl = document.getElementById("learnerGeneratedMaterial");
   document.getElementById("refreshLearner").onclick = loadLearnerMaterials;
   document.getElementById("printLearner").onclick = () => window.print();
+  document.getElementById("downloadLearnerMaterial").onclick = () => {
+    const content = String(outputEl?.value || "").trim();
+    if (!content) {
+      alert("Generate material first.");
+      return;
+    }
+    downloadTextFile("learner-materials-notes.txt", content, "text/plain;charset=utf-8");
+  };
+  document.getElementById("generateLearnerMaterial").onclick = async () => {
+    try {
+      const grade = String(document.getElementById("learnerMaterialGrade")?.value || "").trim();
+      const learningArea = String(document.getElementById("learnerMaterialLearningArea")?.value || "").trim();
+      const strand = String(document.getElementById("learnerMaterialStrand")?.value || "").trim();
+      const subStrand = String(document.getElementById("learnerMaterialSubStrand")?.value || "").trim();
+      if (!grade || !learningArea || !strand) {
+        alert("Select grade, learning area, and strand first.");
+        return;
+      }
+      const generated = await request("/api/cbc/curriculum/ai-generate-notes", {
+        method: "POST",
+        body: JSON.stringify({
+          grade,
+          learning_area: learningArea,
+          strand,
+          sub_strand: subStrand || null
+        })
+      });
+      if (outputEl) outputEl.value = generated?.generated_notes || "No notes generated.";
+    } catch (error) {
+      alert(error.message);
+    }
+  };
   try {
-    const [materials, marks] = await Promise.all([
-      request("/api/learner/materials"),
-      request("/api/learner/marks")
-    ]);
-    renderTable([...(materials || []), ...(marks || [])]);
+    const isLearnerRole = normalizeRoleKey(portalContext?.role || "") === "LEARNER";
+    const [materials, marks] = isLearnerRole
+      ? await Promise.all([request("/api/learner/materials"), request("/api/learner/marks")])
+      : await Promise.all([request("/api/learners/resources"), request("/api/academic/marks")]);
+    renderTable([...(materials || []), ...(marks || []).slice(0, 200)]);
+    applyCompactIconButtons(document.getElementById("formArea"));
   } catch (error) {
     document.getElementById("tableHead").innerHTML = "";
     document.getElementById("tableBody").innerHTML = `<tr><td>${error.message}</td></tr>`;
@@ -4963,7 +7924,7 @@ function attachPostalCodeTownHelper(scopeEl) {
   });
 }
 
-async function renderStaffServiceHub() {
+async function renderStaffServiceHub(options = {}) {
   stopDashboardAutoRefresh();
   currentEditId = null;
   const tableAreaMain = document.querySelector(".main-content .table-area");
@@ -5066,7 +8027,11 @@ async function renderStaffServiceHub() {
   };
 
   catSelect?.addEventListener("change", () => mountCategory(catSelect.value));
-  mountCategory(catSelect?.value || "management-teachers");
+  const initialCategory = [ "management-teachers", "management-non-teaching" ].includes(String(options?.staffCategory || ""))
+    ? String(options.staffCategory)
+    : String(catSelect?.value || "management-teachers");
+  if (catSelect) catSelect.value = initialCategory;
+  mountCategory(initialCategory);
 }
 
 async function renderTeacherTimetableHub(mount) {
@@ -5931,7 +8896,7 @@ function normalizeAttendanceTypeForApi(rawType = "") {
   return "Learner";
 }
 
-async function renderAttendanceManagementHub() {
+async function renderAttendanceManagementHub(options = {}) {
   stopDashboardAutoRefresh();
   currentModule = "attendance";
   currentEditId = null;
@@ -6013,6 +8978,13 @@ async function renderAttendanceManagementHub() {
       <div id="attendanceRegisterTable" class="dashboard-table-wrap"></div>
     </section>
   `;
+  const initialAttendanceType = String(options?.attendanceType || "");
+  const attendanceTypeEl = document.getElementById("attendanceHubType");
+  const attendanceRegisterTypeEl = document.getElementById("attendanceRegisterType");
+  if (["Teacher", "Support Staff", "Learner"].includes(initialAttendanceType)) {
+    if (attendanceTypeEl) attendanceTypeEl.value = initialAttendanceType;
+    if (attendanceRegisterTypeEl) attendanceRegisterTypeEl.value = initialAttendanceType;
+  }
 
   const state = { people: [], selected: new Set(), learnerStatus: new Map() };
   const peopleHost = document.getElementById("attendanceHubPeople");
@@ -6220,33 +9192,237 @@ async function renderAttendanceManagementHub() {
   });
 
   await refreshRegister();
+  if (["Teacher", "Support Staff", "Learner"].includes(initialAttendanceType)) {
+    const today = new Date().toISOString().slice(0, 10);
+    const dateEl = document.getElementById("attendanceHubDate");
+    if (dateEl && !dateEl.value) dateEl.value = today;
+  }
+}
+
+async function openModule(targetModule, options = {}) {
+  if (!targetModule || !isSidebarModuleAllowed(targetModule)) return;
+  currentModule = targetModule;
+  currentEditId = null;
+  if (targetModule === "dashboard") return loadDashboard();
+  if (targetModule === "system-register") return renderSystemRegistration(options);
+  if (targetModule === "system-access-control") return renderModuleRights();
+  if (targetModule === "system-audit") return renderSecurityAudit();
+  if (targetModule === "system-registry") return renderInstitutionsRegistry();
+  if (targetModule === "system-institution-edit") return renderInstitutionEditModule();
+  if (targetModule === "system-institution-uploads") return renderInstitutionUploadsModule();
+  if (targetModule === "system-recycle-bin") return renderRecycleBin();
+  if (targetModule === "system-cbc-editor") return renderCbcCurriculumEditor(options);
+  if (targetModule === "management-staff-service") return renderStaffServiceHub(options);
+  if (targetModule === "attendance") return renderAttendanceManagementHub(options);
+  if (targetModule === "parents-results") return loadParentOrBomResults();
+  if (targetModule === "learner-materials") return loadLearnerMaterials();
+  if (targetModule === "hr-institutional-letters") return renderInstitutionalLettersHub();
+  if (targetModule === "finance-fee-status") return renderFeeStatusHub();
+  if (targetModule === "institutional-registers") return renderInstitutionalRegistersHub();
+  if (moduleConfigs[targetModule]) return renderCrudModule(targetModule, options);
+  return null;
+}
+
+function collapseSidebarSubmoduleLists(exceptParentModule = "") {
+  document.querySelectorAll(".sidebar-submodule-list[data-parent-module]").forEach((list) => {
+    const parent = String(list.dataset.parentModule || "");
+    if (!exceptParentModule || parent !== exceptParentModule) {
+      list.hidden = true;
+    }
+  });
 }
 
 function bindSidebar() {
+  document.querySelectorAll(".sidebar-submodule-list[data-parent-module]").forEach((node) => node.remove());
   document.querySelectorAll(".sidebar button[data-module]").forEach((button) => {
-    if (!isSidebarModuleAllowed(button.dataset.module)) {
+    const moduleId = String(button.dataset.module || "");
+    if ((moduleId === "system-institution-edit" || moduleId === "system-institution-uploads") && !isSuperSystemDeveloperPortal()) {
       button.style.display = "none";
       return;
     }
-    button.addEventListener("click", async () => {
-      currentModule = button.dataset.module;
-      currentEditId = null;
-      if (currentModule === "dashboard") return loadDashboard();
-      if (currentModule === "system-register") return renderSystemRegistration();
-      if (currentModule === "system-access-control") return renderModuleRights();
-      if (currentModule === "system-audit") return renderSecurityAudit();
-      if (currentModule === "system-registry") return renderInstitutionsRegistry();
-      if (currentModule === "system-recycle-bin") return renderRecycleBin();
-      if (currentModule === "system-cbc-editor") return renderCbcCurriculumEditor();
-      if (currentModule === "management-staff-service") return renderStaffServiceHub();
-      if (currentModule === "attendance") return renderAttendanceManagementHub();
-      if (currentModule === "parents-results") return loadParentOrBomResults();
-      if (currentModule === "learner-materials") return loadLearnerMaterials();
-      if (currentModule === "communication-messages") return renderCrudModule(currentModule);
-      if (moduleConfigs[currentModule]) return renderCrudModule(currentModule);
-      return null;
-    });
+    if (!isSidebarModuleAllowed(moduleId)) {
+      button.style.display = "none";
+      return;
+    }
+    button.style.display = "";
+    const submodules = sidebarSubmodulesFor(moduleId).filter(
+      (item) => isSidebarModuleAllowed(item.targetModule) && isSidebarSubmoduleAllowed(item)
+    );
+    if (submodules.length) {
+      const list = document.createElement("div");
+      list.className = "sidebar-submodule-list";
+      list.dataset.parentModule = moduleId;
+      list.hidden = true;
+      list.innerHTML = submodules
+        .map(
+          (item) => `<button type="button" class="sidebar-submodule-btn" data-submodule-id="${escapeHtmlAttribute(item.id)}" data-target-module="${escapeHtmlAttribute(item.targetModule)}">
+            ${escapeHtml(item.label)}
+          </button>`
+        )
+        .join("");
+      button.insertAdjacentElement("afterend", list);
+      list.querySelectorAll(".sidebar-submodule-btn[data-submodule-id]").forEach((subBtn) => {
+        subBtn.onclick = async (event) => {
+          event.stopPropagation();
+          const submoduleId = String(subBtn.dataset.submoduleId || "");
+          const selected = submodules.find((item) => item.id === submoduleId);
+          if (!selected) return;
+          currentSidebarSubmoduleId = selected.id;
+          collapseSidebarSubmoduleLists(moduleId);
+          list.hidden = false;
+          setActiveSidebarButton(moduleId);
+          await openModule(selected.targetModule, selected.options || {});
+        };
+      });
+    }
+    button.onclick = async () => {
+      if (submodules.length) {
+        const list = document.querySelector(`.sidebar-submodule-list[data-parent-module="${moduleId}"]`);
+        const nextHidden = Boolean(list?.hidden);
+        collapseSidebarSubmoduleLists(nextHidden ? moduleId : "");
+        if (list) list.hidden = !nextHidden ? true : false;
+        currentSidebarSubmoduleId = null;
+        setActiveSidebarButton(moduleId);
+        const moduleTitleEl = document.getElementById("moduleTitle");
+        if (moduleTitleEl) moduleTitleEl.textContent = `${toLabel(moduleId)} - Select Sub-Module`;
+        const cardsEl = document.getElementById("cards");
+        if (cardsEl) cardsEl.innerHTML = "";
+        const formArea = document.getElementById("formArea");
+        if (formArea) {
+          formArea.innerHTML = `
+            <div class="module-header-card">
+              <h3>${escapeHtml(toLabel(moduleId))}</h3>
+              <p>Select one sub-module below. Only the selected sub-module details will be shown.</p>
+            </div>
+            <div class="actions-row">
+              ${submodules.map((item) => `<button type="button" data-inline-submodule-id="${escapeHtmlAttribute(item.id)}">${escapeHtml(item.label)}</button>`).join("")}
+            </div>
+          `;
+          formArea.querySelectorAll("button[data-inline-submodule-id]").forEach((inlineButton) => {
+            inlineButton.addEventListener("click", async () => {
+              const targetSubmoduleId = String(inlineButton.getAttribute("data-inline-submodule-id") || "");
+              const selected = submodules.find((item) => item.id === targetSubmoduleId);
+              if (!selected) return;
+              currentSidebarSubmoduleId = selected.id;
+              await openModule(selected.targetModule, selected.options || {});
+            });
+          });
+          applyCompactIconButtons(formArea);
+        }
+        resetDataTable("Select a sub-module to continue.");
+        return;
+      }
+      collapseSidebarSubmoduleLists("");
+      currentSidebarSubmoduleId = null;
+      await openModule(moduleId);
+    };
   });
+}
+
+function renderSidebarInstitutionBranding() {
+  const mount = document.getElementById("sidebarInstitutionBrandingMount");
+  if (!mount) return;
+  const allowed = ["SUPER_SYSTEM_DEVELOPER", "SYSTEM_DEVELOPER", "SYSTEM_ADMINISTRATOR", "ADMIN", "HEAD_OF_INSTITUTION"]
+    .includes(String(portalContext?.role || "").toUpperCase());
+  if (!allowed) {
+    mount.innerHTML = "";
+    return;
+  }
+  mount.className = "sidebar-branding-mount";
+  mount.innerHTML = `
+    <h4>Institution Letterhead Slot</h4>
+    <p class="small-note">Upload/update letterhead used in correspondence.</p>
+    <input id="sidebarLetterheadPathInput" placeholder="/uploads/letterhead.png" />
+    <div class="actions-row">
+      <label class="ax-btn ax-btn--upload ax-btn--sm" for="sidebarLetterheadFileInput">Upload</label>
+      <input id="sidebarLetterheadFileInput" type="file" accept=".png,.jpg,.jpeg,.webp,.gif,.bmp,.svg,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt" hidden />
+      <button id="sidebarLetterheadSaveButton" type="button" class="ax-btn ax-btn--save ax-btn--sm">Save</button>
+    </div>
+  `;
+  const pathInput = document.getElementById("sidebarLetterheadPathInput");
+  const fileInput = document.getElementById("sidebarLetterheadFileInput");
+  fileInput?.addEventListener("change", async () => {
+    const file = fileInput.files?.[0];
+    if (!file || !pathInput) return;
+    try {
+      const uploaded = await uploadFileWithAuth(file);
+      pathInput.value = uploaded?.filePath || "";
+    } catch (error) {
+      alert(error.message);
+    }
+  });
+  document.getElementById("sidebarLetterheadSaveButton")?.addEventListener("click", async () => {
+    try {
+      const letterheadPath = String(pathInput?.value || "").trim();
+      if (!letterheadPath) {
+        alert("Upload a letterhead file first.");
+        return;
+      }
+      await request("/api/institutions/letterhead", {
+        method: "PATCH",
+        body: JSON.stringify({ letterhead_file_path: letterheadPath })
+      });
+      alert("Institution letterhead saved.");
+    } catch (error) {
+      alert(error.message);
+    }
+  });
+  applyCompactIconButtons(mount);
+}
+
+async function initDashboardAssistant() {
+  const panel = document.getElementById("dashboardAiAssistant");
+  const messagesEl = document.getElementById("assistantMessages");
+  const inputEl = document.getElementById("assistantInput");
+  const sendBtn = document.getElementById("assistantSendButton");
+  const toggleBtn = document.getElementById("assistantToggleButton");
+  if (!panel || !messagesEl || !inputEl || !sendBtn || !toggleBtn) return;
+  panel.setAttribute("data-collapsed", panel.getAttribute("data-collapsed") === "1" ? "1" : "0");
+  toggleBtn.textContent = panel.getAttribute("data-collapsed") === "1" ? "Open" : "Hide";
+  const append = (role, message) => {
+    const item = document.createElement("div");
+    item.className = `assistant-msg ${role}`;
+    item.textContent = message;
+    messagesEl.appendChild(item);
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+  };
+  const submit = async () => {
+    const prompt = String(inputEl.value || "").trim();
+    if (!prompt) return;
+    append("user", prompt);
+    append("ai", "Checking system modules...");
+    const pendingNode = messagesEl.lastElementChild;
+    inputEl.value = "";
+    try {
+      const response = await request("/api/dashboard/assistant", {
+        method: "POST",
+        body: JSON.stringify({ prompt })
+      });
+      if (pendingNode) pendingNode.textContent = String(response?.answer || "No assistant response.");
+    } catch (error) {
+      if (pendingNode) {
+        pendingNode.textContent =
+          "I cannot answer right now. For complex questions consult System Developer / Institution System Administrator.";
+      }
+    }
+  };
+  sendBtn.addEventListener("click", () => {
+    submit();
+  });
+  inputEl.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      submit();
+    }
+  });
+  toggleBtn.addEventListener("click", () => {
+    const collapsed = panel.getAttribute("data-collapsed") === "1";
+    const nextState = collapsed ? "0" : "1";
+    panel.setAttribute("data-collapsed", nextState);
+    toggleBtn.textContent = collapsed ? "Hide" : "Open";
+  });
+  messagesEl.innerHTML = "";
+  append("ai", "Ask where to find modules/sub-modules. Complex issues are escalated to your system developer/admin.");
 }
 
 function bindTopbarButtons() {
@@ -6304,11 +9480,13 @@ function bindTopbarButtons() {
       }
     });
   }
+  applyCompactIconButtons(document.querySelector(".topbar-right"));
 }
 
 function renderProfileCenter(profile) {
   currentModule = "profile";
   stopDashboardAutoRefresh();
+  currentSidebarSubmoduleId = null;
   setActiveSidebarButton(null);
   const photoSrc = String(
     profile?.photo_url || profile?.profile_photo_url || profile?.avatar_url || profile?.photo || ""
@@ -6474,71 +9652,13 @@ function renderProfileCenter(profile) {
 
 function bindQuickActionCards() {
   document.querySelectorAll(".quick-action-card[data-module]").forEach((card) => {
-    card.addEventListener("click", async () => {
+    card.onclick = async () => {
       const targetModule = card.getAttribute("data-module");
       if (!targetModule || !isSidebarModuleAllowed(targetModule)) return;
-      currentModule = targetModule;
-      currentEditId = null;
-      if (targetModule === "dashboard") {
-        await loadDashboard();
-        return;
-      }
-      if (targetModule === "system-register") {
-        await renderSystemRegistration();
-        return;
-      }
-      if (targetModule === "system-access-control") {
-        await renderModuleRights();
-        return;
-      }
-      if (targetModule === "system-audit") {
-        await renderSecurityAudit();
-        return;
-      }
-      if (targetModule === "system-registry") {
-        await renderInstitutionsRegistry();
-        return;
-      }
-      if (targetModule === "system-recycle-bin") {
-        await renderRecycleBin();
-        return;
-      }
-      if (targetModule === "system-cbc-editor") {
-        await renderCbcCurriculumEditor();
-        return;
-      }
-      if (targetModule === "management-staff-service") {
-        await renderStaffServiceHub();
-        return;
-      }
-      if (targetModule === "attendance") {
-        await renderAttendanceManagementHub();
-        return;
-      }
-      if (targetModule === "parents-results") {
-        await loadParentOrBomResults();
-        return;
-      }
-      if (targetModule === "learner-materials") {
-        await loadLearnerMaterials();
-        return;
-      }
-      if (targetModule === "hr-institutional-letters") {
-        await renderInstitutionalLettersHub();
-        return;
-      }
-      if (targetModule === "finance-fee-status") {
-        await renderFeeStatusHub();
-        return;
-      }
-      if (targetModule === "institutional-registers") {
-        await renderInstitutionalRegistersHub();
-        return;
-      }
-      if (moduleConfigs[targetModule]) {
-        renderCrudModule(targetModule);
-      }
-    });
+      currentSidebarSubmoduleId = null;
+      collapseSidebarSubmoduleLists("");
+      await openModule(targetModule);
+    };
   });
 }
 
@@ -6891,6 +10011,7 @@ async function init() {
   await safeStep("bindSidebar", async () => bindSidebar());
   await safeStep("bindTopbarButtons", async () => bindTopbarButtons());
   await safeStep("bindQuickActionCards", async () => bindQuickActionCards());
+  await safeStep("initDashboardAssistant", async () => initDashboardAssistant());
 
   const loaded = await safeStep("loadDashboard", () => loadDashboard());
   if (loaded === null) {
@@ -6903,6 +10024,8 @@ async function init() {
   if (meData?.must_change_password) {
     alert("Password policy notice: your password was reset and must be changed immediately.");
   }
+  applyCompactIconButtons(document.getElementById("formArea"));
+  applyTemplateVisibility(document.getElementById("formArea"));
 }
 
 window.editRow = editRow;
