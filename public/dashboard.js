@@ -12,7 +12,7 @@ let portalContext = null;
 let searchRowDrafts = {};
 let dashboardAutoRefreshHandle = null;
 let currentSidebarSubmoduleId = null;
-const CLIENT_UI_BUNDLE_ID = "dash-bundle-main-v60-institution-uploads-exam-flow";
+const CLIENT_UI_BUNDLE_ID = "dash-bundle-main-v61-admission-learners-restored";
 const examPanelState = {
   generatedExam: null,
   serials: [],
@@ -150,6 +150,12 @@ const SIDEBAR_SUBMODULES = {
     }
   ],
   admission: [
+    {
+      id: "admission-learners-registration",
+      label: "Learners Registration",
+      targetModule: "admission",
+      options: { admissionFocus: "bio" }
+    },
     { id: "admission-register", label: "Admission Register", targetModule: "admission", options: { admissionFocus: "register" } },
     { id: "admission-form", label: "Admission Form", targetModule: "admission", options: { admissionFocus: "form" } },
     { id: "admission-letter", label: "Admission Letter", targetModule: "admission", options: { admissionFocus: "letter" } }
@@ -6456,6 +6462,8 @@ function renderCrudModule(moduleKey, options = {}) {
       document.getElementById("admissionFormLetterPanel")?.scrollIntoView({ behavior: "smooth", block: "center" });
     } else if (focusMode === "register") {
       document.getElementById("admissionRegisterPanel")?.scrollIntoView({ behavior: "smooth", block: "center" });
+    } else if (focusMode === "bio") {
+      document.getElementById("admissionLearnersRegistrationPanel")?.scrollIntoView({ behavior: "smooth", block: "center" });
     }
   }
   applyCompactIconButtons(container);
