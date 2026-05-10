@@ -12,7 +12,7 @@ let portalContext = null;
 let searchRowDrafts = {};
 let dashboardAutoRefreshHandle = null;
 let currentSidebarSubmoduleId = null;
-const CLIENT_UI_BUNDLE_ID = "dash-bundle-main-v63-sidebar-cleanup";
+const CLIENT_UI_BUNDLE_ID = "dash-bundle-main-v64-registration-registry-upgrade";
 const examPanelState = {
   generatedExam: null,
   serials: [],
@@ -127,7 +127,7 @@ const MODULE_DESCRIPTIONS = {
   "system-audit": "Review security and login audit trails for accountability.",
   "system-registry": "Browse institutions and user registry details in one place.",
   "system-institution-edit":
-    "Manage institution-specific letterheads, logos, and document templates per tenant (SSD only).",
+    "Institution Upgrade: edit/save/delete institution profile and institution user details (SSD only).",
   "system-institution-uploads":
     "Institution uploads workspace: templates, logos, letterheads, admission/assessment samples, and generated document files per institution.",
   "system-recycle-bin": "Restore or permanently purge archived deleted records.",
@@ -141,7 +141,7 @@ const SIDEBAR_SUBMODULES = {
       label: "Institution Registration",
       targetModule: "system-register",
       options: { registrationFocus: "institution" },
-      roles: ["SUPER_SYSTEM_DEVELOPER", "SYSTEM_DEVELOPER"]
+      roles: ["SUPER_SYSTEM_DEVELOPER"]
     },
     {
       id: "system-register-developers",
@@ -155,14 +155,13 @@ const SIDEBAR_SUBMODULES = {
       label: "HOI/Admin/Sys Admin Registration",
       targetModule: "system-register",
       options: { registrationFocus: "hoi-admin" },
-      roles: ["SUPER_SYSTEM_DEVELOPER", "SYSTEM_DEVELOPER"]
+      roles: ["SUPER_SYSTEM_DEVELOPER"]
     },
     {
       id: "system-register-user",
       label: "User Registration",
       targetModule: "system-register",
-      options: { registrationFocus: "user" },
-      roles: ["SUPER_SYSTEM_DEVELOPER", "SYSTEM_DEVELOPER", "SYSTEM_ADMINISTRATOR", "ADMIN", "HEAD_OF_INSTITUTION"]
+      options: { registrationFocus: "user" }
     }
   ],
   admission: [
@@ -990,33 +989,6 @@ async function renderSystemRegistration(options = {}) {
           <input id="sysInstitutionManualPostalCode" placeholder="Enter postal code manually" style="display:none;" />
           <label>Town</label>
           <input id="sysInstitutionTown" placeholder="Town" />
-          <label>Email</label>
-          <input id="sysInstitutionEmail" placeholder="Institution email" />
-          <label>Phone Prefix</label>
-          <select id="sysInstitutionPhonePrefix">
-            <option value="+254">+254</option>
-            <option value="07">07</option>
-            <option value="01">01</option>
-            <option value="+">+</option>
-          </select>
-          <label>Phone Digits</label>
-          <input id="sysInstitutionPhoneLocal" maxlength="25" placeholder="Remaining digits (max 25)" />
-          <label>Head of Institution / Deputy Name</label>
-          <input id="sysInstitutionAdminName" placeholder="Full name" />
-          <label>Admin Username</label>
-          <input id="sysInstitutionAdminUsername" placeholder="Username" />
-          <label>Admin Role</label>
-          <select id="sysInstitutionAdminRole">
-            <option value="ADMIN">HoI/Administrator</option>
-            <option value="HEAD_OF_INSTITUTION">Deputy HoI</option>
-          </select>
-          <label>Admin Password (optional)</label>
-          <input id="sysInstitutionAdminPassword" type="password" placeholder="Leave blank to auto-generate secure password" />
-          <label>Email agreement</label>
-          <select id="sysInstitutionSendAgreement">
-            <option value="false">No</option>
-            <option value="true">Yes</option>
-          </select>
         </div>
         <div class="agreement-toolbar-row" id="sysAgreementActionsRow">
           <button id="sysSendAgreementButton" style="display:none;">Send Agreement</button>
@@ -1529,14 +1501,7 @@ async function renderSystemRegistration(options = {}) {
           postal_code_manual: postalCodeValue === "__manual__"
             ? String(manualPostalInput?.value || "").trim()
             : undefined,
-          town: String(document.getElementById("sysInstitutionTown")?.value || "").trim(),
-          email: String(document.getElementById("sysInstitutionEmail")?.value || "").trim(),
-          phone: composePrefixedPhone("sysInstitutionPhonePrefix", "sysInstitutionPhoneLocal"),
-          admin_full_name: String(document.getElementById("sysInstitutionAdminName")?.value || "").trim(),
-          admin_username: String(document.getElementById("sysInstitutionAdminUsername")?.value || "").trim(),
-          admin_password: String(document.getElementById("sysInstitutionAdminPassword")?.value || ""),
-          portal_role: String(document.getElementById("sysInstitutionAdminRole")?.value || "ADMIN"),
-          send_agreement_email: String(sendAgreementSelect?.value || "false") === "true"
+          town: String(document.getElementById("sysInstitutionTown")?.value || "").trim()
         };
         const result = await request("/api/institutions", {
           method: "POST",
@@ -1911,10 +1876,10 @@ async function renderSystemRegistration(options = {}) {
     if (actorRole !== "SUPER_SYSTEM_DEVELOPER" && developerSection) {
       developerSection.style.display = "none";
     }
-    if (!["SUPER_SYSTEM_DEVELOPER", "SYSTEM_DEVELOPER"].includes(actorRole) && institutionSection) {
+    if (actorRole !== "SUPER_SYSTEM_DEVELOPER" && institutionSection) {
       institutionSection.style.display = "none";
     }
-    if (!["SUPER_SYSTEM_DEVELOPER", "SYSTEM_DEVELOPER"].includes(actorRole) && hoiAdminSection) {
+    if (actorRole !== "SUPER_SYSTEM_DEVELOPER" && hoiAdminSection) {
       hoiAdminSection.style.display = "none";
     }
     applyCompactIconButtons(document.getElementById("formArea"));
@@ -2248,6 +2213,11 @@ async function renderSecurityAudit() {
   try {
     const logs = await request("/api/system/audit-logs?limit=240");
     const rows = Array.isArray(logs?.logs) ? logs.logs : [];
+    const actorRole = normalizeRoleKey(portalContext?.role || "");
+    const roleScopeNote =
+      actorRole === "SUPER_SYSTEM_DEVELOPER"
+        ? "Super System Developer: global/all institution logs"
+        : "Institution scope only: you can see logs for your institution users";
     document.getElementById("cards").innerHTML = `
       <div class="card stats-card metric-emphasis">
         <h4>Audit Events</h4>
@@ -2261,32 +2231,70 @@ async function renderSecurityAudit() {
         <h4>OTP Failures (24h)</h4>
         <p>${formatNumber(logs?.metrics?.otp_fail_events_24h || 0)}</p>
       </div>
+      <div class="card stats-card">
+        <h4>Scope</h4>
+        <p>${escapeHtml(roleScopeNote)}</p>
+      </div>
     `;
     document.getElementById("formArea").innerHTML = `
       <div class="module-header-card">
         <h3>Security & Logging Audit</h3>
-        <p>Super/System Developer reviews assigned/global institutions; HoI/System Administrator reviews institution-scoped activity. Entries include username, institution code, IP address, machine identifier, logging status, login time, activities, and logout time where recorded.</p>
+        <p>Advanced audit workspace with filters and event cards. Entries include username, institution code, IP address, machine identifier, login status, login time, activity done, and logout time.</p>
+      </div>
+      <div class="form-grid">
+        <label>Filter Username</label>
+        <input id="auditFilterUsername" placeholder="username" />
+        <label>Filter Institution Code</label>
+        <input id="auditFilterInstitutionCode" placeholder="institution code" />
+        <label>Filter Action</label>
+        <input id="auditFilterAction" placeholder="action/event" />
       </div>
       <div class="actions-row">
-        <button id="auditScrollLeftButton">◀</button>
-        <button id="auditScrollRightButton">▶</button>
         <button id="refreshAuditLogButton">Refresh</button>
+        <button id="auditExportViewButton">Print View</button>
       </div>
-      <div id="auditStripScroller" class="dashboard-table-wrap" style="overflow-x:auto; white-space:nowrap;">
-        <div id="auditStripList">
-          ${rows.length ? rows.map((row) => toAuditStripMarkup(row)).join("") : '<p class="small-note">No audit log entries found.</p>'}
-        </div>
+      <div id="auditAdvancedGrid" class="audit-advanced-grid">
+        ${rows.length ? rows.map((row) => `
+          <article class="audit-advanced-card"
+            data-audit-username="${escapeHtmlAttribute(String(row.username || ""))}"
+            data-audit-institution="${escapeHtmlAttribute(String(row.institution_code || ""))}"
+            data-audit-action="${escapeHtmlAttribute(String(row.activity_done || row.action || ""))}">
+            <div class="audit-advanced-head">
+              <strong>${escapeHtml(row.username || row.actor_role || "User")}</strong>
+              <span class="audit-event-tag">${escapeHtml(row.activity_done || row.action || "-")}</span>
+            </div>
+            <div class="audit-advanced-body">
+              <div><span>Institution:</span> ${escapeHtml(row.institution_code || "-")}</div>
+              <div><span>IP:</span> ${escapeHtml(row.ip_address || "-")}</div>
+              <div><span>Machine:</span> ${escapeHtml(row.machine_name || "-")}</div>
+              <div><span>Login:</span> ${escapeHtml(formatDateTime(row.login_time || row.created_at))}</div>
+              <div><span>Logout:</span> ${escapeHtml(formatDateTime(row.logout_time))}</div>
+            </div>
+          </article>
+        `).join("") : '<p class="small-note">No audit log entries found.</p>'}
       </div>
     `;
     resetDataTable("Audit strips loaded above.");
-    const scroller = document.getElementById("auditStripScroller");
-    document.getElementById("auditScrollLeftButton")?.addEventListener("click", () => {
-      scroller?.scrollBy({ left: -520, behavior: "smooth" });
-    });
-    document.getElementById("auditScrollRightButton")?.addEventListener("click", () => {
-      scroller?.scrollBy({ left: 520, behavior: "smooth" });
+    const applyAuditFilters = () => {
+      const usernameQ = String(document.getElementById("auditFilterUsername")?.value || "").trim().toLowerCase();
+      const institutionQ = String(document.getElementById("auditFilterInstitutionCode")?.value || "").trim().toLowerCase();
+      const actionQ = String(document.getElementById("auditFilterAction")?.value || "").trim().toLowerCase();
+      document.querySelectorAll("#auditAdvancedGrid .audit-advanced-card").forEach((card) => {
+        const usernameVal = String(card.getAttribute("data-audit-username") || "").toLowerCase();
+        const institutionVal = String(card.getAttribute("data-audit-institution") || "").toLowerCase();
+        const actionVal = String(card.getAttribute("data-audit-action") || "").toLowerCase();
+        const visible =
+          (!usernameQ || usernameVal.includes(usernameQ)) &&
+          (!institutionQ || institutionVal.includes(institutionQ)) &&
+          (!actionQ || actionVal.includes(actionQ));
+        card.style.display = visible ? "" : "none";
+      });
+    };
+    ["auditFilterUsername", "auditFilterInstitutionCode", "auditFilterAction"].forEach((id) => {
+      document.getElementById(id)?.addEventListener("input", applyAuditFilters);
     });
     document.getElementById("refreshAuditLogButton")?.addEventListener("click", renderSecurityAudit);
+    document.getElementById("auditExportViewButton")?.addEventListener("click", () => window.print());
     applyCompactIconButtons(document.getElementById("formArea"));
   } catch (error) {
     alert(error.message);
@@ -2330,11 +2338,17 @@ async function renderInstitutionsRegistry() {
     const institutionActions = (row) => {
       const rowId = Number(row?.id || 0);
       if (!rowId) return "-";
+      const encoded = JSON.stringify({
+        id: rowId,
+        institution_name: row?.institution_name || "",
+        email: row?.email || "",
+        phone: row?.phone || ""
+      }).replace(/"/g, "&quot;");
       return `
         <div class="search-inline-actions">
           <button class="search-action-icon view" onclick="performRegistryRowAction('institution', { id: ${rowId} }, 'view')" title="View">👁</button>
-          <button class="search-action-icon edit" onclick="performRegistryRowAction('institution', { id: ${rowId} }, 'edit')" title="Edit">✎</button>
-          <button class="search-action-icon save" onclick="performRegistryRowAction('institution', { id: ${rowId} }, 'save')" title="Save">💾</button>
+          <button class="search-action-icon edit" onclick="performRegistryRowAction('institution', ${encoded}, 'edit')" title="Edit">✎</button>
+          <button class="search-action-icon save" onclick="performRegistryRowAction('institution', ${encoded}, 'save')" title="Save">💾</button>
           <button class="search-action-icon print" onclick="performRegistryRowAction('institution', { id: ${rowId} }, 'print')" title="Print">🖨</button>
           <button class="search-action-icon pdf" onclick="performRegistryRowAction('institution', { id: ${rowId} }, 'pdf')" title="PDF">📄</button>
           <button class="search-action-icon delete" onclick="performRegistryRowAction('institution', { id: ${rowId} }, 'delete')" title="Delete">🗑</button>
@@ -2347,11 +2361,17 @@ async function renderInstitutionsRegistry() {
     const userActions = (row) => {
       const rowId = Number(row?.id || 0);
       if (!rowId) return "-";
+      const encoded = JSON.stringify({
+        id: rowId,
+        full_name: row?.full_name || "",
+        email: row?.email || "",
+        phone: row?.phone || ""
+      }).replace(/"/g, "&quot;");
       return `
         <div class="search-inline-actions">
           <button class="search-action-icon view" onclick="performRegistryRowAction('user', { id: ${rowId} }, 'view')" title="View">👁</button>
-          <button class="search-action-icon edit" onclick="performRegistryRowAction('user', { id: ${rowId} }, 'edit')" title="Edit">✎</button>
-          <button class="search-action-icon save" onclick="performRegistryRowAction('user', { id: ${rowId} }, 'save')" title="Save">💾</button>
+          <button class="search-action-icon edit" onclick="performRegistryRowAction('user', ${encoded}, 'edit')" title="Edit">✎</button>
+          <button class="search-action-icon save" onclick="performRegistryRowAction('user', ${encoded}, 'save')" title="Save">💾</button>
           <button class="search-action-icon print" onclick="performRegistryRowAction('user', { id: ${rowId} }, 'print')" title="Print">🖨</button>
           <button class="search-action-icon pdf" onclick="performRegistryRowAction('user', { id: ${rowId} }, 'pdf')" title="PDF">📄</button>
           <button class="search-action-icon delete" onclick="performRegistryRowAction('user', { id: ${rowId} }, 'delete')" title="Delete">🗑</button>
@@ -2365,11 +2385,17 @@ async function renderInstitutionsRegistry() {
       <div class="module-header-card">
         <h3>Registry</h3>
       </div>
-      <div class="form-grid">
+      <div class="form-grid registry-top-controls">
         <label>Registry Scope</label>
         <select id="registryScopeSelect">
           ${scopeOptions.map((option) => `<option value="${option.key}">${escapeHtml(option.label)}</option>`).join("")}
         </select>
+        <div class="search-inline-actions registry-top-actions">
+          <button class="search-action-icon view" id="registryRefreshButton" title="Refresh">↻</button>
+          <button class="search-action-icon print" id="registryPrintButton" title="Print">🖨</button>
+          <button class="search-action-icon pdf" id="registryPdfButton" title="PDF">📄</button>
+          <button class="search-action-icon download" id="registryExcelButton" title="Excel">⬇</button>
+        </div>
       </div>
       <div id="registryScopeTable"></div>
     `;
@@ -2412,6 +2438,22 @@ async function renderInstitutionsRegistry() {
 
     const scopeSelect = document.getElementById("registryScopeSelect");
     scopeSelect?.addEventListener("change", () => renderRegistryScope(scopeSelect.value));
+    document.getElementById("registryRefreshButton")?.addEventListener("click", () => renderRegistryScope(scopeSelect?.value || initialScope));
+    document.getElementById("registryPrintButton")?.addEventListener("click", () => window.print());
+    document.getElementById("registryPdfButton")?.addEventListener("click", () => {
+      if ((scopeSelect?.value || initialScope) === "institution") {
+        window.open("/api/system/registry/export/pdf", "_blank");
+      } else {
+        window.open("/api/users/export/pdf", "_blank");
+      }
+    });
+    document.getElementById("registryExcelButton")?.addEventListener("click", () => {
+      if ((scopeSelect?.value || initialScope) === "institution") {
+        window.open("/api/system/registry/export/excel", "_blank");
+      } else {
+        window.open("/api/users/export/excel", "_blank");
+      }
+    });
     renderRegistryScope(initialScope);
     applyCompactIconButtons(document.getElementById("formArea"));
     resetDataTable("Registry records loaded above.");
@@ -2424,12 +2466,249 @@ async function renderInstitutionEditModule(options = {}) {
   const variant = String(options?.variant || "edit");
   const isUploadVariant = variant === "uploads";
   setActiveSidebarButton(isUploadVariant ? "system-institution-uploads" : "system-institution-edit");
-  document.getElementById("moduleTitle").textContent = isUploadVariant ? "Institution Uploads" : "Institution Edit Module";
+  document.getElementById("moduleTitle").textContent = isUploadVariant ? "Institution Uploads" : "Institution Upgrade";
   if (!isSuperSystemDeveloperPortal()) {
-    alert("Only Super System Developer can access Institution Edit Module.");
+    alert("Only Super System Developer can access Institution Upgrade.");
     return loadDashboard();
   }
   try {
+    if (!isUploadVariant) {
+      const registry = await request("/api/system/registry");
+      const institutions = Array.isArray(registry?.institutions) ? registry.institutions : [];
+      const users = Array.isArray(registry?.users) ? registry.users : [];
+      const sortedInstitutions = [...institutions].sort((a, b) =>
+        String(a?.institution_name || "").localeCompare(String(b?.institution_name || ""))
+      );
+      document.getElementById("cards").innerHTML = `
+        <div class="card stats-card metric-emphasis">
+          <h4>Institution Upgrade</h4>
+          <p>${formatNumber(sortedInstitutions.length)} institution(s)</p>
+        </div>
+        <div class="card stats-card">
+          <h4>Institution Users</h4>
+          <p>${formatNumber(users.length)}</p>
+        </div>
+        <div class="card stats-card">
+          <h4>Scope</h4>
+          <p>Super System Developer only</p>
+        </div>
+      `;
+      document.getElementById("formArea").innerHTML = `
+        <div class="module-header-card">
+          <h3>Institution Upgrade</h3>
+          <p>Select an institution, then use Edit/Save/Delete to manage institution profile and institution user details.</p>
+        </div>
+        <div class="form-grid">
+          <label>Institution</label>
+          <select id="institutionUpgradeInstitutionId">
+            <option value="">Select institution</option>
+            ${sortedInstitutions.map((row) => `<option value="${Number(row.id || 0)}">${escapeHtml(row.institution_name || "-")} (${escapeHtml(row.institution_code || "-")})</option>`).join("")}
+          </select>
+        </div>
+        <div class="actions-row">
+          <button id="institutionUpgradeEditButton" type="button">Edit Institution</button>
+          <button id="institutionUpgradeSaveButton" type="button">Save Institution</button>
+          <button id="institutionUpgradeDeleteButton" type="button">Delete Institution</button>
+        </div>
+        <div class="form-grid">
+          <label>Institution Name</label>
+          <input id="institutionUpgradeName" disabled />
+          <label>Institution Code</label>
+          <input id="institutionUpgradeCode" class="readonly-field" readonly />
+          <label>County</label>
+          <input id="institutionUpgradeCounty" disabled />
+          <label>Sub County</label>
+          <input id="institutionUpgradeSubCounty" disabled />
+          <label>Location</label>
+          <input id="institutionUpgradeLocation" disabled />
+          <label>Postal Address</label>
+          <input id="institutionUpgradePostalAddress" disabled />
+          <label>Postal Code</label>
+          <input id="institutionUpgradePostalCode" disabled />
+          <label>Town</label>
+          <input id="institutionUpgradeTown" disabled />
+          <label>Email</label>
+          <input id="institutionUpgradeEmail" disabled />
+          <label>Phone</label>
+          <input id="institutionUpgradePhone" disabled />
+        </div>
+        <div class="module-header-card">
+          <h4>Institution User Details</h4>
+        </div>
+        <div class="form-grid">
+          <label>Institution User</label>
+          <select id="institutionUpgradeUserId">
+            <option value="">Select user</option>
+          </select>
+        </div>
+        <div class="actions-row">
+          <button id="institutionUpgradeUserEditButton" type="button">Edit User</button>
+          <button id="institutionUpgradeUserSaveButton" type="button">Save User</button>
+          <button id="institutionUpgradeUserDeleteButton" type="button">Delete User</button>
+        </div>
+        <div class="form-grid">
+          <label>Full Name</label>
+          <input id="institutionUpgradeUserName" disabled />
+          <label>Username</label>
+          <input id="institutionUpgradeUsername" disabled />
+          <label>Email</label>
+          <input id="institutionUpgradeUserEmail" disabled />
+          <label>Phone</label>
+          <input id="institutionUpgradeUserPhone" disabled />
+          <label>Role</label>
+          <input id="institutionUpgradeUserRole" disabled />
+        </div>
+      `;
+      const institutionSelect = document.getElementById("institutionUpgradeInstitutionId");
+      const userSelect = document.getElementById("institutionUpgradeUserId");
+      const institutionFields = {
+        name: document.getElementById("institutionUpgradeName"),
+        code: document.getElementById("institutionUpgradeCode"),
+        county: document.getElementById("institutionUpgradeCounty"),
+        sub_county: document.getElementById("institutionUpgradeSubCounty"),
+        location: document.getElementById("institutionUpgradeLocation"),
+        postal_address: document.getElementById("institutionUpgradePostalAddress"),
+        postal_code: document.getElementById("institutionUpgradePostalCode"),
+        town: document.getElementById("institutionUpgradeTown"),
+        email: document.getElementById("institutionUpgradeEmail"),
+        phone: document.getElementById("institutionUpgradePhone")
+      };
+      const userFields = {
+        full_name: document.getElementById("institutionUpgradeUserName"),
+        username: document.getElementById("institutionUpgradeUsername"),
+        email: document.getElementById("institutionUpgradeUserEmail"),
+        phone: document.getElementById("institutionUpgradeUserPhone"),
+        role: document.getElementById("institutionUpgradeUserRole")
+      };
+      const setInstitutionEditMode = (enabled) => {
+        ["name", "county", "sub_county", "location", "postal_address", "postal_code", "town", "email", "phone"].forEach((key) => {
+          if (institutionFields[key]) institutionFields[key].disabled = !enabled;
+        });
+      };
+      const setUserEditMode = (enabled) => {
+        ["full_name", "username", "email", "phone", "role"].forEach((key) => {
+          if (userFields[key]) userFields[key].disabled = !enabled;
+        });
+      };
+      const userMap = new Map();
+      const refreshUsersForInstitution = (institutionId) => {
+        const scopedUsers = users.filter((row) => Number(row.institution_id || 0) === Number(institutionId || 0));
+        userMap.clear();
+        userSelect.innerHTML = `<option value="">Select user</option>${scopedUsers
+          .map((row) => {
+            const id = Number(row.id || 0);
+            userMap.set(id, row);
+            return `<option value="${id}">${escapeHtml(row.full_name || row.username || `User ${id}`)} (${escapeHtml(
+              row.username || "-"
+            )})</option>`;
+          })
+          .join("")}`;
+      };
+      const loadInstitution = async (institutionId) => {
+        if (!institutionId) {
+          Object.values(institutionFields).forEach((field) => {
+            if (field) field.value = "";
+          });
+          refreshUsersForInstitution(0);
+          return;
+        }
+        const response = await request(`/api/system/registry/institutions/${institutionId}/view`);
+        const institution = response?.institution || {};
+        institutionFields.name.value = institution.institution_name || "";
+        institutionFields.code.value = institution.institution_code || "";
+        institutionFields.county.value = institution.county || "";
+        institutionFields.sub_county.value = institution.sub_county || "";
+        institutionFields.location.value = institution.location || "";
+        institutionFields.postal_address.value = institution.postal_address || "";
+        institutionFields.postal_code.value = institution.postal_code || "";
+        institutionFields.town.value = institution.town || "";
+        institutionFields.email.value = institution.email || "";
+        institutionFields.phone.value = institution.phone || "";
+        refreshUsersForInstitution(institutionId);
+      };
+      const loadUser = (userId) => {
+        const row = userMap.get(Number(userId || 0)) || {};
+        userFields.full_name.value = row.full_name || "";
+        userFields.username.value = row.username || "";
+        userFields.email.value = row.email || "";
+        userFields.phone.value = row.phone || "";
+        userFields.role.value = row.role || "";
+      };
+      institutionSelect?.addEventListener("change", async () => {
+        setInstitutionEditMode(false);
+        setUserEditMode(false);
+        await loadInstitution(Number(institutionSelect.value || 0));
+      });
+      userSelect?.addEventListener("change", () => {
+        setUserEditMode(false);
+        loadUser(Number(userSelect.value || 0));
+      });
+      document.getElementById("institutionUpgradeEditButton")?.addEventListener("click", () => setInstitutionEditMode(true));
+      document.getElementById("institutionUpgradeSaveButton")?.addEventListener("click", async () => {
+        const institutionId = Number(institutionSelect?.value || 0);
+        if (!institutionId) {
+          alert("Select institution first.");
+          return;
+        }
+        await request(`/api/system/registry/institutions/${institutionId}`, {
+          method: "PATCH",
+          body: JSON.stringify({
+            institution_name: institutionFields.name.value,
+            county: institutionFields.county.value,
+            sub_county: institutionFields.sub_county.value,
+            location: institutionFields.location.value,
+            postal_address: institutionFields.postal_address.value,
+            postal_code: institutionFields.postal_code.value,
+            town: institutionFields.town.value,
+            email: institutionFields.email.value,
+            phone: institutionFields.phone.value
+          })
+        });
+        alert("Institution details saved.");
+        setInstitutionEditMode(false);
+        await loadInstitution(institutionId);
+      });
+      document.getElementById("institutionUpgradeDeleteButton")?.addEventListener("click", async () => {
+        const institutionId = Number(institutionSelect?.value || 0);
+        if (!institutionId) {
+          alert("Select institution first.");
+          return;
+        }
+        await performRegistryRowAction("institution", { id: institutionId }, "delete");
+      });
+      document.getElementById("institutionUpgradeUserEditButton")?.addEventListener("click", () => setUserEditMode(true));
+      document.getElementById("institutionUpgradeUserSaveButton")?.addEventListener("click", async () => {
+        const userId = Number(userSelect?.value || 0);
+        if (!userId) {
+          alert("Select user first.");
+          return;
+        }
+        await request(`/api/system/registry/users/${userId}`, {
+          method: "PATCH",
+          body: JSON.stringify({
+            full_name: userFields.full_name.value,
+            username: userFields.username.value,
+            email: userFields.email.value,
+            phone: userFields.phone.value
+          })
+        });
+        alert("Institution user details saved.");
+        setUserEditMode(false);
+      });
+      document.getElementById("institutionUpgradeUserDeleteButton")?.addEventListener("click", async () => {
+        const userId = Number(userSelect?.value || 0);
+        if (!userId) {
+          alert("Select user first.");
+          return;
+        }
+        await performRegistryRowAction("user", { id: userId }, "delete");
+      });
+      setInstitutionEditMode(false);
+      setUserEditMode(false);
+      applyCompactIconButtons(document.getElementById("formArea"));
+      return;
+    }
+
     const response = await request("/api/system/institution-documents/institutions");
     const institutions = Array.isArray(response?.institutions) ? response.institutions : [];
     const moduleOptions = Object.keys(MODULE_DESCRIPTIONS)
@@ -3304,9 +3583,10 @@ function wireExamMarksEntryPanel() {
       learnerSelect.innerHTML = `<option value="">Select learner</option>${learners
         .map((row) => {
           learnerMap.set(String(row.id), row);
+          const learnerCode = formatLearnerCode(row.learner_serial_number || row.id) || "-";
           return `<option value="${escapeHtml(String(row.id))}">${escapeHtml(row.full_name || "-")} (${escapeHtml(
             row.admission_number || row.upi_number || String(row.id)
-          )})</option>`;
+          )}) • ${escapeHtml(learnerCode)}</option>`;
         })
         .join("")}`;
       if (output) output.textContent = `Loaded ${learners.length} learner(s) for marks entry.`;
@@ -3701,9 +3981,10 @@ function wireExamAssessmentReportPanel() {
       learnerSelect.innerHTML = `<option value="">Select learner</option>${filtered
         .map((row) => {
           learnerMap.set(String(row.id), row);
+          const learnerCode = formatLearnerCode(row.learner_serial_number || row.id) || "-";
           return `<option value="${escapeHtml(String(row.id))}">${escapeHtml(row.full_name || "-")} (${escapeHtml(
             row.admission_number || row.upi_number || String(row.id)
-          )})</option>`;
+          )}) • ${escapeHtml(learnerCode)}</option>`;
         })
         .join("")}`;
       if (output) output.textContent = `Loaded ${filtered.length} learner(s) for assessment reports.`;
@@ -3878,9 +4159,10 @@ function wireExamLearnerPerformancePanel() {
         .map((row) => {
           const id = String(row.id || "");
           learnerMap.set(id, row);
+          const learnerCode = formatLearnerCode(row.learner_serial_number || row.id) || "-";
           return `<option value="${escapeHtml(id)}">${escapeHtml(row.full_name || "-")} (${escapeHtml(
             row.admission_number || row.upi_number || id
-          )})</option>`;
+          )}) • ${escapeHtml(learnerCode)}</option>`;
         })
         .join("")}`;
       if (output) output.textContent = `Loaded ${filtered.length} learner(s).`;
@@ -5047,6 +5329,7 @@ const moduleConfigs = {
       { name: "parent2_residence", label: "Parent/Guardian 2 Residence" },
       { name: "parent2_occupation", label: "Parent/Guardian 2 Occupation" },
       { name: "conduct_status", label: "Conduct Status" },
+      { name: "learner_code", label: "Learners Code (auto generated)" },
       { name: "learner_password_hash", label: "Learner password hash (technical)" }
     ]
   },
@@ -5559,6 +5842,12 @@ function formatNumber(value) {
   return Number.isFinite(amount) ? amount.toLocaleString() : "0";
 }
 
+function formatLearnerCode(serialLike) {
+  const parsed = Number(serialLike || 0);
+  if (!Number.isFinite(parsed) || parsed <= 0) return "";
+  return `LC-${String(Math.trunc(parsed)).padStart(3, "0")}`;
+}
+
 function formatMoney(value) {
   const amount = Number(value ?? 0);
   const safe = Number.isFinite(amount) ? amount : 0;
@@ -5750,7 +6039,7 @@ function applyThemeAccentByModule(moduleId) {
 function buildInput(field) {
   const id = `field-${field.name}`;
   const value = "";
-  if (field.name === "learner_serial_number") {
+  if (field.name === "learner_serial_number" || field.name === "learner_code") {
     return `<label>${field.label}</label><input id="${id}" type="text" placeholder="${field.label}" value="${value}" readonly />`;
   }
   if (field.type === "textarea") {
@@ -5970,6 +6259,12 @@ async function saveCurrentModule() {
     }
     clearForm(config);
     await loadModuleData(config);
+    if (currentModule === "admission") {
+      const panel = document.querySelector(".admission-bio-panel");
+      if (panel) {
+        await refreshAdmissionLearnerCodePreview(panel);
+      }
+    }
   } catch (error) {
     alert(error.message);
   }
@@ -5987,6 +6282,10 @@ async function editRow(id) {
     currentEditId = row.id;
     config.fields.forEach((field) => setFieldValue(field, row[field.name]));
     if (currentModule === "admission") {
+      const learnerCodeEl = document.getElementById("field-learner_code");
+      if (learnerCodeEl) {
+        learnerCodeEl.value = formatLearnerCode(row.learner_serial_number || row.id);
+      }
       const bio = document.querySelector(".admission-bio-panel");
       if (bio) {
         refreshAdmissionGradeFormExclusiveState(bio);
@@ -6183,6 +6482,7 @@ function renderAdmissionRegisterTable() {
   head.innerHTML = `<tr>
     <th>#</th>
     <th>Admission No.</th>
+    <th>Learners Code</th>
     <th>Full name</th>
     <th>Grade</th>
     <th>Form</th>
@@ -6192,7 +6492,7 @@ function renderAdmissionRegisterTable() {
     <th>Actions</th>
   </tr>`;
   if (!rows.length) {
-    body.innerHTML = `<tr><td colspan="9" class="table-empty-state">No learners match the current filters.</td></tr>`;
+    body.innerHTML = `<tr><td colspan="10" class="table-empty-state">No learners match the current filters.</td></tr>`;
     return;
   }
   body.innerHTML = rows
@@ -6202,6 +6502,7 @@ function renderAdmissionRegisterTable() {
       return `<tr>
         <td>${idx + 1}</td>
         <td>${escapeHtml(row.admission_number || "-")}</td>
+        <td>${escapeHtml(formatLearnerCode(row.learner_serial_number || row.id) || "-")}</td>
         <td>${escapeHtml(row.full_name || "-")}</td>
         <td>${escapeHtml(row.grade || "-")}</td>
         <td>${escapeHtml(row.form_name || "-")}</td>
@@ -6404,9 +6705,7 @@ function wireAdmissionLearnerPhotoUpload(scopeEl) {
     await uploadSelectedFile(file);
   });
   cameraOpenBtn?.addEventListener("click", async () => {
-    const canUseLiveCamera =
-      Boolean(navigator?.mediaDevices?.getUserMedia) &&
-      String(window.location?.protocol || "").startsWith("https");
+    const canUseLiveCamera = Boolean(navigator?.mediaDevices?.getUserMedia);
     if (!canUseLiveCamera) {
       cameraInput?.click();
       return;
@@ -6469,6 +6768,35 @@ function wireAdmissionLearnerPhotoUpload(scopeEl) {
     if (!captured) return;
     await uploadSelectedFile(captured);
   });
+}
+
+async function refreshAdmissionLearnerCodePreview(scopeEl) {
+  const codeEl = scopeEl?.querySelector?.("#field-learner_code");
+  if (!codeEl) return;
+  try {
+    const preview = await request("/api/admission/learners/next-learner-code");
+    codeEl.value = String(preview?.learner_code || "");
+  } catch (_) {
+    codeEl.value = "";
+  }
+}
+
+function wireAdmissionLearnerCodeField(scopeEl) {
+  const codeEl = scopeEl?.querySelector?.("#field-learner_code");
+  const serialEl = scopeEl?.querySelector?.("#field-learner_serial_number");
+  if (!codeEl || codeEl.dataset.bound === "1") return;
+  codeEl.dataset.bound = "1";
+  const syncFromSerial = () => {
+    const serialVal = Number(serialEl?.value || 0);
+    if (serialVal > 0) {
+      codeEl.value = formatLearnerCode(serialVal);
+    }
+  };
+  serialEl?.addEventListener("input", syncFromSerial);
+  syncFromSerial();
+  if (!codeEl.value) {
+    refreshAdmissionLearnerCodePreview(scopeEl).catch(() => {});
+  }
 }
 
 function populateAdmissionGradeFormFilterOptions() {
@@ -6585,27 +6913,97 @@ function wireAdmissionExtendedActions() {
       alert(error.message);
     }
   });
+  const searchLearnersForAdmissionDocs = async () => {
+    const mode = String(document.getElementById("admissionDocSearchMode")?.value || "learner");
+    const value = String(document.getElementById("admissionDocSearchValue")?.value || "").trim();
+    const query = value;
+    const learnerSelect = document.getElementById("admissionDocLearnerSelect");
+    if (!learnerSelect) return [];
+    const rows = await request(`/api/admission/learners?limit=500&search=${encodeURIComponent(query)}`);
+    let filtered = Array.isArray(rows) ? rows : [];
+    if (mode === "gradeform") {
+      filtered = filtered.filter((row) => {
+        const grade = String(row.grade || "").toLowerCase();
+        const form = String(row.form_name || "").toLowerCase();
+        return !value || grade.includes(value.toLowerCase()) || form.includes(value.toLowerCase());
+      });
+    } else if (mode === "stream") {
+      filtered = filtered.filter((row) => !value || String(row.stream || "").toLowerCase().includes(value.toLowerCase()));
+    } else if (mode === "name") {
+      filtered = filtered.filter((row) => !value || String(row.full_name || "").toLowerCase().includes(value.toLowerCase()));
+    } else if (mode === "learner") {
+      filtered = filtered.filter((row) =>
+        !value ||
+        String(row.id || "").includes(value) ||
+        String(row.admission_number || "").toLowerCase().includes(value.toLowerCase()) ||
+        String(row.upi_number || "").toLowerCase().includes(value.toLowerCase())
+      );
+    }
+    learnerSelect.innerHTML = `<option value="">Select learner</option>${filtered
+      .map((row) => `<option value="${Number(row.id || 0)}">${escapeHtml(row.full_name || "-")} (${escapeHtml(
+        row.admission_number || row.upi_number || String(row.id || "-")
+      )}) • ${escapeHtml(formatLearnerCode(row.learner_serial_number || row.id) || "-")}</option>`)
+      .join("")}`;
+    return filtered;
+  };
+  document.getElementById("admissionDocSearchBtn")?.addEventListener("click", async () => {
+    try {
+      const rows = await searchLearnersForAdmissionDocs();
+      if (!rows.length) alert("No learner matched the selected search.");
+    } catch (error) {
+      alert(error.message);
+    }
+  });
   document.getElementById("admissionGenerateFormBtn")?.addEventListener("click", async () => {
     try {
-      const learnerId = Number(prompt("Enter learner ID for admission form:") || 0);
-      if (!learnerId) return;
+      const learnerId = Number(document.getElementById("admissionDocLearnerSelect")?.value || 0);
+      if (!learnerId) {
+        alert("Select learner first.");
+        return;
+      }
       const result = await request(`/api/admission/learners/${learnerId}/admission-form`);
       const outputEl = document.getElementById("admissionGeneratedOutput");
       if (outputEl) outputEl.textContent = JSON.stringify(result, null, 2);
+      const mode = (prompt("Choose output mode: PRINT or DOWNLOAD", "PRINT") || "").trim().toUpperCase();
+      if (mode === "PRINT") window.print();
+      if (mode === "DOWNLOAD") {
+        downloadTextFile(`admission-form-${learnerId}.json`, JSON.stringify(result, null, 2), "application/json;charset=utf-8");
+      }
     } catch (error) {
       alert(error.message);
     }
   });
   document.getElementById("admissionGenerateLetterBtn")?.addEventListener("click", async () => {
     try {
-      const learnerId = Number(prompt("Enter learner ID for admission letter:") || 0);
-      if (!learnerId) return;
+      const learnerId = Number(document.getElementById("admissionDocLearnerSelect")?.value || 0);
+      if (!learnerId) {
+        alert("Select learner first.");
+        return;
+      }
       const result = await request(`/api/admission/learners/${learnerId}/admission-letter`);
       const outputEl = document.getElementById("admissionGeneratedOutput");
       if (outputEl) outputEl.textContent = result?.letter_text || JSON.stringify(result, null, 2);
+      const mode = (prompt("Choose output mode: PRINT or DOWNLOAD", "PRINT") || "").trim().toUpperCase();
+      if (mode === "PRINT") window.print();
+      if (mode === "DOWNLOAD") {
+        downloadTextFile(
+          `admission-letter-${learnerId}.txt`,
+          String(result?.letter_text || JSON.stringify(result, null, 2)),
+          "text/plain;charset=utf-8"
+        );
+      }
     } catch (error) {
       alert(error.message);
     }
+  });
+  document.getElementById("admissionDocPrintBtn")?.addEventListener("click", () => window.print());
+  document.getElementById("admissionDocDownloadBtn")?.addEventListener("click", () => {
+    const content = document.getElementById("admissionGeneratedOutput")?.textContent || "";
+    if (!content.trim()) {
+      alert("Generate form or letter first.");
+      return;
+    }
+    downloadTextFile("admission-generated-output.txt", content, "text/plain;charset=utf-8");
   });
   document.getElementById("admissionPreviewOutputBtn")?.addEventListener("click", () => {
     const content = document.getElementById("admissionGeneratedOutput")?.textContent || "";
@@ -6626,6 +7024,7 @@ function wireAdmissionModuleUi(container, config) {
   wireAdmissionMedicalToggle(container);
   wireAdmissionAgeField(container);
   wireAdmissionNameAutoFill(container);
+  wireAdmissionLearnerCodeField(container);
   attachAdmissionPostalFromSelect(container);
   wireAdmissionLearnerPhotoUpload(container);
   wireAdmissionRegisterToolbar(config);
@@ -6907,10 +7306,28 @@ function renderCrudModule(moduleKey, options = {}) {
     ${admissionRegisterMarkup.replace('class="admission-register-panel"', `class="admission-register-panel" style="${showRegister ? "" : "display:none;"}"`)}
     <section id="admissionFormLetterSection" class="dashboard-section" style="${showFormLetter ? "" : "display:none;"}">
       <h4 id="admissionFormLetterPanel">${showFormAction && !showLetterAction ? "Admission Form" : showLetterAction && !showFormAction ? "Admission Letter" : "Admission Form & Letter"}</h4>
-      <p class="small-note">Generate the selected admission document only for chosen learner IDs.</p>
+      <p class="small-note">Search learners by learner ID, name, grade/form, or stream. Select learner first, then generate, print, or download.</p>
+      <div class="form-grid">
+        <label>Search Mode</label>
+        <select id="admissionDocSearchMode">
+          <option value="learner">Per Learner</option>
+          <option value="name">By Name</option>
+          <option value="gradeform">By Grade/Form</option>
+          <option value="stream">By Stream</option>
+        </select>
+        <label>Search Value</label>
+        <input id="admissionDocSearchValue" placeholder="Learner ID, name, grade/form, or stream" />
+        <label>Matched Learners</label>
+        <select id="admissionDocLearnerSelect">
+          <option value="">Select learner</option>
+        </select>
+      </div>
       <div class="actions-row">
+        <button type="button" id="admissionDocSearchBtn" class="ax-btn ax-btn--view ax-btn--sm">Search Learner</button>
         <button type="button" id="admissionGenerateFormBtn" class="ax-btn ax-btn--process ax-btn--sm" style="${showFormAction ? "" : "display:none;"}">Generate Admission Form</button>
         <button type="button" id="admissionGenerateLetterBtn" class="ax-btn ax-btn--process ax-btn--sm" style="${showLetterAction ? "" : "display:none;"}">Generate Admission Letter</button>
+        <button type="button" id="admissionDocPrintBtn" class="ax-btn ax-btn--print ax-btn--sm">Print Output</button>
+        <button type="button" id="admissionDocDownloadBtn" class="ax-btn ax-btn--download ax-btn--sm">Download Output</button>
         <button type="button" id="admissionPreviewOutputBtn" class="ax-btn ax-btn--view ax-btn--sm">Preview Last Output</button>
       </div>
       <pre id="admissionGeneratedOutput" class="small-note" style="max-height:240px;overflow:auto;white-space:pre-wrap;"></pre>

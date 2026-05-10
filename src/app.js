@@ -3666,7 +3666,7 @@ app.post(
   "/api/institutions/preview-code",
   auth,
   enforceModuleAccess(MODULE_KEYS.REGISTRATION),
-  enforceRole([ROLES.SYSTEM_DEVELOPER]),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER]),
   asyncHandler(async (req, res) => {
     const countyInput = cleanOptionalValue(req.body?.county);
     const countyCodeInput = cleanOptionalValue(req.body?.county_code);
@@ -3702,7 +3702,7 @@ app.post(
   accountMutationRateLimit,
   accountMutationCooldown,
   enforceModuleAccess(MODULE_KEYS.REGISTRATION),
-  enforceRole([ROLES.SYSTEM_DEVELOPER]),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER]),
   enforcePermission(PERMISSIONS.CREATE),
   asyncHandler(async (req, res) => {
     const institutionName = cleanValue(req.body?.institution_name);
@@ -3724,9 +3724,11 @@ app.post(
 
     const adminFullName = cleanValue(req.body?.admin_full_name);
     const adminUsername = cleanValue(req.body?.admin_username);
-    const adminUsernameValidationError = validateUsername(adminUsername, "admin_username");
-    if (adminUsernameValidationError) {
-      return res.status(400).json({ error: adminUsernameValidationError });
+    if (adminUsername) {
+      const adminUsernameValidationError = validateUsername(adminUsername, "admin_username");
+      if (adminUsernameValidationError) {
+        return res.status(400).json({ error: adminUsernameValidationError });
+      }
     }
     const adminPasswordInput = cleanValue(req.body?.admin_password);
     const portalRoleRaw = normalizeRole(cleanValue(req.body?.portal_role));
@@ -3752,8 +3754,9 @@ app.post(
 
     const postalDetails = getPostalDetails(postalCodeInput);
     const normalizedTown = townInput || postalDetails?.town || null;
-    const adminPassword = adminPasswordInput || generateStrongPassword(14);
-    if (adminPasswordInput) {
+    const shouldCreateAdminAccount = Boolean(adminFullName && adminUsername);
+    const adminPassword = shouldCreateAdminAccount ? (adminPasswordInput || generateStrongPassword(14)) : null;
+    if (adminPasswordInput && shouldCreateAdminAccount) {
       const weakAdminPasswordError = requireStrongPassword(adminPassword, "admin_password");
       if (weakAdminPasswordError) {
         return res.status(400).json({ error: weakAdminPasswordError });
@@ -3765,9 +3768,9 @@ app.post(
       });
     }
 
-    if (!institutionName || !adminFullName || !adminUsername) {
+    if (!institutionName) {
       return res.status(400).json({
-        error: "institution_name, admin_full_name, and admin_username are required."
+        error: "institution_name is required."
       });
     }
 
@@ -3808,41 +3811,43 @@ app.post(
       return res.status(409).json({ error: "Unable to allocate a unique institution code. Please retry." });
     }
     const institutionId = institutionInsert.insertId;
-    const passwordHash = await hashPassword(adminPassword);
+    let credentialDispatch = null;
+    if (shouldCreateAdminAccount) {
+      const passwordHash = await hashPassword(adminPassword);
+      await query(
+        `INSERT INTO users
+          (institution_id, full_name, username, password_hash, password_last_changed_at, password_expires_at, role, email, phone, is_active)
+         VALUES (?, ?, ?, ?, NOW(), DATE_ADD(NOW(), INTERVAL ? DAY), ?, ?, ?, 1)`,
+        [
+          institutionId,
+          adminFullName,
+          adminUsername,
+          passwordHash,
+          PASSWORD_ROTATION_DAYS,
+          portalRole,
+          institutionEmail,
+          institutionPhone
+        ]
+      );
 
-    await query(
-      `INSERT INTO users
-        (institution_id, full_name, username, password_hash, password_last_changed_at, password_expires_at, role, email, phone, is_active)
-       VALUES (?, ?, ?, ?, NOW(), DATE_ADD(NOW(), INTERVAL ? DAY), ?, ?, ?, 1)`,
-      [
-        institutionId,
-        adminFullName,
-        adminUsername,
-        passwordHash,
-        PASSWORD_ROTATION_DAYS,
-        portalRole,
-        institutionEmail,
-        institutionPhone
-      ]
-    );
-
-    const credentialMessage = [
-      "Welcome to IMIS for Basic Education Learning Institution.",
-      "Your institution account has been registered successfully.",
-      `Institution: ${institutionName}`,
-      `Institution Code: ${institutionCode}`,
-      `Username: ${adminUsername}`,
-      `Password: ${adminPassword}`,
-      "",
-      "Login Link: www.theimis.com",
-      "Please log in and change this password immediately after first sign-in."
-    ].join("\n");
-    const credentialDispatch = await dispatchCredentialNotice({
-      email: institutionEmail,
-      phone: institutionPhone,
-      subject: "IMIS Institution Administrator Credentials",
-      message: credentialMessage
-    });
+      const credentialMessage = [
+        "Welcome to IMIS for Basic Education Learning Institution.",
+        "Your institution account has been registered successfully.",
+        `Institution: ${institutionName}`,
+        `Institution Code: ${institutionCode}`,
+        `Username: ${adminUsername}`,
+        `Password: ${adminPassword}`,
+        "",
+        "Login Link: www.theimis.com",
+        "Please log in and change this password immediately after first sign-in."
+      ].join("\n");
+      credentialDispatch = await dispatchCredentialNotice({
+        email: institutionEmail,
+        phone: institutionPhone,
+        subject: "IMIS Institution Administrator Credentials",
+        message: credentialMessage
+      });
+    }
 
     const institutionRecord = {
       id: institutionId,
@@ -3855,7 +3860,7 @@ app.post(
     };
 
     let agreementEmailDispatch = null;
-    if (sendAgreementEmail) {
+    if (sendAgreementEmail && institutionEmail) {
       agreementEmailDispatch = await dispatchCredentialNotice({
         email: institutionEmail,
         phone: null,
@@ -3875,15 +3880,17 @@ app.post(
       category: categoryRecord.label,
       category_code: categoryRecord.code,
       postal_address: postalAddress,
-      admin_username: adminUsername,
-      admin_role: portalRole
+      admin_username: adminUsername || null,
+      admin_role: shouldCreateAdminAccount ? portalRole : null
     });
 
     res.status(201).json({
-      message: "Institution and administrator account registered successfully. Credentials dispatched via configured channels.",
+      message: shouldCreateAdminAccount
+        ? "Institution and administrator account registered successfully."
+        : "Institution registered successfully.",
       institution_id: institutionId,
       institution_code: institutionCode,
-      admin_username: adminUsername,
+      admin_username: adminUsername || null,
       admin_password: null,
       county: countyRecord.name,
       county_code: countyRecord.code,
@@ -6442,9 +6449,28 @@ app.get(
   asyncHandler(async (req, res) => {
     const institutionId = Number(req.params.id);
     if (!institutionId) return res.status(400).json({ error: "Valid institution id is required." });
+    const institutionColumns = await getExistingColumns("institutions", [
+      "institution_name",
+      "institution_code",
+      "email",
+      "phone",
+      "county",
+      "sub_county",
+      "location",
+      "village",
+      "postal_address",
+      "postal_code",
+      "town",
+      "institution_type",
+      "institution_level",
+      "is_active",
+      "is_suspended",
+      "status_reason",
+      "suspended_reason",
+      "created_at"
+    ]);
     const rows = await query(
-      `SELECT id, institution_name, institution_code, email, phone, county, sub_county, location, village,
-              postal_address, is_active, is_suspended, status_reason, suspended_reason, created_at
+      `SELECT id, ${institutionColumns.join(", ")}
        FROM institutions
        WHERE id = ?
        LIMIT 1`,
@@ -6470,7 +6496,28 @@ app.patch(
   asyncHandler(async (req, res) => {
     const institutionId = Number(req.params.id);
     if (!institutionId) return res.status(400).json({ error: "Valid institution id is required." });
-    const rows = await query("SELECT id, institution_name, institution_code, email, phone FROM institutions WHERE id = ? LIMIT 1", [institutionId]);
+    const institutionColumns = await getExistingColumns("institutions", [
+      "institution_name",
+      "institution_code",
+      "email",
+      "phone",
+      "county",
+      "sub_county",
+      "location",
+      "village",
+      "postal_address",
+      "postal_code",
+      "town",
+      "institution_type",
+      "institution_level"
+    ]);
+    const rows = await query(
+      `SELECT id, ${institutionColumns.join(", ")}
+       FROM institutions
+       WHERE id = ?
+       LIMIT 1`,
+      [institutionId]
+    );
     if (!rows.length) return res.status(404).json({ error: "Institution not found." });
     const editInstitutionScopeError = await assertInstitutionScopeAccess(req, institutionId, "You can only edit institutions in your assigned scope.");
     if (editInstitutionScopeError) {
@@ -6480,17 +6527,47 @@ app.patch(
     const institution_name = cleanOptionalValue(req.body?.institution_name);
     const email = cleanOptionalValue(req.body?.email);
     const phone = cleanOptionalValue(req.body?.phone);
+    const county = cleanOptionalValue(req.body?.county);
+    const sub_county = cleanOptionalValue(req.body?.sub_county);
+    const location = cleanOptionalValue(req.body?.location);
+    const village = cleanOptionalValue(req.body?.village);
+    const postal_address = cleanOptionalValue(req.body?.postal_address);
+    const postal_code = cleanOptionalValue(req.body?.postal_code);
+    const town = cleanOptionalValue(req.body?.town);
+    const institution_type = cleanOptionalValue(req.body?.institution_type);
+    const institution_level = cleanOptionalValue(req.body?.institution_level);
     const nextInstitutionName = institution_name ?? existingInstitution.institution_name;
     const nextInstitutionEmail = email ?? existingInstitution.email;
     const nextInstitutionPhone = phone ?? existingInstitution.phone;
-    await query(
-      `UPDATE institutions
-       SET institution_name = COALESCE(?, institution_name),
-           email = COALESCE(?, email),
-           phone = COALESCE(?, phone)
-       WHERE id = ?`,
-      [institution_name, email, phone, institutionId]
-    );
+    const updatePairs = [];
+    const updateParams = [];
+    const updatable = {
+      institution_name,
+      email,
+      phone,
+      county,
+      sub_county,
+      location,
+      village,
+      postal_address,
+      postal_code,
+      town,
+      institution_type,
+      institution_level
+    };
+    Object.entries(updatable).forEach(([column, value]) => {
+      if (!institutionColumns.includes(column)) return;
+      updatePairs.push(`${column} = COALESCE(?, ${column})`);
+      updateParams.push(value);
+    });
+    if (updatePairs.length) {
+      await query(
+        `UPDATE institutions
+         SET ${updatePairs.join(", ")}
+         WHERE id = ?`,
+        [...updateParams, institutionId]
+      );
+    }
     const shouldDispatchFreshWelcome =
       (institution_name !== null && cleanValue(institution_name) !== cleanValue(existingInstitution.institution_name)) ||
       (email !== null && cleanValue(email) !== cleanValue(existingInstitution.email)) ||
@@ -6699,16 +6776,34 @@ app.patch(
     );
     if (!userRows.length) return res.status(404).json({ error: "User not found." });
     const user = userRows[0];
+    const username = cleanOptionalValue(req.body?.username);
     const full_name = cleanOptionalValue(req.body?.full_name);
     const email = cleanOptionalValue(req.body?.email);
     const phone = cleanOptionalValue(req.body?.phone);
+    if (username !== null) {
+      const usernameValidationError = validateUsername(username, "username");
+      if (usernameValidationError) {
+        return res.status(400).json({ error: usernameValidationError });
+      }
+      const duplicate = await query(
+        `SELECT id
+         FROM users
+         WHERE institution_id = ? AND username = ? AND id <> ?
+         LIMIT 1`,
+        [user.institution_id, username, userId]
+      );
+      if (duplicate.length) {
+        return res.status(409).json({ error: "Username already exists for this institution." });
+      }
+    }
     const nextName = full_name ?? user.full_name;
     const nextEmail = email ?? user.email;
     const nextPhone = phone ?? user.phone;
     const detailsChanged =
       (full_name !== null && cleanValue(full_name) !== cleanValue(user.full_name)) ||
       (email !== null && cleanValue(email) !== cleanValue(user.email)) ||
-      (phone !== null && cleanValue(phone) !== cleanValue(user.phone));
+      (phone !== null && cleanValue(phone) !== cleanValue(user.phone)) ||
+      (username !== null && cleanValue(username) !== cleanValue(user.username));
     let generatedPassword = null;
     let credentialDispatch = null;
     if (detailsChanged) {
@@ -6717,6 +6812,7 @@ app.patch(
       await query(
         `UPDATE users
          SET full_name = COALESCE(?, full_name),
+             username = COALESCE(?, username),
              email = COALESCE(?, email),
              phone = COALESCE(?, phone),
              password_hash = ?,
@@ -6727,7 +6823,7 @@ app.patch(
              locked_until = NULL,
              last_failed_login_at = NULL
          WHERE id = ?`,
-        [full_name, email, phone, passwordHash, PASSWORD_ROTATION_DAYS, userId]
+        [full_name, username, email, phone, passwordHash, PASSWORD_ROTATION_DAYS, userId]
       );
       const institutionRows = await query(
         "SELECT institution_name, institution_code FROM institutions WHERE id = ? LIMIT 1",
@@ -6743,7 +6839,7 @@ app.patch(
           "Your profile details were updated in IMIS.",
           `Institution: ${institutionName}`,
           `Institution Code: ${institutionCode}`,
-          `Username: ${user.username || "-"}`,
+          `Username: ${username || user.username || "-"}`,
           `Temporary Password: ${generatedPassword}`,
           `Role: ${user.role || "-"}`,
           `Name: ${nextName || "-"}`,
@@ -6755,13 +6851,15 @@ app.patch(
       await query(
         `UPDATE users
          SET full_name = COALESCE(?, full_name),
+             username = COALESCE(?, username),
              email = COALESCE(?, email),
              phone = COALESCE(?, phone)
          WHERE id = ?`,
-        [full_name, email, phone, userId]
+        [full_name, username, email, phone, userId]
       );
     }
     await auditLog(req.user, "UPDATE_REGISTRY_USER", "users", userId, {
+      username,
       full_name,
       email,
       phone,
@@ -9778,6 +9876,29 @@ app.get(
       seed: seed || ""
     });
     res.json({ admission_number: admissionNumber });
+  })
+);
+
+app.get(
+  "/api/admission/learners/next-learner-code",
+  auth,
+  enforceModuleAccess(MODULE_KEYS.ADMISSION),
+  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.SYSTEM_ADMINISTRATOR, ROLES.TEACHER]),
+  asyncHandler(async (req, res) => {
+    const learnerSerialColumns = await getExistingColumns("learners", ["learner_serial_number"]);
+    const useSerialColumn = learnerSerialColumns.includes("learner_serial_number");
+    const [row] = await query(
+      `SELECT MAX(${useSerialColumn ? "COALESCE(learner_serial_number, id)" : "id"}) AS max_serial
+       FROM learners
+       WHERE institution_id = ?`,
+      [Number(req.user.institution_id || 0)]
+    );
+    const nextSerial = Number(row?.max_serial || 0) + 1;
+    const learnerCode = `LC-${padThree(nextSerial)}`;
+    res.json({
+      next_serial: nextSerial,
+      learner_code: learnerCode
+    });
   })
 );
 

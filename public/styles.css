@@ -1650,12 +1650,11 @@ button:hover {
   border: 1px solid rgba(255, 205, 205, 0.35);
 }
 
-.welcome-logout-btn {
-  margin-right: 8px;
-  padding: 2px 8px !important;
-  min-height: 22px !important;
-  font-size: 11px !important;
-  vertical-align: middle;
+.topbar-logout-btn {
+  margin-right: 6px;
+  min-height: 28px;
+  padding: 4px 10px;
+  font-size: 11px;
 }
 
 .sidebar button.danger:hover {
@@ -3838,19 +3837,32 @@ td .ax-btn::before,
 }
 
 .ax-btn.ax-btn--icon-only {
-  min-width: 28px;
-  width: 28px;
-  min-height: 24px;
-  height: 24px;
-  padding: 0;
+  min-width: 56px;
+  min-height: 34px;
+  height: auto;
+  padding: 2px 4px;
   border-radius: 6px;
   font-size: 0;
   gap: 0;
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
 }
 
 .ax-btn.ax-btn--icon-only::before {
   margin-right: 0;
   font-size: 12px;
+}
+
+.ax-btn.ax-btn--icon-only::after {
+  content: attr(title);
+  font-size: 8px;
+  font-weight: 700;
+  line-height: 1;
+  margin-top: 2px;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
 }
 
 .dashboard-ai-assistant {
@@ -4069,6 +4081,67 @@ td .ax-btn::before,
   width: 100%;
   border-radius: 10px;
   background: #0f172a;
+}
+
+.audit-advanced-grid {
+  margin-top: 10px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 10px;
+}
+
+.audit-advanced-card {
+  border: 1px solid #cfe0f0;
+  border-radius: 10px;
+  background: linear-gradient(180deg, #ffffff 0%, #f7fbff 100%);
+  padding: 9px;
+}
+
+.audit-advanced-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.audit-event-tag {
+  font-size: 10px;
+  font-weight: 700;
+  border: 1px solid #c4dcf5;
+  border-radius: 999px;
+  background: #e8f3ff;
+  color: #12416b;
+  padding: 2px 7px;
+}
+
+.audit-advanced-body {
+  display: grid;
+  gap: 4px;
+  font-size: 11px;
+}
+
+.audit-advanced-body span {
+  font-weight: 700;
+  color: #0f3860;
+}
+
+.registry-top-controls {
+  display: grid;
+  grid-template-columns: minmax(180px, 260px) 1fr;
+  align-items: end;
+  gap: 8px 10px;
+}
+
+.registry-top-actions {
+  justify-content: flex-start;
+  gap: 4px;
+}
+
+#registryScopeTable .dashboard-table th,
+#registryScopeTable .dashboard-table td {
+  padding-top: 4px;
+  padding-bottom: 4px;
 }
 
 .adm-status-pill {
