@@ -12,7 +12,7 @@ let portalContext = null;
 let searchRowDrafts = {};
 let dashboardAutoRefreshHandle = null;
 let currentSidebarSubmoduleId = null;
-const CLIENT_UI_BUNDLE_ID = "dash-bundle-main-v62-n1-to-n14-pass";
+const CLIENT_UI_BUNDLE_ID = "dash-bundle-main-v63-sidebar-cleanup";
 const examPanelState = {
   generatedExam: null,
   serials: [],
@@ -9592,7 +9592,6 @@ async function init() {
   // CRITICAL: bind sidebar/topbar BEFORE the dashboard cockpit fetch so module
   // navigation always works even if /api/dashboard/summary fails.
   await safeStep("bindSidebar", async () => bindSidebar());
-  await safeStep("renderSidebarInstitutionBranding", async () => renderSidebarInstitutionBranding());
   await safeStep("bindTopbarButtons", async () => bindTopbarButtons());
   await safeStep("bindQuickActionCards", async () => bindQuickActionCards());
   await safeStep("initDashboardAssistant", async () => initDashboardAssistant());

@@ -1554,8 +1554,8 @@ button:hover {
 }
 
 .sidebar-brand {
-  margin-bottom: 10px;
-  padding: 10px 12px;
+  margin-bottom: 6px;
+  padding: 8px 10px;
   border: 1px solid rgba(255, 255, 255, 0.18);
   border-radius: 12px;
   background: rgba(255, 255, 255, 0.06);
@@ -1564,9 +1564,9 @@ button:hover {
 .sidebar-brand p {
   margin: 0;
   color: #f7db82;
-  font-size: 11px;
+  font-size: 9px;
   font-weight: 700;
-  line-height: 1.25;
+  line-height: 1.2;
 }
 
 .nav-group-label {
@@ -1581,24 +1581,24 @@ button:hover {
 }
 
 .portal-label {
-  font-size: 12px;
+  font-size: 10px;
   color: #b7e4ff;
-  margin-bottom: 12px;
+  margin-bottom: 8px;
   display: block;
-  font-weight: 800;
+  font-weight: 700;
   line-height: 1.2;
   border: 1px solid rgba(241, 203, 88, 0.4);
   background: linear-gradient(120deg, rgba(255, 214, 101, 0.14), rgba(47, 130, 187, 0.2));
-  padding: 7px 9px;
-  border-radius: 9px;
+  padding: 4px 7px;
+  border-radius: 8px;
 }
 
 .dash-ui-fingerprint {
-  margin: -4px 0 10px;
-  padding: 5px 8px;
-  font-size: 10px;
-  font-weight: 700;
-  line-height: 1.35;
+  margin: -2px 0 6px;
+  padding: 4px 6px;
+  font-size: 8px;
+  font-weight: 600;
+  line-height: 1.2;
   color: #eaf7ff;
   border-radius: 8px;
   border: 1px dashed rgba(173, 220, 255, 0.45);
@@ -1608,6 +1608,8 @@ button:hover {
 .sidebar-brand h2 {
   color: #ffd76d;
   text-shadow: 0 1px 0 rgba(0, 0, 0, 0.16), 0 0 16px rgba(255, 206, 84, 0.22);
+  font-size: 15px;
+  margin-bottom: 4px;
 }
 
 .sidebar button {
@@ -1644,10 +1646,16 @@ button:hover {
 }
 
 .sidebar #logoutButton.danger {
-  flex-shrink: 0;
-  margin-top: 12px;
   background: rgba(210, 60, 60, 0.9);
   border: 1px solid rgba(255, 205, 205, 0.35);
+}
+
+.welcome-logout-btn {
+  margin-right: 8px;
+  padding: 2px 8px !important;
+  min-height: 22px !important;
+  font-size: 11px !important;
+  vertical-align: middle;
 }
 
 .sidebar button.danger:hover {
