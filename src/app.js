@@ -5212,7 +5212,7 @@ app.get(
 app.post(
   "/api/institutions/streams",
   auth,
-  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER]),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER]),
   asyncHandler(async (req, res) => {
     const institutionId = Number(req.user.institution_id);
     const grade = cleanValue(req.body?.grade_or_form || "") || null;
@@ -7153,7 +7153,7 @@ app.delete(
 app.get(
   "/api/cbc/curriculum",
   auth,
-  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER]),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER]),
   enforcePermission(PERMISSIONS.VIEW),
   asyncHandler(async (req, res) => {
     const rows = await getPaginatedRows({
@@ -7171,7 +7171,7 @@ app.get(
 app.get(
   "/api/cbc/curriculum/:id(\\d+)",
   auth,
-  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER]),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER]),
   enforcePermission(PERMISSIONS.VIEW),
   asyncHandler(async (req, res) => {
     const rows = await query(
@@ -7189,7 +7189,7 @@ app.get(
 app.post(
   "/api/cbc/curriculum",
   auth,
-  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER]),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER]),
   enforcePermission(PERMISSIONS.CREATE),
   asyncHandler(async (req, res) => {
     const data = pickFields(req.body, [
@@ -7227,7 +7227,7 @@ app.post(
 app.put(
   "/api/cbc/curriculum/:id(\\d+)",
   auth,
-  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER]),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER]),
   enforcePermission(PERMISSIONS.UPDATE),
   asyncHandler(async (req, res) => {
     const entryId = Number(req.params.id);
@@ -7265,7 +7265,7 @@ app.put(
 app.delete(
   "/api/cbc/curriculum/:id(\\d+)",
   auth,
-  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER]),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER]),
   enforcePermission(PERMISSIONS.DELETE),
   asyncHandler(async (req, res) => {
     const entryId = Number(req.params.id);
@@ -7301,7 +7301,7 @@ app.delete(
 app.post(
   "/api/cbc/curriculum/ai-suggest-structure",
   auth,
-  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER]),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER]),
   enforcePermission(PERMISSIONS.CREATE),
   asyncHandler(async (req, res) => {
     const grade = cleanValue(req.body?.grade);
@@ -7336,7 +7336,7 @@ app.post(
 app.post(
   "/api/cbc/curriculum/ai-suggest-strands",
   auth,
-  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER]),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER]),
   enforcePermission(PERMISSIONS.CREATE),
   asyncHandler(async (req, res) => {
     const grade = cleanValue(req.body?.grade);
@@ -7371,7 +7371,7 @@ app.post(
 app.post(
   "/api/cbc/curriculum/ai-suggest-substrands",
   auth,
-  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER]),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER]),
   enforcePermission(PERMISSIONS.CREATE),
   asyncHandler(async (req, res) => {
     const grade = cleanValue(req.body?.grade);
@@ -7406,7 +7406,7 @@ app.post(
 app.post(
   "/api/cbc/curriculum/ai-generate-notes",
   auth,
-  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER]),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER]),
   enforcePermission(PERMISSIONS.CREATE),
   asyncHandler(async (req, res) => {
     const grade = cleanValue(req.body?.grade);
@@ -7456,7 +7456,7 @@ app.post(
 app.get(
   "/api/cbc/curriculum/materials",
   auth,
-  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER]),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER]),
   enforcePermission(PERMISSIONS.VIEW),
   asyncHandler(async (req, res) => {
     const rows = await query(
@@ -7474,7 +7474,7 @@ app.get(
 app.post(
   "/api/cbc/curriculum/materials/upload",
   auth,
-  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER]),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER]),
   enforcePermission(PERMISSIONS.CREATE),
   upload.single("file"),
   asyncHandler(async (req, res) => {
@@ -7525,7 +7525,7 @@ app.post(
 app.patch(
   "/api/cbc/curriculum/materials/:id(\\d+)",
   auth,
-  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER]),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER]),
   enforcePermission(PERMISSIONS.UPDATE),
   asyncHandler(async (req, res) => {
     const materialId = Number(req.params.id);
@@ -7549,7 +7549,7 @@ app.patch(
 app.post(
   "/api/cbc/curriculum/bulk-generate",
   auth,
-  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
   enforcePermission(PERMISSIONS.CREATE),
   asyncHandler(async (req, res) => {
     const grade = cleanValue(req.body?.grade);
@@ -7794,7 +7794,7 @@ app.get(
 app.post(
   "/api/cbc/curriculum/structure-mappings/import",
   auth,
-  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
   enforcePermission(PERMISSIONS.CREATE),
   upload.single("file"),
   asyncHandler(async (req, res) => {
@@ -7834,7 +7834,7 @@ app.post(
 app.post(
   "/api/cbc/curriculum/structure-mappings",
   auth,
-  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
   enforcePermission(PERMISSIONS.CREATE),
   asyncHandler(async (req, res) => {
     const learningArea = cleanValue(req.body?.learning_area);
@@ -7869,7 +7869,7 @@ app.post(
 app.get(
   "/api/cbc/curriculum/structure-mappings",
   auth,
-  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER]),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER]),
   enforcePermission(PERMISSIONS.VIEW),
   asyncHandler(async (req, res) => {
     const learningArea = cleanOptionalValue(req.query?.learning_area);
@@ -7904,7 +7904,7 @@ app.get(
 app.patch(
   "/api/cbc/curriculum/structure-mappings/:id(\\d+)",
   auth,
-  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
   enforcePermission(PERMISSIONS.UPDATE),
   asyncHandler(async (req, res) => {
     const mappingId = Number(req.params.id);
@@ -7931,7 +7931,7 @@ app.get(
   "/api/cbc/kicd/catalog",
   auth,
   enforceModuleAccess(MODULE_KEYS.CBC_CURRICULUM_EDITOR),
-  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER]),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER]),
   enforcePermission(PERMISSIONS.VIEW),
   asyncHandler(async (req, res) => {
     const includeLevels = Array.isArray(req.query?.include_levels)
@@ -7951,7 +7951,7 @@ app.post(
   "/api/cbc/kicd/import",
   auth,
   enforceModuleAccess(MODULE_KEYS.CBC_CURRICULUM_EDITOR),
-  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
   enforcePermission(PERMISSIONS.CREATE),
   asyncHandler(async (req, res) => {
     const includeLevels = Array.isArray(req.body?.include_levels)
@@ -8880,7 +8880,7 @@ const moduleConfigs = [
       "form_name",
       "stream"
     ],
-    allowedRoles: [ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER],
+    allowedRoles: [ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER],
     fields: [
       "full_name",
       "first_name",
@@ -9038,7 +9038,7 @@ const moduleConfigs = [
     table: "teacher_resources",
     moduleKey: MODULE_KEYS.MANAGEMENT_TEACHER_RESOURCES,
     searchFields: ["resource_type", "title", "grade", "term"],
-    allowedRoles: [ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER],
+    allowedRoles: [ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER],
     scopedByRole: {
       roles: [ROLES.TEACHER],
       column: "created_by_user_id"
@@ -9112,6 +9112,8 @@ const moduleConfigs = [
       "stream"
     ],
     allowedRoles: [
+      ROLES.SUPER_SYSTEM_DEVELOPER,
+      ROLES.SYSTEM_DEVELOPER,
       ROLES.ADMIN,
       ROLES.HEAD_OF_INSTITUTION,
       ROLES.TEACHER,
@@ -9727,7 +9729,7 @@ app.post(
   "/api/management/teacher-resources/auto-generate",
   auth,
   enforceModuleAccess(MODULE_KEYS.MANAGEMENT_TEACHER_RESOURCES),
-  enforceRole([ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER]),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER]),
   enforcePermission(PERMISSIONS.CREATE),
   asyncHandler(async (req, res) => {
     const { teacher_profile_id, resource_type, grade, term, strand, sub_strand } = req.body;
@@ -9765,7 +9767,7 @@ app.post(
   "/api/academic/exams/auto-generate",
   auth,
   enforceModuleAccess(MODULE_KEYS.ACADEMIC_EXAMS),
-  enforceRole([ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER]),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER]),
   enforcePermission(PERMISSIONS.CREATE),
   asyncHandler(async (req, res) => {
     const {
@@ -10299,7 +10301,7 @@ function buildExamSerialSegment({
 app.post(
   "/api/academic/exams/allocate-serials",
   auth,
-  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER]),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER]),
   asyncHandler(async (req, res) => {
     const institutionId = Number(req.user.institution_id);
     const body = req.body || {};
