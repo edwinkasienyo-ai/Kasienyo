@@ -636,16 +636,45 @@ async function performRegistryRowAction(entityType, row = {}, action = "view") {
         return;
       }
       if (action === "edit" || action === "save") {
-        const institutionName = prompt("Institution name", row.institution_name || "");
+        const response = await request(`/api/system/registry/institutions/${rowId}/view`);
+        const current = response?.institution || {};
+        const institutionName = prompt("Institution name", row.institution_name || current.institution_name || "");
         if (institutionName === null) return;
-        const email = prompt("Institution email", row.email || "");
+        const county = prompt("County", current.county || "");
+        if (county === null) return;
+        const subCounty = prompt("Sub county", current.sub_county || "");
+        if (subCounty === null) return;
+        const location = prompt("Location", current.location || "");
+        if (location === null) return;
+        const village = prompt("Village", current.village || "");
+        if (village === null) return;
+        const postalAddress = prompt("Postal address", current.postal_address || "");
+        if (postalAddress === null) return;
+        const postalCode = prompt("Postal code", current.postal_code || "");
+        if (postalCode === null) return;
+        const town = prompt("Town", current.town || "");
+        if (town === null) return;
+        const institutionType = prompt("Institution type", current.institution_type || "");
+        if (institutionType === null) return;
+        const institutionLevel = prompt("Institution level", current.institution_level || "");
+        if (institutionLevel === null) return;
+        const email = prompt("Institution email", row.email || current.email || "");
         if (email === null) return;
-        const phone = prompt("Institution phone", row.phone || "");
+        const phone = prompt("Institution phone", row.phone || current.phone || "");
         if (phone === null) return;
         await request(`/api/system/registry/institutions/${rowId}`, {
           method: "PATCH",
           body: JSON.stringify({
             institution_name: institutionName,
+            county,
+            sub_county: subCounty,
+            location,
+            village,
+            postal_address: postalAddress,
+            postal_code: postalCode,
+            town,
+            institution_type: institutionType,
+            institution_level: institutionLevel,
             email,
             phone
           })
@@ -863,9 +892,7 @@ async function renderSystemRegistration(options = {}) {
       ["HEAD_OF_INSTITUTION", "ADMIN", "SYSTEM_ADMINISTRATOR"].includes(normalizeRoleKey(role))
     );
     const userRegistrationRoles = roleOptions.filter((role) =>
-      !["SUPER_SYSTEM_DEVELOPER", "SYSTEM_DEVELOPER", "HEAD_OF_INSTITUTION", "ADMIN", "SYSTEM_ADMINISTRATOR"].includes(
-        normalizeRoleKey(role)
-      )
+      !["SUPER_SYSTEM_DEVELOPER", "SYSTEM_DEVELOPER"].includes(normalizeRoleKey(role))
     );
     const canRegisterInstitution = Boolean(registrarOptions?.can_register_institution);
     const canManageAllInstitutions = Boolean(registrarOptions?.can_manage_all_institutions);
@@ -2325,7 +2352,7 @@ async function renderInstitutionsRegistry() {
   setActiveSidebarButton("system-registry");
   document.getElementById("moduleTitle").textContent = "Institutions & Users Registry";
   if (!isSystemAdminRole()) {
-    alert("Only System Developer, Admin, or Head of Institution can open this registry.");
+    alert("Only Super/System Developer, System Administrator, Admin, or Head of Institution can open this registry.");
     return loadDashboard();
   }
   try {

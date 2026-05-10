@@ -1131,6 +1131,11 @@ function getAssignableRolesForActor(user) {
   if (role === ROLES.SYSTEM_DEVELOPER) {
     return PUBLIC_ROLE_OPTIONS.filter((item) => item !== ROLES.SUPER_SYSTEM_DEVELOPER);
   }
+  if (role === ROLES.SYSTEM_ADMINISTRATOR) {
+    return PUBLIC_ROLE_OPTIONS.filter(
+      (item) => ![ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER].includes(item)
+    );
+  }
   if ([ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION].includes(role)) {
     return PUBLIC_ROLE_OPTIONS.filter(
       (item) =>
@@ -3632,7 +3637,7 @@ app.get(
   "/api/users/registrar-options",
   auth,
   enforceModuleAccess(MODULE_KEYS.REGISTRATION),
-  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER, ROLES.SYSTEM_ADMINISTRATOR, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
   asyncHandler(async (req, res) => {
     const canSeeAllInstitutions = canManageAcrossInstitutions(req.user);
     const requestedInstitutionId = Number(req.query?.institution_id || 0) || null;
@@ -4933,7 +4938,7 @@ app.post(
 app.get(
   "/api/users",
   auth,
-  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER, ROLES.SYSTEM_ADMINISTRATOR, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
   asyncHandler(async (req, res) => {
     if (canManageAcrossInstitutions(req.user)) {
       const users = await query(
@@ -4967,7 +4972,7 @@ app.post(
   accountMutationRateLimit,
   accountMutationCooldown,
   enforceModuleAccess(MODULE_KEYS.REGISTRATION),
-  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER, ROLES.SYSTEM_ADMINISTRATOR, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
   asyncHandler(async (req, res) => {
     const { full_name, username, role, email, phone } = req.body;
     if (!full_name || !username || !role) {
@@ -6303,16 +6308,40 @@ app.get(
   "/api/system/registry",
   auth,
   enforceModuleAccess(MODULE_KEYS.INSTITUTIONS_USERS_REGISTRY),
-  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER, ROLES.SYSTEM_ADMINISTRATOR, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
   asyncHandler(async (req, res) => {
     const scopedInstitutions = await loadInstitutionScopeOptions(req.user);
     const includeInstitutionRegistry = scopedInstitutions.length > 0;
-    const institutions = scopedInstitutions.map((row) => ({
-      id: row.id,
-      institution_name: row.institution_name,
-      institution_code: row.institution_code
-    }));
-    const scopedInstitutionIds = institutions.map((item) => Number(item.id || 0)).filter((id) => id > 0);
+    const scopedInstitutionIds = scopedInstitutions.map((item) => Number(item.id || 0)).filter((id) => id > 0);
+    const institutionColumns = await getExistingColumns("institutions", [
+      "institution_name",
+      "institution_code",
+      "county",
+      "sub_county",
+      "location",
+      "village",
+      "postal_address",
+      "postal_code",
+      "town",
+      "institution_type",
+      "institution_level",
+      "email",
+      "phone",
+      "is_active",
+      "is_suspended",
+      "status_reason",
+      "suspended_reason",
+      "created_at"
+    ]);
+    const institutions = scopedInstitutionIds.length
+      ? await query(
+        `SELECT id${institutionColumns.length ? `, ${institutionColumns.join(", ")}` : ""}
+         FROM institutions
+         WHERE id IN (${scopedInstitutionIds.map(() => "?").join(", ")})
+         ORDER BY institution_name ASC`,
+        scopedInstitutionIds
+      )
+      : [];
     const placeholders = scopedInstitutionIds.map(() => "?").join(", ");
     const users = scopedInstitutionIds.length
       ? await query(
@@ -6472,7 +6501,7 @@ app.get(
   "/api/system/registry/institutions/:id/view",
   auth,
   enforceModuleAccess(MODULE_KEYS.INSTITUTIONS_USERS_REGISTRY),
-  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER, ROLES.SYSTEM_ADMINISTRATOR, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
   asyncHandler(async (req, res) => {
     const institutionId = Number(req.params.id);
     if (!institutionId) return res.status(400).json({ error: "Valid institution id is required." });
@@ -6519,7 +6548,7 @@ app.patch(
   "/api/system/registry/institutions/:id",
   auth,
   enforceModuleAccess(MODULE_KEYS.INSTITUTIONS_USERS_REGISTRY),
-  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER, ROLES.SYSTEM_ADMINISTRATOR, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
   asyncHandler(async (req, res) => {
     const institutionId = Number(req.params.id);
     if (!institutionId) return res.status(400).json({ error: "Valid institution id is required." });
@@ -6665,7 +6694,7 @@ app.patch(
   "/api/system/registry/institutions/:id/status",
   auth,
   enforceModuleAccess(MODULE_KEYS.INSTITUTIONS_USERS_REGISTRY),
-  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER, ROLES.SYSTEM_ADMINISTRATOR, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
   asyncHandler(async (req, res) => {
     const institutionId = Number(req.params.id);
     if (!institutionId) return res.status(400).json({ error: "Valid institution id is required." });
@@ -6710,7 +6739,7 @@ app.delete(
   "/api/system/registry/institutions/:id",
   auth,
   enforceModuleAccess(MODULE_KEYS.INSTITUTIONS_USERS_REGISTRY),
-  enforceRole([ROLES.SYSTEM_DEVELOPER]),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER]),
   asyncHandler(async (req, res) => {
     const institutionId = Number(req.params.id);
     if (!institutionId) return res.status(400).json({ error: "Valid institution id is required." });
@@ -6737,13 +6766,31 @@ app.delete(
       },
       deletedByUserId: req.user.id
     });
-    await query("DELETE FROM users WHERE institution_id = ?", [institutionId]);
-    await query("DELETE FROM institutions WHERE id = ?", [institutionId]);
+    const deleteReason = "Institution moved to recycle bin";
+    await query(
+      `UPDATE users
+       SET is_active = 0,
+           is_suspended = 1,
+           status_reason = COALESCE(status_reason, ?),
+           suspended_reason = COALESCE(suspended_reason, ?)
+       WHERE institution_id = ?`,
+      [deleteReason, deleteReason, institutionId]
+    );
+    await query(
+      `UPDATE institutions
+       SET is_active = 0,
+           is_suspended = 1,
+           status_reason = COALESCE(status_reason, ?),
+           suspended_reason = COALESCE(suspended_reason, ?)
+       WHERE id = ?`,
+      [deleteReason, deleteReason, institutionId]
+    );
     await auditLog(req.user, "DELETE_INSTITUTION", "institutions", institutionId, {
       institution_code: institution.institution_code,
-      users_deleted: users.length
+      users_deactivated: users.length,
+      mode: "SOFT_DELETE_TO_RECYCLE_BIN"
     });
-    res.json({ message: "Institution moved to recycle bin successfully." });
+    res.json({ message: "Institution moved to recycle bin and deactivated successfully." });
   })
 );
 
@@ -6751,7 +6798,7 @@ app.get(
   "/api/system/registry/users/:id/view",
   auth,
   enforceModuleAccess(MODULE_KEYS.INSTITUTIONS_USERS_REGISTRY),
-  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER, ROLES.SYSTEM_ADMINISTRATOR, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
   asyncHandler(async (req, res) => {
     const userId = Number(req.params.id);
     if (!userId) return res.status(400).json({ error: "Valid user id is required." });
@@ -6777,7 +6824,7 @@ app.patch(
   "/api/system/registry/users/:id",
   auth,
   enforceModuleAccess(MODULE_KEYS.INSTITUTIONS_USERS_REGISTRY),
-  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER, ROLES.SYSTEM_ADMINISTRATOR, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
   asyncHandler(async (req, res) => {
     const userId = Number(req.params.id);
     if (!userId) return res.status(400).json({ error: "Valid user id is required." });
@@ -6906,7 +6953,7 @@ app.patch(
   "/api/system/registry/users/:id/status",
   auth,
   enforceModuleAccess(MODULE_KEYS.INSTITUTIONS_USERS_REGISTRY),
-  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER, ROLES.SYSTEM_ADMINISTRATOR, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
   asyncHandler(async (req, res) => {
     const userId = Number(req.params.id);
     if (!userId) return res.status(400).json({ error: "Valid user id is required." });
@@ -6958,7 +7005,7 @@ app.get(
   "/api/system/recycle-bin",
   auth,
   enforceModuleAccess(MODULE_KEYS.RECYCLE_BIN),
-  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER, ROLES.SYSTEM_ADMINISTRATOR, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
   asyncHandler(async (req, res) => {
     await purgeExpiredRecycleBinItems();
     await normalizeLegacyRecycleBinVisibility();
@@ -7027,7 +7074,7 @@ app.post(
   "/api/system/recycle-bin/:id/restore",
   auth,
   enforceModuleAccess(MODULE_KEYS.RECYCLE_BIN),
-  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER, ROLES.SYSTEM_ADMINISTRATOR, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
   enforcePermission(PERMISSIONS.UPDATE),
   asyncHandler(async (req, res) => {
     const recycleId = Number(req.params.id);
@@ -7110,7 +7157,7 @@ app.delete(
   "/api/system/recycle-bin/:id",
   auth,
   enforceModuleAccess(MODULE_KEYS.RECYCLE_BIN),
-  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER, ROLES.SYSTEM_ADMINISTRATOR, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
   enforcePermission(PERMISSIONS.DELETE),
   asyncHandler(async (req, res) => {
     const recycleId = Number(req.params.id);
