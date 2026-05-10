@@ -1264,6 +1264,24 @@ CREATE TABLE IF NOT EXISTS institutional_registers (
 )`);
 
   await query(`
+CREATE TABLE IF NOT EXISTS institution_documents (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  institution_id BIGINT NOT NULL,
+  module_key VARCHAR(120) NULL,
+  submodule_key VARCHAR(120) NULL,
+  document_type VARCHAR(120) NOT NULL,
+  document_title VARCHAR(255) NOT NULL,
+  notes TEXT NULL,
+  file_path VARCHAR(255) NOT NULL,
+  mime_type VARCHAR(120) NULL,
+  uploaded_by_user_id BIGINT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  INDEX idx_institution_documents_lookup (institution_id, document_type, module_key),
+  CONSTRAINT fk_institution_documents_institution FOREIGN KEY (institution_id) REFERENCES institutions(id)
+)`);
+
+  await query(`
 CREATE TABLE IF NOT EXISTS system_developer_institution_assignments (
   id BIGINT PRIMARY KEY AUTO_INCREMENT,
   developer_user_id BIGINT NOT NULL,

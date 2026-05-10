@@ -1064,6 +1064,36 @@ function formatLearnerSerial(serialNumber) {
   return String(serial).padStart(3, "0");
 }
 
+function normalizeAdmissionSeed(seedValue = "") {
+  return String(seedValue || "")
+    .trim()
+    .replace(/[^a-z0-9/-]/gi, "")
+    .slice(0, 28)
+    .toUpperCase();
+}
+
+async function nextAdmissionNumber({ institutionId, seed = "" }) {
+  const normalizedSeed = normalizeAdmissionSeed(seed);
+  const prefix = normalizedSeed ? `ADM/${normalizedSeed}` : "ADM";
+  const rows = await query(
+    `SELECT admission_number
+     FROM learners
+     WHERE institution_id = ?
+       AND admission_number LIKE ?
+     ORDER BY id DESC
+     LIMIT 2000`,
+    [institutionId, `${prefix}%`]
+  );
+  const nextSerial = rows.reduce((maxValue, row) => {
+    const admissionNumber = cleanValue(row?.admission_number || "");
+    const match = admissionNumber.match(/(\d+)\s*$/);
+    if (!match) return maxValue;
+    const value = Number(match[1] || 0);
+    return Number.isFinite(value) && value > maxValue ? value : maxValue;
+  }, 0) + 1;
+  return `${prefix}-${String(nextSerial).padStart(3, "0")}`;
+}
+
 function generateStrongPassword(length = 12) {
   const charset = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789@#$%&*!";
   const targetLength = Math.max(Number(length) || 12, PASSWORD_MIN_LENGTH);
@@ -5475,7 +5505,7 @@ app.get(
   "/api/institutions/:id/agreement-template",
   auth,
   enforceModuleAccess(MODULE_KEYS.REGISTRATION),
-  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER]),
   asyncHandler(async (req, res) => {
     const institutionId = Number(req.params.id);
     const institution = await loadInstitutionAgreementContext(institutionId);
@@ -5495,7 +5525,7 @@ app.put(
   accountMutationRateLimit,
   accountMutationCooldown,
   enforceModuleAccess(MODULE_KEYS.REGISTRATION),
-  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER]),
   asyncHandler(async (req, res) => {
     const institutionId = Number(req.params.id);
     const institution = await loadInstitutionAgreementContext(institutionId);
@@ -5523,7 +5553,7 @@ app.delete(
   accountMutationRateLimit,
   accountMutationCooldown,
   enforceModuleAccess(MODULE_KEYS.REGISTRATION),
-  enforceRole([ROLES.SYSTEM_DEVELOPER]),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER]),
   asyncHandler(async (req, res) => {
     const institutionId = Number(req.params.id);
     const institution = await loadInstitutionAgreementContext(institutionId);
@@ -6149,6 +6179,140 @@ app.get(
 );
 
 app.get(
+  "/api/system/institution-documents/institutions",
+  auth,
+  enforceModuleAccess(MODULE_KEYS.INSTITUTIONS_USERS_REGISTRY),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER]),
+  enforcePermission(PERMISSIONS.VIEW),
+  asyncHandler(async (_req, res) => {
+    const institutions = await query(
+      `SELECT id, institution_name, institution_code
+       FROM institutions
+       ORDER BY institution_name ASC`
+    );
+    res.json({ institutions });
+  })
+);
+
+app.get(
+  "/api/system/institution-documents",
+  auth,
+  enforceModuleAccess(MODULE_KEYS.INSTITUTIONS_USERS_REGISTRY),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER]),
+  enforcePermission(PERMISSIONS.VIEW),
+  asyncHandler(async (req, res) => {
+    const institutionId = Number(req.query?.institution_id || 0);
+    if (!institutionId) {
+      return res.status(400).json({ error: "institution_id is required." });
+    }
+    const q = `%${cleanValue(req.query?.q || "")}%`;
+    const documents = await query(
+      `SELECT d.id, d.institution_id, d.module_key, d.submodule_key, d.document_type, d.document_title,
+              d.notes, d.file_path, d.mime_type, d.created_at, i.institution_name, i.institution_code
+       FROM institution_documents d
+       INNER JOIN institutions i ON i.id = d.institution_id
+       WHERE d.institution_id = ?
+         AND (
+           ? = '%%'
+           OR d.document_type LIKE ?
+           OR d.document_title LIKE ?
+           OR d.module_key LIKE ?
+           OR d.submodule_key LIKE ?
+         )
+       ORDER BY d.id DESC
+       LIMIT 500`,
+      [institutionId, q, q, q, q, q]
+    );
+    res.json({ documents });
+  })
+);
+
+app.post(
+  "/api/system/institution-documents",
+  auth,
+  enforceModuleAccess(MODULE_KEYS.INSTITUTIONS_USERS_REGISTRY),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER]),
+  enforcePermission(PERMISSIONS.CREATE),
+  asyncHandler(async (req, res) => {
+    const institutionId = Number(req.body?.institution_id || 0);
+    const documentType = cleanValue(req.body?.document_type || "");
+    const title = cleanValue(req.body?.document_title || "");
+    const filePath = cleanOptionalValue(req.body?.file_path);
+    if (!institutionId || !documentType || !title || !filePath) {
+      return res.status(400).json({ error: "institution_id, document_type, document_title and file_path are required." });
+    }
+    const exists = await query("SELECT id FROM institutions WHERE id = ? LIMIT 1", [institutionId]);
+    if (!exists.length) {
+      return res.status(404).json({ error: "Institution not found." });
+    }
+    const result = await query(
+      `INSERT INTO institution_documents
+        (institution_id, module_key, submodule_key, document_type, document_title, notes, file_path, mime_type, uploaded_by_user_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        institutionId,
+        cleanOptionalValue(req.body?.module_key),
+        cleanOptionalValue(req.body?.submodule_key),
+        documentType,
+        title,
+        cleanOptionalValue(req.body?.notes),
+        filePath,
+        cleanOptionalValue(req.body?.mime_type),
+        Number(req.user.id || 0) || null
+      ]
+    );
+    await auditLog(req.user, "UPSERT_INSTITUTION_DOCUMENT", "institution_documents", result.insertId, {
+      institution_id: institutionId,
+      document_type: documentType,
+      module_key: cleanOptionalValue(req.body?.module_key),
+      submodule_key: cleanOptionalValue(req.body?.submodule_key)
+    });
+    res.status(201).json({ id: result.insertId, message: "Institution document mapped successfully." });
+  })
+);
+
+app.delete(
+  "/api/system/institution-documents/:id",
+  auth,
+  enforceModuleAccess(MODULE_KEYS.INSTITUTIONS_USERS_REGISTRY),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER]),
+  enforcePermission(PERMISSIONS.DELETE),
+  asyncHandler(async (req, res) => {
+    const id = Number(req.params.id || 0);
+    if (!id) return res.status(400).json({ error: "Valid document id is required." });
+    const result = await query("DELETE FROM institution_documents WHERE id = ?", [id]);
+    if (!result.affectedRows) return res.status(404).json({ error: "Institution document not found." });
+    await auditLog(req.user, "DELETE_INSTITUTION_DOCUMENT", "institution_documents", id, {});
+    res.json({ message: "Institution document removed." });
+  })
+);
+
+app.get(
+  "/api/institutions/documents",
+  auth,
+  enforceModuleAccess(MODULE_KEYS.INSTITUTIONS_USERS_REGISTRY),
+  enforcePermission(PERMISSIONS.VIEW),
+  asyncHandler(async (req, res) => {
+    const institutionId = Number(req.user.institution_id || 0);
+    if (!institutionId) {
+      return res.status(400).json({ error: "institution scope is missing." });
+    }
+    const documentType = cleanOptionalValue(req.query?.document_type);
+    const moduleKey = cleanOptionalValue(req.query?.module_key);
+    const rows = await query(
+      `SELECT id, module_key, submodule_key, document_type, document_title, notes, file_path, mime_type, created_at
+       FROM institution_documents
+       WHERE institution_id = ?
+         AND (? IS NULL OR document_type = ?)
+         AND (? IS NULL OR module_key = ?)
+       ORDER BY id DESC`,
+      [institutionId, documentType, documentType, moduleKey, moduleKey]
+    );
+    res.json({ documents: rows });
+  })
+);
+
+app.get(
   "/api/system/registry/institutions/:id/view",
   auth,
   enforceModuleAccess(MODULE_KEYS.INSTITUTIONS_USERS_REGISTRY),
@@ -6184,15 +6348,19 @@ app.patch(
   asyncHandler(async (req, res) => {
     const institutionId = Number(req.params.id);
     if (!institutionId) return res.status(400).json({ error: "Valid institution id is required." });
-    const rows = await query("SELECT id, institution_name, email, phone FROM institutions WHERE id = ? LIMIT 1", [institutionId]);
+    const rows = await query("SELECT id, institution_name, institution_code, email, phone FROM institutions WHERE id = ? LIMIT 1", [institutionId]);
     if (!rows.length) return res.status(404).json({ error: "Institution not found." });
     const editInstitutionScopeError = await assertInstitutionScopeAccess(req, institutionId, "You can only edit institutions in your assigned scope.");
     if (editInstitutionScopeError) {
       return res.status(editInstitutionScopeError.status).json({ error: editInstitutionScopeError.error });
     }
+    const existingInstitution = rows[0];
     const institution_name = cleanOptionalValue(req.body?.institution_name);
     const email = cleanOptionalValue(req.body?.email);
     const phone = cleanOptionalValue(req.body?.phone);
+    const nextInstitutionName = institution_name ?? existingInstitution.institution_name;
+    const nextInstitutionEmail = email ?? existingInstitution.email;
+    const nextInstitutionPhone = phone ?? existingInstitution.phone;
     await query(
       `UPDATE institutions
        SET institution_name = COALESCE(?, institution_name),
@@ -6201,12 +6369,69 @@ app.patch(
        WHERE id = ?`,
       [institution_name, email, phone, institutionId]
     );
+    const shouldDispatchFreshWelcome =
+      (institution_name !== null && cleanValue(institution_name) !== cleanValue(existingInstitution.institution_name)) ||
+      (email !== null && cleanValue(email) !== cleanValue(existingInstitution.email)) ||
+      (phone !== null && cleanValue(phone) !== cleanValue(existingInstitution.phone));
+    let usersNotified = 0;
+    if (shouldDispatchFreshWelcome) {
+      const institutionUsers = await query(
+        `SELECT id, username, full_name, role, email, phone
+         FROM users
+         WHERE institution_id = ?
+         ORDER BY id ASC`,
+        [institutionId]
+      );
+      for (const user of institutionUsers) {
+        const generatedPassword = generateStrongPassword(12);
+        const passwordHash = await hashPassword(generatedPassword);
+        // eslint-disable-next-line no-await-in-loop
+        await query(
+          `UPDATE users
+           SET password_hash = ?,
+               password_last_changed_at = NOW(),
+               password_expires_at = DATE_ADD(NOW(), INTERVAL ? DAY),
+               must_change_password = 1,
+               failed_login_attempts = 0,
+               locked_until = NULL,
+               last_failed_login_at = NULL
+           WHERE id = ?`,
+          [passwordHash, PASSWORD_ROTATION_DAYS, Number(user.id || 0)]
+        );
+        const message = [
+          "WELCOME TO IMIS SYSTEM FOR BASIC EDUCATION LEARNING INSTITUTIONS.",
+          `Institution: ${nextInstitutionName || "Institution"}`,
+          `Institution Code: ${existingInstitution.institution_code || "-"}`,
+          `Username: ${user.username || "-"}`,
+          `Temporary Password: ${generatedPassword}`,
+          `Role: ${user.role || "-"}`,
+          `Institution Contact Email: ${nextInstitutionEmail || "-"}`,
+          `Institution Contact Phone: ${nextInstitutionPhone || "-"}`,
+          "",
+          "Please sign in and change this password immediately."
+        ].join("\n");
+        // eslint-disable-next-line no-await-in-loop
+        await dispatchCredentialNotice({
+          email: cleanOptionalValue(user.email),
+          phone: cleanOptionalValue(user.phone),
+          subject: "IMIS Updated Institution Welcome Credentials",
+          message
+        });
+        usersNotified += 1;
+      }
+    }
     await auditLog(req.user, "UPDATE_REGISTRY_INSTITUTION", "institutions", institutionId, {
       institution_name,
       email,
-      phone
+      phone,
+      users_notified: usersNotified,
+      fresh_welcome_dispatched: shouldDispatchFreshWelcome
     });
-    res.json({ message: "Institution saved successfully." });
+    res.json({
+      message: "Institution saved successfully.",
+      users_notified: usersNotified,
+      fresh_welcome_dispatched: shouldDispatchFreshWelcome
+    });
   })
 );
 
@@ -6343,23 +6568,90 @@ app.patch(
     if (editUserScopeError) {
       return res.status(editUserScopeError.status).json({ error: editUserScopeError.error });
     }
+    const userRows = await query(
+      `SELECT id, institution_id, username, role, full_name, email, phone
+       FROM users
+       WHERE id = ?
+       LIMIT 1`,
+      [userId]
+    );
+    if (!userRows.length) return res.status(404).json({ error: "User not found." });
+    const user = userRows[0];
     const full_name = cleanOptionalValue(req.body?.full_name);
     const email = cleanOptionalValue(req.body?.email);
     const phone = cleanOptionalValue(req.body?.phone);
-    await query(
-      `UPDATE users
-       SET full_name = COALESCE(?, full_name),
-           email = COALESCE(?, email),
-           phone = COALESCE(?, phone)
-       WHERE id = ?`,
-      [full_name, email, phone, userId]
-    );
+    const nextName = full_name ?? user.full_name;
+    const nextEmail = email ?? user.email;
+    const nextPhone = phone ?? user.phone;
+    const detailsChanged =
+      (full_name !== null && cleanValue(full_name) !== cleanValue(user.full_name)) ||
+      (email !== null && cleanValue(email) !== cleanValue(user.email)) ||
+      (phone !== null && cleanValue(phone) !== cleanValue(user.phone));
+    let generatedPassword = null;
+    let credentialDispatch = null;
+    if (detailsChanged) {
+      generatedPassword = generateStrongPassword(12);
+      const passwordHash = await hashPassword(generatedPassword);
+      await query(
+        `UPDATE users
+         SET full_name = COALESCE(?, full_name),
+             email = COALESCE(?, email),
+             phone = COALESCE(?, phone),
+             password_hash = ?,
+             password_last_changed_at = NOW(),
+             password_expires_at = DATE_ADD(NOW(), INTERVAL ? DAY),
+             must_change_password = 1,
+             failed_login_attempts = 0,
+             locked_until = NULL,
+             last_failed_login_at = NULL
+         WHERE id = ?`,
+        [full_name, email, phone, passwordHash, PASSWORD_ROTATION_DAYS, userId]
+      );
+      const institutionRows = await query(
+        "SELECT institution_name, institution_code FROM institutions WHERE id = ? LIMIT 1",
+        [user.institution_id]
+      );
+      const institutionName = cleanValue(institutionRows[0]?.institution_name || "-");
+      const institutionCode = cleanValue(institutionRows[0]?.institution_code || "-");
+      credentialDispatch = await dispatchCredentialNotice({
+        email: nextEmail,
+        phone: nextPhone,
+        subject: "IMIS Updated Welcome Credentials",
+        message: [
+          "Your profile details were updated in IMIS.",
+          `Institution: ${institutionName}`,
+          `Institution Code: ${institutionCode}`,
+          `Username: ${user.username || "-"}`,
+          `Temporary Password: ${generatedPassword}`,
+          `Role: ${user.role || "-"}`,
+          `Name: ${nextName || "-"}`,
+          "",
+          "Use the new password and change it immediately at first login."
+        ].join("\n")
+      });
+    } else {
+      await query(
+        `UPDATE users
+         SET full_name = COALESCE(?, full_name),
+             email = COALESCE(?, email),
+             phone = COALESCE(?, phone)
+         WHERE id = ?`,
+        [full_name, email, phone, userId]
+      );
+    }
     await auditLog(req.user, "UPDATE_REGISTRY_USER", "users", userId, {
       full_name,
       email,
-      phone
+      phone,
+      details_changed: detailsChanged,
+      fresh_welcome_dispatched: detailsChanged
     });
-    res.json({ message: "User saved successfully." });
+    res.json({
+      message: "User saved successfully.",
+      fresh_welcome_dispatched: detailsChanged,
+      generated_password: canManageAcrossInstitutions(req.user) ? generatedPassword : null,
+      credential_dispatch: credentialDispatch
+    });
   })
 );
 
@@ -9353,6 +9645,40 @@ app.post(
 );
 
 app.get(
+  "/api/admission/learners/next-admission-number",
+  auth,
+  enforceModuleAccess(MODULE_KEYS.ADMISSION),
+  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.SYSTEM_ADMINISTRATOR, ROLES.TEACHER]),
+  asyncHandler(async (req, res) => {
+    const seed = cleanOptionalValue(req.query?.seed);
+    const admissionNumber = await nextAdmissionNumber({
+      institutionId: Number(req.user.institution_id),
+      seed: seed || ""
+    });
+    res.json({ admission_number: admissionNumber });
+  })
+);
+
+app.post(
+  "/api/admission/learners/next-admission-number",
+  auth,
+  enforceModuleAccess(MODULE_KEYS.ADMISSION),
+  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.SYSTEM_ADMINISTRATOR, ROLES.TEACHER]),
+  enforcePermission(PERMISSIONS.CREATE),
+  asyncHandler(async (req, res) => {
+    const mode = cleanValue(req.body?.mode || "auto").toLowerCase();
+    const seed = mode.includes("seed")
+      ? cleanOptionalValue(req.body?.seed || "")
+      : "";
+    const admissionNumber = await nextAdmissionNumber({
+      institutionId: Number(req.user.institution_id),
+      seed
+    });
+    res.json({ admission_number: admissionNumber, mode });
+  })
+);
+
+app.get(
   "/api/admission/learners/:id/admission-form",
   auth,
   enforceModuleAccess(MODULE_KEYS.ADMISSION),
@@ -9374,6 +9700,19 @@ app.get(
       return res.status(404).json({ error: "Learner not found." });
     }
     const learner = rows[0];
+    let resolvedLetterhead = cleanOptionalValue(learner.letterhead_file_path);
+    if (!resolvedLetterhead) {
+      const letterheadDocs = await query(
+        `SELECT file_path
+         FROM institution_documents
+         WHERE institution_id = ?
+           AND document_type IN ('institution_letterhead', 'admission_form_template')
+         ORDER BY id DESC
+         LIMIT 1`,
+        [learner.institution_id]
+      );
+      resolvedLetterhead = cleanOptionalValue(letterheadDocs[0]?.file_path);
+    }
     const learnerSerialLabel = formatLearnerSerial(learner.learner_serial_number || learner.id);
     const referenceNo = `ADM-FORM-${learnerSerialLabel || learner.id}-${dayjs().format("YYYYMMDDHHmmss")}`;
     res.json({
@@ -9382,7 +9721,7 @@ app.get(
       learner_serial_label: learnerSerialLabel || null,
       generated_at: dayjs().format("YYYY-MM-DD HH:mm:ss"),
       title: "Institution Admission Form",
-      letterhead_file_path: learner.letterhead_file_path || null,
+      letterhead_file_path: resolvedLetterhead || null,
       learner_details: learner,
       parent_guardian_details: {
         parent_full_name: learner.parent_full_name,
@@ -9438,6 +9777,26 @@ app.get(
       return res.status(404).json({ error: "Learner not found." });
     }
     const learner = rows[0];
+    let resolvedLetterhead = cleanOptionalValue(learner.letterhead_file_path);
+    let resolvedTemplateFile = cleanOptionalValue(learner.admission_letter_template_file_url);
+    if (!resolvedLetterhead || !resolvedTemplateFile) {
+      const institutionDocs = await query(
+        `SELECT document_type, file_path
+         FROM institution_documents
+         WHERE institution_id = ?
+           AND document_type IN ('institution_letterhead', 'admission_letter_template')
+         ORDER BY id DESC`,
+        [learner.institution_id]
+      );
+      if (!resolvedLetterhead) {
+        const letterhead = institutionDocs.find((row) => cleanValue(row.document_type) === "institution_letterhead");
+        resolvedLetterhead = cleanOptionalValue(letterhead?.file_path);
+      }
+      if (!resolvedTemplateFile) {
+        const admissionLetter = institutionDocs.find((row) => cleanValue(row.document_type) === "admission_letter_template");
+        resolvedTemplateFile = cleanOptionalValue(admissionLetter?.file_path);
+      }
+    }
     const baseTemplate = cleanOptionalValue(learner.admission_letter_template_text) || [
       "Dear {{LEARNER_NAME}},",
       "",
@@ -9471,8 +9830,8 @@ app.get(
       learner_name: learner.full_name,
       admission_number: learner.admission_number,
       generated_at: dayjs().format("YYYY-MM-DD HH:mm:ss"),
-      letterhead_file_path: learner.letterhead_file_path || null,
-      template_file_url: learner.admission_letter_template_file_url || null,
+      letterhead_file_path: resolvedLetterhead || null,
+      template_file_url: resolvedTemplateFile || null,
       letter_text: renderedLetter
     });
   })
@@ -10204,6 +10563,56 @@ app.get(
     res.json({
       message:
         "Parent/Teacher chat endpoint placeholder is enabled. Plug a websocket service for live chat."
+    });
+  })
+);
+
+app.post(
+  "/api/communication/messages/recipient-preview",
+  auth,
+  enforceModuleAccess(MODULE_KEYS.COMMUNICATION_MESSAGES),
+  enforceRole([ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
+  enforcePermission(PERMISSIONS.VIEW),
+  asyncHandler(async (req, res) => {
+    const recipientRole = cleanValue(req.body?.recipient_role);
+    if (!recipientRole) {
+      return res.status(400).json({ error: "recipient_role is required." });
+    }
+    const contacts = await resolveCommunicationRecipients({
+      institutionId: req.user.institution_id,
+      recipientRole,
+      recipientContact: ""
+    });
+    res.json({
+      recipient_role: recipientRole,
+      total_contacts: contacts.length,
+      first_contact: contacts[0] || null,
+      contacts: contacts.slice(0, 20)
+    });
+  })
+);
+
+app.get(
+  "/api/communication/messages/recipient-preview",
+  auth,
+  enforceModuleAccess(MODULE_KEYS.COMMUNICATION_MESSAGES),
+  enforceRole([ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
+  enforcePermission(PERMISSIONS.VIEW),
+  asyncHandler(async (req, res) => {
+    const recipientRole = cleanValue(req.query?.recipient_role);
+    if (!recipientRole) {
+      return res.status(400).json({ error: "recipient_role is required." });
+    }
+    const contacts = await resolveCommunicationRecipients({
+      institutionId: req.user.institution_id,
+      recipientRole,
+      recipientContact: ""
+    });
+    res.json({
+      recipient_role: recipientRole,
+      total_contacts: contacts.length,
+      first_contact: contacts[0] || null,
+      contacts: contacts.slice(0, 20)
     });
   })
 );

@@ -12,7 +12,7 @@ let portalContext = null;
 let searchRowDrafts = {};
 let dashboardAutoRefreshHandle = null;
 let currentSidebarSubmoduleId = null;
-const CLIENT_UI_BUNDLE_ID = "dash-bundle-main-v58-jss-core-serials";
+const CLIENT_UI_BUNDLE_ID = "dash-bundle-main-v59-iconized-isolated-institution-edit";
 const examPanelState = {
   generatedExam: null,
   serials: [],
@@ -88,6 +88,7 @@ const MODULE_KEY_BY_ID = {
   "system-access-control": "access-control",
   "system-audit": "security-audit",
   "system-registry": "institutions-users-registry",
+  "system-institution-edit": "institutions-users-registry",
   "system-recycle-bin": "recycle-bin",
   "system-cbc-editor": "cbc-curriculum-editor"
 };
@@ -124,6 +125,8 @@ const MODULE_DESCRIPTIONS = {
   "system-access-control": "Assign module rights and review role-based access permissions.",
   "system-audit": "Review security and login audit trails for accountability.",
   "system-registry": "Browse institutions and user registry details in one place.",
+  "system-institution-edit":
+    "Manage institution-specific letterheads, logos, and document templates per tenant (SSD only).",
   "system-recycle-bin": "Restore or permanently purge archived deleted records.",
   "system-cbc-editor": "Create and maintain CBC curriculum structures and metadata."
 };
@@ -224,6 +227,56 @@ function sidebarSubmoduleParent(submoduleId = "") {
   return Object.keys(SIDEBAR_SUBMODULES).find((parent) =>
     sidebarSubmodulesFor(parent).some((item) => item.id === target)
   );
+}
+
+function isSuperSystemDeveloperPortal() {
+  return normalizeRoleKey(portalContext?.role || "") === "SUPER_SYSTEM_DEVELOPER";
+}
+
+function inferAxButtonVariant(label = "", existingClasses = "") {
+  const source = `${String(label || "")} ${String(existingClasses || "")}`.toLowerCase();
+  if (source.includes("delete") || source.includes("remove") || source.includes("purge")) return "ax-btn--delete";
+  if (source.includes("save")) return "ax-btn--save";
+  if (source.includes("edit") || source.includes("amend") || source.includes("modify")) return "ax-btn--edit";
+  if (source.includes("refresh")) return "ax-btn--refresh";
+  if (source.includes("print")) return "ax-btn--print";
+  if (source.includes("excel")) return "ax-btn--export-excel";
+  if (source.includes("pdf")) return "ax-btn--export-pdf";
+  if (source.includes("download")) return "ax-btn--download";
+  if (source.includes("upload")) return "ax-btn--upload";
+  if (source.includes("register") || source.includes("create")) return "ax-btn--register";
+  if (source.includes("dispatch") || source.includes("generate") || source.includes("process") || source.includes("send")) return "ax-btn--process";
+  if (source.includes("clear") || source.includes("reset")) return "ax-btn--reset";
+  if (source.includes("view") || source.includes("open")) return "ax-btn--view";
+  return "ax-btn--view";
+}
+
+function applyCompactIconButtons(scope = document) {
+  if (!scope || typeof scope.querySelectorAll !== "function") return;
+  scope.querySelectorAll("button, label.ax-btn").forEach((node) => {
+    if (node.closest(".sidebar-scroll")) return;
+    if (node.id === "logoutButton") return;
+    const text = String(node.textContent || "").trim();
+    if (node.tagName === "BUTTON") {
+      node.classList.add("ax-btn", "ax-btn--sm");
+      const variant = inferAxButtonVariant(text, node.className);
+      node.classList.add(variant);
+      node.classList.add("ax-btn--icon-only");
+      if (!node.getAttribute("title")) node.setAttribute("title", text || "Action");
+      if (!node.getAttribute("aria-label")) node.setAttribute("aria-label", text || "Action");
+    } else if (node.tagName === "LABEL") {
+      if (!node.getAttribute("title")) node.setAttribute("title", text || "Action");
+      if (!node.getAttribute("aria-label")) node.setAttribute("aria-label", text || "Action");
+    }
+  });
+}
+
+function applyTemplateVisibility(scope = document) {
+  if (!scope || typeof scope.querySelectorAll !== "function") return;
+  if (isSuperSystemDeveloperPortal()) return;
+  scope.querySelectorAll("[data-template-control='true']").forEach((node) => {
+    node.style.display = "none";
+  });
 }
 
 function isSystemAdminRole() {
@@ -677,7 +730,7 @@ function applyDashboardIdentity(meData = {}) {
 
 async function renderSystemRegistration(options = {}) {
   setActiveSidebarButton("system-register");
-  document.getElementById("moduleTitle").textContent = "Register (Institution/User)";
+  document.getElementById("moduleTitle").textContent = "Institution Registration & User Registration";
   if (!isSystemAdminRole()) {
     alert("Only Super/System Developer, System Administrator, HoI/Administrator can access registration center.");
     return loadDashboard();
@@ -759,7 +812,7 @@ async function renderSystemRegistration(options = {}) {
       </div>
 
       ${canRegisterInstitution ? `
-      <section class="registration-compact-card register-section-compact">
+      <section id="registrationInstitutionSection" class="registration-compact-card register-section-compact">
         <div class="section-card-header">
           <h3>Register Institution (System Developer only)</h3>
           <p class="small-note">Institution code is auto-generated from county + category with strict non-duplicate sequencing.</p>
@@ -850,7 +903,7 @@ async function renderSystemRegistration(options = {}) {
           <button id="sysDownloadAgreementButton">Download PDF</button>
           <button id="sysPrintAgreementButton">Print PDF</button>
         </div>
-        <div class="form-grid registration-compact-grid">
+        <div class="form-grid registration-compact-grid" data-template-control="true">
           <label>Agreement Template Institution</label>
           <select id="sysAgreementInstitutionId">
             ${institutionRows
@@ -862,7 +915,7 @@ async function renderSystemRegistration(options = {}) {
           <label>Agreement Template Text</label>
           <textarea id="sysAgreementTemplateText" placeholder="Optional agreement body template"></textarea>
         </div>
-        <div class="agreement-toolbar-row">
+        <div class="agreement-toolbar-row" data-template-control="true">
           <button id="sysSaveAgreementTemplateButton">Save Template</button>
           <button id="sysLoadAgreementTemplateButton">Open Template</button>
           <button id="sysDeleteAgreementTemplateButton" class="danger-button">Delete Template</button>
@@ -876,7 +929,7 @@ async function renderSystemRegistration(options = {}) {
         </div>
       </section>
       ` : `
-      <section class="registration-compact-card register-section-compact">
+      <section id="registrationInstitutionSection" class="registration-compact-card register-section-compact">
         <div class="section-card-header">
           <h3>Register Institution</h3>
           <p class="small-note">Visible but not active for this role.</p>
@@ -885,7 +938,7 @@ async function renderSystemRegistration(options = {}) {
       </section>
       `}
 
-      <section class="registration-compact-card register-section-compact">
+      <section id="registrationUserSection" class="registration-compact-card register-section-compact">
         <div class="section-card-header">
           <h3>Register User (Inside Institution Scope)</h3>
           <p class="small-note">Auto-generated password can be sent through Email, SMS, or both with legal onboarding text.</p>
@@ -939,7 +992,7 @@ async function renderSystemRegistration(options = {}) {
         </div>
       </section>
 
-      <section class="registration-compact-card register-section-compact">
+      <section id="registrationUsersListSection" class="registration-compact-card register-section-compact">
         <div class="section-card-header">
           <h3>Registered Users</h3>
           <p class="small-note">All users in your scope are listed below with compact actions.</p>
@@ -1278,14 +1331,22 @@ async function renderSystemRegistration(options = {}) {
         printWindow?.print();
       }, 700);
     });
+    const institutionSection = document.getElementById("registrationInstitutionSection");
+    const userSection = document.getElementById("registrationUserSection");
+    const usersListSection = document.getElementById("registrationUsersListSection");
     const registrationFocus = String(options?.registrationFocus || "").toLowerCase();
     if (registrationFocus === "institution") {
+      if (userSection) userSection.style.display = "none";
+      if (usersListSection) usersListSection.style.display = "none";
       document.querySelector("#sysInstitutionName")?.focus();
       document.querySelector("#sysInstitutionName")?.scrollIntoView({ behavior: "smooth", block: "center" });
     } else if (registrationFocus === "user") {
+      if (institutionSection) institutionSection.style.display = "none";
       document.querySelector("#sysUserFullName")?.focus();
       document.querySelector("#sysUserFullName")?.scrollIntoView({ behavior: "smooth", block: "center" });
     }
+    applyCompactIconButtons(document.getElementById("formArea"));
+    applyTemplateVisibility(document.getElementById("formArea"));
   } catch (error) {
     alert(error.message);
   }
@@ -1330,6 +1391,10 @@ async function renderModuleRights() {
       "dashboard-fee-collection",
       "dashboard-outstanding-balances"
     ];
+    const dynamicSidebarSubmoduleKeys = Object.values(SIDEBAR_SUBMODULES)
+      .flatMap((rows) => (Array.isArray(rows) ? rows : []))
+      .map((row) => String(row.id || ""))
+      .filter(Boolean);
     const explicitSubModuleKeys = [
       "admission-register",
       "admission-form",
@@ -1346,7 +1411,9 @@ async function renderModuleRights() {
       "institution-letterhead-upload",
       "hr-institutional-letters",
       "finance-fee-status",
-      "institutional-registers"
+      "institutional-registers",
+      "system-institution-edit",
+      ...dynamicSidebarSubmoduleKeys
     ];
     const moduleKeys = Array.from(new Set([...moduleKeysRaw, ...dashboardWidgetKeys, ...explicitSubModuleKeys])).sort((a, b) =>
       String(a).localeCompare(String(b))
@@ -1571,6 +1638,7 @@ async function renderModuleRights() {
     document.getElementById("moduleAccessSelectDownloadButton")?.addEventListener("click", () => setAllForPermission("DOWNLOAD", true));
 
     await loadOverrides();
+    applyCompactIconButtons(document.getElementById("formArea"));
     resetDataTable("Module access matrix loaded.");
   } catch (error) {
     alert(error.message);
@@ -1638,6 +1706,7 @@ async function renderSecurityAudit() {
       scroller?.scrollBy({ left: 520, behavior: "smooth" });
     });
     document.getElementById("refreshAuditLogButton")?.addEventListener("click", renderSecurityAudit);
+    applyCompactIconButtons(document.getElementById("formArea"));
   } catch (error) {
     alert(error.message);
   }
@@ -1763,7 +1832,199 @@ async function renderInstitutionsRegistry() {
     const scopeSelect = document.getElementById("registryScopeSelect");
     scopeSelect?.addEventListener("change", () => renderRegistryScope(scopeSelect.value));
     renderRegistryScope(initialScope);
+    applyCompactIconButtons(document.getElementById("formArea"));
     resetDataTable("Registry records loaded above.");
+  } catch (error) {
+    alert(error.message);
+  }
+}
+
+async function renderInstitutionEditModule() {
+  setActiveSidebarButton("system-institution-edit");
+  document.getElementById("moduleTitle").textContent = "Institution Edit Module";
+  if (!isSuperSystemDeveloperPortal()) {
+    alert("Only Super System Developer can access Institution Edit Module.");
+    return loadDashboard();
+  }
+  try {
+    const response = await request("/api/system/institution-documents/institutions");
+    const institutions = Array.isArray(response?.institutions) ? response.institutions : [];
+    const moduleOptions = Object.keys(MODULE_DESCRIPTIONS)
+      .filter((key) => !key.startsWith("dashboard"))
+      .sort((a, b) => a.localeCompare(b));
+    const documentTypeOptions = [
+      "institution_photo",
+      "institution_logo",
+      "institution_letterhead",
+      "admission_registration_form_template",
+      "admission_form_template",
+      "admission_letter_template",
+      "assessment_report_template",
+      "exam_script_template",
+      "result_script_template",
+      "rules_and_regulations_template",
+      "other"
+    ];
+    document.getElementById("cards").innerHTML = `
+      <div class="card stats-card metric-emphasis">
+        <h4>Institution Edit Module</h4>
+        <p>${formatNumber(institutions.length)} institutions</p>
+      </div>
+      <div class="card stats-card">
+        <h4>Scope</h4>
+        <p>Super System Developer only</p>
+      </div>
+      <div class="card stats-card">
+        <h4>Auto-Pick</h4>
+        <p>Documents are linked to selected institution immediately.</p>
+      </div>
+    `;
+    document.getElementById("formArea").innerHTML = `
+      <div class="module-header-card">
+        <h3>Institution Edit Module</h3>
+        <p>Search institution, upload templates/logos/letterheads per institution, and classify by module/sub-module so each tenant only sees its own files.</p>
+      </div>
+      <div class="form-grid">
+        <label>Search Institution</label>
+        <input id="institutionDocSearchInput" placeholder="Type institution name/code..." />
+        <label>Institution</label>
+        <select id="institutionDocInstitutionId">
+          <option value="">Select institution</option>
+          ${institutions.map((row) => `<option value="${Number(row.id || 0)}">${escapeHtml(row.institution_name || "-")} (${escapeHtml(row.institution_code || "-")})</option>`).join("")}
+        </select>
+        <label>Module</label>
+        <select id="institutionDocModuleKey">
+          <option value="">Select module</option>
+          ${moduleOptions.map((key) => `<option value="${escapeHtmlAttribute(key)}">${escapeHtml(toLabel(key))}</option>`).join("")}
+        </select>
+        <label>Sub-module</label>
+        <select id="institutionDocSubmoduleKey">
+          <option value="">Select sub-module</option>
+        </select>
+        <label>Document Type</label>
+        <select id="institutionDocType">
+          ${documentTypeOptions.map((entry) => `<option value="${escapeHtmlAttribute(entry)}">${escapeHtml(toLabel(entry))}</option>`).join("")}
+        </select>
+        <label>Document Title</label>
+        <input id="institutionDocTitle" placeholder="Friendly title" />
+        <label>Notes / Usage</label>
+        <textarea id="institutionDocNotes" rows="3" placeholder="Usage notes"></textarea>
+      </div>
+      <div class="actions-row">
+        <button id="institutionDocDownloadSampleBtn" type="button">Download Sample</button>
+        <label class="ax-btn ax-btn--upload ax-btn--sm" for="institutionDocFileInput">Select Upload</label>
+        <input id="institutionDocFileInput" type="file" hidden />
+        <button id="institutionDocSaveBtn" type="button">Upload & Save</button>
+        <button id="institutionDocRefreshBtn" type="button">Refresh List</button>
+      </div>
+      <div id="institutionDocTableHolder"></div>
+    `;
+    const searchEl = document.getElementById("institutionDocSearchInput");
+    const institutionEl = document.getElementById("institutionDocInstitutionId");
+    const moduleEl = document.getElementById("institutionDocModuleKey");
+    const submoduleEl = document.getElementById("institutionDocSubmoduleKey");
+    const tableHolder = document.getElementById("institutionDocTableHolder");
+
+    const refreshSubmodules = () => {
+      const moduleKey = String(moduleEl?.value || "");
+      const list = Array.isArray(SIDEBAR_SUBMODULES[moduleKey]) ? SIDEBAR_SUBMODULES[moduleKey] : [];
+      if (!submoduleEl) return;
+      submoduleEl.innerHTML = `<option value="">Select sub-module</option>${list
+        .map((entry) => `<option value="${escapeHtmlAttribute(entry.id)}">${escapeHtml(entry.label)}</option>`)
+        .join("")}`;
+    };
+
+    const refreshDocuments = async () => {
+      const institutionId = Number(institutionEl?.value || 0);
+      if (!institutionId) {
+        tableHolder.innerHTML = '<p class="small-note">Select institution to view document mappings.</p>';
+        return;
+      }
+      const q = String(searchEl?.value || "").trim();
+      const docs = await request(
+        `/api/system/institution-documents?institution_id=${institutionId}&q=${encodeURIComponent(q)}`
+      );
+      const rows = Array.isArray(docs?.documents) ? docs.documents : [];
+      tableHolder.innerHTML = buildDashboardTable(
+        ["ID", "Title", "Type", "Module", "Sub-module", "File", "Uploaded", "Actions"],
+        rows.map((row) => [
+          row.id,
+          row.document_title || "-",
+          row.document_type || "-",
+          toLabel(row.module_key || "-"),
+          row.submodule_key ? toLabel(row.submodule_key) : "-",
+          row.file_path || "-",
+          formatDateTime(row.created_at),
+          `<div class="search-inline-actions">
+            <button class="search-action-icon view" data-inst-doc-view="${Number(row.id || 0)}" title="View">👁</button>
+            <button class="search-action-icon delete" data-inst-doc-delete="${Number(row.id || 0)}" title="Delete">🗑</button>
+          </div>`
+        ])
+      );
+      tableHolder.querySelectorAll("[data-inst-doc-view]").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const id = Number(btn.getAttribute("data-inst-doc-view") || 0);
+          const row = rows.find((entry) => Number(entry.id || 0) === id);
+          if (!row?.file_path) return;
+          window.open(row.file_path, "_blank");
+        });
+      });
+      tableHolder.querySelectorAll("[data-inst-doc-delete]").forEach((btn) => {
+        btn.addEventListener("click", async () => {
+          const id = Number(btn.getAttribute("data-inst-doc-delete") || 0);
+          if (!id || !window.confirm("Delete this institution document mapping?")) return;
+          await request(`/api/system/institution-documents/${id}`, { method: "DELETE" });
+          await refreshDocuments();
+        });
+      });
+      applyCompactIconButtons(document.getElementById("formArea"));
+    };
+
+    moduleEl?.addEventListener("change", refreshSubmodules);
+    institutionEl?.addEventListener("change", refreshDocuments);
+    searchEl?.addEventListener("input", () => {
+      window.clearTimeout(searchEl.__institutionDocTimer);
+      searchEl.__institutionDocTimer = window.setTimeout(() => refreshDocuments().catch(() => {}), 250);
+    });
+    document.getElementById("institutionDocRefreshBtn")?.addEventListener("click", refreshDocuments);
+    document.getElementById("institutionDocDownloadSampleBtn")?.addEventListener("click", () => {
+      const payload = [
+        "institution_code,module_key,submodule_key,document_type,document_title,notes,file_path",
+        "001/PJ/001,admission,admission-letter,admission_letter_template,Admission Letter Template,Update placeholders,/uploads/sample-admission-letter.docx"
+      ].join("\n");
+      downloadTextFile("institution-document-template.csv", payload, "text/csv;charset=utf-8");
+    });
+    document.getElementById("institutionDocSaveBtn")?.addEventListener("click", async () => {
+      const institutionId = Number(institutionEl?.value || 0);
+      if (!institutionId) {
+        alert("Select institution first.");
+        return;
+      }
+      const uploadFile = document.getElementById("institutionDocFileInput")?.files?.[0] || null;
+      if (!uploadFile) {
+        alert("Select a file to upload.");
+        return;
+      }
+      const uploaded = await uploadFileWithAuth(uploadFile);
+      await request("/api/system/institution-documents", {
+        method: "POST",
+        body: JSON.stringify({
+          institution_id: institutionId,
+          module_key: String(moduleEl?.value || "").trim() || null,
+          submodule_key: String(submoduleEl?.value || "").trim() || null,
+          document_type: String(document.getElementById("institutionDocType")?.value || "").trim() || "other",
+          document_title: String(document.getElementById("institutionDocTitle")?.value || "").trim() || uploadFile.name,
+          notes: String(document.getElementById("institutionDocNotes")?.value || "").trim() || null,
+          file_path: uploaded?.filePath || null
+        })
+      });
+      alert("Institution document uploaded and mapped successfully.");
+      document.getElementById("institutionDocFileInput").value = "";
+      await refreshDocuments();
+    });
+    refreshSubmodules();
+    await refreshDocuments();
+    applyCompactIconButtons(document.getElementById("formArea"));
   } catch (error) {
     alert(error.message);
   }
@@ -1898,6 +2159,7 @@ async function renderRecycleBin() {
       alert(JSON.stringify(item, null, 2));
     });
     document.getElementById("refreshRecycleBinButton")?.addEventListener("click", renderRecycleBin);
+    applyCompactIconButtons(document.getElementById("formArea"));
   } catch (error) {
     alert(error.message);
   }
@@ -3961,6 +4223,8 @@ async function renderCbcCurriculumEditor(options = {}) {
       }
     });
     document.getElementById("refreshCbcEditorButton")?.addEventListener("click", renderCbcCurriculumEditor);
+    applyCompactIconButtons(document.getElementById("formArea"));
+    applyTemplateVisibility(document.getElementById("formArea"));
   } catch (error) {
     alert(error.message);
   }
@@ -3968,7 +4232,7 @@ async function renderCbcCurriculumEditor(options = {}) {
 
 const moduleConfigs = {
   admission: {
-    title: "Admission Module - Learners Bio Data",
+    title: "Admission Module - Learners Registration",
     endpoint: "/api/admission/learners",
     fields: [
       { name: "first_name", label: "Learner First Name *" },
@@ -3984,6 +4248,7 @@ const moduleConfigs = {
       },
       { name: "admission_number_seed", label: "Admission Serial Seed (for next auto generation)" },
       { name: "admission_number", label: "Admission Number *" },
+      { name: "learner_serial_number", label: "Permanent Learner Serial (system generated)" },
       { name: "date_of_admission", label: "Date of Admission", type: "date" },
       { name: "age_display", label: "Age (Auto: years and months)" },
       { name: "grade", label: "Grade (CBC / Primary / Junior)", type: "select", optionsKey: "gradeOptions" },
@@ -4735,6 +5000,9 @@ function applyThemeAccentByModule(moduleId) {
 function buildInput(field) {
   const id = `field-${field.name}`;
   const value = "";
+  if (field.name === "learner_serial_number") {
+    return `<label>${field.label}</label><input id="${id}" type="text" placeholder="${field.label}" value="${value}" readonly />`;
+  }
   if (field.type === "textarea") {
     return `<label>${field.label}</label><textarea id="${id}" rows="3" placeholder="${field.label}">${value}</textarea>`;
   }
@@ -4830,11 +5098,27 @@ async function saveCurrentModule() {
         alert("Enter the serial seed before using 'Feed serial for next auto generation'.");
         return;
       }
-      payload.admission_number = `ADM/${seed}-${Date.now()}`.slice(0, 80);
+      try {
+        const serial = await request("/api/admission/learners/next-admission-number", {
+          method: "POST",
+          body: JSON.stringify({ mode: "seed", seed })
+        });
+        payload.admission_number = String(serial?.admission_number || "").trim();
+      } catch (error) {
+        alert(error.message);
+        return;
+      }
     } else if (admissionMode.includes("system auto")) {
-      const serialSeed = String(payload.admission_number_seed || "").trim().replace(/\s+/g, "");
-      const prefix = serialSeed ? `ADM/${serialSeed}-` : "ADM/";
-      payload.admission_number = `${prefix}${Date.now()}`.slice(0, 80);
+      try {
+        const serial = await request("/api/admission/learners/next-admission-number", {
+          method: "POST",
+          body: JSON.stringify({ mode: "auto" })
+        });
+        payload.admission_number = String(serial?.admission_number || "").trim();
+      } catch (error) {
+        alert(error.message);
+        return;
+      }
     } else if (!String(payload.admission_number || "").trim()) {
       alert("Admission number is required when manual generation is selected.");
       return;
@@ -5021,6 +5305,7 @@ function renderTable(rows) {
   if (!rows.length) {
     head.innerHTML = "";
     body.innerHTML = '<tr><td class="table-empty-state">No records found.</td></tr>';
+    applyCompactIconButtons(document.querySelector(".table-area"));
     return;
   }
 
@@ -5043,6 +5328,7 @@ function renderTable(rows) {
     `
     )
     .join("");
+  applyCompactIconButtons(document.querySelector(".table-area"));
 }
 
 function renderModuleSummary(config, rows = []) {
@@ -5782,13 +6068,17 @@ function renderCrudModule(moduleKey, options = {}) {
       : "";
 
   if (moduleKey === "admission") {
+    const focusMode = String(options?.admissionFocus || "").toLowerCase();
+    const showBio = !focusMode || focusMode === "bio";
+    const showRegister = !focusMode || focusMode === "register";
+    const showFormLetter = !focusMode || focusMode === "form" || focusMode === "letter";
     container.innerHTML = `
     <div class="section-card-header">
       <h3>${escapeHtml(config.title)}</h3>
       <p class="small-note">${escapeHtml(MODULE_DESCRIPTIONS[moduleKey] || "Manage records and actions for this module.")}</p>
     </div>
-    <div class="admission-bio-panel">
-      <h4 class="admission-bio-title">Learners Bio Data</h4>
+    <div id="admissionLearnersRegistrationPanel" class="admission-bio-panel" style="${showBio ? "" : "display:none;"}">
+      <h4 class="admission-bio-title">Learners Registration</h4>
       <p class="small-note admission-mutual-note">Select <strong>either</strong> Grade <strong>or</strong> Form (not both). Postal code fills the town automatically.</p>
       <div class="form-grid form-grid-admission">
         ${config.fields.map(buildInput).join("")}
@@ -5796,15 +6086,14 @@ function renderCrudModule(moduleKey, options = {}) {
       <div class="actions-row actions-row--compact">
         <button id="${saveId}" type="button" class="ax-btn ax-btn--save ax-btn--sm">Save</button>
         <button id="${clearId}" type="button" class="ax-btn ax-btn--reset ax-btn--sm">Clear</button>
-        <button id="${procId}" type="button" class="ax-btn ax-btn--process ax-btn--sm">Proceed</button>
         <button id="${pdfId}" type="button" class="ax-btn ax-btn--download ax-btn--sm">PDF</button>
         <button id="${xlsId}" type="button" class="ax-btn ax-btn--download ax-btn--sm">Excel</button>
         <button id="${printId}" type="button" class="ax-btn ax-btn--print ax-btn--sm">Print</button>
         <button id="${viewId}" type="button" class="ax-btn ax-btn--refresh ax-btn--sm">Refresh</button>
       </div>
     </div>
-    ${admissionRegisterMarkup}
-    <section class="dashboard-section">
+    ${admissionRegisterMarkup.replace('class="admission-register-panel"', `class="admission-register-panel" style="${showRegister ? "" : "display:none;"}"`)}
+    <section id="admissionFormLetterSection" class="dashboard-section" style="${showFormLetter ? "" : "display:none;"}">
       <h4 id="admissionFormLetterPanel">Admission Form & Letter</h4>
       <p class="small-note">Generate one-page admission forms and admission letters for selected learner IDs.</p>
       <div class="actions-row">
@@ -5814,7 +6103,7 @@ function renderCrudModule(moduleKey, options = {}) {
       </div>
       <pre id="admissionGeneratedOutput" class="small-note" style="max-height:240px;overflow:auto;white-space:pre-wrap;"></pre>
     </section>
-    <section id="admissionTemplatesSection" class="dashboard-section">
+    <section id="admissionTemplatesSection" class="dashboard-section" data-template-control="true" style="${showFormLetter ? "" : "display:none;"}">
       <h4>Templates & Letterhead</h4>
       <div class="actions-row">
         <button type="button" id="admissionDownloadBioTemplateBtn" class="ax-btn ax-btn--download ax-btn--sm">Download Bio Data Template</button>
@@ -5865,18 +6154,10 @@ function renderCrudModule(moduleKey, options = {}) {
   if (moduleKey === "admission") {
     if (tableAreaMain) tableAreaMain.style.display = "none";
     wireAdmissionModuleUi(container, config);
-    if (normalizeRoleKey(portalContext?.role || "") !== "SUPER_SYSTEM_DEVELOPER") {
+    if (!isSuperSystemDeveloperPortal()) {
       const templateSection = document.getElementById("admissionTemplatesSection");
       if (templateSection) templateSection.style.display = "none";
     }
-    document.getElementById(procId).onclick = async () => {
-      try {
-        await loadModuleData(config);
-        alert("Admission register refreshed from the server.");
-      } catch (error) {
-        alert(error.message);
-      }
-    };
   } else {
     if (tableAreaMain) tableAreaMain.style.display = "";
     document.getElementById(procId).onclick = () => alert("Processing completed for this module.");
@@ -5958,6 +6239,21 @@ function renderCrudModule(moduleKey, options = {}) {
   if (moduleKey === "communication-messages") {
     document.getElementById(`${btnPrefix}-dispatch`)?.addEventListener("click", dispatchQueuedMessages);
     document.getElementById(`${btnPrefix}-chat`)?.addEventListener("click", openCommunicationChat);
+    const recipientRoleEl = document.getElementById("field-recipient_role");
+    const recipientContactEl = document.getElementById("field-recipient_contact");
+    recipientRoleEl?.addEventListener("change", async () => {
+      const role = String(recipientRoleEl.value || "").trim();
+      if (!role || !recipientContactEl) return;
+      try {
+        const info = await request(`/api/communication/messages/recipient-preview?recipient_role=${encodeURIComponent(role)}`);
+        recipientContactEl.value = info?.first_contact || "";
+        recipientContactEl.placeholder = info?.total_contacts
+          ? `${info.total_contacts} contact(s) matched`
+          : "No contacts found for this role";
+      } catch (_) {
+        /* ignore preview lookup failure and allow manual entry */
+      }
+    });
   }
   if (moduleKey === "admission") {
     const focusMode = String(options?.admissionFocus || "").toLowerCase();
@@ -5967,6 +6263,8 @@ function renderCrudModule(moduleKey, options = {}) {
       document.getElementById("admissionRegisterPanel")?.scrollIntoView({ behavior: "smooth", block: "center" });
     }
   }
+  applyCompactIconButtons(container);
+  applyTemplateVisibility(container);
   loadModuleData(config);
   setTimeout(() => attachPostalCodeTownHelper(container), 0);
 }
@@ -6276,6 +6574,7 @@ async function loadParentOrBomResults() {
   document.getElementById("exportParentPdf").onclick = () =>
     window.open("/api/parent/results/export/pdf", "_blank");
   document.getElementById("printParent").onclick = () => window.print();
+  applyCompactIconButtons(document.getElementById("formArea"));
 
   try {
     const rows = await request("/api/parent/results");
@@ -6288,29 +6587,85 @@ async function loadParentOrBomResults() {
 
 async function loadLearnerMaterials() {
   setActiveSidebarButton("learner-materials");
-  document.getElementById("moduleTitle").textContent = "Learner Learning Materials and Marks";
+  document.getElementById("moduleTitle").textContent = "Learner Materials Module";
   document.getElementById("cards").innerHTML = `
     <div class="card stats-card metric-emphasis">
-      <h4>Learner Portal</h4>
-      <p>Materials, revision content, and marks</p>
+      <h4>Learner Materials</h4>
+      <p>Curriculum-driven notes and assessment resources</p>
     </div>
   `;
   document.getElementById("formArea").innerHTML = `
-    <h3>Learner Portal Resources</h3>
-    <p class="small-note">Refresh to load the latest learning resources and performance records.</p>
+    <h3>Learner Materials Module</h3>
+    <p class="small-note">Generate notes from curriculum data, then print/download immediately.</p>
+    <div class="form-grid">
+      <label>Material Type</label>
+      <select id="learnerMaterialType">
+        <option value="notes">Notes</option>
+        <option value="past_exam">Past Exams</option>
+        <option value="revision_sheet">Revision Sheet</option>
+      </select>
+      <label>Grade</label>
+      <select id="learnerMaterialGrade">
+        <option value="">Select grade</option>
+        ${(Array.isArray(meta?.gradeOptions) ? meta.gradeOptions : []).map((row) => `<option value="${escapeHtml(row)}">${escapeHtml(row)}</option>`).join("")}
+      </select>
+      <label>Learning Area</label>
+      <input id="learnerMaterialLearningArea" placeholder="e.g. Pre-Technical Studies" />
+      <label>Strand</label>
+      <input id="learnerMaterialStrand" placeholder="e.g. 2.0 Communication in Pre-Technical Studies" />
+      <label>Sub-strand (optional)</label>
+      <input id="learnerMaterialSubStrand" placeholder="e.g. 2.3 ICT Tools in Communication" />
+    </div>
     <div class="actions-row">
+      <button id="generateLearnerMaterial">Generate</button>
       <button id="refreshLearner">Refresh</button>
       <button id="printLearner">Print</button>
+      <button id="downloadLearnerMaterial">Download</button>
     </div>
+    <textarea id="learnerGeneratedMaterial" rows="12" placeholder="Generated material appears here..."></textarea>
   `;
+  const outputEl = document.getElementById("learnerGeneratedMaterial");
   document.getElementById("refreshLearner").onclick = loadLearnerMaterials;
   document.getElementById("printLearner").onclick = () => window.print();
+  document.getElementById("downloadLearnerMaterial").onclick = () => {
+    const content = String(outputEl?.value || "").trim();
+    if (!content) {
+      alert("Generate material first.");
+      return;
+    }
+    downloadTextFile("learner-materials-notes.txt", content, "text/plain;charset=utf-8");
+  };
+  document.getElementById("generateLearnerMaterial").onclick = async () => {
+    try {
+      const grade = String(document.getElementById("learnerMaterialGrade")?.value || "").trim();
+      const learningArea = String(document.getElementById("learnerMaterialLearningArea")?.value || "").trim();
+      const strand = String(document.getElementById("learnerMaterialStrand")?.value || "").trim();
+      const subStrand = String(document.getElementById("learnerMaterialSubStrand")?.value || "").trim();
+      if (!grade || !learningArea || !strand) {
+        alert("Select grade, learning area, and strand first.");
+        return;
+      }
+      const generated = await request("/api/cbc/curriculum/ai-generate-notes", {
+        method: "POST",
+        body: JSON.stringify({
+          grade,
+          learning_area: learningArea,
+          strand,
+          sub_strand: subStrand || null
+        })
+      });
+      if (outputEl) outputEl.value = generated?.generated_notes || "No notes generated.";
+    } catch (error) {
+      alert(error.message);
+    }
+  };
   try {
-    const [materials, marks] = await Promise.all([
-      request("/api/learner/materials"),
-      request("/api/learner/marks")
-    ]);
-    renderTable([...(materials || []), ...(marks || [])]);
+    const isLearnerRole = normalizeRoleKey(portalContext?.role || "") === "LEARNER";
+    const [materials, marks] = isLearnerRole
+      ? await Promise.all([request("/api/learner/materials"), request("/api/learner/marks")])
+      : await Promise.all([request("/api/learners/resources"), request("/api/academic/marks")]);
+    renderTable([...(materials || []), ...(marks || []).slice(0, 200)]);
+    applyCompactIconButtons(document.getElementById("formArea"));
   } catch (error) {
     document.getElementById("tableHead").innerHTML = "";
     document.getElementById("tableBody").innerHTML = `<tr><td>${error.message}</td></tr>`;
@@ -7622,6 +7977,7 @@ async function openModule(targetModule, options = {}) {
   if (targetModule === "system-access-control") return renderModuleRights();
   if (targetModule === "system-audit") return renderSecurityAudit();
   if (targetModule === "system-registry") return renderInstitutionsRegistry();
+  if (targetModule === "system-institution-edit") return renderInstitutionEditModule();
   if (targetModule === "system-recycle-bin") return renderRecycleBin();
   if (targetModule === "system-cbc-editor") return renderCbcCurriculumEditor(options);
   if (targetModule === "management-staff-service") return renderStaffServiceHub(options);
@@ -7648,6 +8004,10 @@ function bindSidebar() {
   document.querySelectorAll(".sidebar-submodule-list[data-parent-module]").forEach((node) => node.remove());
   document.querySelectorAll(".sidebar button[data-module]").forEach((button) => {
     const moduleId = String(button.dataset.module || "");
+    if (moduleId === "system-institution-edit" && !isSuperSystemDeveloperPortal()) {
+      button.style.display = "none";
+      return;
+    }
     if (!isSidebarModuleAllowed(moduleId)) {
       button.style.display = "none";
       return;
@@ -7696,6 +8056,121 @@ function bindSidebar() {
       await openModule(moduleId);
     };
   });
+}
+
+function renderSidebarInstitutionBranding() {
+  const mount = document.getElementById("sidebarInstitutionBrandingMount");
+  if (!mount) return;
+  const allowed = ["SUPER_SYSTEM_DEVELOPER", "SYSTEM_DEVELOPER", "SYSTEM_ADMINISTRATOR", "ADMIN", "HEAD_OF_INSTITUTION"]
+    .includes(String(portalContext?.role || "").toUpperCase());
+  if (!allowed) {
+    mount.innerHTML = "";
+    return;
+  }
+  mount.className = "sidebar-branding-mount";
+  mount.innerHTML = `
+    <h4>Institution Letterhead Slot</h4>
+    <p class="small-note">Upload/update letterhead used in correspondence.</p>
+    <input id="sidebarLetterheadPathInput" placeholder="/uploads/letterhead.png" />
+    <div class="actions-row">
+      <label class="ax-btn ax-btn--upload ax-btn--sm" for="sidebarLetterheadFileInput">Upload</label>
+      <input id="sidebarLetterheadFileInput" type="file" accept=".png,.jpg,.jpeg,.webp,.gif,.pdf,.doc,.docx" hidden />
+      <button id="sidebarLetterheadSaveButton" type="button" class="ax-btn ax-btn--save ax-btn--sm">Save</button>
+    </div>
+  `;
+  const pathInput = document.getElementById("sidebarLetterheadPathInput");
+  const fileInput = document.getElementById("sidebarLetterheadFileInput");
+  fileInput?.addEventListener("change", async () => {
+    const file = fileInput.files?.[0];
+    if (!file || !pathInput) return;
+    try {
+      const uploaded = await uploadFileWithAuth(file);
+      pathInput.value = uploaded?.filePath || "";
+    } catch (error) {
+      alert(error.message);
+    }
+  });
+  document.getElementById("sidebarLetterheadSaveButton")?.addEventListener("click", async () => {
+    try {
+      const letterheadPath = String(pathInput?.value || "").trim();
+      if (!letterheadPath) {
+        alert("Upload a letterhead file first.");
+        return;
+      }
+      await request("/api/institutions/letterhead", {
+        method: "PATCH",
+        body: JSON.stringify({ letterhead_file_path: letterheadPath })
+      });
+      alert("Institution letterhead saved.");
+    } catch (error) {
+      alert(error.message);
+    }
+  });
+  applyCompactIconButtons(mount);
+}
+
+function buildAssistantReply(promptText = "") {
+  const prompt = String(promptText || "").trim();
+  const text = prompt.toLowerCase();
+  if (!prompt) return "Ask about module location, sub-module workflow, or data entry steps.";
+  if (text.includes("institution edit") || text.includes("letterhead") || text.includes("logo")) {
+    return "Open System Administration → Institution Edit Module. Select institution, then upload letterhead/logo/templates.";
+  }
+  if (text.includes("admission")) {
+    return "Open Admission, then choose sub-modules: Admission Register, Admission Form, or Admission Letter from the sidebar list.";
+  }
+  if (text.includes("exam") || text.includes("marks") || text.includes("result")) {
+    return "Open Examination Management. Select Curriculum, Exam Generation, Marks Entry, Result Scripts, or Assessment Report from its sub-module list.";
+  }
+  if (text.includes("access control") || text.includes("rights")) {
+    return "Open Access Control (Module Rights), select a user, then assign module/sub-module permissions and save overrides.";
+  }
+  if (text.includes("template")) {
+    return "Template controls are restricted to Super System Developer. Open the target module and use the template upload/download section.";
+  }
+  return "I can guide module navigation and workflow. For complex technical issues, consult the System Developer or Institution System Administrator.";
+}
+
+function initDashboardAssistant() {
+  const panel = document.getElementById("dashboardAiAssistant");
+  const messagesEl = document.getElementById("assistantMessages");
+  const inputEl = document.getElementById("assistantInput");
+  const sendBtn = document.getElementById("assistantSendButton");
+  const toggleBtn = document.getElementById("assistantToggleButton");
+  if (!panel || !messagesEl || !inputEl || !sendBtn || !toggleBtn) return;
+  const append = (role, message) => {
+    const item = document.createElement("div");
+    item.className = `assistant-msg ${role}`;
+    item.textContent = message;
+    messagesEl.appendChild(item);
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+  };
+  const submit = () => {
+    const prompt = String(inputEl.value || "").trim();
+    if (!prompt) return;
+    append("user", prompt);
+    append("ai", buildAssistantReply(prompt));
+    inputEl.value = "";
+  };
+  sendBtn.addEventListener("click", submit);
+  inputEl.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      submit();
+    }
+  });
+  toggleBtn.addEventListener("click", () => {
+    const collapsed = panel.getAttribute("data-collapsed") === "1";
+    panel.setAttribute("data-collapsed", collapsed ? "0" : "1");
+    messagesEl.style.display = collapsed ? "grid" : "none";
+    inputEl.style.display = collapsed ? "" : "none";
+    sendBtn.style.display = collapsed ? "" : "none";
+  });
+  messagesEl.innerHTML = "";
+  append(
+    "ai",
+    "Welcome. Ask me where to find modules/sub-modules or how to complete a workflow. Complex technical issues should be escalated to System Developer/Admin."
+  );
 }
 
 function bindTopbarButtons() {
@@ -7753,6 +8228,7 @@ function bindTopbarButtons() {
       }
     });
   }
+  applyCompactIconButtons(document.querySelector(".topbar-right"));
 }
 
 function renderProfileCenter(profile) {
@@ -8281,8 +8757,10 @@ async function init() {
   // CRITICAL: bind sidebar/topbar BEFORE the dashboard cockpit fetch so module
   // navigation always works even if /api/dashboard/summary fails.
   await safeStep("bindSidebar", async () => bindSidebar());
+  await safeStep("renderSidebarInstitutionBranding", async () => renderSidebarInstitutionBranding());
   await safeStep("bindTopbarButtons", async () => bindTopbarButtons());
   await safeStep("bindQuickActionCards", async () => bindQuickActionCards());
+  await safeStep("initDashboardAssistant", async () => initDashboardAssistant());
 
   const loaded = await safeStep("loadDashboard", () => loadDashboard());
   if (loaded === null) {
@@ -8295,6 +8773,8 @@ async function init() {
   if (meData?.must_change_password) {
     alert("Password policy notice: your password was reset and must be changed immediately.");
   }
+  applyCompactIconButtons(document.getElementById("formArea"));
+  applyTemplateVisibility(document.getElementById("formArea"));
 }
 
 window.editRow = editRow;
