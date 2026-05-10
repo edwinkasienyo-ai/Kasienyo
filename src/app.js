@@ -2419,48 +2419,84 @@ app.post(
     const prompt = cleanValue(req.body?.prompt || "");
     const normalizedPrompt = prompt.toLowerCase();
     const allModuleKeys = Array.from(new Set(Object.values(MODULE_KEYS)));
+    const moduleHints = [
+      {
+        module: "register-center",
+        keywords: ["register", "registration", "institution registration", "user registration", "hoi registration", "system administrator registration"],
+        guidance:
+          "Open Institution Registration. Sub-modules: Institution Registration, SSD/SD Registration, HOI/Admin/System Administrator Registration, User Registration."
+      },
+      {
+        module: "admission",
+        keywords: ["admission", "learner", "bio data", "learners registration", "admission register", "admission letter", "admission form"],
+        guidance:
+          "Open Admission. Sub-modules: Learners Registration, Admission Register, Admission Form, Admission Letter."
+      },
+      {
+        module: "cbc-curriculum-editor",
+        keywords: ["exam", "curriculum", "marks", "result", "assessment", "performance"],
+        guidance:
+          "Open Examination Management. Sub-modules: Curriculum, Exam Generation, Marks Entry, Result Scripts, Assessment Report, Learner Performance Record."
+      },
+      {
+        module: "institutions-users-registry",
+        keywords: ["institution uploads", "institution documents", "letterhead", "logo", "template", "institution edit"],
+        guidance:
+          "Open Institution Edit Module / Institution Uploads to select institution, upload templates/docs, and auto-map documents per tenant."
+      },
+      {
+        module: "access-control",
+        keywords: ["access", "rights", "permissions", "module rights", "authorization"],
+        guidance:
+          "Open Access Control (Module Rights), select user, then enable module/sub-module/sub-sub-module permissions and save overrides."
+      },
+      {
+        module: "security-audit",
+        keywords: ["audit", "security", "logging", "login logs"],
+        guidance:
+          "Open Security & Logging Audit to review login and activity audit records."
+      },
+      {
+        module: "communication-messages",
+        keywords: ["sms", "message", "communication", "recipient"],
+        guidance:
+          "Open SMS and Communication. Select message type and recipient role; recipient contact can auto-fill from bio-data."
+      }
+    ];
     const allowedModules = [];
+    const lockedModules = [];
     for (const moduleKey of allModuleKeys) {
       // eslint-disable-next-line no-await-in-loop
       const allowed = await hasModuleAccess(req.user, moduleKey);
       if (allowed) {
         allowedModules.push(moduleKey);
+      } else {
+        lockedModules.push(moduleKey);
       }
     }
-    const priorityHints = [
-      { keywords: ["institution upload", "institution document", "letterhead", "logo", "template"], module: "institutions-users-registry" },
-      { keywords: ["registration", "register institution", "register user"], module: "register-center" },
-      { keywords: ["admission", "learner"], module: "admission" },
-      { keywords: ["exam", "curriculum", "marks", "result", "assessment"], module: "cbc-curriculum-editor" },
-      { keywords: ["access control", "rights", "permission"], module: "access-control" },
-      { keywords: ["audit", "security", "logging"], module: "security-audit" },
-      { keywords: ["recycle", "restore", "purge"], module: "recycle-bin" },
-      { keywords: ["communication", "sms", "message"], module: "communication-messages" }
-    ];
-    const matched = priorityHints.find((row) => row.keywords.some((key) => normalizedPrompt.includes(key)));
-    const suggestedModules = matched
-      ? allowedModules.filter((moduleKey) => moduleKey === matched.module)
-      : allowedModules.filter((moduleKey) => normalizedPrompt && moduleKey.includes(normalizedPrompt.replace(/\s+/g, "-")));
-    const fallbackTop = allowedModules.slice(0, 6).map((key) => friendlyModuleLabel(key));
+    const matchedHint = moduleHints.find((hint) => hint.keywords.some((key) => normalizedPrompt.includes(key)));
+    const suggestedModule = matchedHint?.module || null;
+    const canAccessSuggested = suggestedModule ? allowedModules.includes(suggestedModule) : false;
+    const fallbackTop = allowedModules.slice(0, 10).map((key) => friendlyModuleLabel(key));
     let answer = "";
     if (!prompt) {
-      answer = `Ask module-location questions. You can currently access: ${fallbackTop.join(", ")}.`;
-    } else if (suggestedModules.length) {
-      answer = `Open: ${suggestedModules.map((key) => friendlyModuleLabel(key)).join(", ")}.`;
-      if (matched?.module === "cbc-curriculum-editor") {
-        answer += " Use the Examination Management sidebar sub-modules for Curriculum, Exam Generation, Marks Entry, Result Scripts, Assessment Report, and Learner Performance.";
-      }
-      if (matched?.module === "institutions-users-registry") {
-        answer += " Use Institution Edit Module / Institution Uploads to map templates and files per institution.";
-      }
+      answer = `Ask any module/sub-module question. Available modules in your scope: ${fallbackTop.join(", ")}.`;
+    } else if (matchedHint && canAccessSuggested) {
+      answer = `${matchedHint.guidance}`;
+    } else if (matchedHint && !canAccessSuggested) {
+      answer = `${matchedHint.guidance} This module is currently locked for your user rights. Request access from System Developer / Institution System Administrator.`;
     } else {
-      answer = "I could not map that directly. Check your sidebar sub-modules; for complex actions consult System Developer or Institution System Administrator.";
+      const suggestion = fallbackTop.length
+        ? `Try one of: ${fallbackTop.slice(0, 6).join(", ")}.`
+        : "No module list was available for this account.";
+      answer = `I could not map that question exactly, but I can guide module and sub-module navigation. ${suggestion} For complex technical issues consult System Developer / Institution System Administrator.`;
     }
     res.json({
       answer,
       prompt,
-      matched_module: matched?.module || null,
-      allowed_modules: allowedModules
+      matched_module: suggestedModule,
+      allowed_modules: allowedModules,
+      locked_modules: lockedModules
     });
   })
 );
@@ -3575,13 +3611,35 @@ app.get(
     const requestedInstitutionId = Number(req.query?.institution_id || 0) || null;
     const scopeInstitutions = await loadInstitutionScopeOptions(req.user);
     const institutionScopeId = requestedInstitutionId || Number(req.user.institution_id || 0) || Number(scopeInstitutions[0]?.id || 0) || null;
-    const institutions = scopeInstitutions
-      .filter((item) => !requestedInstitutionId || Number(item.id) === requestedInstitutionId)
-      .map((item) => ({
-        id: item.id,
-        institution_name: item.institution_name,
-        institution_code: item.institution_code
-      }));
+    const scopedInstitutionIds = scopeInstitutions
+      .map((item) => Number(item.id || 0))
+      .filter((id) => id > 0)
+      .filter((id) => !requestedInstitutionId || id === requestedInstitutionId);
+    const institutionDetailColumns = await getExistingColumns("institutions", [
+      "institution_name",
+      "institution_code",
+      "email",
+      "phone",
+      "county",
+      "category",
+      "sub_county",
+      "location",
+      "postal_address",
+      "postal_code",
+      "town",
+      "institution_type",
+      "institution_level",
+      "created_at"
+    ]);
+    const institutions = scopedInstitutionIds.length
+      ? await query(
+        `SELECT id, ${institutionDetailColumns.join(", ")}
+         FROM institutions
+         WHERE id IN (${scopedInstitutionIds.map(() => "?").join(", ")})
+         ORDER BY institution_name ASC`,
+        scopedInstitutionIds
+      )
+      : [];
     const registrationMeta = canRegisterInstitution(req.user)
       ? {
           counties: COUNTIES,

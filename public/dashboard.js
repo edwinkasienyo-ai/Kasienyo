@@ -12,7 +12,7 @@ let portalContext = null;
 let searchRowDrafts = {};
 let dashboardAutoRefreshHandle = null;
 let currentSidebarSubmoduleId = null;
-const CLIENT_UI_BUNDLE_ID = "dash-bundle-main-v61-admission-learners-restored";
+const CLIENT_UI_BUNDLE_ID = "dash-bundle-main-v62-n1-to-n14-pass";
 const examPanelState = {
   generatedExam: null,
   serials: [],
@@ -122,7 +122,7 @@ const MODULE_DESCRIPTIONS = {
   "welfare-contributions": "Track periodic welfare member contributions.",
   "welfare-loans": "Administer welfare loan requests, approvals, and repayment status.",
   laws: "Store and retrieve institutional policies and legal documents.",
-  "system-register": "Register institutions and users inside the system after sign-in (role-scoped).",
+  "system-register": "Institution Registration and role-based user registration with strict sub-module isolation.",
   "system-access-control": "Assign module rights and review role-based access permissions.",
   "system-audit": "Review security and login audit trails for accountability.",
   "system-registry": "Browse institutions and user registry details in one place.",
@@ -140,13 +140,29 @@ const SIDEBAR_SUBMODULES = {
       id: "system-register-institution",
       label: "Institution Registration",
       targetModule: "system-register",
-      options: { registrationFocus: "institution" }
+      options: { registrationFocus: "institution" },
+      roles: ["SUPER_SYSTEM_DEVELOPER", "SYSTEM_DEVELOPER"]
+    },
+    {
+      id: "system-register-developers",
+      label: "SSD/SD Registration",
+      targetModule: "system-register",
+      options: { registrationFocus: "developers" },
+      roles: ["SUPER_SYSTEM_DEVELOPER"]
+    },
+    {
+      id: "system-register-hoi-admin",
+      label: "HOI/Admin/Sys Admin Registration",
+      targetModule: "system-register",
+      options: { registrationFocus: "hoi-admin" },
+      roles: ["SUPER_SYSTEM_DEVELOPER", "SYSTEM_DEVELOPER"]
     },
     {
       id: "system-register-user",
       label: "User Registration",
       targetModule: "system-register",
-      options: { registrationFocus: "user" }
+      options: { registrationFocus: "user" },
+      roles: ["SUPER_SYSTEM_DEVELOPER", "SYSTEM_DEVELOPER", "SYSTEM_ADMINISTRATOR", "ADMIN", "HEAD_OF_INSTITUTION"]
     }
   ],
   admission: [
@@ -237,6 +253,13 @@ function sidebarSubmodulesFor(moduleId = "") {
   return Array.isArray(SIDEBAR_SUBMODULES[moduleId]) ? SIDEBAR_SUBMODULES[moduleId] : [];
 }
 
+function isSidebarSubmoduleAllowed(submodule = {}) {
+  const requiredRoles = Array.isArray(submodule?.roles) ? submodule.roles : [];
+  if (!requiredRoles.length) return true;
+  const actorRole = normalizeRoleKey(portalContext?.role || "");
+  return requiredRoles.includes(actorRole);
+}
+
 function sidebarSubmoduleParent(submoduleId = "") {
   const target = String(submoduleId || "");
   return Object.keys(SIDEBAR_SUBMODULES).find((parent) =>
@@ -268,9 +291,17 @@ function inferAxButtonVariant(label = "", existingClasses = "") {
 
 function applyCompactIconButtons(scope = document) {
   if (!scope || typeof scope.querySelectorAll !== "function") return;
+  const preserveButtonIds = new Set([
+    "searchButton",
+    "assistantSendButton",
+    "assistantToggleButton",
+    "updateHeroImageButton",
+    "changeCredentialsButton",
+    "logoutButton"
+  ]);
   scope.querySelectorAll("button, label.ax-btn").forEach((node) => {
     if (node.closest(".sidebar-scroll")) return;
-    if (node.id === "logoutButton") return;
+    if (preserveButtonIds.has(String(node.id || ""))) return;
     const text = String(node.textContent || "").trim();
     if (node.tagName === "BUTTON") {
       node.classList.add("ax-btn", "ax-btn--sm");
@@ -278,8 +309,20 @@ function applyCompactIconButtons(scope = document) {
       node.classList.add(variant);
       if (!node.getAttribute("title")) node.setAttribute("title", text || "Action");
       if (!node.getAttribute("aria-label")) node.setAttribute("aria-label", text || "Action");
+      const explicitKeep =
+        node.getAttribute("data-keep-button-style") === "1" ||
+        /search|upload|hero|profile/i.test(String(node.id || "")) ||
+        /search|upload|hero|profile/i.test(text);
+      if (!explicitKeep) {
+        node.classList.add("ax-btn--icon-only");
+      } else {
+        node.classList.remove("ax-btn--icon-only");
+      }
       const compactText = String(text || "").replace(/\s+/g, "");
-      const isSymbolOnly = compactText.length <= 2 || /^[^\p{L}\p{N}]+$/u.test(compactText);
+      const isSymbolOnly =
+        node.classList.contains("ax-btn--icon-only") ||
+        compactText.length <= 2 ||
+        /^[^\p{L}\p{N}]+$/u.test(compactText);
       node.classList.toggle("icon-symbolic", isSymbolOnly);
     } else if (node.tagName === "LABEL") {
       if (!node.getAttribute("title")) node.setAttribute("title", text || "Action");
@@ -776,30 +819,41 @@ function applyDashboardIdentity(meData = {}) {
 
 async function renderSystemRegistration(options = {}) {
   setActiveSidebarButton("system-register");
-  document.getElementById("moduleTitle").textContent = "Institution Registration & User Registration";
+  document.getElementById("moduleTitle").textContent = "Institution Registration";
   if (!isSystemAdminRole()) {
     alert("Only Super/System Developer, System Administrator, HoI/Administrator can access registration center.");
     return loadDashboard();
   }
   try {
-    const [options, users] = await Promise.all([
+    const [registrarOptions, users] = await Promise.all([
       request("/api/users/registrar-options"),
       request("/api/users")
     ]);
-    const institutionRows = Array.isArray(options?.institutions) ? options.institutions : [];
+    const institutionRows = Array.isArray(registrarOptions?.institutions) ? registrarOptions.institutions : [];
     const userRows = Array.isArray(users) ? users : [];
     const actorRole = normalizeRoleKey(portalContext?.role || "");
-    const roleOptionsRaw = Array.isArray(options?.assignable_roles) ? options.assignable_roles : [];
+    const roleOptionsRaw = Array.isArray(registrarOptions?.assignable_roles) ? registrarOptions.assignable_roles : [];
     const roleOptions = roleOptionsRaw.filter((role) => {
       if (normalizeRoleKey(role) !== "SUPER_SYSTEM_DEVELOPER") return true;
       return actorRole === "SUPER_SYSTEM_DEVELOPER";
     });
-    const canRegisterInstitution = Boolean(options?.can_register_institution);
-    const canManageAllInstitutions = Boolean(options?.can_manage_all_institutions);
-    const canRegisterUsers = Boolean(options?.can_register_users);
-    const registrationMeta = options?.registration_meta || null;
+    const developerRoles = roleOptions.filter((role) =>
+      ["SUPER_SYSTEM_DEVELOPER", "SYSTEM_DEVELOPER"].includes(normalizeRoleKey(role))
+    );
+    const hoiAdminRoles = roleOptions.filter((role) =>
+      ["HEAD_OF_INSTITUTION", "ADMIN", "SYSTEM_ADMINISTRATOR"].includes(normalizeRoleKey(role))
+    );
+    const userRegistrationRoles = roleOptions.filter((role) =>
+      !["SUPER_SYSTEM_DEVELOPER", "SYSTEM_DEVELOPER", "HEAD_OF_INSTITUTION", "ADMIN", "SYSTEM_ADMINISTRATOR"].includes(
+        normalizeRoleKey(role)
+      )
+    );
+    const canRegisterInstitution = Boolean(registrarOptions?.can_register_institution);
+    const canManageAllInstitutions = Boolean(registrarOptions?.can_manage_all_institutions);
+    const canRegisterUsers = Boolean(registrarOptions?.can_register_users);
+    const registrationMeta = registrarOptions?.registration_meta || null;
     const defaultInstitutionId =
-      Number(options?.institution_scope_id || 0) ||
+      Number(registrarOptions?.institution_scope_id || 0) ||
       Number(portalContext?.institution_id || 0) ||
       Number(institutionRows[0]?.id || 0) ||
       0;
@@ -808,6 +862,12 @@ async function renderSystemRegistration(options = {}) {
       institutionRows[0] ||
       null;
     const defaultRole = roleOptions[0] || "";
+    const defaultDeveloperRole = developerRoles.find((role) => normalizeRoleKey(role) === "SYSTEM_DEVELOPER") || developerRoles[0] || "";
+    const defaultHoiAdminRole = hoiAdminRoles.find((role) => normalizeRoleKey(role) === "HEAD_OF_INSTITUTION") || hoiAdminRoles[0] || "";
+    const defaultUserRole = userRegistrationRoles[0] || roleOptions.find((role) => normalizeRoleKey(role) === "TEACHER") || "";
+    const institutionRowsSorted = [...institutionRows].sort((a, b) =>
+      String(a?.institution_name || "").localeCompare(String(b?.institution_name || ""))
+    );
     const canSelectInstitutionForUser = canManageAllInstitutions;
     let latestInstitutionId = Number(defaultInstitution?.id || 0) || null;
     const composePrefixedPhone = (prefixElementId, localElementId) => {
@@ -831,6 +891,10 @@ async function renderSystemRegistration(options = {}) {
             email: row?.email || "",
             phone: row?.phone || ""
           }).replace(/"/g, "&quot;")}, 'edit')">✎</button>
+          <button class="search-action-icon save" title="Save" onclick="performRegistryRowAction('user', { id: ${rowId} }, 'save')">💾</button>
+          <button class="search-action-icon print" title="Print" onclick="performRegistryRowAction('user', { id: ${rowId} }, 'print')">🖨</button>
+          <button class="search-action-icon pdf" title="PDF" onclick="performRegistryRowAction('user', { id: ${rowId} }, 'pdf')">📄</button>
+          <button class="search-action-icon download" title="Download" onclick="performRegistryRowAction('user', { id: ${rowId} }, 'download')">⬇</button>
           <button class="search-action-icon delete" title="Delete" onclick="performRegistryRowAction('user', { id: ${rowId} }, 'delete')">🗑</button>
         </div>
       `;
@@ -853,19 +917,25 @@ async function renderSystemRegistration(options = {}) {
 
     document.getElementById("formArea").innerHTML = `
       <div class="module-header-card">
-        <h3>Register (Institution/User)</h3>
-        <p>Super/System Developer can register institutions and users. HoI/System Administrator registers users in their institution scope.</p>
+        <h3>Institution Registration</h3>
+        <p>Use sub-modules: Institution Registration, SSD/SD Registration, HOI/Admin/System Administrator Registration, and User Registration.</p>
       </div>
 
       ${canRegisterInstitution ? `
       <section id="registrationInstitutionSection" class="registration-compact-card register-section-compact">
         <div class="section-card-header">
-          <h3>Register Institution (System Developer only)</h3>
-          <p class="small-note">Institution code is auto-generated from county + category with strict non-duplicate sequencing.</p>
+          <h3>Institution Registration</h3>
+          <p class="small-note">SSD/SD only. Institution code auto-generates from county + institution level using first-come sequencing.</p>
         </div>
         <div class="form-grid registration-compact-grid">
           <label>Institution Name</label>
           <input id="sysInstitutionName" placeholder="Institution name" />
+          <label>Institution Type</label>
+          <select id="sysInstitutionType">
+            <option value="">Select type</option>
+            <option value="Private">Private</option>
+            <option value="Public">Public</option>
+          </select>
           <label>County</label>
           ${
             registrationMeta?.counties?.length
@@ -874,23 +944,28 @@ async function renderSystemRegistration(options = {}) {
                   ${registrationMeta.counties
                     .map((c) => `<option value="${escapeHtml(c.name)}" data-county-code="${escapeHtml(c.code)}">${escapeHtml(c.name)} (${escapeHtml(c.code)})</option>`)
                     .join("")}
+                  <option value="Other" data-county-code="048">Other (048)</option>
                 </select>`
               : `<input id="sysInstitutionCounty" placeholder="County" />`
           }
           <label>Institution's Code</label>
           <input id="sysInstitutionCodePreview" class="readonly-field" readonly placeholder="Auto-generated code" />
           <input id="sysInstitutionCountyCode" type="hidden" />
-          <label>Category</label>
-          ${
-            registrationMeta?.categories?.length
-              ? `<select id="sysInstitutionCategory">
-                  <option value="">Select category</option>
-                  ${registrationMeta.categories
-                    .map((c) => `<option value="${escapeHtml(c.label)}">${escapeHtml(c.label)} (${escapeHtml(c.code)})</option>`)
-                    .join("")}
-                </select>`
-              : `<input id="sysInstitutionCategory" placeholder="Category" />`
-          }
+          <label>Institution Level</label>
+          <select id="sysInstitutionLevel">
+            <option value="">Select level</option>
+            <option value="P">Primary (P)</option>
+            <option value="PJ">Primary/Junior (PJ)</option>
+            <option value="JS">Junior Secondary (JS)</option>
+            <option value="SS">Senior Secondary (SS)</option>
+          </select>
+          <label style="display:none;">Category</label>
+          <select id="sysInstitutionCategory" style="display:none;">
+            <option value="Primary">Primary (P)</option>
+            <option value="Primary/Junior">Primary/Junior (PJ)</option>
+            <option value="Junior Secondary">Junior Secondary (JS)</option>
+            <option value="Senior Secondary">Senior Secondary (SS)</option>
+          </select>
           <label>Sub County</label>
           <input id="sysInstitutionSubCounty" placeholder="Sub county" />
           <label>Location</label>
@@ -959,7 +1034,7 @@ async function renderSystemRegistration(options = {}) {
           <label>Upload Agreement Letter Sample (PDF)</label>
           <input id="sysAgreementTemplateFile" type="file" accept="application/pdf" />
           <label>Agreement Template Text</label>
-          <textarea id="sysAgreementTemplateText" placeholder="Optional agreement body template"></textarea>
+          <textarea id="sysAgreementTemplateText" class="template-spacious" rows="10" placeholder="Optional agreement body template"></textarea>
         </div>
         <div class="agreement-toolbar-row" data-template-control="true">
           <button id="sysSaveAgreementTemplateButton">Save Template</button>
@@ -973,6 +1048,27 @@ async function renderSystemRegistration(options = {}) {
         <div class="registration-compact-actions">
           <button id="sysRegisterInstitutionButton">Register Institution</button>
         </div>
+        <div class="module-header-card">
+          <h4>Registered Institutions</h4>
+          <p class="small-note">Search by county, name, level, and type. Edit opens Institution Registration for amendment.</p>
+        </div>
+        <div class="form-grid registration-compact-grid">
+          <label>Search by County</label>
+          <input id="registeredInstitutionSearchCounty" placeholder="County" />
+          <label>Search by Name</label>
+          <input id="registeredInstitutionSearchName" placeholder="Institution name" />
+          <label>Search by Level</label>
+          <input id="registeredInstitutionSearchLevel" placeholder="P/PJ/JS/SS" />
+          <label>Search by Type</label>
+          <input id="registeredInstitutionSearchType" placeholder="Public/Private" />
+        </div>
+        <div class="iim-actions-row">
+          <button id="registeredInstitutionRefreshButton" class="iim-action-btn">↻ Refresh</button>
+          <button id="registeredInstitutionPrintButton" class="iim-action-btn">🖨 Print</button>
+          <button id="registeredInstitutionPdfButton" class="iim-action-btn warn">📄 PDF</button>
+          <button id="registeredInstitutionExcelButton" class="iim-action-btn warn">⬇ Excel</button>
+        </div>
+        <div id="registeredInstitutionsTableHost"></div>
       </section>
       ` : `
       <section id="registrationInstitutionSection" class="registration-compact-card register-section-compact">
@@ -984,9 +1080,144 @@ async function renderSystemRegistration(options = {}) {
       </section>
       `}
 
+      <section id="registrationDeveloperSection" class="registration-compact-card register-section-compact">
+        <div class="section-card-header">
+          <h3>Super System Developer and System Developer Registration</h3>
+          <p class="small-note">Only Super System Developer can register SSD/SD accounts.</p>
+        </div>
+        <div class="form-grid registration-compact-grid">
+          <label>Institution</label>
+          <select id="sysDevInstitutionId">
+            ${institutionRowsSorted
+              .map((item) => `<option value="${item.id}" ${Number(item.id) === Number(defaultInstitutionId) ? "selected" : ""}>${escapeHtml(item.institution_name || "Institution")} (${escapeHtml(item.institution_code || "-")})</option>`)
+              .join("")}
+          </select>
+          <label>Name</label>
+          <input id="sysDevFullName" placeholder="Full name" />
+          <label>Prefix</label>
+          <select id="sysDevPhonePrefix">
+            <option value="+254">+254</option>
+            <option value="07">07</option>
+            <option value="01">01</option>
+            <option value="+">+</option>
+          </select>
+          <label>Mobile Digits</label>
+          <input id="sysDevPhoneLocal" placeholder="Mobile number digits" />
+          <label>Postal Address</label>
+          <input id="sysDevPostalAddress" placeholder="P.O. Box..." />
+          <label>Postal Code</label>
+          <input id="sysDevPostalCode" placeholder="Postal code" />
+          <label>Town</label>
+          <input id="sysDevTown" placeholder="Town" />
+          <label>Role</label>
+          <select id="sysDevRole">
+            ${developerRoles.map((role) => `<option value="${escapeHtml(role)}" ${role === defaultDeveloperRole ? "selected" : ""}>${escapeHtml(toLabel(role))}</option>`).join("")}
+          </select>
+          <label>Username</label>
+          <input id="sysDevUsername" placeholder="Username" />
+          <label>Password Mode</label>
+          <select id="sysDevAutoPassword">
+            <option value="true">Auto</option>
+            <option value="false">Manual</option>
+          </select>
+          <label>Manual Password</label>
+          <input id="sysDevPassword" type="text" placeholder="Enter manual password if Auto=No" />
+          <label>Email</label>
+          <input id="sysDevEmail" placeholder="Email" />
+        </div>
+        <div class="registration-compact-actions">
+          <button id="sysRegisterDeveloperButton">Register SSD/SD</button>
+        </div>
+        <div class="module-header-card">
+          <h4>Registered Super System Developers and System Developers</h4>
+        </div>
+        <div id="registeredDevelopersTableHost"></div>
+      </section>
+
+      <section id="registrationHoiAdminSection" class="registration-compact-card register-section-compact">
+        <div class="section-card-header">
+          <h3>HOI/Administrator/System Administrator Registration</h3>
+          <p class="small-note">Select institution first to activate role and user details.</p>
+        </div>
+        <div class="form-grid registration-compact-grid">
+          <label>Institution (A-Z)</label>
+          <select id="sysHoiInstitutionId">
+            <option value="">Select institution</option>
+            ${institutionRowsSorted
+              .map((item) => `<option value="${item.id}">${escapeHtml(item.institution_name || "Institution")} (${escapeHtml(item.institution_code || "-")})</option>`)
+              .join("")}
+          </select>
+          <label>Institution Code</label>
+          <input id="sysHoiInstitutionCode" readonly class="readonly-field" />
+          <label>Role</label>
+          <select id="sysHoiRole" disabled>
+            ${hoiAdminRoles.map((role) => `<option value="${escapeHtml(role)}" ${role === defaultHoiAdminRole ? "selected" : ""}>${escapeHtml(toLabel(role))}</option>`).join("")}
+          </select>
+          <label>Full Name</label>
+          <input id="sysHoiFullName" placeholder="Full name" disabled />
+          <label>Email</label>
+          <input id="sysHoiEmail" placeholder="Email" disabled />
+          <label>Phone Prefix</label>
+          <select id="sysHoiPhonePrefix" disabled>
+            <option value="+254">+254</option>
+            <option value="07">07</option>
+            <option value="01">01</option>
+            <option value="+">+</option>
+          </select>
+          <label>Mobile Digits</label>
+          <input id="sysHoiPhoneLocal" placeholder="Mobile digits" disabled />
+          <label>Username</label>
+          <input id="sysHoiUsername" placeholder="Username" disabled />
+          <label>Auto Password</label>
+          <select id="sysHoiAutoPassword" disabled>
+            <option value="true">Yes</option>
+            <option value="false">No</option>
+          </select>
+          <label>Password (Manual if Auto=No)</label>
+          <input id="sysHoiPassword" type="text" placeholder="Manual password" disabled />
+          <label>Delivery Mode</label>
+          <select id="sysHoiWelcomeDispatch" disabled>
+            <option value="SMS">SMS</option>
+            <option value="EMAIL">Email</option>
+            <option value="BOTH">Email & SMS</option>
+          </select>
+          <label>Generate Agreement Letter</label>
+          <select id="sysHoiGenerateAgreement" disabled>
+            <option value="false">No</option>
+            <option value="true">Yes</option>
+          </select>
+          <label>Agreement Mode</label>
+          <select id="sysHoiAgreementMode" disabled>
+            <option value="EMAIL">Email</option>
+            <option value="PRINT">Print</option>
+            <option value="PDF">PDF</option>
+          </select>
+          <label>Agreement Letter Sample Upload</label>
+          <input id="sysHoiAgreementSample" type="file" accept=".pdf,.doc,.docx,.txt" disabled />
+        </div>
+        <div class="registration-compact-actions">
+          <button id="sysRegisterHoiAdminButton">Register HOI/Admin/System Admin</button>
+        </div>
+        <div class="module-header-card">
+          <h4>HOI/Administrator and System Administrator Profile</h4>
+          <p class="small-note">HOI rows highlighted green, System Administrator rows highlighted yellow.</p>
+        </div>
+        <div class="form-grid registration-compact-grid">
+          <label>Search Institution</label>
+          <input id="hoiProfileSearchInstitution" placeholder="Institution" />
+          <label>Search County</label>
+          <input id="hoiProfileSearchCounty" placeholder="County" />
+          <label>Search Level</label>
+          <input id="hoiProfileSearchLevel" placeholder="Level" />
+          <label>Search Category</label>
+          <input id="hoiProfileSearchCategory" placeholder="Role/category" />
+        </div>
+        <div id="registeredHoiAdminsTableHost"></div>
+      </section>
+
       <section id="registrationUserSection" class="registration-compact-card register-section-compact">
         <div class="section-card-header">
-          <h3>Register User (Inside Institution Scope)</h3>
+          <h3>User Registration</h3>
           <p class="small-note">Auto-generated password can be sent through Email, SMS, or both with legal onboarding text.</p>
         </div>
         <div class="form-grid registration-compact-grid">
@@ -1004,7 +1235,7 @@ async function renderSystemRegistration(options = {}) {
           <input id="sysUserUsername" placeholder="Username" />
           <label>Role</label>
           <select id="sysUserRole">
-            ${roleOptions.map((role) => `<option value="${escapeHtml(role)}">${escapeHtml(toLabel(role))}</option>`).join("")}
+            ${(userRegistrationRoles.length ? userRegistrationRoles : roleOptions).map((role) => `<option value="${escapeHtml(role)}" ${role === defaultUserRole ? "selected" : ""}>${escapeHtml(toLabel(role))}</option>`).join("")}
           </select>
           <label>Email</label>
           <input id="sysUserEmail" placeholder="Email" />
@@ -1040,8 +1271,14 @@ async function renderSystemRegistration(options = {}) {
 
       <section id="registrationUsersListSection" class="registration-compact-card register-section-compact">
         <div class="section-card-header">
-          <h3>Registered Users</h3>
-          <p class="small-note">All users in your scope are listed below with compact actions.</p>
+          <h3>Users Register</h3>
+          <p class="small-note">List of registered users aligned per institution with action icons.</p>
+        </div>
+        <div class="form-grid registration-compact-grid">
+          <label>Search User Name</label>
+          <input id="registeredUsersSearchName" placeholder="User name" />
+          <label>Search Institution</label>
+          <input id="registeredUsersSearchInstitution" placeholder="Institution" />
         </div>
         <div class="search-inline-actions">
           <button class="search-action-icon edit" id="bulkEditUserButton" title="Edit User">✎ Edit User</button>
@@ -1065,6 +1302,73 @@ async function renderSystemRegistration(options = {}) {
       </section>
     `;
 
+    const institutionDataRows = institutionRowsSorted.map((item) => ({
+      id: Number(item.id || 0),
+      institution_name: item.institution_name || "-",
+      institution_code: item.institution_code || "-",
+      county: item.county || "",
+      institution_level: item.category_code || item.category || "",
+      institution_type: item.institution_type || ""
+    }));
+    const renderRegisteredInstitutionsTable = () => {
+      const host = document.getElementById("registeredInstitutionsTableHost");
+      if (!host) return;
+      const searchCounty = String(document.getElementById("registeredInstitutionSearchCounty")?.value || "").trim().toLowerCase();
+      const searchName = String(document.getElementById("registeredInstitutionSearchName")?.value || "").trim().toLowerCase();
+      const searchLevel = String(document.getElementById("registeredInstitutionSearchLevel")?.value || "").trim().toLowerCase();
+      const searchType = String(document.getElementById("registeredInstitutionSearchType")?.value || "").trim().toLowerCase();
+      const filtered = institutionDataRows.filter((row) => {
+        if (searchCounty && !String(row.county || "").toLowerCase().includes(searchCounty)) return false;
+        if (searchName && !String(row.institution_name || "").toLowerCase().includes(searchName)) return false;
+        if (searchLevel && !String(row.institution_level || "").toLowerCase().includes(searchLevel)) return false;
+        if (searchType && !String(row.institution_type || "").toLowerCase().includes(searchType)) return false;
+        return true;
+      });
+      host.innerHTML = buildDashboardTable(
+        ["Institution", "Code", "County", "Level", "Type", "Actions"],
+        filtered.map((row) => [
+          row.institution_name,
+          row.institution_code,
+          row.county || "-",
+          row.institution_level || "-",
+          row.institution_type || "-",
+          `<div class="search-inline-actions">
+            <button class="search-action-icon view" onclick="performRegistryRowAction('institution', { id: ${Number(row.id || 0)} }, 'view')" title="View">👁</button>
+            <button class="search-action-icon edit" onclick="performRegistryRowAction('institution', { id: ${Number(row.id || 0)} }, 'edit')" title="Edit">✎</button>
+            <button class="search-action-icon save" onclick="performRegistryRowAction('institution', { id: ${Number(row.id || 0)} }, 'save')" title="Save">💾</button>
+            <button class="search-action-icon delete" onclick="performRegistryRowAction('institution', { id: ${Number(row.id || 0)} }, 'delete')" title="Delete">🗑</button>
+            <button class="search-action-icon print" onclick="performRegistryRowAction('institution', { id: ${Number(row.id || 0)} }, 'print')" title="Print">🖨</button>
+            <button class="search-action-icon pdf" onclick="performRegistryRowAction('institution', { id: ${Number(row.id || 0)} }, 'pdf')" title="PDF">📄</button>
+          </div>`
+        ])
+      );
+    };
+
+    const renderRoleScopedTable = (hostId, rowsInput, titleRoleFilter = () => true) => {
+      const host = document.getElementById(hostId);
+      if (!host) return;
+      const rowsScoped = (Array.isArray(rowsInput) ? rowsInput : []).filter(titleRoleFilter);
+      host.innerHTML = buildDashboardTable(
+        ["Name", "Role", "Institution", "Code", "Actions"],
+        rowsScoped.map((row) => {
+          const roleKey = normalizeRoleKey(row.role || "");
+          const roleClass =
+            roleKey === "HEAD_OF_INSTITUTION" || roleKey === "ADMIN"
+              ? "role-chip role-chip--hoi"
+              : roleKey === "SYSTEM_ADMINISTRATOR"
+                ? "role-chip role-chip--sysadmin"
+                : "role-chip";
+          return [
+            row.full_name || "-",
+            `<span class="${roleClass}">${escapeHtml(formatRoleDisplay(row.role || "-"))}</span>`,
+            row.institution_name || "-",
+            row.institution_code || "-",
+            renderRegistryUserActions(row)
+          ];
+        })
+      );
+    };
+
     resetDataTable("Registration center loaded.");
 
     const institutionSelect = document.getElementById("sysUserInstitutionId");
@@ -1072,6 +1376,7 @@ async function renderSystemRegistration(options = {}) {
     const agreementInstitutionSelect = document.getElementById("sysAgreementInstitutionId");
     const countySelect = document.getElementById("sysInstitutionCounty");
     const countyCodeInput = document.getElementById("sysInstitutionCountyCode");
+    const levelSelect = document.getElementById("sysInstitutionLevel");
     const categorySelect = document.getElementById("sysInstitutionCategory");
     const institutionCodePreview = document.getElementById("sysInstitutionCodePreview");
     const postalCodeSelect = document.getElementById("sysInstitutionPostalCode");
@@ -1147,6 +1452,20 @@ async function renderSystemRegistration(options = {}) {
       }
     };
 
+    const syncLevelCategory = () => {
+      if (!levelSelect || !categorySelect) return;
+      const level = String(levelSelect.value || "").trim().toUpperCase();
+      const mapByLevel = {
+        P: "Primary",
+        PJ: "Primary/Junior",
+        JS: "Junior Secondary",
+        SS: "Senior Secondary"
+      };
+      if (mapByLevel[level]) {
+        categorySelect.value = mapByLevel[level];
+      }
+    };
+
     const toggleAgreementActionState = () => {
       const canSendAgreement = String(sendAgreementSelect?.value || "false") === "true";
       if (sendAgreementButton) sendAgreementButton.style.display = canSendAgreement ? "inline-flex" : "none";
@@ -1171,6 +1490,10 @@ async function renderSystemRegistration(options = {}) {
     institutionSelect?.addEventListener("change", updateUserInstitutionCodePreview);
     updateUserInstitutionCodePreview();
     countySelect?.addEventListener("change", refreshInstitutionCodePreview);
+    levelSelect?.addEventListener("change", () => {
+      syncLevelCategory();
+      refreshInstitutionCodePreview();
+    });
     categorySelect?.addEventListener("change", refreshInstitutionCodePreview);
     postalCodeSelect?.addEventListener("change", () => {
       togglePostalManualEntry();
@@ -1181,6 +1504,7 @@ async function renderSystemRegistration(options = {}) {
     document.getElementById("sysInstitutionPostalAddress")?.addEventListener("input", updateAgreementPreview);
     document.getElementById("sysInstitutionAdminName")?.addEventListener("input", updateAgreementPreview);
     togglePostalManualEntry();
+    syncLevelCategory();
     toggleAgreementActionState();
     updateAgreementPreview();
     if (!canSelectInstitutionForUser && institutionSelect) {
@@ -1192,6 +1516,8 @@ async function renderSystemRegistration(options = {}) {
         const postalCodeValue = String(postalCodeSelect?.value || "").trim();
         const payload = {
           institution_name: String(document.getElementById("sysInstitutionName")?.value || "").trim(),
+          institution_type: String(document.getElementById("sysInstitutionType")?.value || "").trim() || null,
+          institution_level: String(document.getElementById("sysInstitutionLevel")?.value || "").trim() || null,
           county: String(countySelect?.value || "").trim(),
           county_code: String(countyCodeInput?.value || "").trim(),
           category: String(categorySelect?.value || "").trim(),
@@ -1268,6 +1594,178 @@ async function renderSystemRegistration(options = {}) {
       await performRegistryRowAction("user", { id: userId }, "delete");
     });
     document.getElementById("bulkRefreshUserButton")?.addEventListener("click", renderSystemRegistration);
+    ["registeredInstitutionSearchCounty", "registeredInstitutionSearchName", "registeredInstitutionSearchLevel", "registeredInstitutionSearchType"]
+      .forEach((id) => document.getElementById(id)?.addEventListener("input", renderRegisteredInstitutionsTable));
+    document.getElementById("registeredInstitutionRefreshButton")?.addEventListener("click", renderRegisteredInstitutionsTable);
+    document.getElementById("registeredInstitutionPrintButton")?.addEventListener("click", () => window.print());
+    document.getElementById("registeredInstitutionPdfButton")?.addEventListener("click", () => {
+      window.open("/api/system/registry/export/pdf", "_blank");
+    });
+    document.getElementById("registeredInstitutionExcelButton")?.addEventListener("click", () => {
+      window.open("/api/system/registry/export/excel", "_blank");
+    });
+    renderRegisteredInstitutionsTable();
+
+    const registerDeveloperButton = document.getElementById("sysRegisterDeveloperButton");
+    if (registerDeveloperButton) {
+      if (actorRole !== "SUPER_SYSTEM_DEVELOPER") {
+        registerDeveloperButton.disabled = true;
+      }
+      registerDeveloperButton.addEventListener("click", async () => {
+        try {
+          const autoGenerate = String(document.getElementById("sysDevAutoPassword")?.value || "true") === "true";
+          const payload = {
+            institution_id: Number(document.getElementById("sysDevInstitutionId")?.value || 0) || undefined,
+            full_name: String(document.getElementById("sysDevFullName")?.value || "").trim(),
+            username: String(document.getElementById("sysDevUsername")?.value || "").trim(),
+            role: String(document.getElementById("sysDevRole")?.value || defaultDeveloperRole),
+            email: String(document.getElementById("sysDevEmail")?.value || "").trim(),
+            phone: composePrefixedPhone("sysDevPhonePrefix", "sysDevPhoneLocal"),
+            auto_generate_password: autoGenerate,
+            password: autoGenerate ? null : String(document.getElementById("sysDevPassword")?.value || ""),
+            send_welcome_via: "BOTH"
+          };
+          const result = await request("/api/users", {
+            method: "POST",
+            body: JSON.stringify(payload)
+          });
+          const generated = result?.generated_password ? ` Temporary Password: ${result.generated_password}` : "";
+          alert(`Developer account registered.${generated}`);
+          await renderSystemRegistration({ registrationFocus: "developers" });
+        } catch (error) {
+          alert(error.message);
+        }
+      });
+    }
+    renderRoleScopedTable("registeredDevelopersTableHost", userRows, (row) =>
+      ["SUPER_SYSTEM_DEVELOPER", "SYSTEM_DEVELOPER"].includes(normalizeRoleKey(row.role || ""))
+    );
+
+    const hoiInstitutionSelect = document.getElementById("sysHoiInstitutionId");
+    const hoiInstitutionCode = document.getElementById("sysHoiInstitutionCode");
+    const hoiDependentIds = [
+      "sysHoiRole",
+      "sysHoiFullName",
+      "sysHoiEmail",
+      "sysHoiPhonePrefix",
+      "sysHoiPhoneLocal",
+      "sysHoiUsername",
+      "sysHoiAutoPassword",
+      "sysHoiPassword",
+      "sysHoiWelcomeDispatch",
+      "sysHoiGenerateAgreement",
+      "sysHoiAgreementMode",
+      "sysHoiAgreementSample"
+    ];
+    const syncHoiActivation = () => {
+      const selectedInstitutionId = Number(hoiInstitutionSelect?.value || 0);
+      const selectedInstitution = institutionRowsSorted.find((item) => Number(item.id) === selectedInstitutionId) || null;
+      if (hoiInstitutionCode) hoiInstitutionCode.value = selectedInstitution?.institution_code || "";
+      hoiDependentIds.forEach((id) => {
+        const node = document.getElementById(id);
+        if (node) node.disabled = !selectedInstitutionId;
+      });
+    };
+    hoiInstitutionSelect?.addEventListener("change", syncHoiActivation);
+    syncHoiActivation();
+
+    document.getElementById("sysRegisterHoiAdminButton")?.addEventListener("click", async () => {
+      try {
+        const autoGenerate = String(document.getElementById("sysHoiAutoPassword")?.value || "true") === "true";
+        const institutionId = Number(document.getElementById("sysHoiInstitutionId")?.value || 0);
+        if (!institutionId) {
+          alert("Select institution first.");
+          return;
+        }
+        const payload = {
+          institution_id: institutionId,
+          full_name: String(document.getElementById("sysHoiFullName")?.value || "").trim(),
+          username: String(document.getElementById("sysHoiUsername")?.value || "").trim(),
+          role: String(document.getElementById("sysHoiRole")?.value || defaultHoiAdminRole),
+          email: String(document.getElementById("sysHoiEmail")?.value || "").trim(),
+          phone: composePrefixedPhone("sysHoiPhonePrefix", "sysHoiPhoneLocal"),
+          auto_generate_password: autoGenerate,
+          password: autoGenerate ? null : String(document.getElementById("sysHoiPassword")?.value || ""),
+          send_welcome_via: String(document.getElementById("sysHoiWelcomeDispatch")?.value || "BOTH")
+        };
+        const result = await request("/api/users", {
+          method: "POST",
+          body: JSON.stringify(payload)
+        });
+        const roleSelected = normalizeRoleKey(payload.role || "");
+        if (roleSelected === "HEAD_OF_INSTITUTION" || roleSelected === "ADMIN") {
+          const wantsAgreement = String(document.getElementById("sysHoiGenerateAgreement")?.value || "false") === "true";
+          if (wantsAgreement) {
+            const mode = String(document.getElementById("sysHoiAgreementMode")?.value || "EMAIL");
+            if (mode === "EMAIL") {
+              await request(`/api/institutions/${institutionId}/agreement/send`, { method: "POST" });
+            } else {
+              window.open(`/api/institutions/${institutionId}/agreement.pdf`, "_blank");
+            }
+          }
+        }
+        const generated = result?.generated_password ? ` Temporary Password: ${result.generated_password}` : "";
+        alert(`HOI/Admin/System Administrator registered.${generated}`);
+        await renderSystemRegistration({ registrationFocus: "hoi-admin" });
+      } catch (error) {
+        alert(error.message);
+      }
+    });
+
+    ["hoiProfileSearchInstitution", "hoiProfileSearchCounty", "hoiProfileSearchLevel", "hoiProfileSearchCategory"]
+      .forEach((id) => {
+        document.getElementById(id)?.addEventListener("input", () => {
+          const institutionQ = String(document.getElementById("hoiProfileSearchInstitution")?.value || "").trim().toLowerCase();
+          const countyQ = String(document.getElementById("hoiProfileSearchCounty")?.value || "").trim().toLowerCase();
+          const levelQ = String(document.getElementById("hoiProfileSearchLevel")?.value || "").trim().toLowerCase();
+          const categoryQ = String(document.getElementById("hoiProfileSearchCategory")?.value || "").trim().toLowerCase();
+          const filtered = userRows.filter((row) => {
+            const roleKey = normalizeRoleKey(row.role || "");
+            if (!["HEAD_OF_INSTITUTION", "ADMIN", "SYSTEM_ADMINISTRATOR"].includes(roleKey)) return false;
+            if (institutionQ && !String(row.institution_name || "").toLowerCase().includes(institutionQ)) return false;
+            if (countyQ && !String(row.county || "").toLowerCase().includes(countyQ)) return false;
+            const levelValue = String(row.category || "").toLowerCase();
+            if (levelQ && !levelValue.includes(levelQ)) return false;
+            if (categoryQ && !String(formatRoleDisplay(row.role || "")).toLowerCase().includes(categoryQ)) return false;
+            return true;
+          });
+          renderRoleScopedTable("registeredHoiAdminsTableHost", filtered, () => true);
+        });
+      });
+    renderRoleScopedTable("registeredHoiAdminsTableHost", userRows, (row) =>
+      ["HEAD_OF_INSTITUTION", "ADMIN", "SYSTEM_ADMINISTRATOR"].includes(normalizeRoleKey(row.role || ""))
+    );
+
+    const renderFilteredUsersRegister = () => {
+      const hostTable = document.querySelector("#registrationUsersListSection .dashboard-table-wrap table tbody");
+      if (!hostTable) return;
+      const qName = String(document.getElementById("registeredUsersSearchName")?.value || "").trim().toLowerCase();
+      const qInstitution = String(document.getElementById("registeredUsersSearchInstitution")?.value || "").trim().toLowerCase();
+      const rowsFiltered = userRows.filter((row) => {
+        if (qName && !String(row.full_name || "").toLowerCase().includes(qName)) return false;
+        if (qInstitution && !String(row.institution_name || "").toLowerCase().includes(qInstitution)) return false;
+        return true;
+      });
+      const host = document.querySelector("#registrationUsersListSection .dashboard-table-wrap");
+      if (!host) return;
+      host.innerHTML = buildDashboardTable(
+        ["Name", "Username", "Role", "Institution", "Email", "Phone", "Created", "Actions"],
+        rowsFiltered.map((row) => [
+          row.full_name || "-",
+          row.username || "-",
+          formatRoleDisplay(row.role || "-"),
+          row.institution_name || row.institution_id || "-",
+          row.email || "-",
+          row.phone || "-",
+          formatDateTime(row.created_at),
+          renderRegistryUserActions(row)
+        ])
+      );
+      applyCompactIconButtons(document.getElementById("registrationUsersListSection"));
+    };
+    document.getElementById("registeredUsersSearchName")?.addEventListener("input", renderFilteredUsersRegister);
+    document.getElementById("registeredUsersSearchInstitution")?.addEventListener("input", renderFilteredUsersRegister);
+    renderFilteredUsersRegister();
 
     document.getElementById("sysSaveAgreementTemplateButton")?.addEventListener("click", async () => {
       try {
@@ -1378,18 +1876,46 @@ async function renderSystemRegistration(options = {}) {
       }, 700);
     });
     const institutionSection = document.getElementById("registrationInstitutionSection");
+    const developerSection = document.getElementById("registrationDeveloperSection");
+    const hoiAdminSection = document.getElementById("registrationHoiAdminSection");
     const userSection = document.getElementById("registrationUserSection");
     const usersListSection = document.getElementById("registrationUsersListSection");
     const registrationFocus = String(options?.registrationFocus || "").toLowerCase();
+    const hideAllSections = () => {
+      [institutionSection, developerSection, hoiAdminSection, userSection, usersListSection].forEach((section) => {
+        if (section) section.style.display = "none";
+      });
+    };
     if (registrationFocus === "institution") {
-      if (userSection) userSection.style.display = "none";
-      if (usersListSection) usersListSection.style.display = "none";
+      hideAllSections();
+      if (institutionSection) institutionSection.style.display = "";
       document.querySelector("#sysInstitutionName")?.focus();
       document.querySelector("#sysInstitutionName")?.scrollIntoView({ behavior: "smooth", block: "center" });
+    } else if (registrationFocus === "developers") {
+      hideAllSections();
+      if (developerSection) developerSection.style.display = "";
+      document.querySelector("#sysDevFullName")?.focus();
+      document.querySelector("#sysDevFullName")?.scrollIntoView({ behavior: "smooth", block: "center" });
+    } else if (registrationFocus === "hoi-admin") {
+      hideAllSections();
+      if (hoiAdminSection) hoiAdminSection.style.display = "";
+      document.querySelector("#sysHoiInstitutionId")?.focus();
+      document.querySelector("#sysHoiInstitutionId")?.scrollIntoView({ behavior: "smooth", block: "center" });
     } else if (registrationFocus === "user") {
-      if (institutionSection) institutionSection.style.display = "none";
+      hideAllSections();
+      if (userSection) userSection.style.display = "";
+      if (usersListSection) usersListSection.style.display = "";
       document.querySelector("#sysUserFullName")?.focus();
       document.querySelector("#sysUserFullName")?.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+    if (actorRole !== "SUPER_SYSTEM_DEVELOPER" && developerSection) {
+      developerSection.style.display = "none";
+    }
+    if (!["SUPER_SYSTEM_DEVELOPER", "SYSTEM_DEVELOPER"].includes(actorRole) && institutionSection) {
+      institutionSection.style.display = "none";
+    }
+    if (!["SUPER_SYSTEM_DEVELOPER", "SYSTEM_DEVELOPER"].includes(actorRole) && hoiAdminSection) {
+      hoiAdminSection.style.display = "none";
     }
     applyCompactIconButtons(document.getElementById("formArea"));
     applyTemplateVisibility(document.getElementById("formArea"));
@@ -1452,7 +1978,15 @@ async function renderModuleRights() {
       "staff-profile-teacher",
       "staff-profile-support-staff",
       "register-institution",
+      "system-register-institution",
+      "system-register-developers",
+      "system-register-hoi-admin",
       "register-users",
+      "system-register-user",
+      "registered-institutions",
+      "registered-developers",
+      "registered-hoi-admins",
+      "users-register",
       "security-login-audit",
       "institution-letterhead-upload",
       "hr-institutional-letters",
@@ -1950,6 +2484,8 @@ async function renderInstitutionEditModule(options = {}) {
         <select id="institutionDocSubmoduleKey">
           <option value="">Select sub-module</option>
         </select>
+        <label>Sub-sub-module / Area</label>
+        <input id="institutionDocSubSubmoduleKey" placeholder="Optional sub-sub-module or area" />
         <label>Document Type</label>
         <select id="institutionDocType">
           ${documentTypeOptions.map((entry) => `<option value="${escapeHtmlAttribute(entry)}">${escapeHtml(toLabel(entry))}</option>`).join("")}
@@ -1973,6 +2509,7 @@ async function renderInstitutionEditModule(options = {}) {
     const institutionEl = document.getElementById("institutionDocInstitutionId");
     const moduleEl = document.getElementById("institutionDocModuleKey");
     const submoduleEl = document.getElementById("institutionDocSubmoduleKey");
+    const subSubmoduleEl = document.getElementById("institutionDocSubSubmoduleKey");
     const tableHolder = document.getElementById("institutionDocTableHolder");
 
     const refreshSubmodules = () => {
@@ -2075,7 +2612,9 @@ async function renderInstitutionEditModule(options = {}) {
         body: JSON.stringify({
           institution_id: institutionId,
           module_key: String(moduleEl?.value || "").trim() || null,
-          submodule_key: String(submoduleEl?.value || "").trim() || null,
+          submodule_key: [String(submoduleEl?.value || "").trim(), String(subSubmoduleEl?.value || "").trim()]
+            .filter(Boolean)
+            .join(" / ") || null,
           document_type: String(document.getElementById("institutionDocType")?.value || "").trim() || "other",
           document_title: String(document.getElementById("institutionDocTitle")?.value || "").trim() || uploadFile.name,
           notes: String(document.getElementById("institutionDocNotes")?.value || "").trim() || null,
@@ -2702,9 +3241,9 @@ function renderExamMarksEntryPanel() {
       <button class="ax-btn ax-btn--export-pdf" id="marksEntryDownloadPdfButton" title="Download PDF">PDF</button>
       <button class="ax-btn ax-btn--export-excel" id="marksEntryDownloadExcelButton" title="Download Excel">Excel</button>
       <button class="ax-btn ax-btn--print" id="marksEntryPrintButton" title="Print">Print</button>
-      <button class="ax-btn ax-btn--download" id="marksEntryDownloadSampleButton" title="Download Sample">Sample</button>
-      <button class="ax-btn ax-btn--upload" id="marksEntryUploadAmendedButton" title="Upload Amended Sample">Upload</button>
-      <input id="marksEntryUploadInput" type="file" accept=".xlsx,.csv" style="display:none;" />
+      <button class="ax-btn ax-btn--download" id="marksEntryDownloadSampleButton" title="Download Sample" data-template-control="true">Sample</button>
+      <button class="ax-btn ax-btn--upload" id="marksEntryUploadAmendedButton" title="Upload Amended Sample" data-template-control="true">Upload</button>
+      <input id="marksEntryUploadInput" type="file" accept=".xlsx,.csv" style="display:none;" data-template-control="true" />
       <button class="ax-btn ax-btn--refresh" id="marksEntryRefreshLearnersButton" title="Refresh Learners">Refresh Learners</button>
     </div>
     <div id="marksEntryOutput" class="small-note">Use Save to store marks for selected learner.</div>
@@ -2970,9 +3509,9 @@ function renderExamResultScriptsPanel() {
       <button class="ax-btn ax-btn--print" id="resultPrintButton" title="Print">Print</button>
       <button class="ax-btn ax-btn--export-pdf" id="resultDownloadPdfButton" title="Download PDF">PDF</button>
       <button class="ax-btn ax-btn--export-excel" id="resultDownloadExcelButton" title="Download Excel">Excel</button>
-      <button class="ax-btn ax-btn--download" id="resultDownloadSampleButton" title="Download Sample">Sample</button>
-      <button class="ax-btn ax-btn--upload" id="resultUploadAmendedButton" title="Upload Amended Sample">Upload</button>
-      <input id="resultUploadInput" type="file" accept=".xlsx,.csv" style="display:none;" />
+      <button class="ax-btn ax-btn--download" id="resultDownloadSampleButton" title="Download Sample" data-template-control="true">Sample</button>
+      <button class="ax-btn ax-btn--upload" id="resultUploadAmendedButton" title="Upload Amended Sample" data-template-control="true">Upload</button>
+      <input id="resultUploadInput" type="file" accept=".xlsx,.csv" style="display:none;" data-template-control="true" />
     </div>
     <div id="resultScriptsOutput" class="small-note">Generate ranked results to view scripts.</div>
   `;
@@ -3127,9 +3666,9 @@ function renderExamAssessmentReportPanel() {
       <button class="ax-btn ax-btn--view" id="assessTrendButton" title="Show Performance Trend">Trend</button>
       <button class="ax-btn ax-btn--print" id="assessPrintButton" title="Print">Print</button>
       <button class="ax-btn ax-btn--export-pdf" id="assessDownloadPdfButton" title="Download PDF">PDF</button>
-      <button class="ax-btn ax-btn--download" id="assessDownloadSampleButton" title="Download Sample">Sample</button>
-      <button class="ax-btn ax-btn--upload" id="assessUploadAmendedButton" title="Upload Amended Sample">Upload</button>
-      <input id="assessUploadInput" type="file" accept=".xlsx,.csv,.pdf,.docx" style="display:none;" />
+      <button class="ax-btn ax-btn--download" id="assessDownloadSampleButton" title="Download Sample" data-template-control="true">Sample</button>
+      <button class="ax-btn ax-btn--upload" id="assessUploadAmendedButton" title="Upload Amended Sample" data-template-control="true">Upload</button>
+      <input id="assessUploadInput" type="file" accept=".xlsx,.csv,.pdf,.docx" style="display:none;" data-template-control="true" />
     </div>
     <div id="assessmentOutput" class="small-note">Generate a learner assessment report to view full profile + trend.</div>
   `;
@@ -3635,26 +4174,36 @@ async function renderCbcCurriculumEditor(options = {}) {
       if (tab === "exam-generation") {
         panel.innerHTML = renderExamGenerationPanel();
         wireExamGenerationPanel();
+        applyCompactIconButtons(panel);
+        applyTemplateVisibility(panel);
         return;
       }
       if (tab === "marks-entry") {
         panel.innerHTML = renderExamMarksEntryPanel();
         wireExamMarksEntryPanel();
+        applyCompactIconButtons(panel);
+        applyTemplateVisibility(panel);
         return;
       }
       if (tab === "result-scripts") {
         panel.innerHTML = renderExamResultScriptsPanel();
         wireExamResultScriptsPanel();
+        applyCompactIconButtons(panel);
+        applyTemplateVisibility(panel);
         return;
       }
       if (tab === "assessment-report") {
         panel.innerHTML = renderExamAssessmentReportPanel();
         wireExamAssessmentReportPanel();
+        applyCompactIconButtons(panel);
+        applyTemplateVisibility(panel);
         return;
       }
       if (tab === "learner-performance") {
         panel.innerHTML = renderExamLearnerPerformancePanel();
         wireExamLearnerPerformancePanel();
+        applyCompactIconButtons(panel);
+        applyTemplateVisibility(panel);
         return;
       }
     };
@@ -5854,7 +6403,67 @@ function wireAdmissionLearnerPhotoUpload(scopeEl) {
     }
     await uploadSelectedFile(file);
   });
-  cameraOpenBtn?.addEventListener("click", () => cameraInput?.click());
+  cameraOpenBtn?.addEventListener("click", async () => {
+    const canUseLiveCamera =
+      Boolean(navigator?.mediaDevices?.getUserMedia) &&
+      String(window.location?.protocol || "").startsWith("https");
+    if (!canUseLiveCamera) {
+      cameraInput?.click();
+      return;
+    }
+    let stream = null;
+    const overlay = document.createElement("div");
+    overlay.className = "camera-capture-overlay";
+    overlay.innerHTML = `
+      <div class="camera-capture-card">
+        <h4>Capture Learner Photo</h4>
+        <video id="cameraCaptureVideo" autoplay playsinline></video>
+        <div class="actions-row">
+          <button type="button" id="cameraCaptureTakeBtn">Capture</button>
+          <button type="button" id="cameraCaptureCloseBtn">Close</button>
+        </div>
+      </div>
+    `;
+    const stopStream = () => {
+      if (stream) {
+        stream.getTracks().forEach((track) => track.stop());
+      }
+      overlay.remove();
+    };
+    try {
+      document.body.appendChild(overlay);
+      stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" }, audio: false });
+      const videoEl = overlay.querySelector("#cameraCaptureVideo");
+      if (!videoEl) throw new Error("Camera preview not available.");
+      videoEl.srcObject = stream;
+      overlay.querySelector("#cameraCaptureCloseBtn")?.addEventListener("click", stopStream);
+      overlay.querySelector("#cameraCaptureTakeBtn")?.addEventListener("click", async () => {
+        try {
+          const canvas = document.createElement("canvas");
+          const width = Number(videoEl.videoWidth || 640);
+          const height = Number(videoEl.videoHeight || 480);
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext("2d");
+          ctx.drawImage(videoEl, 0, 0, width, height);
+          const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.92));
+          if (!blob) {
+            alert("Failed to capture camera photo.");
+            return;
+          }
+          const capturedFile = new File([blob], `learner-photo-${Date.now()}.jpg`, { type: "image/jpeg" });
+          await uploadSelectedFile(capturedFile);
+          stopStream();
+        } catch (error) {
+          alert(error.message || "Camera capture failed.");
+        }
+      });
+    } catch (error) {
+      stopStream();
+      alert(`Live camera not available (${error.message || "Unknown error"}). Falling back to file picker.`);
+      cameraInput?.click();
+    }
+  });
   cameraInput?.addEventListener("change", async () => {
     const captured = cameraInput.files?.[0];
     if (!captured) return;
@@ -6273,6 +6882,8 @@ function renderCrudModule(moduleKey, options = {}) {
     const showBio = !focusMode || focusMode === "bio";
     const showRegister = !focusMode || focusMode === "register";
     const showFormLetter = !focusMode || focusMode === "form" || focusMode === "letter";
+    const showFormAction = !focusMode || focusMode === "form";
+    const showLetterAction = !focusMode || focusMode === "letter";
     container.innerHTML = `
     <div class="section-card-header">
       <h3>${escapeHtml(config.title)}</h3>
@@ -6295,11 +6906,11 @@ function renderCrudModule(moduleKey, options = {}) {
     </div>
     ${admissionRegisterMarkup.replace('class="admission-register-panel"', `class="admission-register-panel" style="${showRegister ? "" : "display:none;"}"`)}
     <section id="admissionFormLetterSection" class="dashboard-section" style="${showFormLetter ? "" : "display:none;"}">
-      <h4 id="admissionFormLetterPanel">Admission Form & Letter</h4>
-      <p class="small-note">Generate one-page admission forms and admission letters for selected learner IDs.</p>
+      <h4 id="admissionFormLetterPanel">${showFormAction && !showLetterAction ? "Admission Form" : showLetterAction && !showFormAction ? "Admission Letter" : "Admission Form & Letter"}</h4>
+      <p class="small-note">Generate the selected admission document only for chosen learner IDs.</p>
       <div class="actions-row">
-        <button type="button" id="admissionGenerateFormBtn" class="ax-btn ax-btn--process ax-btn--sm">Generate Admission Form</button>
-        <button type="button" id="admissionGenerateLetterBtn" class="ax-btn ax-btn--process ax-btn--sm">Generate Admission Letter</button>
+        <button type="button" id="admissionGenerateFormBtn" class="ax-btn ax-btn--process ax-btn--sm" style="${showFormAction ? "" : "display:none;"}">Generate Admission Form</button>
+        <button type="button" id="admissionGenerateLetterBtn" class="ax-btn ax-btn--process ax-btn--sm" style="${showLetterAction ? "" : "display:none;"}">Generate Admission Letter</button>
         <button type="button" id="admissionPreviewOutputBtn" class="ax-btn ax-btn--view ax-btn--sm">Preview Last Output</button>
       </div>
       <pre id="admissionGeneratedOutput" class="small-note" style="max-height:240px;overflow:auto;white-space:pre-wrap;"></pre>
@@ -6316,7 +6927,7 @@ function renderCrudModule(moduleKey, options = {}) {
         <label>Institution Letterhead File Path</label>
         <input id="admissionLetterheadPath" placeholder="/uploads/....png" />
         <label>Admission Letter Template (optional text)</label>
-        <textarea id="admissionLetterTemplateText" rows="4" placeholder="Use placeholders {{LEARNER_NAME}}, {{INSTITUTION_NAME}}, {{ADMISSION_NUMBER}}, {{GRADE_FORM}}, {{STREAM}}, {{REPORTING_DATE}}"></textarea>
+        <textarea id="admissionLetterTemplateText" class="template-spacious" rows="12" placeholder="Use placeholders {{LEARNER_NAME}}, {{INSTITUTION_NAME}}, {{ADMISSION_NUMBER}}, {{GRADE_FORM}}, {{STREAM}}, {{REPORTING_DATE}}"></textarea>
       </div>
       <div class="actions-row">
         <label class="ax-btn ax-btn--view ax-btn--sm" for="admissionLetterTemplateFileUpload">Upload Letter Template File</label>
@@ -8217,7 +8828,9 @@ function bindSidebar() {
       return;
     }
     button.style.display = "";
-    const submodules = sidebarSubmodulesFor(moduleId).filter((item) => isSidebarModuleAllowed(item.targetModule));
+    const submodules = sidebarSubmodulesFor(moduleId).filter(
+      (item) => isSidebarModuleAllowed(item.targetModule) && isSidebarSubmoduleAllowed(item)
+    );
     if (submodules.length) {
       const list = document.createElement("div");
       list.className = "sidebar-submodule-list";
@@ -8253,6 +8866,33 @@ function bindSidebar() {
         if (list) list.hidden = !nextHidden ? true : false;
         currentSidebarSubmoduleId = null;
         setActiveSidebarButton(moduleId);
+        const moduleTitleEl = document.getElementById("moduleTitle");
+        if (moduleTitleEl) moduleTitleEl.textContent = `${toLabel(moduleId)} - Select Sub-Module`;
+        const cardsEl = document.getElementById("cards");
+        if (cardsEl) cardsEl.innerHTML = "";
+        const formArea = document.getElementById("formArea");
+        if (formArea) {
+          formArea.innerHTML = `
+            <div class="module-header-card">
+              <h3>${escapeHtml(toLabel(moduleId))}</h3>
+              <p>Select one sub-module below. Only the selected sub-module details will be shown.</p>
+            </div>
+            <div class="actions-row">
+              ${submodules.map((item) => `<button type="button" data-inline-submodule-id="${escapeHtmlAttribute(item.id)}">${escapeHtml(item.label)}</button>`).join("")}
+            </div>
+          `;
+          formArea.querySelectorAll("button[data-inline-submodule-id]").forEach((inlineButton) => {
+            inlineButton.addEventListener("click", async () => {
+              const targetSubmoduleId = String(inlineButton.getAttribute("data-inline-submodule-id") || "");
+              const selected = submodules.find((item) => item.id === targetSubmoduleId);
+              if (!selected) return;
+              currentSidebarSubmoduleId = selected.id;
+              await openModule(selected.targetModule, selected.options || {});
+            });
+          });
+          applyCompactIconButtons(formArea);
+        }
+        resetDataTable("Select a sub-module to continue.");
         return;
       }
       collapseSidebarSubmoduleLists("");
@@ -8278,7 +8918,7 @@ function renderSidebarInstitutionBranding() {
     <input id="sidebarLetterheadPathInput" placeholder="/uploads/letterhead.png" />
     <div class="actions-row">
       <label class="ax-btn ax-btn--upload ax-btn--sm" for="sidebarLetterheadFileInput">Upload</label>
-      <input id="sidebarLetterheadFileInput" type="file" accept=".png,.jpg,.jpeg,.webp,.gif,.pdf,.doc,.docx" hidden />
+      <input id="sidebarLetterheadFileInput" type="file" accept=".png,.jpg,.jpeg,.webp,.gif,.bmp,.svg,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt" hidden />
       <button id="sidebarLetterheadSaveButton" type="button" class="ax-btn ax-btn--save ax-btn--sm">Save</button>
     </div>
   `;
@@ -8320,6 +8960,8 @@ async function initDashboardAssistant() {
   const sendBtn = document.getElementById("assistantSendButton");
   const toggleBtn = document.getElementById("assistantToggleButton");
   if (!panel || !messagesEl || !inputEl || !sendBtn || !toggleBtn) return;
+  panel.setAttribute("data-collapsed", panel.getAttribute("data-collapsed") === "1" ? "1" : "0");
+  toggleBtn.textContent = panel.getAttribute("data-collapsed") === "1" ? "Open" : "Hide";
   const append = (role, message) => {
     const item = document.createElement("div");
     item.className = `assistant-msg ${role}`;
@@ -8358,10 +9000,9 @@ async function initDashboardAssistant() {
   });
   toggleBtn.addEventListener("click", () => {
     const collapsed = panel.getAttribute("data-collapsed") === "1";
-    panel.setAttribute("data-collapsed", collapsed ? "0" : "1");
-    messagesEl.style.display = collapsed ? "grid" : "none";
-    inputEl.style.display = collapsed ? "" : "none";
-    sendBtn.style.display = collapsed ? "" : "none";
+    const nextState = collapsed ? "0" : "1";
+    panel.setAttribute("data-collapsed", nextState);
+    toggleBtn.textContent = collapsed ? "Hide" : "Open";
   });
   messagesEl.innerHTML = "";
   append("ai", "Ask where to find modules/sub-modules. Complex issues are escalated to your system developer/admin.");
@@ -8951,6 +9592,7 @@ async function init() {
   // CRITICAL: bind sidebar/topbar BEFORE the dashboard cockpit fetch so module
   // navigation always works even if /api/dashboard/summary fails.
   await safeStep("bindSidebar", async () => bindSidebar());
+  await safeStep("renderSidebarInstitutionBranding", async () => renderSidebarInstitutionBranding());
   await safeStep("bindTopbarButtons", async () => bindTopbarButtons());
   await safeStep("bindQuickActionCards", async () => bindQuickActionCards());
   await safeStep("initDashboardAssistant", async () => initDashboardAssistant());
