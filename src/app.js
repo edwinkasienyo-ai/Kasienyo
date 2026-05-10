@@ -61,7 +61,7 @@ const {
   makeNotes,
   getAllCbcLearningAreas,
   buildBulkCbcEntries,
-  getPreTechnicalSeedRows
+  getJuniorSecondaryCoreSeedRows
 } = require("./config/cbcLibrary");
 const {
   KICD_LEVEL_PAGES,
@@ -1056,6 +1056,12 @@ async function nextInstitutionCode({ countyCode, categoryCode }) {
     return Number.isFinite(serial) && serial > maxSerial ? serial : maxSerial;
   }, 0) + 1;
   return `${countyCode}/${categoryCode}/${padThree(next)}`;
+}
+
+function formatLearnerSerial(serialNumber) {
+  const serial = Number(serialNumber || 0);
+  if (!serial || !Number.isFinite(serial)) return "";
+  return String(serial).padStart(3, "0");
 }
 
 function generateStrongPassword(length = 12) {
@@ -5091,7 +5097,7 @@ app.get(
   "/api/templates/institution-streams.csv",
   auth,
   enforceModuleAccess(MODULE_KEYS.ADMISSION),
-  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.SYSTEM_ADMINISTRATOR]),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER]),
   asyncHandler(async (req, res) => {
     const csv = [
       "grade_or_form,stream_name",
@@ -5108,7 +5114,7 @@ app.get(
 app.post(
   "/api/institutions/streams/bulk",
   auth,
-  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.SYSTEM_ADMINISTRATOR]),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER]),
   asyncHandler(async (req, res) => {
     const institutionId = Number(req.user.institution_id);
     const entries = Array.isArray(req.body?.entries) ? req.body.entries : [];
@@ -5155,7 +5161,7 @@ app.get(
   "/api/templates/admission-bio-data.csv",
   auth,
   enforceModuleAccess(MODULE_KEYS.ADMISSION),
-  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.SYSTEM_ADMINISTRATOR]),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER]),
   asyncHandler(async (req, res) => {
     const csv = [
       "first_name,middle_name,last_name,other_names,admission_number,date_of_birth,date_of_admission,grade,form_name,stream,gender,parent_full_name,parent_phone,parent_email,learner_condition,disability_type,has_medical_condition,medical_condition_notes,status",
@@ -5170,7 +5176,7 @@ app.get(
 app.get(
   "/api/templates/staff-profiles.csv",
   auth,
-  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.SYSTEM_ADMINISTRATOR]),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER]),
   asyncHandler(async (req, res) => {
     const profileType = cleanValue(req.query?.type || "teacher").toLowerCase();
     const csv = profileType === "support"
@@ -7222,7 +7228,7 @@ function csvCell(value) {
 app.get(
   "/api/cbc/curriculum/structure-mappings/template",
   auth,
-  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER]),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER]),
   enforcePermission(PERMISSIONS.VIEW),
   asyncHandler(async (_, res) => {
     const csv = [
@@ -7239,7 +7245,7 @@ app.get(
 app.get(
   "/api/cbc/curriculum/structure-mappings/template-doc",
   auth,
-  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER]),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER]),
   enforcePermission(PERMISSIONS.VIEW),
   asyncHandler(async (_, res) => {
     const docText = [
@@ -7639,8 +7645,8 @@ app.post(
   enforcePermission(PERMISSIONS.CREATE),
   asyncHandler(async (req, res) => {
     const replaceExisting = parseTruthy(req.body?.replace_existing);
-    const sourceLabel = "PHOTO_JSS_PRETECHNICAL";
-    const seedRows = getPreTechnicalSeedRows();
+    const sourceLabel = "PHOTO_JSS_CORE";
+    const seedRows = getJuniorSecondaryCoreSeedRows();
     if (replaceExisting) {
       await query(
         `DELETE FROM cbc_structure_mappings
@@ -7752,7 +7758,7 @@ app.post(
       inserted_curriculum_entries: insertedCurriculumEntries
     });
     res.json({
-      message: "Grade 7-9 Pre-Technical strands/sub-strands seeded successfully.",
+      message: "Grade 7-9 Pre-Technical + Social Studies strands/sub-strands seeded successfully.",
       source_label: sourceLabel,
       inserted_mappings: insertedMappings,
       skipped_mappings: skippedMappings,
@@ -8947,6 +8953,7 @@ moduleConfigs.forEach((config) => {
     asyncHandler(async (req, res) => {
       const scopedFilter = getScopedFilter(config, req.user);
       const data = pickFields(req.body, config.fields);
+      let assignLearnerSerialAfterInsert = false;
       data.institution_id = req.user.institution_id;
       data.created_by_user_id = req.user.id;
       if (scopedFilter.where && config.scopedByRole?.column) {
@@ -9003,6 +9010,9 @@ moduleConfigs.forEach((config) => {
       }
 
       if (config.table === "learners") {
+        if (Object.prototype.hasOwnProperty.call(data, "learner_serial_number")) {
+          delete data.learner_serial_number;
+        }
         const gradePart = cleanValue(data.grade || "");
         const formPart = cleanValue(data.form_name || "");
         if (gradePart && formPart) {
@@ -9024,6 +9034,11 @@ moduleConfigs.forEach((config) => {
         if (mc !== "yes") {
           data.medical_condition_notes = null;
         }
+        const learnerSerialColumn = await getExistingColumns("learners", ["learner_serial_number"]);
+        if (learnerSerialColumn.includes("learner_serial_number")) {
+          // Use insert id as permanent learner serial (first-registered sequence, never reassigned).
+          assignLearnerSerialAfterInsert = true;
+        }
       }
 
       const columns = Object.keys(data);
@@ -9033,6 +9048,14 @@ moduleConfigs.forEach((config) => {
       const placeholders = columns.map(() => "?").join(", ");
       const sql = `INSERT INTO ${config.table} (${columns.join(", ")}) VALUES (${placeholders})`;
       const result = await query(sql, Object.values(data));
+      if (config.table === "learners" && assignLearnerSerialAfterInsert) {
+        await query(
+          `UPDATE learners
+           SET learner_serial_number = COALESCE(learner_serial_number, ?)
+           WHERE id = ? AND institution_id = ?`,
+          [Number(result.insertId || 0), Number(result.insertId || 0), req.user.institution_id]
+        );
+      }
       await auditLog(req.user, "CREATE", config.table, result.insertId, data);
       res.status(201).json({ id: result.insertId, message: "Record created." });
     })
@@ -9351,9 +9374,12 @@ app.get(
       return res.status(404).json({ error: "Learner not found." });
     }
     const learner = rows[0];
-    const referenceNo = `ADM-FORM-${learner.id}-${dayjs().format("YYYYMMDDHHmmss")}`;
+    const learnerSerialLabel = formatLearnerSerial(learner.learner_serial_number || learner.id);
+    const referenceNo = `ADM-FORM-${learnerSerialLabel || learner.id}-${dayjs().format("YYYYMMDDHHmmss")}`;
     res.json({
       reference_no: referenceNo,
+      learner_serial_number: learner.learner_serial_number || null,
+      learner_serial_label: learnerSerialLabel || null,
       generated_at: dayjs().format("YYYY-MM-DD HH:mm:ss"),
       title: "Institution Admission Form",
       letterhead_file_path: learner.letterhead_file_path || null,
@@ -9417,6 +9443,7 @@ app.get(
       "",
       "We are pleased to offer you admission to {{INSTITUTION_NAME}}.",
       "Admission Number: {{ADMISSION_NUMBER}}",
+      "Learner Serial Number: {{LEARNER_SERIAL_NUMBER}}",
       "Grade/Form: {{GRADE_FORM}}",
       "Stream: {{STREAM}}",
       "",
@@ -9432,12 +9459,15 @@ app.get(
       .replaceAll("{{INSTITUTION_NAME}}", cleanValue(learner.institution_name || "-"))
       .replaceAll("{{INSTITUTION_CODE}}", cleanValue(learner.institution_code || "-"))
       .replaceAll("{{ADMISSION_NUMBER}}", cleanValue(learner.admission_number || "-"))
+      .replaceAll("{{LEARNER_SERIAL_NUMBER}}", cleanValue(formatLearnerSerial(learner.learner_serial_number || learner.id) || "-"))
       .replaceAll("{{GRADE_FORM}}", cleanValue(learner.grade || learner.form_name || "-"))
       .replaceAll("{{STREAM}}", cleanValue(learner.stream || "-"))
       .replaceAll("{{REPORTING_DATE}}", dayjs().add(7, "day").format("YYYY-MM-DD"))
       .replaceAll("{{DATE_TIME}}", dayjs().format("YYYY-MM-DD HH:mm:ss"));
     res.json({
       learner_id: learner.id,
+      learner_serial_number: learner.learner_serial_number || null,
+      learner_serial_label: formatLearnerSerial(learner.learner_serial_number || learner.id) || null,
       learner_name: learner.full_name,
       admission_number: learner.admission_number,
       generated_at: dayjs().format("YYYY-MM-DD HH:mm:ss"),
@@ -9650,7 +9680,7 @@ function buildExamSerialSegment({
   term,
   year,
   stream,
-  learnerId
+  learnerSerialNumber
 }) {
   const bits = [
     String(grade || form || "GRADE").slice(0, 8).toUpperCase(),
@@ -9659,7 +9689,7 @@ function buildExamSerialSegment({
     String(term || "T").replace(/[^A-Z0-9]/gi, "").slice(0, 2).toUpperCase(),
     String(year || new Date().getFullYear()),
     stream ? String(stream).slice(0, 2).toUpperCase() : "XX",
-    learnerId ? `L${learnerId}` : "BULK"
+    learnerSerialNumber ? `L${formatLearnerSerial(learnerSerialNumber)}` : "BULK"
   ];
   return bits.join("-");
 }
@@ -9682,9 +9712,13 @@ app.post(
     if (!(grade || form) || !learningArea || !examType) {
       return res.status(400).json({ error: "grade/form, learning_area/subject and exam_type are required." });
     }
+    const learnerSerialColumns = await getExistingColumns("learners", ["learner_serial_number"]);
+    const hasLearnerSerialColumn = learnerSerialColumns.includes("learner_serial_number");
     const learners = mode === "per_learner"
       ? await query(
-          `SELECT id, full_name, admission_number, grade, stream
+          `SELECT id, full_name, admission_number, grade, stream${
+            hasLearnerSerialColumn ? ", learner_serial_number" : ""
+          }
            FROM learners
            WHERE institution_id = ?
              AND (grade = ? OR grade = ? OR ? = '')
@@ -9692,16 +9726,17 @@ app.post(
            ORDER BY full_name ASC`,
           [institutionId, grade || "", form || "", grade || form || "", stream || "", stream || ""]
         )
-      : [{ id: null, full_name: "BULK", admission_number: "BULK" }];
+      : [{ id: null, full_name: "BULK", admission_number: "BULK", learner_serial_number: null }];
     const serials = learners.map((learner) => ({
       learner_id: learner.id,
+      learner_serial_number: learner.learner_serial_number || null,
       learner_name: learner.full_name,
       admission_number: learner.admission_number,
       grade: learner.grade || grade || form,
       stream: learner.stream || stream || null,
       serial: buildExamSerialSegment({
         grade, form, learningArea, examType, term, year, stream,
-        learnerId: learner.id
+        learnerSerialNumber: learner.learner_serial_number || learner.id
       })
     }));
     res.json({ count: serials.length, mode, serials });

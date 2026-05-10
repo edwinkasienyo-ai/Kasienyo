@@ -124,6 +124,94 @@ const PRE_TECHNICAL_JSS_LIBRARY = {
   }
 };
 
+const SOCIAL_STUDIES_JSS_LIBRARY = {
+  "Grade 7": {
+    "1.0 Personal Development": [
+      "1.1 Self exploration",
+      "1.2 Entrepreneurial opportunities in Social Studies"
+    ],
+    "2.0 People and Relationships": [
+      "2.1 Human Origin",
+      "2.2 Early Civilization",
+      "2.3 Slavery and Servitude",
+      "2.4 Development in Medium of Trade",
+      "2.6 Peaceful Coexistence"
+    ],
+    "3.0 Community Service Learning": [
+      "3.1 Community Service Learning"
+    ],
+    "4.0 Natural and Historic Built Environment": [
+      "4.1 Historical Information",
+      "4.2 Historical Development of Agriculture",
+      "4.3 Maps and Map Work",
+      "4.4 Earth and the Solar System",
+      "4.5 Weather",
+      "4.6 Fieldwork"
+    ]
+  },
+  "Grade 8": {
+    "1.0 People and Population": [
+      "1.1 Scientific theory about human origin",
+      "1.2 Early Civilization",
+      "1.3 Population Group in Africa"
+    ],
+    "2.0 People and Relationships": [
+      "2.1 Building Self-Esteem",
+      "2.2 Emotional Care",
+      "2.3 Resilience",
+      "2.4 Socio-cultural Diversity and Inclusion",
+      "2.5 Building Healthy Relationships",
+      "2.6 Peaceful Conflict Resolution"
+    ],
+    "3.0 Community Service Learning": [
+      "3.1 Community Service-learning project"
+    ],
+    "4.0 Natural and Historical Building Environments": [
+      "4.1 Map Reading and Interpretation",
+      "4.2 Weather and Climate",
+      "4.3 Vegetation in Africa",
+      "4.4 Historical Sites and Monuments in Africa"
+    ],
+    "5.0 Political Developments and Governance": [
+      "5.1 The Constitution",
+      "5.2 Human Rights",
+      "5.3 Citizenship",
+      "5.4 Essential skills in Critical Thinking",
+      "5.5 Development of Creative Thinking",
+      "5.6 Process of Problem-solving"
+    ]
+  },
+  "Grade 9": {
+    "1.0 Social Studies and Career Development": [
+      "1.1 Pathway Choices",
+      "1.2 Pre-Career Support System"
+    ],
+    "2.0 Community Service-Learning": [
+      "2.1 Community Service-learning project"
+    ],
+    "3.0 People and Relationships": [
+      "3.1 Social-economic practices of Early Humans",
+      "3.2 Indigenous Knowledge Systems in African Societies",
+      "3.3 Poverty Reduction",
+      "3.4 Population Structure",
+      "3.5 Peaceful Conflict Resolution",
+      "3.6 Healthy Relationships"
+    ],
+    "4.0 Natural and Historical Built Environments": [
+      "4.1 Topographical Maps",
+      "4.2 Internal Land Forming Processes",
+      "4.3 Multipurpose River Projects in Africa",
+      "4.4 Management and Conservation of the Environment"
+    ],
+    "5.0 Political Developments and Governance": [
+      "5.1 The Constitution of Kenya",
+      "5.2 Civic Engagement in Governance",
+      "5.3 Kenya's Bill of Rights",
+      "5.4 Cultural Globalization"
+    ]
+  }
+};
+
 function getAllCbcLearningAreas() {
   const levelAreas = Array.isArray(CBC_LEVELS)
     ? CBC_LEVELS.flatMap((level) => [
@@ -147,6 +235,11 @@ function normalizeKey(value) {
 function isPreTechnicalLearningArea(value = "") {
   const key = normalizeKey(value);
   return key.includes("pretechnical") && key.includes("studies");
+}
+
+function isSocialStudiesLearningArea(value = "") {
+  const key = normalizeKey(value);
+  return key.includes("social") && key.includes("studies");
 }
 
 function textbookReferences(learningArea, gradeOrForm) {
@@ -223,6 +316,25 @@ function buildCbcSuggestion({ grade, formName, learningArea, mappingRows = [] })
       generated_notes: ""
     };
   }
+  if (isSocialStudiesLearningArea(subjectKey) && SOCIAL_STUDIES_JSS_LIBRARY[gradeKey]) {
+    const strands = Object.keys(SOCIAL_STUDIES_JSS_LIBRARY[gradeKey]);
+    const subStrandsByStrand = {};
+    strands.forEach((strand) => {
+      subStrandsByStrand[strand] = [...SOCIAL_STUDIES_JSS_LIBRARY[gradeKey][strand]];
+    });
+    const selectedStrand = strands[0] || "";
+    const selectedSubStrand = (subStrandsByStrand[selectedStrand] || [])[0] || "";
+    return {
+      strand: selectedStrand,
+      sub_strand: selectedSubStrand,
+      strand_options: strands,
+      sub_strand_options_by_strand: subStrandsByStrand,
+      learning_outcomes: "",
+      assessment_rubric: "Add notes and assessment guidance for the selected sub-strand.",
+      textbook_references: textbookReferences(subjectKey || "Social Studies", gradeKey || "Junior Secondary"),
+      generated_notes: ""
+    };
+  }
   const library = SUBJECT_LIBRARY[subjectKey];
   const strands = library?.strands?.length ? library.strands : DEFAULT_STRANDS;
   const subStrandsByStrand = {};
@@ -273,6 +385,31 @@ function getPreTechnicalSeedRows() {
     });
   });
   return rows;
+}
+
+function getSocialStudiesSeedRows() {
+  const rows = [];
+  Object.entries(SOCIAL_STUDIES_JSS_LIBRARY).forEach(([grade, strandsMap]) => {
+    Object.entries(strandsMap).forEach(([strand, subStrands]) => {
+      subStrands.forEach((subStrand) => {
+        rows.push({
+          grade,
+          form_name: null,
+          learning_area: "Social Studies",
+          strand,
+          sub_strand: subStrand,
+          specific_learning_outcomes: "",
+          learning_experiences: "",
+          notes: ""
+        });
+      });
+    });
+  });
+  return rows;
+}
+
+function getJuniorSecondaryCoreSeedRows() {
+  return [...getPreTechnicalSeedRows(), ...getSocialStudiesSeedRows()];
 }
 
 function buildSuggestionFromMappings({ grade, formName, learningArea, mappings = [] }) {
@@ -372,5 +509,7 @@ module.exports = {
   makeNotes,
   getAllCbcLearningAreas,
   buildBulkCbcEntries,
-  getPreTechnicalSeedRows
+  getPreTechnicalSeedRows,
+  getSocialStudiesSeedRows,
+  getJuniorSecondaryCoreSeedRows
 };

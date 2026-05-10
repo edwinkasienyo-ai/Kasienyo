@@ -12,7 +12,7 @@ let portalContext = null;
 let searchRowDrafts = {};
 let dashboardAutoRefreshHandle = null;
 let currentSidebarSubmoduleId = null;
-const CLIENT_UI_BUNDLE_ID = "dash-bundle-main-v57-local-pdf-import-exam-live";
+const CLIENT_UI_BUNDLE_ID = "dash-bundle-main-v58-jss-core-serials";
 const examPanelState = {
   generatedExam: null,
   serials: [],
@@ -2951,6 +2951,7 @@ async function renderCbcCurriculumEditor(options = {}) {
   setActiveSidebarButton("system-cbc-editor");
   document.getElementById("moduleTitle").textContent = "Examination Management";
   const actorRole = normalizeRoleKey(portalContext?.role || "");
+  const isSuperSystemDeveloper = actorRole === "SUPER_SYSTEM_DEVELOPER";
   const canManageCurriculum = actorRole === "SUPER_SYSTEM_DEVELOPER" || actorRole === "SYSTEM_DEVELOPER";
   const initialExamTab = String(options?.examTab || "curriculum");
   currentModule = "system-cbc-editor";
@@ -2989,13 +2990,14 @@ async function renderCbcCurriculumEditor(options = {}) {
         <h3>Examination Management</h3>
         <p>Sub-modules: <strong>Curriculum</strong> · Exam Generation · Marks Entry · Result Scripts · Assessment Report</p>
       </div>
-      <nav class="exam-mgmt-nav actions-row">
+      <nav class="exam-mgmt-nav actions-row" style="display:none;">
         <button class="active" data-exam-tab="curriculum">Curriculum</button>
         <button data-exam-tab="exam-generation">Exam Generation</button>
         <button data-exam-tab="marks-entry">Marks Entry</button>
         <button data-exam-tab="result-scripts">Result Scripts</button>
         <button data-exam-tab="assessment-report">Assessment Report</button>
       </nav>
+      <section id="examCurriculumRoot">
       <div class="module-header-card">
         <h4>Curriculum Sub-Module</h4>
         <p>Upload teacher notes/materials, design curriculum, and feed AI for downstream exam generation.</p>
@@ -3063,7 +3065,7 @@ async function renderCbcCurriculumEditor(options = {}) {
         <label>Upload Teacher/Textbook/Learning Material</label><input id="cbcMaterialFile" type="file" />
       </div>
       <div class="ax-toolbar">
-        <button class="ax-btn ax-btn--add" id="seedPretechnicalStrandsButton">Load Grade 7-9 Pre-Technical Strands</button>
+        <button class="ax-btn ax-btn--add" id="seedPretechnicalStrandsButton">Load Grade 7-9 Pre-Technical + Social Studies Strands</button>
         <button class="ax-btn ax-btn--save" id="saveCbcEntryButton">Save Curriculum Entry</button>
         <button class="ax-btn ax-btn--generate" id="generateCbcStructureButton">AI Strand/Sub-Strand Assist</button>
         <button class="ax-btn ax-btn--generate" id="generateCbcNotesButton">Generate AI Notes</button>
@@ -3147,6 +3149,7 @@ async function renderCbcCurriculumEditor(options = {}) {
       <div class="ax-toolbar">
         <button class="ax-btn ax-btn--save" id="saveManualCbcMappingButton">Save Manual Mapping + Notes</button>
       </div>
+      </section>
       <section id="examMgmtSubmodulePanel" class="dashboard-section" style="display:none;"></section>
     `;
     const activateExamTab = (tabKey = "curriculum") => {
@@ -3155,6 +3158,10 @@ async function renderCbcCurriculumEditor(options = {}) {
         btn.classList.toggle("active", String(btn.dataset.examTab || "curriculum") === tab);
       });
       const panel = document.getElementById("examMgmtSubmodulePanel");
+      const curriculumRoot = document.getElementById("examCurriculumRoot");
+      if (curriculumRoot) {
+        curriculumRoot.hidden = tab !== "curriculum";
+      }
       if (!panel) return;
       if (tab === "curriculum") {
         panel.style.display = "none";
@@ -3290,6 +3297,20 @@ async function renderCbcCurriculumEditor(options = {}) {
       if (manualSubStrandInput) manualSubStrandInput.disabled = true;
     };
 
+    const applyTemplateVisibilityByRole = () => {
+      if (isSuperSystemDeveloper) return;
+      [
+        "downloadCbcMappingTemplateButton",
+        "downloadCbcWordTemplateButton",
+        "importCbcMappingButton",
+        "cbcMappingFile",
+        "importLocalCurriculumButton"
+      ].forEach((id) => {
+        const node = document.getElementById(id);
+        if (node) node.style.display = "none";
+      });
+    };
+
     const applyCurriculumActivationState = () => {
       const hasGrade = Boolean(String(gradeEl?.value || "").trim());
       const hasForm = Boolean(String(formEl?.value || "").trim());
@@ -3423,11 +3444,12 @@ async function renderCbcCurriculumEditor(options = {}) {
       }
     });
     applyRoleEditMode();
+    applyTemplateVisibilityByRole();
     refreshLearningAreaOptionsFromSelection();
     applyCurriculumActivationState();
     document.getElementById("seedPretechnicalStrandsButton")?.addEventListener("click", async () => {
       const proceed = window.confirm(
-        "Load Grade 7, 8 and 9 Pre-Technical strands/sub-strands from the provided photo set?"
+        "Load Grade 7, 8 and 9 Pre-Technical + Social Studies strands/sub-strands from the provided lists?"
       );
       if (!proceed) return;
       try {
@@ -5792,7 +5814,7 @@ function renderCrudModule(moduleKey, options = {}) {
       </div>
       <pre id="admissionGeneratedOutput" class="small-note" style="max-height:240px;overflow:auto;white-space:pre-wrap;"></pre>
     </section>
-    <section class="dashboard-section">
+    <section id="admissionTemplatesSection" class="dashboard-section">
       <h4>Templates & Letterhead</h4>
       <div class="actions-row">
         <button type="button" id="admissionDownloadBioTemplateBtn" class="ax-btn ax-btn--download ax-btn--sm">Download Bio Data Template</button>
@@ -5843,6 +5865,10 @@ function renderCrudModule(moduleKey, options = {}) {
   if (moduleKey === "admission") {
     if (tableAreaMain) tableAreaMain.style.display = "none";
     wireAdmissionModuleUi(container, config);
+    if (normalizeRoleKey(portalContext?.role || "") !== "SUPER_SYSTEM_DEVELOPER") {
+      const templateSection = document.getElementById("admissionTemplatesSection");
+      if (templateSection) templateSection.style.display = "none";
+    }
     document.getElementById(procId).onclick = async () => {
       try {
         await loadModuleData(config);
