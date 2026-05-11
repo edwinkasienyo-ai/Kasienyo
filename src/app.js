@@ -2359,6 +2359,15 @@ async function getPaginatedRows({
   limit = 50,
   offset = 0
 }) {
+  const normalizePaginationValue = (value, { fallback, min = 0, max = 5000 }) => {
+    const parsed = Number.parseInt(String(value ?? ""), 10);
+    if (!Number.isFinite(parsed)) return fallback;
+    if (parsed < min) return min;
+    if (parsed > max) return max;
+    return parsed;
+  };
+  const safeLimit = normalizePaginationValue(limit, { fallback: 50, min: 1, max: 5000 });
+  const safeOffset = normalizePaginationValue(offset, { fallback: 0, min: 0, max: 1000000 });
   const usableFields = Array.isArray(searchFields)
     ? await getExistingColumns(table, searchFields)
     : [];
@@ -2371,7 +2380,7 @@ async function getPaginatedRows({
                WHERE institution_id = ? ${extraWhere}${search.where}
                ORDER BY id DESC
                LIMIT ? OFFSET ?`;
-  return query(sql, [...search.params, Number(limit), Number(offset)]);
+  return query(sql, [...search.params, safeLimit, safeOffset]);
 }
 
 async function getExistingColumns(tableName, candidateColumns = []) {
@@ -7950,27 +7959,106 @@ app.post(
 );
 
 function parseCbcMappingCsv(csvText = "") {
+  function splitCsvLine(line = "") {
+    const cells = [];
+    let current = "";
+    let inQuotes = false;
+    for (let i = 0; i < line.length; i += 1) {
+      const ch = line[i];
+      const next = line[i + 1];
+      if (ch === "\"" && inQuotes && next === "\"") {
+        current += "\"";
+        i += 1;
+        continue;
+      }
+      if (ch === "\"") {
+        inQuotes = !inQuotes;
+        continue;
+      }
+      if (ch === "," && !inQuotes) {
+        cells.push(current.trim());
+        current = "";
+        continue;
+      }
+      current += ch;
+    }
+    cells.push(current.trim());
+    return cells;
+  }
+
+  function normalizeCsvHeader(value = "") {
+    return cleanValue(value || "")
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "_")
+      .replace(/^_+|_+$/g, "");
+  }
+
   const lines = String(csvText || "")
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter(Boolean);
-  if (!lines.length) return [];
+  if (lines.length <= 1) return [];
+  const headerParts = splitCsvLine(lines[0]).map((item) => normalizeCsvHeader(item));
+  const hasNamedColumns = headerParts.includes("learning_area") && headerParts.includes("strand");
   const rows = [];
   for (let index = 1; index < lines.length; index += 1) {
     const line = lines[index];
-    const parts = line.split(",").map((part) => part.trim());
+    const parts = splitCsvLine(line);
+    if (!parts.length) continue;
+    if (hasNamedColumns) {
+      const row = {};
+      headerParts.forEach((headerKey, idx) => {
+        row[headerKey] = cleanValue(parts[idx] || "");
+      });
+      rows.push({
+        action: cleanValue(row.action || "NEW").toUpperCase(),
+        mapping_id: Number(row.mapping_id || 0) || null,
+        curriculum_entry_id: Number(row.curriculum_entry_id || 0) || null,
+        level_mode: cleanValue(row.level_mode || ""),
+        grade: cleanValue(row.grade || ""),
+        form_name: cleanValue(row.form_name || ""),
+        learning_area: cleanValue(row.learning_area || ""),
+        strand: cleanValue(row.strand || ""),
+        strand_description: cleanValue(row.strand_description || ""),
+        sub_strand: cleanValue(row.sub_strand || ""),
+        sub_strand_description: cleanValue(row.sub_strand_description || ""),
+        notes: cleanValue(row.notes || ""),
+        source_label: cleanValue(row.source_label || "CSV Import")
+      });
+      continue;
+    }
     if (parts.length < 3) continue;
     rows.push({
-      learning_area: parts[0] || "",
-      strand: parts[1] || "",
-      sub_strand: parts[2] || "",
-      notes: parts[3] || "",
-      grade: parts[4] || "",
-      form_name: parts[5] || "",
-      source_label: parts[6] || "CSV Import"
+      action: "NEW",
+      mapping_id: null,
+      curriculum_entry_id: null,
+      level_mode: "",
+      learning_area: cleanValue(parts[0] || ""),
+      strand: cleanValue(parts[1] || ""),
+      sub_strand: cleanValue(parts[2] || ""),
+      strand_description: "",
+      sub_strand_description: "",
+      notes: cleanValue(parts[3] || ""),
+      grade: cleanValue(parts[4] || ""),
+      form_name: cleanValue(parts[5] || ""),
+      source_label: cleanValue(parts[6] || "CSV Import")
     });
   }
   return rows.filter((row) => row.learning_area && row.strand && row.sub_strand);
+}
+
+function buildMappingNotes({ strand_description, sub_strand_description, notes }) {
+  const blocks = [];
+  if (cleanValue(strand_description || "")) {
+    blocks.push(`Strand Description: ${cleanValue(strand_description || "")}`);
+  }
+  if (cleanValue(sub_strand_description || "")) {
+    blocks.push(`Sub-strand Description: ${cleanValue(sub_strand_description || "")}`);
+  }
+  if (cleanValue(notes || "")) {
+    blocks.push(`Notes: ${cleanValue(notes || "")}`);
+  }
+  return blocks.join("\n");
 }
 
 function extractKicdNarrativeSection(notes = "", heading = "") {
@@ -7994,11 +8082,74 @@ app.get(
   enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER]),
   enforcePermission(PERMISSIONS.VIEW),
   asyncHandler(async (_, res) => {
-    const csv = [
-      "learning_area,strand,sub_strand,notes,grade,form_name,source_label",
-      "English,Reading,Comprehension Skills,Learners identify main ideas and answer comprehension questions.,Grade 4,,KICD",
-      "Mathematics,Numbers,Fractions and Decimals,Learners represent fractions and decimals and solve daily-life examples.,Grade 6,,KICD"
-    ].join("\n");
+    const levelOrder = [
+      "PP2",
+      "Grade 1",
+      "Grade 2",
+      "Grade 3",
+      "Grade 4",
+      "Grade 5",
+      "Grade 6",
+      "Grade 7",
+      "Grade 8",
+      "Grade 9",
+      "Grade 10",
+      "Grade 11",
+      "Grade 12",
+      "Form 3",
+      "Form 4"
+    ];
+    const selectedLevels = new Set(levelOrder);
+    const previewRows = [];
+    for (const level of CBC_LEVELS) {
+      const levelLearningAreas = [
+        ...(Array.isArray(level.learningAreas) ? level.learningAreas : []),
+        ...Object.values(level.pathways || {}).flatMap((areas) => (Array.isArray(areas) ? areas : []))
+      ];
+      const uniqueAreas = Array.from(new Set(levelLearningAreas.map((area) => cleanValue(area)).filter(Boolean)));
+      const gradeList = Array.isArray(level.grades) ? level.grades : [];
+      for (const gradeName of gradeList) {
+        if (!selectedLevels.has(gradeName)) continue;
+        for (const learningArea of uniqueAreas) {
+          previewRows.push({
+            action: "NEW",
+            mapping_id: "",
+            curriculum_entry_id: "",
+            level_mode: gradeName.startsWith("Form ") ? "form" : "grade",
+            grade: gradeName.startsWith("Form ") ? "" : gradeName,
+            form_name: gradeName.startsWith("Form ") ? gradeName : "",
+            learning_area: learningArea,
+            strand: "",
+            strand_description: "",
+            sub_strand: "",
+            sub_strand_description: "",
+            notes: "",
+            source_label: "KICD-CBC-IMPORT"
+          });
+        }
+      }
+    }
+    const lines = [
+      "action,mapping_id,curriculum_entry_id,level_mode,grade,form_name,learning_area,strand,strand_description,sub_strand,sub_strand_description,notes,source_label",
+      "NEW,,,grade,Grade 7,,Social Studies,Human Rights,Main competency area narrative,Meaning of Rights,Sub-topic narrative,Teacher notes/past paper linkage,CSV Import",
+      "EDIT,145,3201,grade,Grade 7,,Social Studies,Human Rights Updated,Updated strand details,Meaning of Rights Updated,Updated sub-strand details,Corrective note after review,CSV Import",
+      ...previewRows.map((row) => [
+        csvCell(row.action),
+        csvCell(row.mapping_id),
+        csvCell(row.curriculum_entry_id),
+        csvCell(row.level_mode),
+        csvCell(row.grade),
+        csvCell(row.form_name),
+        csvCell(row.learning_area),
+        csvCell(row.strand),
+        csvCell(row.strand_description),
+        csvCell(row.sub_strand),
+        csvCell(row.sub_strand_description),
+        csvCell(row.notes),
+        csvCell(row.source_label)
+      ].join(","))
+    ];
+    const csv = lines.join("\n");
     res.setHeader("Content-Type", "text/csv; charset=utf-8");
     res.setHeader("Content-Disposition", "attachment; filename=\"cbc-structure-mappings-template.csv\"");
     res.send(csv);
@@ -8015,26 +8166,18 @@ app.get(
       "CBC/CBE STRAND-SUB-STRAND-NOTES TEMPLATE",
       "",
       "Instructions:",
-      "1. Fill one entry block per sub-strand.",
-      "2. Save this file as .docx or .txt, then copy entries into CSV template if needed.",
+      "1. Use action NEW for fresh rows and EDIT for correcting existing rows.",
+      "2. mapping_id edits cbc_structure_mappings; curriculum_entry_id edits cbc_curriculum_entries.",
+      "3. Fill one row per sub-strand per level + learning area.",
+      "4. Supported levels in template: PP2, Grade 1-12, Form 3, Form 4.",
+      "5. Fill strand_description and sub_strand_description to retain detailed narratives.",
       "",
-      "Entry Block:",
-      "Learning Area: ____________________________",
-      "Strand: __________________________________",
-      "Sub-Strand: ______________________________",
-      "Notes: ___________________________________",
-      "Grade (optional): ________________________",
-      "Form (optional): _________________________",
-      "Source Label: ____________________________",
+      "CSV Columns:",
+      "action,mapping_id,curriculum_entry_id,level_mode,grade,form_name,learning_area,strand,strand_description,sub_strand,sub_strand_description,notes,source_label",
       "",
       "Example:",
-      "Learning Area: Mathematics",
-      "Strand: Numbers",
-      "Sub-Strand: Fractions and Decimals",
-      "Notes: Learners identify numerator/denominator and solve real-life fraction tasks.",
-      "Grade (optional): Grade 6",
-      "Form (optional):",
-      "Source Label: KICD"
+      "NEW,,,grade,Grade 8,,Pre-Technical Studies,Workshop Safety,Foundational safety standards,Safety Rules,Sub-strand scope and lesson aims,Include practical tasks and assessment notes,CSV Import",
+      "EDIT,218,4402,form,,Form 4,Mathematics,Algebra,Corrected strand narrative,Quadratic Equations,Corrected sub-strand narrative,Updated after curriculum validation,CSV Import"
     ].join("\r\n");
     res.setHeader("Content-Type", "application/msword; charset=utf-8");
     res.setHeader("Content-Disposition", "attachment; filename=\"cbc-structure-mappings-template.doc\"");
@@ -8058,8 +8201,74 @@ app.post(
       return res.status(400).json({ error: "No valid mapping rows found in CSV." });
     }
     let imported = 0;
+    let updatedMappings = 0;
+    let updatedCurriculum = 0;
+    let createdCurriculum = 0;
+    let skipped = 0;
+    const skippedRows = [];
     for (const row of rows) {
-      await query(
+      const action = cleanValue(row.action || "NEW").toUpperCase();
+      const grade = cleanOptionalValue(row.grade);
+      const formName = cleanOptionalValue(row.form_name);
+      const mappingNotes = buildMappingNotes({
+        strand_description: row.strand_description,
+        sub_strand_description: row.sub_strand_description,
+        notes: row.notes
+      });
+      if (action === "EDIT") {
+        if (Number(row.mapping_id || 0) > 0) {
+          const result = await query(
+            `UPDATE cbc_structure_mappings
+             SET learning_area = ?, strand = ?, sub_strand = ?, notes = ?, grade = ?, form_name = ?, source_label = ?, updated_at = NOW()
+             WHERE id = ? AND institution_id = ?`,
+            [
+              cleanValue(row.learning_area),
+              cleanValue(row.strand),
+              cleanValue(row.sub_strand),
+              cleanOptionalValue(mappingNotes),
+              grade,
+              formName,
+              cleanOptionalValue(row.source_label) || "CSV Import",
+              Number(row.mapping_id),
+              req.user.institution_id
+            ]
+          );
+          if (Number(result?.affectedRows || 0) > 0) {
+            updatedMappings += 1;
+          } else {
+            skipped += 1;
+            skippedRows.push({ row: row.mapping_id, reason: "Mapping ID not found for this institution." });
+          }
+        } else {
+          skipped += 1;
+          skippedRows.push({ row: "-", reason: "EDIT action requires mapping_id." });
+        }
+        if (Number(row.curriculum_entry_id || 0) > 0) {
+          const result = await query(
+            `UPDATE cbc_curriculum_entries
+             SET learning_area = ?, strand = ?, sub_strand = ?, notes = ?, specific_learning_outcomes = ?, updated_at = NOW()
+             WHERE id = ? AND institution_id = ?`,
+            [
+              cleanValue(row.learning_area),
+              cleanValue(row.strand),
+              cleanValue(row.sub_strand),
+              cleanOptionalValue(mappingNotes),
+              cleanOptionalValue(row.sub_strand_description || row.notes),
+              Number(row.curriculum_entry_id),
+              req.user.institution_id
+            ]
+          );
+          if (Number(result?.affectedRows || 0) > 0) {
+            updatedCurriculum += 1;
+          } else {
+            skipped += 1;
+            skippedRows.push({ row: row.curriculum_entry_id, reason: "Curriculum entry ID not found for this institution." });
+          }
+        }
+        // eslint-disable-next-line no-continue
+        continue;
+      }
+      const mappingInsert = await query(
         `INSERT INTO cbc_structure_mappings
           (institution_id, learning_area, strand, sub_strand, notes, grade, form_name, source_label, created_by_user_id)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -8068,17 +8277,53 @@ app.post(
           cleanValue(row.learning_area),
           cleanValue(row.strand),
           cleanValue(row.sub_strand),
-          cleanOptionalValue(row.notes),
-          cleanOptionalValue(row.grade),
-          cleanOptionalValue(row.form_name),
+          cleanOptionalValue(mappingNotes),
+          grade,
+          formName,
           cleanOptionalValue(row.source_label) || "CSV Import",
           req.user.id
         ]
       );
-      imported += 1;
+      if (Number(mappingInsert?.insertId || 0) > 0) imported += 1;
+      if (grade || formName) {
+        await query(
+          `INSERT INTO cbc_curriculum_entries
+            (institution_id, grade, form_name, learning_area, strand, sub_strand, specific_learning_outcomes, suggested_assessment_rubric, notes, term, year, created_by_user_id)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            req.user.institution_id,
+            grade || formName || "Grade 7",
+            formName,
+            cleanValue(row.learning_area),
+            cleanValue(row.strand),
+            cleanValue(row.sub_strand),
+            cleanOptionalValue(row.sub_strand_description || row.notes),
+            cleanOptionalValue(row.strand_description),
+            cleanOptionalValue(mappingNotes),
+            "Term One",
+            new Date().getFullYear(),
+            req.user.id
+          ]
+        );
+        createdCurriculum += 1;
+      }
     }
-    await auditLog(req.user, "IMPORT_CBC_STRUCTURE_MAPPINGS", "cbc_structure_mappings", null, { imported });
-    res.status(201).json({ message: "Structure mappings imported.", imported });
+    await auditLog(req.user, "IMPORT_CBC_STRUCTURE_MAPPINGS", "cbc_structure_mappings", null, {
+      imported,
+      updated_mappings: updatedMappings,
+      updated_curriculum_entries: updatedCurriculum,
+      created_curriculum_entries: createdCurriculum,
+      skipped
+    });
+    res.status(201).json({
+      message: "Structure mappings import processed.",
+      imported_new_mappings: imported,
+      updated_mappings: updatedMappings,
+      updated_curriculum_entries: updatedCurriculum,
+      created_curriculum_entries: createdCurriculum,
+      skipped,
+      skipped_rows: skippedRows.slice(0, 60)
+    });
   })
 );
 

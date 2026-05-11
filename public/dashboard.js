@@ -12,7 +12,7 @@ let portalContext = null;
 let searchRowDrafts = {};
 let dashboardAutoRefreshHandle = null;
 let currentSidebarSubmoduleId = null;
-const CLIENT_UI_BUNDLE_ID = "dash-bundle-main-v69-exam-engine-enterprise-expansion";
+const CLIENT_UI_BUNDLE_ID = "dash-bundle-main-v70-exam-template-import-fixes";
 const examPanelState = {
   generatedExam: null,
   serials: [],
@@ -5659,6 +5659,7 @@ async function renderCbcCurriculumEditor(options = {}) {
             <button class="ax-btn ax-btn--edit ax-btn--sm" id="examV2CurrEditBtn" title="Edit row by ID">Edit</button>
             <button class="ax-btn ax-btn--delete ax-btn--sm" id="examV2CurrDeleteBtn" title="Delete row by ID">Delete</button>
             <button class="ax-btn ax-btn--refresh ax-btn--sm" id="examV2CurrRefreshBtn" title="Refresh">Refresh</button>
+            <button class="ax-btn ax-btn--download ax-btn--sm" id="examV2CurrTemplateBtn" title="Download import template">Template</button>
             <button class="ax-btn ax-btn--download ax-btn--sm" id="examV2CurrDownloadBtn" title="Download rows">Download</button>
           </div>
           <div class="dashboard-table-wrap">
@@ -5855,6 +5856,9 @@ async function renderCbcCurriculumEditor(options = {}) {
     });
 
     document.getElementById("examV2CurrRefreshBtn")?.addEventListener("click", renderCurriculumTab);
+    document.getElementById("examV2CurrTemplateBtn")?.addEventListener("click", async () => {
+      await downloadWithAuth("/api/cbc/curriculum/structure-mappings/template", "cbc-structure-mappings-template.csv");
+    });
     document.getElementById("examV2CurrDownloadBtn")?.addEventListener("click", () => {
       if (!rows.length) {
         alert("No rows to download.");
