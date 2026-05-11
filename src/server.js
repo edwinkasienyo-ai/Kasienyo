@@ -1282,6 +1282,50 @@ CREATE TABLE IF NOT EXISTS institution_documents (
 )`);
 
   await query(`
+CREATE TABLE IF NOT EXISTS exam_templates (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  institution_id BIGINT NOT NULL,
+  template_key VARCHAR(120) NOT NULL,
+  template_name VARCHAR(255) NOT NULL,
+  version_tag VARCHAR(60) NULL,
+  content LONGTEXT NOT NULL,
+  is_active TINYINT(1) NOT NULL DEFAULT 1,
+  created_by_user_id VARCHAR(100) NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  INDEX idx_exam_templates_lookup (institution_id, template_key, is_active),
+  CONSTRAINT fk_exam_templates_institution FOREIGN KEY (institution_id) REFERENCES institutions(id)
+)`);
+
+  await query(`
+CREATE TABLE IF NOT EXISTS exam_archives (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  institution_id BIGINT NOT NULL,
+  archive_type VARCHAR(100) NOT NULL,
+  title VARCHAR(255) NOT NULL,
+  reference_id BIGINT NULL,
+  payload_json JSON NULL,
+  status VARCHAR(40) NOT NULL DEFAULT 'ARCHIVED',
+  created_by_user_id VARCHAR(100) NULL,
+  archived_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  INDEX idx_exam_archives_lookup (institution_id, archive_type, status),
+  CONSTRAINT fk_exam_archives_institution FOREIGN KEY (institution_id) REFERENCES institutions(id)
+)`);
+
+  await query(`
+CREATE TABLE IF NOT EXISTS exam_module_settings (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  institution_id BIGINT NOT NULL,
+  settings_json JSON NULL,
+  updated_by_user_id VARCHAR(100) NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY uq_exam_module_settings_inst (institution_id),
+  CONSTRAINT fk_exam_module_settings_institution FOREIGN KEY (institution_id) REFERENCES institutions(id)
+)`);
+
+  await query(`
 CREATE TABLE IF NOT EXISTS system_developer_institution_assignments (
   id BIGINT PRIMARY KEY AUTO_INCREMENT,
   developer_user_id BIGINT NOT NULL,

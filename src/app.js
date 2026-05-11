@@ -10925,6 +10925,394 @@ app.get(
   })
 );
 
+const EXAM_TEMPLATE_KEY_ALLOWLIST = new Set([
+  "exam-paper",
+  "mark-sheet",
+  "assessment-report",
+  "progress-report",
+  "teacher-notes"
+]);
+
+const EXAM_SETTINGS_DEFAULTS = {
+  auto_save_enabled: true,
+  auto_save_interval_sec: 90,
+  strict_cbc_validation: true,
+  background_processing_enabled: true,
+  realtime_sync_enabled: false,
+  offline_cache_enabled: true
+};
+
+function normalizeExamTemplateKey(value = "") {
+  const key = cleanValue(value || "").toLowerCase();
+  return EXAM_TEMPLATE_KEY_ALLOWLIST.has(key) ? key : "exam-paper";
+}
+
+function normalizeArchiveStatus(value = "") {
+  const normalized = cleanValue(value || "").toUpperCase();
+  return normalized === "ACTIVE" || normalized === "ARCHIVED" ? normalized : "ARCHIVED";
+}
+
+app.get(
+  "/api/examinations/analytics/overview",
+  auth,
+  enforceModuleAccess(MODULE_KEYS.CBC_CURRICULUM_EDITOR),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER]),
+  enforcePermission(PERMISSIONS.VIEW),
+  asyncHandler(async (req, res) => {
+    const institutionId = Number(req.user.institution_id);
+    const [curriculumCountRows, materialCountRows, examCountRows, marksCountRows, learnerCountRows, meanRows] = await Promise.all([
+      query("SELECT COUNT(*) AS total FROM cbc_curriculum_entries WHERE institution_id = ?", [institutionId]),
+      query("SELECT COUNT(*) AS total FROM teacher_resources WHERE institution_id = ?", [institutionId]),
+      query("SELECT COUNT(*) AS total FROM academic_exams WHERE institution_id = ?", [institutionId]),
+      query("SELECT COUNT(*) AS total FROM academic_marks WHERE institution_id = ?", [institutionId]),
+      query("SELECT COUNT(DISTINCT learner_id) AS total FROM academic_marks WHERE institution_id = ?", [institutionId]),
+      query("SELECT ROUND(AVG(marks), 2) AS mean_marks FROM academic_marks WHERE institution_id = ?", [institutionId])
+    ]);
+    const [curriculumByAreaRows, marksByAreaRows] = await Promise.all([
+      query(
+        `SELECT learning_area, COUNT(*) AS entry_count
+         FROM cbc_curriculum_entries
+         WHERE institution_id = ?
+         GROUP BY learning_area
+         ORDER BY learning_area ASC`,
+        [institutionId]
+      ),
+      query(
+        `SELECT subject AS learning_area, ROUND(AVG(marks), 2) AS avg_marks, ROUND(AVG(percentage), 2) AS avg_percentage
+         FROM academic_marks
+         WHERE institution_id = ?
+         GROUP BY subject
+         ORDER BY subject ASC`,
+        [institutionId]
+      )
+    ]);
+    const marksByAreaMap = new Map(marksByAreaRows.map((row) => [cleanValue(row.learning_area), row]));
+    const allAreas = Array.from(
+      new Set([
+        ...curriculumByAreaRows.map((row) => cleanValue(row.learning_area)),
+        ...marksByAreaRows.map((row) => cleanValue(row.learning_area))
+      ].filter(Boolean))
+    ).sort((a, b) => a.localeCompare(b));
+    const byLearningArea = allAreas.map((learningArea) => {
+      const curriculum = curriculumByAreaRows.find((row) => cleanValue(row.learning_area) === learningArea);
+      const marks = marksByAreaMap.get(learningArea);
+      return {
+        learning_area: learningArea,
+        entry_count: Number(curriculum?.entry_count || 0),
+        avg_marks: Number(marks?.avg_marks || 0).toFixed(2),
+        avg_percentage: Number(marks?.avg_percentage || 0).toFixed(2)
+      };
+    });
+    res.json({
+      counters: {
+        curriculum_rows: Number(curriculumCountRows[0]?.total || 0),
+        learning_materials: Number(materialCountRows[0]?.total || 0),
+        generated_exams: Number(examCountRows[0]?.total || 0),
+        marks_records: Number(marksCountRows[0]?.total || 0),
+        assessed_learners: Number(learnerCountRows[0]?.total || 0),
+        mean_marks: Number(meanRows[0]?.mean_marks || 0).toFixed(2)
+      },
+      by_learning_area: byLearningArea
+    });
+  })
+);
+
+app.get(
+  "/api/examinations/templates",
+  auth,
+  enforceModuleAccess(MODULE_KEYS.CBC_CURRICULUM_EDITOR),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER]),
+  enforcePermission(PERMISSIONS.VIEW),
+  asyncHandler(async (req, res) => {
+    const rows = await query(
+      `SELECT id, template_key, template_name, version_tag, content, is_active, created_at, updated_at
+       FROM exam_templates
+       WHERE institution_id = ? AND is_active = 1
+       ORDER BY updated_at DESC, id DESC`,
+      [req.user.institution_id]
+    );
+    res.json(rows);
+  })
+);
+
+app.post(
+  "/api/examinations/templates",
+  auth,
+  enforceModuleAccess(MODULE_KEYS.CBC_CURRICULUM_EDITOR),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER]),
+  enforcePermission(PERMISSIONS.CREATE),
+  asyncHandler(async (req, res) => {
+    const templateKey = normalizeExamTemplateKey(req.body?.template_key);
+    const templateName = cleanValue(req.body?.template_name || "");
+    const content = cleanValue(req.body?.content || "");
+    if (!templateName || !content) {
+      return res.status(400).json({ error: "template_name and content are required." });
+    }
+    const result = await query(
+      `INSERT INTO exam_templates
+        (institution_id, template_key, template_name, version_tag, content, is_active, created_by_user_id)
+       VALUES (?, ?, ?, ?, ?, 1, ?)`,
+      [
+        req.user.institution_id,
+        templateKey,
+        templateName,
+        cleanOptionalValue(req.body?.version_tag),
+        content,
+        String(req.user.id || "")
+      ]
+    );
+    await auditLog(req.user, "CREATE_EXAM_TEMPLATE", "exam_templates", result.insertId, {
+      template_key: templateKey,
+      template_name: templateName
+    });
+    res.status(201).json({ id: result.insertId, message: "Exam template saved." });
+  })
+);
+
+app.put(
+  "/api/examinations/templates/:id(\\d+)",
+  auth,
+  enforceModuleAccess(MODULE_KEYS.CBC_CURRICULUM_EDITOR),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER]),
+  enforcePermission(PERMISSIONS.UPDATE),
+  asyncHandler(async (req, res) => {
+    const templateId = Number(req.params.id || 0);
+    if (!templateId) return res.status(400).json({ error: "Valid template id is required." });
+    const templateKey = normalizeExamTemplateKey(req.body?.template_key);
+    const templateName = cleanValue(req.body?.template_name || "");
+    const content = cleanValue(req.body?.content || "");
+    if (!templateName || !content) {
+      return res.status(400).json({ error: "template_name and content are required." });
+    }
+    await query(
+      `UPDATE exam_templates
+       SET template_key = ?, template_name = ?, version_tag = ?, content = ?, updated_at = NOW()
+       WHERE id = ? AND institution_id = ? AND is_active = 1`,
+      [
+        templateKey,
+        templateName,
+        cleanOptionalValue(req.body?.version_tag),
+        content,
+        templateId,
+        req.user.institution_id
+      ]
+    );
+    await auditLog(req.user, "UPDATE_EXAM_TEMPLATE", "exam_templates", templateId, {
+      template_key: templateKey,
+      template_name: templateName
+    });
+    res.json({ message: "Exam template updated." });
+  })
+);
+
+app.delete(
+  "/api/examinations/templates/:id(\\d+)",
+  auth,
+  enforceModuleAccess(MODULE_KEYS.CBC_CURRICULUM_EDITOR),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER]),
+  enforcePermission(PERMISSIONS.DELETE),
+  asyncHandler(async (req, res) => {
+    const templateId = Number(req.params.id || 0);
+    if (!templateId) return res.status(400).json({ error: "Valid template id is required." });
+    await query(
+      `UPDATE exam_templates
+       SET is_active = 0, updated_at = NOW()
+       WHERE id = ? AND institution_id = ?`,
+      [templateId, req.user.institution_id]
+    );
+    await auditLog(req.user, "DELETE_EXAM_TEMPLATE", "exam_templates", templateId, {});
+    res.json({ message: "Exam template removed." });
+  })
+);
+
+app.post(
+  "/api/examinations/templates/:id(\\d+)/clone",
+  auth,
+  enforceModuleAccess(MODULE_KEYS.CBC_CURRICULUM_EDITOR),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER]),
+  enforcePermission(PERMISSIONS.CREATE),
+  asyncHandler(async (req, res) => {
+    const templateId = Number(req.params.id || 0);
+    if (!templateId) return res.status(400).json({ error: "Valid template id is required." });
+    const rows = await query(
+      `SELECT template_key, template_name, version_tag, content
+       FROM exam_templates
+       WHERE id = ? AND institution_id = ? AND is_active = 1
+       LIMIT 1`,
+      [templateId, req.user.institution_id]
+    );
+    if (!rows.length) return res.status(404).json({ error: "Template not found." });
+    const source = rows[0];
+    const result = await query(
+      `INSERT INTO exam_templates
+        (institution_id, template_key, template_name, version_tag, content, is_active, created_by_user_id)
+       VALUES (?, ?, ?, ?, ?, 1, ?)`,
+      [
+        req.user.institution_id,
+        source.template_key,
+        `${cleanValue(source.template_name)} (Clone)`,
+        cleanOptionalValue(source.version_tag),
+        cleanValue(source.content),
+        String(req.user.id || "")
+      ]
+    );
+    await auditLog(req.user, "CLONE_EXAM_TEMPLATE", "exam_templates", result.insertId, { source_template_id: templateId });
+    res.status(201).json({ id: result.insertId, message: "Template cloned." });
+  })
+);
+
+app.get(
+  "/api/examinations/archives",
+  auth,
+  enforceModuleAccess(MODULE_KEYS.CBC_CURRICULUM_EDITOR),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER]),
+  enforcePermission(PERMISSIONS.VIEW),
+  asyncHandler(async (req, res) => {
+    const statusFilter = cleanValue(req.query?.status || "").toUpperCase();
+    const rows = await query(
+      `SELECT id, archive_type, title, reference_id, payload_json, status, archived_at, updated_at
+       FROM exam_archives
+       WHERE institution_id = ?
+         AND (? = '' OR status = ?)
+       ORDER BY archived_at DESC, id DESC
+       LIMIT 1500`,
+      [req.user.institution_id, statusFilter, statusFilter]
+    );
+    res.json(rows.map((row) => ({ ...row, payload_json: parseStoredJson(row.payload_json) || null })));
+  })
+);
+
+app.post(
+  "/api/examinations/archives",
+  auth,
+  enforceModuleAccess(MODULE_KEYS.CBC_CURRICULUM_EDITOR),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER]),
+  enforcePermission(PERMISSIONS.CREATE),
+  asyncHandler(async (req, res) => {
+    const archiveType = cleanValue(req.body?.archive_type || "");
+    const title = cleanValue(req.body?.title || "");
+    if (!archiveType || !title) {
+      return res.status(400).json({ error: "archive_type and title are required." });
+    }
+    const result = await query(
+      `INSERT INTO exam_archives
+        (institution_id, archive_type, title, reference_id, payload_json, status, created_by_user_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [
+        req.user.institution_id,
+        archiveType,
+        title,
+        Number(req.body?.reference_id || 0) || null,
+        req.body?.payload_json === undefined ? null : JSON.stringify(req.body?.payload_json),
+        normalizeArchiveStatus(req.body?.status || "ARCHIVED"),
+        String(req.user.id || "")
+      ]
+    );
+    await auditLog(req.user, "ARCHIVE_EXAM_ITEM", "exam_archives", result.insertId, { archive_type: archiveType, title });
+    res.status(201).json({ id: result.insertId, message: "Archive item saved." });
+  })
+);
+
+app.patch(
+  "/api/examinations/archives/:id(\\d+)",
+  auth,
+  enforceModuleAccess(MODULE_KEYS.CBC_CURRICULUM_EDITOR),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER]),
+  enforcePermission(PERMISSIONS.UPDATE),
+  asyncHandler(async (req, res) => {
+    const archiveId = Number(req.params.id || 0);
+    if (!archiveId) return res.status(400).json({ error: "Valid archive id is required." });
+    const updates = [];
+    const params = [];
+    if (Object.prototype.hasOwnProperty.call(req.body || {}, "status")) {
+      updates.push("status = ?");
+      params.push(normalizeArchiveStatus(req.body?.status));
+    }
+    if (Object.prototype.hasOwnProperty.call(req.body || {}, "title")) {
+      updates.push("title = ?");
+      params.push(cleanValue(req.body?.title || ""));
+    }
+    if (Object.prototype.hasOwnProperty.call(req.body || {}, "payload_json")) {
+      updates.push("payload_json = ?");
+      params.push(req.body?.payload_json === null ? null : JSON.stringify(req.body?.payload_json));
+    }
+    if (!updates.length) {
+      return res.status(400).json({ error: "No archive update fields supplied." });
+    }
+    await query(
+      `UPDATE exam_archives
+       SET ${updates.join(", ")}, updated_at = NOW()
+       WHERE id = ? AND institution_id = ?`,
+      [...params, archiveId, req.user.institution_id]
+    );
+    await auditLog(req.user, "UPDATE_EXAM_ARCHIVE", "exam_archives", archiveId, pickFields(req.body || {}, ["status", "title"]));
+    res.json({ message: "Archive item updated." });
+  })
+);
+
+app.get(
+  "/api/examinations/settings",
+  auth,
+  enforceModuleAccess(MODULE_KEYS.CBC_CURRICULUM_EDITOR),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER]),
+  enforcePermission(PERMISSIONS.VIEW),
+  asyncHandler(async (req, res) => {
+    const rows = await query(
+      `SELECT settings_json
+       FROM exam_module_settings
+       WHERE institution_id = ?
+       LIMIT 1`,
+      [req.user.institution_id]
+    );
+    const stored = parseStoredJson(rows[0]?.settings_json) || {};
+    res.json({ settings: { ...EXAM_SETTINGS_DEFAULTS, ...stored } });
+  })
+);
+
+app.put(
+  "/api/examinations/settings",
+  auth,
+  enforceModuleAccess(MODULE_KEYS.CBC_CURRICULUM_EDITOR),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER]),
+  enforcePermission(PERMISSIONS.UPDATE),
+  asyncHandler(async (req, res) => {
+    const incoming = req.body && typeof req.body === "object" ? req.body : {};
+    const settings = {
+      auto_save_enabled: parseTruthy(incoming.auto_save_enabled),
+      auto_save_interval_sec: Math.min(Math.max(Number(incoming.auto_save_interval_sec || 90), 10), 900),
+      strict_cbc_validation: parseTruthy(incoming.strict_cbc_validation),
+      background_processing_enabled: parseTruthy(incoming.background_processing_enabled),
+      realtime_sync_enabled: parseTruthy(incoming.realtime_sync_enabled),
+      offline_cache_enabled: parseTruthy(incoming.offline_cache_enabled)
+    };
+    const payload = JSON.stringify(settings);
+    const existing = await query(
+      `SELECT id
+       FROM exam_module_settings
+       WHERE institution_id = ?
+       LIMIT 1`,
+      [req.user.institution_id]
+    );
+    if (existing.length) {
+      await query(
+        `UPDATE exam_module_settings
+         SET settings_json = ?, updated_by_user_id = ?, updated_at = NOW()
+         WHERE institution_id = ?`,
+        [payload, String(req.user.id || ""), req.user.institution_id]
+      );
+    } else {
+      await query(
+        `INSERT INTO exam_module_settings
+          (institution_id, settings_json, updated_by_user_id)
+         VALUES (?, ?, ?)`,
+        [req.user.institution_id, payload, String(req.user.id || "")]
+      );
+    }
+    await auditLog(req.user, "UPDATE_EXAM_SETTINGS", "exam_module_settings", null, settings);
+    res.json({ message: "Examination settings saved.", settings });
+  })
+);
+
 app.get(
   "/api/parent/results/export/pdf",
   auth,

@@ -3881,6 +3881,73 @@ td .ax-btn::before,
   margin-right: 0;
 }
 
+.exam-top-nav {
+  position: sticky;
+  top: 0;
+  z-index: 8;
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding: 8px;
+  margin: 8px 0 12px;
+  border: 1px solid #d7e3f2;
+  border-radius: 10px;
+  background: #f7fbff;
+  scrollbar-width: thin;
+}
+
+.exam-top-nav .exam-nav-btn {
+  flex: 0 0 auto;
+  transition: transform 0.14s ease, box-shadow 0.14s ease, background-color 0.14s ease;
+}
+
+.exam-top-nav .exam-nav-btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 14px rgba(20, 67, 120, 0.15);
+}
+
+.exam-top-nav .exam-nav-btn.active {
+  background: #d5ecff;
+  border-color: #6cb7ff;
+  color: #0c3f70;
+}
+
+.exam-icon-group button {
+  transition: transform 0.14s ease, filter 0.14s ease;
+}
+
+.exam-icon-group button:hover {
+  transform: translateY(-1px);
+  filter: saturate(1.1);
+}
+
+.exam-analytics-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.exam-analytics-card {
+  border: 1px solid #d8e5f2;
+  border-radius: 10px;
+  background: #fff;
+  padding: 10px;
+}
+
+.exam-analytics-card h5 {
+  margin: 0 0 4px;
+  font-size: 12px;
+  color: #2b4f75;
+}
+
+.exam-analytics-card p {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 700;
+  color: #124577;
+}
+
 .dashboard-ai-assistant {
   position: fixed;
   right: 0;

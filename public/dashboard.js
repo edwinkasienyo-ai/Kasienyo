@@ -12,7 +12,7 @@ let portalContext = null;
 let searchRowDrafts = {};
 let dashboardAutoRefreshHandle = null;
 let currentSidebarSubmoduleId = null;
-const CLIENT_UI_BUNDLE_ID = "dash-bundle-main-v66-api-error-detail";
+const CLIENT_UI_BUNDLE_ID = "dash-bundle-main-v67-exam-engine-redesign";
 const examPanelState = {
   generatedExam: null,
   serials: [],
@@ -134,7 +134,7 @@ const MODULE_DESCRIPTIONS = {
   "system-institution-uploads":
     "Institution uploads workspace: templates, logos, letterheads, admission/assessment samples, and generated document files per institution.",
   "system-recycle-bin": "Restore or permanently purge archived deleted records.",
-  "system-cbc-editor": "Create and maintain CBC curriculum structures and metadata."
+  "system-cbc-editor": "AI-powered examination lifecycle engine: curriculum, generation, scripts, assessment, progression, analytics, templates, archives and settings."
 };
 
 const SIDEBAR_SUBMODULES = {
@@ -206,25 +206,29 @@ const SIDEBAR_SUBMODULES = {
       targetModule: "system-cbc-editor",
       options: { examTab: "exam-generation" }
     },
-    { id: "marks-entry", label: "Marks Entry", targetModule: "system-cbc-editor", options: { examTab: "marks-entry" } },
+    { id: "exam-entry", label: "Exam Entry", targetModule: "system-cbc-editor", options: { examTab: "exam-entry" } },
     {
-      id: "result-scripts",
-      label: "Results Script",
+      id: "exam-scripts",
+      label: "Exam Scripts",
       targetModule: "system-cbc-editor",
-      options: { examTab: "result-scripts" }
+      options: { examTab: "exam-scripts" }
     },
     {
-      id: "assessment-report",
-      label: "Assessment Report",
+      id: "assessment-reports",
+      label: "Assessment Reports",
       targetModule: "system-cbc-editor",
-      options: { examTab: "assessment-report" }
+      options: { examTab: "assessment-reports" }
     },
     {
-      id: "learner-performance",
-      label: "Learner Performance Record",
+      id: "progress-reports",
+      label: "Progress Reports",
       targetModule: "system-cbc-editor",
-      options: { examTab: "learner-performance" }
-    }
+      options: { examTab: "progress-reports" }
+    },
+    { id: "exam-analytics", label: "Analytics", targetModule: "system-cbc-editor", options: { examTab: "analytics" } },
+    { id: "exam-templates", label: "Templates", targetModule: "system-cbc-editor", options: { examTab: "templates" } },
+    { id: "exam-archives", label: "Archives", targetModule: "system-cbc-editor", options: { examTab: "archives" } },
+    { id: "exam-settings", label: "Settings", targetModule: "system-cbc-editor", options: { examTab: "settings" } }
   ],
   "hr-leave": [
     { id: "hr-leave-sub", label: "HR Management", targetModule: "hr-leave" },
@@ -3773,7 +3777,7 @@ function wireExamGenerationPanel() {
     }
     try {
       await request(`/api/academic/exams/${examId}`, {
-        method: "PATCH",
+        method: "PUT",
         body: JSON.stringify({
           generated_exam_text: String(fields.generatedText?.value || "")
         })
@@ -3869,8 +3873,8 @@ function renderExamMarksEntryPanel() {
   ];
   return `
     <div class="module-header-card">
-      <h4>Marks Entry</h4>
-      <p>Enter marks manually or through exam serial numbers. Saved marks feed Results Script, Assessment Report, and Learner Performance Record.</p>
+      <h4>Exam Entry</h4>
+      <p>Enter marks manually or through exam serial numbers. Saved marks feed Exam Scripts, Assessment Reports, and Progress Reports.</p>
     </div>
     <div class="form-grid">
       <label>Entry Format</label>
@@ -4186,7 +4190,7 @@ function wireExamMarksEntryPanel() {
     const nextMarks = Number(prompt("Enter new marks:", "0") || 0);
     try {
       await request(`/api/academic/marks/${targetId}`, {
-        method: "PATCH",
+        method: "PUT",
         body: JSON.stringify({
           marks: nextMarks,
           percentage: nextMarks,
@@ -4245,7 +4249,7 @@ function renderExamResultScriptsPanel() {
   const learningAreas = buildExamLearningAreaOptionsBySelection({});
   return `
     <div class="module-header-card">
-      <h4>Results Script</h4>
+      <h4>Exam Scripts</h4>
       <p>Generate result scripts per learner, stream, grade, full list, or learning area. Learner serial numbers remain constant across grades.</p>
     </div>
     <div class="form-grid">
@@ -4638,7 +4642,7 @@ function renderExamLearnerPerformancePanel() {
   const { grades, forms } = buildExamGradeFormSelectOptions();
   return `
     <div class="module-header-card">
-      <h4>Learner Performance Record Sub-Module</h4>
+      <h4>Progress Reports Sub-Module</h4>
       <p>Search one learner and view full performance history grouped by grade, term, and exam session.</p>
     </div>
     <div class="form-grid">
@@ -4778,6 +4782,692 @@ function wireExamLearnerPerformancePanel() {
   });
 }
 
+function normalizeExamTabKey(tab = "") {
+  const value = String(tab || "").trim().toLowerCase();
+  const aliases = {
+    "marks-entry": "exam-entry",
+    "result-scripts": "exam-scripts",
+    "assessment-report": "assessment-reports",
+    "learner-performance": "progress-reports"
+  };
+  return aliases[value] || value || "curriculum";
+}
+
+function examTemplatePresetContent(templateKey = "exam-paper") {
+  const presets = {
+    "exam-paper": [
+      "Institution: {{INSTITUTION_NAME}}",
+      "Learning Area: {{LEARNING_AREA}}",
+      "Level: {{GRADE_OR_FORM}}",
+      "Exam Session: {{EXAM_SESSION}}",
+      "Structure: {{STRUCTURE}}",
+      "Serial: {{SERIAL}}",
+      "",
+      "Section A",
+      "1. ...",
+      "2. ...",
+      "",
+      "Section B",
+      "3. ...",
+      "4. ..."
+    ],
+    "mark-sheet": [
+      "Learner Name,Admission Number,Learning Area,Exam Session,Marks,Percentage,Band,Remarks"
+    ],
+    "assessment-report": [
+      "Learner Name: {{LEARNER_NAME}}",
+      "Admission Number: {{ADMISSION_NUMBER}}",
+      "Grade/Form: {{GRADE_OR_FORM}}",
+      "Stream: {{STREAM}}",
+      "",
+      "Assessment Summary",
+      "- Learning Area: {{LEARNING_AREA}}",
+      "- Mean Score: {{MEAN_SCORE}}",
+      "- Competency Band: {{COMPETENCY_BAND}}",
+      "",
+      "Teacher Remark:",
+      "{{TEACHER_REMARK}}"
+    ],
+    "progress-report": [
+      "Learner: {{LEARNER_NAME}} ({{ADMISSION_NUMBER}})",
+      "Academic Year: {{ACADEMIC_YEAR}}",
+      "",
+      "Term Performance",
+      "Term,Learning Area,Marks,Percentage,Band,Position",
+      "",
+      "Overall Progression Summary",
+      "- Strengths: ",
+      "- Improvement Areas: ",
+      "- Recommended Support: "
+    ],
+    "teacher-notes": [
+      "Learning Area: {{LEARNING_AREA}}",
+      "Strand: {{STRAND}}",
+      "Sub-Strand: {{SUB_STRAND}}",
+      "",
+      "Learning Outcomes",
+      "- ...",
+      "",
+      "Learning Activities",
+      "- ...",
+      "",
+      "Assessment Checkpoints",
+      "- ..."
+    ]
+  };
+  return (presets[templateKey] || presets["exam-paper"]).join("\n");
+}
+
+function renderExamAnalyticsPanel() {
+  return `
+    <div class="module-header-card">
+      <h4>Examination Analytics Engine</h4>
+      <p>Real-time snapshots for curriculum depth, exam throughput, learner mark flow and CBC performance patterns.</p>
+    </div>
+    <div class="actions-row exam-icon-group">
+      <button class="ax-btn ax-btn--refresh ax-btn--sm" id="examAnalyticsRefreshBtn" title="Refresh analytics">Refresh</button>
+      <button class="ax-btn ax-btn--download ax-btn--sm" id="examAnalyticsDownloadBtn" title="Download analytics">Download</button>
+      <button class="ax-btn ax-btn--print ax-btn--sm" id="examAnalyticsPrintBtn" title="Print analytics">Print</button>
+    </div>
+    <div id="examAnalyticsCards" class="exam-analytics-grid"></div>
+    <div class="dashboard-table-wrap">
+      <table class="dashboard-table">
+        <thead>
+          <tr><th>Learning Area</th><th>Entries</th><th>Avg Marks</th><th>Avg Percentage</th></tr>
+        </thead>
+        <tbody id="examAnalyticsBody"></tbody>
+      </table>
+    </div>
+    <div id="examAnalyticsStatus" class="small-note">Loading analytics...</div>
+  `;
+}
+
+async function wireExamAnalyticsPanel() {
+  const cardsEl = document.getElementById("examAnalyticsCards");
+  const bodyEl = document.getElementById("examAnalyticsBody");
+  const statusEl = document.getElementById("examAnalyticsStatus");
+
+  const renderAnalytics = (payload = {}) => {
+    const counters = payload?.counters || {};
+    const byLearningArea = Array.isArray(payload?.by_learning_area) ? payload.by_learning_area : [];
+    if (cardsEl) {
+      cardsEl.innerHTML = `
+        <article class="exam-analytics-card"><h5>Curriculum Rows</h5><p>${formatNumber(counters.curriculum_rows || 0)}</p></article>
+        <article class="exam-analytics-card"><h5>Materials</h5><p>${formatNumber(counters.learning_materials || 0)}</p></article>
+        <article class="exam-analytics-card"><h5>Generated Exams</h5><p>${formatNumber(counters.generated_exams || 0)}</p></article>
+        <article class="exam-analytics-card"><h5>Marks Records</h5><p>${formatNumber(counters.marks_records || 0)}</p></article>
+        <article class="exam-analytics-card"><h5>Learners Assessed</h5><p>${formatNumber(counters.assessed_learners || 0)}</p></article>
+        <article class="exam-analytics-card"><h5>Mean Score</h5><p>${escapeHtml(String(counters.mean_marks ?? 0))}</p></article>
+      `;
+    }
+    if (bodyEl) {
+      bodyEl.innerHTML = byLearningArea.length
+        ? byLearningArea.map((row) => `
+          <tr>
+            <td>${escapeHtml(row.learning_area || "-")}</td>
+            <td>${escapeHtml(String(row.entry_count || 0))}</td>
+            <td>${escapeHtml(String(row.avg_marks || 0))}</td>
+            <td>${escapeHtml(String(row.avg_percentage || 0))}</td>
+          </tr>
+        `).join("")
+        : `<tr><td colspan="4">No analytics rows available.</td></tr>`;
+    }
+  };
+
+  const load = async () => {
+    try {
+      const payload = await request("/api/examinations/analytics/overview");
+      renderAnalytics(payload);
+      if (statusEl) statusEl.textContent = `Last sync: ${formatDateTime(new Date().toISOString())}`;
+    } catch (error) {
+      if (statusEl) statusEl.textContent = error.message;
+      if (bodyEl) bodyEl.innerHTML = `<tr><td colspan="4">${escapeHtml(error.message)}</td></tr>`;
+    }
+  };
+
+  document.getElementById("examAnalyticsRefreshBtn")?.addEventListener("click", load);
+  document.getElementById("examAnalyticsDownloadBtn")?.addEventListener("click", () => {
+    const rows = Array.from((bodyEl?.querySelectorAll("tr") || [])).map((row) =>
+      Array.from(row.querySelectorAll("td")).map((cell) => cell.textContent || "")
+    );
+    if (!rows.length) {
+      alert("No analytics rows to download.");
+      return;
+    }
+    const csv = rowsToCsv(rows.map((columns) => ({
+      learning_area: columns[0] || "",
+      entries: columns[1] || "",
+      avg_marks: columns[2] || "",
+      avg_percentage: columns[3] || ""
+    })));
+    downloadTextFile("exam-analytics.csv", csv, "text/csv;charset=utf-8");
+  });
+  document.getElementById("examAnalyticsPrintBtn")?.addEventListener("click", () => window.print());
+  await load();
+}
+
+function renderExamTemplateManagerPanel() {
+  return `
+    <div class="module-header-card">
+      <h4>Template Orchestration</h4>
+      <p>Create, clone, preview and archive dynamic templates for exams, scripts, assessment and progress workflows.</p>
+    </div>
+    <div class="form-grid">
+      <label>Template Type</label>
+      <select id="examTplType">
+        <option value="exam-paper">Exam Paper</option>
+        <option value="mark-sheet">Mark Sheet</option>
+        <option value="assessment-report">Assessment Report</option>
+        <option value="progress-report">Progress Report</option>
+        <option value="teacher-notes">Teacher Notes</option>
+      </select>
+      <label>Template Name</label>
+      <input id="examTplName" placeholder="e.g. Grade 9 Social Studies Paper 1" />
+      <label>Version Tag</label>
+      <input id="examTplVersionTag" placeholder="e.g. v1.0" />
+      <label>Template Body</label>
+      <textarea id="examTplBody" rows="14" class="template-spacious" placeholder="Template body..."></textarea>
+    </div>
+    <div class="actions-row exam-icon-group">
+      <button class="ax-btn ax-btn--generate ax-btn--sm" id="examTplPresetBtn" title="Generate preset">AI Generate</button>
+      <button class="ax-btn ax-btn--save ax-btn--sm" id="examTplSaveBtn" title="Save template">Save</button>
+      <button class="ax-btn ax-btn--edit ax-btn--sm" id="examTplUpdateBtn" title="Update template">Edit</button>
+      <button class="ax-btn ax-btn--view ax-btn--sm" id="examTplViewBtn" title="Preview template">Preview</button>
+      <button class="ax-btn ax-btn--clone ax-btn--sm" id="examTplCloneBtn" title="Clone template">Clone</button>
+      <button class="ax-btn ax-btn--delete ax-btn--sm" id="examTplDeleteBtn" title="Delete template">Delete</button>
+      <button class="ax-btn ax-btn--download ax-btn--sm" id="examTplDownloadBtn" title="Download template">Download</button>
+      <button class="ax-btn ax-btn--upload ax-btn--sm" id="examTplUploadBtn" title="Upload template">Upload</button>
+      <input id="examTplUploadInput" type="file" accept=".txt,.csv,.doc,.docx,.md" style="display:none;" />
+      <button class="ax-btn ax-btn--refresh ax-btn--sm" id="examTplRefreshBtn" title="Refresh templates">Refresh</button>
+    </div>
+    <div id="examTplStatus" class="small-note">Ready.</div>
+    <div class="dashboard-table-wrap">
+      <table class="dashboard-table">
+        <thead><tr><th>ID</th><th>Type</th><th>Name</th><th>Version</th><th>Updated</th><th>Actions</th></tr></thead>
+        <tbody id="examTplBodyRows"></tbody>
+      </table>
+    </div>
+  `;
+}
+
+async function wireExamTemplateManagerPanel() {
+  const typeEl = document.getElementById("examTplType");
+  const nameEl = document.getElementById("examTplName");
+  const versionTagEl = document.getElementById("examTplVersionTag");
+  const bodyEl = document.getElementById("examTplBody");
+  const rowsEl = document.getElementById("examTplBodyRows");
+  const statusEl = document.getElementById("examTplStatus");
+  let selectedTemplateId = null;
+  let rowsCache = [];
+
+  const setStatus = (message) => {
+    if (statusEl) statusEl.textContent = message || "";
+  };
+
+  const bindSelected = (row = null) => {
+    selectedTemplateId = Number(row?.id || 0) || null;
+    if (row) {
+      if (typeEl) typeEl.value = String(row.template_key || "exam-paper");
+      if (nameEl) nameEl.value = String(row.template_name || "");
+      if (versionTagEl) versionTagEl.value = String(row.version_tag || "");
+      if (bodyEl) bodyEl.value = String(row.content || "");
+      setStatus(`Selected template #${row.id}`);
+    }
+  };
+
+  const renderRows = () => {
+    if (!rowsEl) return;
+    rowsEl.innerHTML = rowsCache.length
+      ? rowsCache.map((row) => `
+        <tr>
+          <td>${escapeHtml(String(row.id || "-"))}</td>
+          <td>${escapeHtml(row.template_key || "-")}</td>
+          <td>${escapeHtml(row.template_name || "-")}</td>
+          <td>${escapeHtml(row.version_tag || "-")}</td>
+          <td>${escapeHtml(formatDateTime(row.updated_at || row.created_at))}</td>
+          <td class="table-actions-cell">
+            <button class="ax-btn ax-btn--view ax-btn--sm" data-tpl-action="select" data-id="${Number(row.id || 0)}">View</button>
+            <button class="ax-btn ax-btn--clone ax-btn--sm" data-tpl-action="clone" data-id="${Number(row.id || 0)}">Clone</button>
+            <button class="ax-btn ax-btn--archive ax-btn--sm" data-tpl-action="archive" data-id="${Number(row.id || 0)}">Archive</button>
+          </td>
+        </tr>
+      `).join("")
+      : `<tr><td colspan="6">No templates saved.</td></tr>`;
+    rowsEl.querySelectorAll("[data-tpl-action]").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const action = String(btn.getAttribute("data-tpl-action") || "");
+        const id = Number(btn.getAttribute("data-id") || 0);
+        const row = rowsCache.find((item) => Number(item.id || 0) === id) || null;
+        if (!id || !action) return;
+        if (action === "select") {
+          bindSelected(row);
+          return;
+        }
+        if (action === "clone") {
+          try {
+            await request(`/api/examinations/templates/${id}/clone`, { method: "POST" });
+            await loadRows();
+          } catch (error) {
+            alert(error.message);
+          }
+          return;
+        }
+        if (action === "archive") {
+          try {
+            await request("/api/examinations/archives", {
+              method: "POST",
+              body: JSON.stringify({
+                archive_type: "template",
+                title: row?.template_name || `Template ${id}`,
+                reference_id: id,
+                payload_json: { template: row || null }
+              })
+            });
+            setStatus(`Template #${id} archived.`);
+          } catch (error) {
+            alert(error.message);
+          }
+        }
+      });
+    });
+  };
+
+  const loadRows = async () => {
+    try {
+      const rows = await request("/api/examinations/templates");
+      rowsCache = Array.isArray(rows) ? rows : [];
+      renderRows();
+      setStatus(`Loaded ${rowsCache.length} template(s).`);
+    } catch (error) {
+      setStatus(error.message);
+      rowsCache = [];
+      renderRows();
+    }
+  };
+
+  document.getElementById("examTplPresetBtn")?.addEventListener("click", () => {
+    if (bodyEl) bodyEl.value = examTemplatePresetContent(String(typeEl?.value || "exam-paper"));
+    setStatus("Preset loaded. Review and save.");
+  });
+  document.getElementById("examTplSaveBtn")?.addEventListener("click", async () => {
+    const payload = {
+      template_key: String(typeEl?.value || "exam-paper"),
+      template_name: String(nameEl?.value || "").trim(),
+      version_tag: String(versionTagEl?.value || "").trim(),
+      content: String(bodyEl?.value || "").trim()
+    };
+    if (!payload.template_name || !payload.content) {
+      alert("Template name and body are required.");
+      return;
+    }
+    try {
+      await request("/api/examinations/templates", {
+        method: "POST",
+        body: JSON.stringify(payload)
+      });
+      await loadRows();
+    } catch (error) {
+      alert(error.message);
+    }
+  });
+  document.getElementById("examTplUpdateBtn")?.addEventListener("click", async () => {
+    if (!selectedTemplateId) {
+      alert("Select a template first.");
+      return;
+    }
+    try {
+      await request(`/api/examinations/templates/${selectedTemplateId}`, {
+        method: "PUT",
+        body: JSON.stringify({
+          template_key: String(typeEl?.value || "exam-paper"),
+          template_name: String(nameEl?.value || "").trim(),
+          version_tag: String(versionTagEl?.value || "").trim(),
+          content: String(bodyEl?.value || "").trim()
+        })
+      });
+      await loadRows();
+    } catch (error) {
+      alert(error.message);
+    }
+  });
+  document.getElementById("examTplViewBtn")?.addEventListener("click", () => {
+    const content = String(bodyEl?.value || "").trim();
+    if (!content) {
+      alert("No template body to preview.");
+      return;
+    }
+    const popup = window.open("", "_blank");
+    if (!popup) return;
+    popup.document.write(`<pre>${escapeHtml(content)}</pre>`);
+    popup.document.close();
+  });
+  document.getElementById("examTplCloneBtn")?.addEventListener("click", async () => {
+    if (!selectedTemplateId) {
+      alert("Select a template first.");
+      return;
+    }
+    try {
+      await request(`/api/examinations/templates/${selectedTemplateId}/clone`, { method: "POST" });
+      await loadRows();
+    } catch (error) {
+      alert(error.message);
+    }
+  });
+  document.getElementById("examTplDeleteBtn")?.addEventListener("click", async () => {
+    if (!selectedTemplateId) {
+      alert("Select a template first.");
+      return;
+    }
+    if (!window.confirm(`Delete template #${selectedTemplateId}?`)) return;
+    try {
+      await request(`/api/examinations/templates/${selectedTemplateId}`, { method: "DELETE" });
+      selectedTemplateId = null;
+      await loadRows();
+    } catch (error) {
+      alert(error.message);
+    }
+  });
+  document.getElementById("examTplDownloadBtn")?.addEventListener("click", () => {
+    const content = String(bodyEl?.value || "").trim();
+    if (!content) {
+      alert("No template body to download.");
+      return;
+    }
+    const name = String(nameEl?.value || "exam-template").trim().replace(/\s+/g, "-").toLowerCase();
+    downloadTextFile(`${name || "exam-template"}.txt`, content);
+  });
+  document.getElementById("examTplUploadBtn")?.addEventListener("click", () => {
+    document.getElementById("examTplUploadInput")?.click();
+  });
+  document.getElementById("examTplUploadInput")?.addEventListener("change", async (event) => {
+    const file = event?.target?.files?.[0];
+    if (!file) return;
+    const text = await file.text();
+    if (bodyEl) bodyEl.value = text;
+    if (nameEl && !nameEl.value) nameEl.value = file.name.replace(/\.[^.]+$/, "");
+    setStatus(`Loaded file: ${file.name}`);
+    event.target.value = "";
+  });
+  document.getElementById("examTplRefreshBtn")?.addEventListener("click", loadRows);
+  await loadRows();
+}
+
+function renderExamArchivePanel() {
+  return `
+    <div class="module-header-card">
+      <h4>Archives & Lifecycle</h4>
+      <p>Archive generated exams, scripts and reports for retrieval, traceability and institutional compliance.</p>
+    </div>
+    <div class="form-grid">
+      <label>Archive Type</label>
+      <select id="examArchiveType">
+        <option value="exam-paper">Exam Paper</option>
+        <option value="exam-script">Exam Script</option>
+        <option value="assessment-report">Assessment Report</option>
+        <option value="progress-report">Progress Report</option>
+        <option value="template">Template</option>
+      </select>
+      <label>Archive Title</label>
+      <input id="examArchiveTitle" placeholder="Archive title" />
+      <label>Reference ID</label>
+      <input id="examArchiveRefId" type="number" placeholder="Optional source ID" />
+      <label>Payload / Notes</label>
+      <textarea id="examArchivePayload" rows="8" class="template-spacious" placeholder="Archived payload or notes..."></textarea>
+      <label>Status Filter</label>
+      <select id="examArchiveStatusFilter">
+        <option value="">All</option>
+        <option value="ACTIVE">Active</option>
+        <option value="ARCHIVED">Archived</option>
+      </select>
+    </div>
+    <div class="actions-row exam-icon-group">
+      <button class="ax-btn ax-btn--archive ax-btn--sm" id="examArchiveSaveBtn" title="Archive item">Archive</button>
+      <button class="ax-btn ax-btn--view ax-btn--sm" id="examArchiveViewBtn" title="View archive">View</button>
+      <button class="ax-btn ax-btn--approve ax-btn--sm" id="examArchiveRestoreBtn" title="Restore archive">Restore</button>
+      <button class="ax-btn ax-btn--download ax-btn--sm" id="examArchiveDownloadBtn" title="Download archive">Download</button>
+      <button class="ax-btn ax-btn--refresh ax-btn--sm" id="examArchiveRefreshBtn" title="Refresh archive">Refresh</button>
+    </div>
+    <div id="examArchiveStatus" class="small-note">Ready.</div>
+    <div class="dashboard-table-wrap">
+      <table class="dashboard-table">
+        <thead><tr><th>ID</th><th>Type</th><th>Title</th><th>Status</th><th>Archived At</th><th>Actions</th></tr></thead>
+        <tbody id="examArchiveRows"></tbody>
+      </table>
+    </div>
+  `;
+}
+
+async function wireExamArchivePanel() {
+  const typeEl = document.getElementById("examArchiveType");
+  const titleEl = document.getElementById("examArchiveTitle");
+  const refEl = document.getElementById("examArchiveRefId");
+  const payloadEl = document.getElementById("examArchivePayload");
+  const filterEl = document.getElementById("examArchiveStatusFilter");
+  const rowsEl = document.getElementById("examArchiveRows");
+  const statusEl = document.getElementById("examArchiveStatus");
+  let rowsCache = [];
+  let selectedArchiveId = null;
+
+  const setStatus = (message) => {
+    if (statusEl) statusEl.textContent = message || "";
+  };
+
+  const renderRows = () => {
+    if (!rowsEl) return;
+    rowsEl.innerHTML = rowsCache.length
+      ? rowsCache.map((row) => `
+        <tr>
+          <td>${escapeHtml(String(row.id || "-"))}</td>
+          <td>${escapeHtml(row.archive_type || "-")}</td>
+          <td>${escapeHtml(row.title || "-")}</td>
+          <td>${escapeHtml(row.status || "-")}</td>
+          <td>${escapeHtml(formatDateTime(row.archived_at || row.created_at))}</td>
+          <td class="table-actions-cell">
+            <button class="ax-btn ax-btn--view ax-btn--sm" data-archive-action="view" data-id="${Number(row.id || 0)}">View</button>
+            <button class="ax-btn ax-btn--approve ax-btn--sm" data-archive-action="restore" data-id="${Number(row.id || 0)}">Restore</button>
+          </td>
+        </tr>
+      `).join("")
+      : `<tr><td colspan="6">No archive rows yet.</td></tr>`;
+    rowsEl.querySelectorAll("[data-archive-action]").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const action = String(btn.getAttribute("data-archive-action") || "");
+        const id = Number(btn.getAttribute("data-id") || 0);
+        const row = rowsCache.find((item) => Number(item.id || 0) === id) || null;
+        if (!id) return;
+        selectedArchiveId = id;
+        if (action === "view" && row) {
+          if (typeEl) typeEl.value = String(row.archive_type || "exam-paper");
+          if (titleEl) titleEl.value = String(row.title || "");
+          if (refEl) refEl.value = String(row.reference_id || "");
+          if (payloadEl) payloadEl.value = typeof row.payload_json === "string"
+            ? row.payload_json
+            : JSON.stringify(row.payload_json || {}, null, 2);
+          setStatus(`Loaded archive #${id}.`);
+          return;
+        }
+        if (action === "restore") {
+          try {
+            await request(`/api/examinations/archives/${id}`, {
+              method: "PATCH",
+              body: JSON.stringify({ status: "ACTIVE" })
+            });
+            await loadRows();
+          } catch (error) {
+            alert(error.message);
+          }
+        }
+      });
+    });
+  };
+
+  const loadRows = async () => {
+    const params = new URLSearchParams();
+    const statusFilter = String(filterEl?.value || "").trim();
+    if (statusFilter) params.set("status", statusFilter);
+    try {
+      const rows = await request(`/api/examinations/archives?${params.toString()}`);
+      rowsCache = Array.isArray(rows) ? rows : [];
+      renderRows();
+      setStatus(`Loaded ${rowsCache.length} archive row(s).`);
+    } catch (error) {
+      setStatus(error.message);
+      rowsCache = [];
+      renderRows();
+    }
+  };
+
+  document.getElementById("examArchiveSaveBtn")?.addEventListener("click", async () => {
+    const payloadText = String(payloadEl?.value || "").trim();
+    const payloadJson = payloadText
+      ? (() => {
+        try {
+          return JSON.parse(payloadText);
+        } catch (_) {
+          return { text: payloadText };
+        }
+      })()
+      : null;
+    try {
+      await request("/api/examinations/archives", {
+        method: "POST",
+        body: JSON.stringify({
+          archive_type: String(typeEl?.value || "exam-paper"),
+          title: String(titleEl?.value || "").trim() || "Exam Archive",
+          reference_id: Number(refEl?.value || 0) || null,
+          payload_json: payloadJson
+        })
+      });
+      await loadRows();
+    } catch (error) {
+      alert(error.message);
+    }
+  });
+  document.getElementById("examArchiveViewBtn")?.addEventListener("click", () => {
+    if (!selectedArchiveId) {
+      alert("Select an archive row first.");
+      return;
+    }
+    const row = rowsCache.find((item) => Number(item.id || 0) === selectedArchiveId) || null;
+    if (!row) return;
+    const popup = window.open("", "_blank");
+    if (!popup) return;
+    popup.document.write(`<pre>${escapeHtml(JSON.stringify(row, null, 2))}</pre>`);
+    popup.document.close();
+  });
+  document.getElementById("examArchiveRestoreBtn")?.addEventListener("click", async () => {
+    if (!selectedArchiveId) {
+      alert("Select an archive row first.");
+      return;
+    }
+    try {
+      await request(`/api/examinations/archives/${selectedArchiveId}`, {
+        method: "PATCH",
+        body: JSON.stringify({ status: "ACTIVE" })
+      });
+      await loadRows();
+    } catch (error) {
+      alert(error.message);
+    }
+  });
+  document.getElementById("examArchiveDownloadBtn")?.addEventListener("click", () => {
+    if (!selectedArchiveId) {
+      alert("Select an archive row first.");
+      return;
+    }
+    const row = rowsCache.find((item) => Number(item.id || 0) === selectedArchiveId) || null;
+    if (!row) return;
+    downloadTextFile(
+      `exam-archive-${selectedArchiveId}.json`,
+      JSON.stringify(row, null, 2),
+      "application/json;charset=utf-8"
+    );
+  });
+  document.getElementById("examArchiveRefreshBtn")?.addEventListener("click", loadRows);
+  filterEl?.addEventListener("change", loadRows);
+  await loadRows();
+}
+
+function renderExamSettingsPanel() {
+  return `
+    <div class="module-header-card">
+      <h4>Examination Settings</h4>
+      <p>Configure module automation, validation and orchestration defaults for secure enterprise operation.</p>
+    </div>
+    <div class="form-grid">
+      <label>Auto Save Enabled</label>
+      <select id="examSettingsAutoSave"><option value="1">Enabled</option><option value="0">Disabled</option></select>
+      <label>Auto Save Interval (sec)</label>
+      <input id="examSettingsAutoSaveInterval" type="number" min="10" max="900" value="90" />
+      <label>Strict CBC Validation</label>
+      <select id="examSettingsCbcValidation"><option value="1">Enabled</option><option value="0">Disabled</option></select>
+      <label>Background Processing</label>
+      <select id="examSettingsBackground"><option value="1">Enabled</option><option value="0">Disabled</option></select>
+      <label>Real-time Sync (WebSocket Ready)</label>
+      <select id="examSettingsRealtime"><option value="1">Enabled</option><option value="0">Disabled</option></select>
+      <label>Offline Cache</label>
+      <select id="examSettingsCache"><option value="1">Enabled</option><option value="0">Disabled</option></select>
+    </div>
+    <div class="actions-row exam-icon-group">
+      <button class="ax-btn ax-btn--save ax-btn--sm" id="examSettingsSaveBtn" title="Save settings">Save</button>
+      <button class="ax-btn ax-btn--refresh ax-btn--sm" id="examSettingsReloadBtn" title="Reload settings">Refresh</button>
+      <button class="ax-btn ax-btn--view ax-btn--sm" id="examSettingsPreviewBtn" title="Preview settings">Preview</button>
+    </div>
+    <pre id="examSettingsPreview" class="small-note" style="max-height:260px;overflow:auto;"></pre>
+  `;
+}
+
+async function wireExamSettingsPanel() {
+  const readForm = () => ({
+    auto_save_enabled: Number(document.getElementById("examSettingsAutoSave")?.value || 0) === 1,
+    auto_save_interval_sec: Number(document.getElementById("examSettingsAutoSaveInterval")?.value || 90),
+    strict_cbc_validation: Number(document.getElementById("examSettingsCbcValidation")?.value || 0) === 1,
+    background_processing_enabled: Number(document.getElementById("examSettingsBackground")?.value || 0) === 1,
+    realtime_sync_enabled: Number(document.getElementById("examSettingsRealtime")?.value || 0) === 1,
+    offline_cache_enabled: Number(document.getElementById("examSettingsCache")?.value || 0) === 1
+  });
+  const applyForm = (settings = {}) => {
+    const pick = (key, fallback) => Object.prototype.hasOwnProperty.call(settings, key) ? settings[key] : fallback;
+    document.getElementById("examSettingsAutoSave").value = pick("auto_save_enabled", true) ? "1" : "0";
+    document.getElementById("examSettingsAutoSaveInterval").value = String(pick("auto_save_interval_sec", 90));
+    document.getElementById("examSettingsCbcValidation").value = pick("strict_cbc_validation", true) ? "1" : "0";
+    document.getElementById("examSettingsBackground").value = pick("background_processing_enabled", true) ? "1" : "0";
+    document.getElementById("examSettingsRealtime").value = pick("realtime_sync_enabled", false) ? "1" : "0";
+    document.getElementById("examSettingsCache").value = pick("offline_cache_enabled", true) ? "1" : "0";
+  };
+  const preview = () => {
+    const pre = document.getElementById("examSettingsPreview");
+    if (!pre) return;
+    pre.textContent = JSON.stringify(readForm(), null, 2);
+  };
+  const load = async () => {
+    try {
+      const result = await request("/api/examinations/settings");
+      applyForm(result?.settings || {});
+      preview();
+    } catch (error) {
+      const pre = document.getElementById("examSettingsPreview");
+      if (pre) pre.textContent = error.message;
+    }
+  };
+  document.getElementById("examSettingsSaveBtn")?.addEventListener("click", async () => {
+    const payload = readForm();
+    try {
+      await request("/api/examinations/settings", {
+        method: "PUT",
+        body: JSON.stringify(payload)
+      });
+      preview();
+      alert("Examination settings saved.");
+    } catch (error) {
+      alert(error.message);
+    }
+  });
+  document.getElementById("examSettingsReloadBtn")?.addEventListener("click", load);
+  document.getElementById("examSettingsPreviewBtn")?.addEventListener("click", preview);
+  await load();
+}
+
 async function renderCbcCurriculumEditor(options = {}) {
   setActiveSidebarButton("system-cbc-editor");
   document.getElementById("moduleTitle").textContent = "Examination Management";
@@ -4786,10 +5476,34 @@ async function renderCbcCurriculumEditor(options = {}) {
 
   const actorRole = normalizeRoleKey(portalContext?.role || "");
   const isSuperSystemDeveloper = actorRole === "SUPER_SYSTEM_DEVELOPER";
-  const canAccessCurriculumCore = actorRole === "SUPER_SYSTEM_DEVELOPER";
-  const canAccessNotesGeneration = isExamNotesGenerationRole(actorRole);
-  const initialExamTab = String(options?.examTab || "curriculum");
+  const canAccessCurriculumCore = isSuperSystemDeveloper;
+  const canAccessNotesGeneration = isSuperSystemDeveloper;
+  const initialExamTab = normalizeExamTabKey(options?.examTab || "curriculum");
   const initialCurriculumTab = String(options?.curriculumTab || "curriculum-design");
+  if (!isSuperSystemDeveloper) {
+    document.getElementById("cards").innerHTML = `
+      <div class="card stats-card metric-emphasis">
+        <h4>Examination Module</h4>
+        <p>Restricted</p>
+      </div>
+      <div class="card stats-card">
+        <h4>Allowed Role</h4>
+        <p>SUPER SYSTEM DEVELOPER</p>
+      </div>
+      <div class="card stats-card">
+        <h4>Current Role</h4>
+        <p>${escapeHtml(actorRole || "-")}</p>
+      </div>
+    `;
+    document.getElementById("formArea").innerHTML = `
+      <div class="module-header-card">
+        <h3>Examination Management Module</h3>
+        <p>Access is restricted to <strong>SUPER SYSTEM DEVELOPER</strong> only, as configured for this module redesign.</p>
+      </div>
+    `;
+    resetDataTable("Examination module access restricted.");
+    return;
+  }
   const gradeOptions = Array.isArray(meta?.gradeOptions) ? meta.gradeOptions : [];
   const formOptions = Array.isArray(meta?.formOptions) ? meta.formOptions : [];
   const levelOptions = Array.isArray(meta?.cbcLevels) ? meta.cbcLevels : [];
@@ -4828,15 +5542,16 @@ async function renderCbcCurriculumEditor(options = {}) {
     </div>
     <div class="card stats-card">
       <h4>Exam Engine</h4>
-      <p>6 sub-modules active</p>
+      <p>10 sub-modules active</p>
     </div>
   `;
 
   document.getElementById("formArea").innerHTML = `
     <div class="module-header-card">
       <h3>Examination Management Module</h3>
-      <p>Sub-modules: Curriculum, Exam Generation, Marks Entry, Results Script, Assessment Report, Learners Performance Record.</p>
+      <p>Curriculum-aware examination lifecycle: Curriculum, Exam Generation, Exam Entry, Exam Scripts, Assessment Reports, Progress Reports, Analytics, Templates, Archives, and Settings.</p>
     </div>
+    <nav id="examTopNav" class="exam-top-nav" aria-label="Examination submodules"></nav>
     <section id="examMgmtSubmodulePanel" class="dashboard-section"></section>
   `;
 
@@ -4974,7 +5689,7 @@ async function renderCbcCurriculumEditor(options = {}) {
             </div>
             <textarea id="currNotesOutput" rows="14" class="template-spacious" placeholder="Generated teacher notes appear here."></textarea>
           `
-            : `<p class="small-note">Access blocked. Notes Generation is available only to SSD, SD, HOI/Admin, S/Teacher, D/HIO and Teacher roles.</p>`
+            : `<p class="small-note">Access blocked. Notes Generation is available only to Super System Developer in this module configuration.</p>`
         }
       </section>
       <section id="examTemplateStudioSection" class="dashboard-section">
@@ -5003,6 +5718,27 @@ async function renderCbcCurriculumEditor(options = {}) {
   };
 
   const panel = document.getElementById("examMgmtSubmodulePanel");
+  const navEl = document.getElementById("examTopNav");
+  const examTabs = [
+    { id: "curriculum", label: "Curriculum" },
+    { id: "exam-generation", label: "Exam Generation" },
+    { id: "exam-entry", label: "Exam Entry" },
+    { id: "exam-scripts", label: "Exam Scripts" },
+    { id: "assessment-reports", label: "Assessment Reports" },
+    { id: "progress-reports", label: "Progress Reports" },
+    { id: "analytics", label: "Analytics" },
+    { id: "templates", label: "Templates" },
+    { id: "archives", label: "Archives" },
+    { id: "settings", label: "Settings" }
+  ];
+  const renderExamNav = (activeTab) => {
+    if (!navEl) return;
+    navEl.innerHTML = examTabs.map((tab) => `
+      <button type="button" class="ax-btn ax-btn--view ax-btn--sm exam-nav-btn${activeTab === tab.id ? " active" : ""}" data-exam-tab="${tab.id}" title="${escapeHtmlAttribute(tab.label)}">
+        ${escapeHtml(tab.label)}
+      </button>
+    `).join("");
+  };
   const setTablePreview = () => {
     const rows = examPanelState.curriculumRows || [];
     const head = document.getElementById("tableHead");
@@ -5025,8 +5761,15 @@ async function renderCbcCurriculumEditor(options = {}) {
   };
 
   const activateExamTab = async (tabKey = "curriculum", curriculumTab = initialCurriculumTab) => {
-    const tab = String(tabKey || "curriculum");
+    const tab = normalizeExamTabKey(tabKey || "curriculum");
     if (!panel) return;
+    renderExamNav(tab);
+    styleExamModuleButtonsAsNamedIcons(navEl);
+    navEl?.querySelectorAll("[data-exam-tab]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        activateExamTab(String(btn.getAttribute("data-exam-tab") || "curriculum"));
+      });
+    });
     if (tab === "curriculum") {
       panel.innerHTML = renderCurriculumPanel(curriculumTab);
       const statusEl = document.getElementById("curriculumStatus");
@@ -5265,7 +6008,7 @@ async function renderCbcCurriculumEditor(options = {}) {
         const subStrand = prompt("New sub-strand (optional):", "") || "";
         try {
           await request(`/api/cbc/curriculum/${id}`, {
-            method: "PATCH",
+            method: "PUT",
             body: JSON.stringify({ strand, sub_strand: subStrand })
           });
           setStatus(`Curriculum entry ${id} updated.`);
@@ -5638,7 +6381,7 @@ async function renderCbcCurriculumEditor(options = {}) {
       styleExamModuleButtonsAsNamedIcons(panel);
       return;
     }
-    if (tab === "marks-entry") {
+    if (tab === "exam-entry" || tab === "marks-entry") {
       panel.innerHTML = renderExamMarksEntryPanel();
       wireExamMarksEntryPanel();
       applyCompactIconButtons(panel);
@@ -5646,7 +6389,7 @@ async function renderCbcCurriculumEditor(options = {}) {
       styleExamModuleButtonsAsNamedIcons(panel);
       return;
     }
-    if (tab === "result-scripts") {
+    if (tab === "exam-scripts" || tab === "result-scripts") {
       panel.innerHTML = renderExamResultScriptsPanel();
       wireExamResultScriptsPanel();
       applyCompactIconButtons(panel);
@@ -5654,7 +6397,7 @@ async function renderCbcCurriculumEditor(options = {}) {
       styleExamModuleButtonsAsNamedIcons(panel);
       return;
     }
-    if (tab === "assessment-report") {
+    if (tab === "assessment-reports" || tab === "assessment-report") {
       panel.innerHTML = renderExamAssessmentReportPanel();
       wireExamAssessmentReportPanel();
       applyCompactIconButtons(panel);
@@ -5662,11 +6405,40 @@ async function renderCbcCurriculumEditor(options = {}) {
       styleExamModuleButtonsAsNamedIcons(panel);
       return;
     }
-    if (tab === "learner-performance") {
+    if (tab === "progress-reports" || tab === "learner-performance") {
       panel.innerHTML = renderExamLearnerPerformancePanel();
       wireExamLearnerPerformancePanel();
       applyCompactIconButtons(panel);
       applyTemplateVisibility(panel);
+      styleExamModuleButtonsAsNamedIcons(panel);
+      return;
+    }
+    if (tab === "analytics") {
+      panel.innerHTML = renderExamAnalyticsPanel();
+      await wireExamAnalyticsPanel();
+      applyCompactIconButtons(panel);
+      styleExamModuleButtonsAsNamedIcons(panel);
+      return;
+    }
+    if (tab === "templates") {
+      panel.innerHTML = renderExamTemplateManagerPanel();
+      await wireExamTemplateManagerPanel();
+      applyCompactIconButtons(panel);
+      applyTemplateVisibility(panel);
+      styleExamModuleButtonsAsNamedIcons(panel);
+      return;
+    }
+    if (tab === "archives") {
+      panel.innerHTML = renderExamArchivePanel();
+      await wireExamArchivePanel();
+      applyCompactIconButtons(panel);
+      styleExamModuleButtonsAsNamedIcons(panel);
+      return;
+    }
+    if (tab === "settings") {
+      panel.innerHTML = renderExamSettingsPanel();
+      await wireExamSettingsPanel();
+      applyCompactIconButtons(panel);
       styleExamModuleButtonsAsNamedIcons(panel);
     }
   };
