@@ -1616,8 +1616,14 @@ function isSafeTableIdentifier(name) {
   return /^[a-z_][a-z0-9_]*$/i.test(cleanValue(name));
 }
 
+const cachedTableColumns = new Map();
+
 async function getTableColumns(tableName) {
   if (!isSafeTableIdentifier(tableName)) return [];
+  const cacheKey = String(tableName || "").trim().toLowerCase();
+  if (cachedTableColumns.has(cacheKey)) {
+    return cachedTableColumns.get(cacheKey);
+  }
   const rows = await query(
     `SELECT COLUMN_NAME
      FROM INFORMATION_SCHEMA.COLUMNS
@@ -1625,7 +1631,27 @@ async function getTableColumns(tableName) {
        AND TABLE_NAME = ?`,
     [tableName]
   );
-  return rows.map((row) => row.COLUMN_NAME);
+  const names = rows.map((row) => row.COLUMN_NAME);
+  cachedTableColumns.set(cacheKey, names);
+  return names;
+}
+
+/** Drops payload keys MySQL doesn't have yet (avoids ER_BAD_FIELD errors when schema drift / partial imports). */
+async function filterRowByTableColumns(tableName, row) {
+  const source = row && typeof row === "object" ? row : {};
+  const keys = Object.keys(source);
+  if (!keys.length) {
+    return {};
+  }
+  const existing = await getExistingColumns(tableName, keys);
+  const allow = new Set(existing);
+  const out = {};
+  for (const key of keys) {
+    if (allow.has(key)) {
+      out[key] = source[key];
+    }
+  }
+  return out;
 }
 
 function getScopedFilter(config, user) {
@@ -2333,8 +2359,11 @@ async function getPaginatedRows({
   limit = 50,
   offset = 0
 }) {
+  const usableFields = Array.isArray(searchFields)
+    ? await getExistingColumns(table, searchFields)
+    : [];
   const search = buildSearchWhere({
-    fields: searchFields,
+    fields: usableFields,
     queryValue: q,
     params: [institutionId, ...extraParams]
   });
@@ -7334,7 +7363,7 @@ app.post(
   enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER]),
   enforcePermission(PERMISSIONS.CREATE),
   asyncHandler(async (req, res) => {
-    const data = pickFields(req.body, [
+    let data = pickFields(req.body, [
       "grade",
       "form_name",
       "learning_area",
@@ -7354,6 +7383,7 @@ app.post(
     }
     data.institution_id = req.user.institution_id;
     data.created_by_user_id = req.user.id;
+    data = await filterRowByTableColumns("cbc_curriculum_entries", data);
     const columns = Object.keys(data);
     const placeholders = columns.map(() => "?").join(", ");
     const result = await query(
@@ -7374,7 +7404,7 @@ app.put(
   asyncHandler(async (req, res) => {
     const entryId = Number(req.params.id);
     if (!entryId) return res.status(400).json({ error: "Valid curriculum entry id is required." });
-    const data = pickFields(req.body, [
+    let data = pickFields(req.body, [
       "grade",
       "form_name",
       "learning_area",
@@ -7389,6 +7419,7 @@ app.put(
       "year",
       "notes"
     ]);
+    data = await filterRowByTableColumns("cbc_curriculum_entries", data);
     const columns = Object.keys(data);
     if (!columns.length) {
       return res.status(400).json({ error: "No valid curriculum fields provided." });
@@ -9686,7 +9717,7 @@ moduleConfigs.forEach((config) => {
     enforcePermission(PERMISSIONS.CREATE),
     asyncHandler(async (req, res) => {
       const scopedFilter = getScopedFilter(config, req.user);
-      const data = pickFields(req.body, config.fields);
+      let data = pickFields(req.body, config.fields);
       let assignLearnerSerialAfterInsert = false;
       data.institution_id = req.user.institution_id;
       data.created_by_user_id = req.user.id;
@@ -9775,6 +9806,7 @@ moduleConfigs.forEach((config) => {
         }
       }
 
+      data = await filterRowByTableColumns(config.table, data);
       const columns = Object.keys(data);
       if (!columns.length) {
         return res.status(400).json({ error: "No valid payload fields." });
@@ -9803,7 +9835,7 @@ moduleConfigs.forEach((config) => {
     enforcePermission(PERMISSIONS.UPDATE),
     asyncHandler(async (req, res) => {
       const scopedFilter = getScopedFilter(config, req.user);
-      const data = pickFields(req.body, config.fields);
+      let data = pickFields(req.body, config.fields);
       if (config.table === "learners") {
         const mergeRows = await query(
           `SELECT grade, form_name, learner_condition, has_medical_condition FROM ${config.table}
@@ -9847,6 +9879,7 @@ moduleConfigs.forEach((config) => {
           data.medical_condition_notes = null;
         }
       }
+      data = await filterRowByTableColumns(config.table, data);
       const columns = Object.keys(data);
       if (!columns.length) {
         return res.status(400).json({ error: "No valid payload fields." });
