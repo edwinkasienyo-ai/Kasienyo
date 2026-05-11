@@ -3948,6 +3948,37 @@ td .ax-btn::before,
   color: #124577;
 }
 
+.exam-v2-header {
+  border-left: 4px solid #1f86df;
+}
+
+.exam-v2-layout {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.exam-v2-pane {
+  border: 1px solid #d7e3f2;
+  border-radius: 12px;
+  background: #fff;
+  padding: 12px;
+}
+
+.exam-v2-pane h4 {
+  margin: 0 0 6px;
+  color: #0d3d6d;
+}
+
+.exam-v2-pane .small-note {
+  margin-bottom: 10px;
+}
+
+.exam-v2-pane textarea {
+  width: 100%;
+}
+
 .dashboard-ai-assistant {
   position: fixed;
   right: 0;
