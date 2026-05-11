@@ -5427,6 +5427,28 @@ app.get(
 );
 
 app.get(
+  "/api/templates/lesson-plan.csv",
+  auth,
+  enforceRole([
+    ROLES.SUPER_SYSTEM_DEVELOPER,
+    ROLES.SYSTEM_DEVELOPER,
+    ROLES.ADMIN,
+    ROLES.HEAD_OF_INSTITUTION,
+    ROLES.SENIOR_TEACHER,
+    ROLES.TEACHER
+  ]),
+  asyncHandler(async (_, res) => {
+    const csv = [
+      "academic_year,term,grade,form_name,stream,learning_area,strand,strand_description,sub_strand,sub_strand_description,lesson_title,learning_outcomes,resources,assessment_strategy,homework,teacher_notes",
+      `${new Date().getFullYear()}/${new Date().getFullYear() + 1},Term One,Grade 7,,,Pre-Technical Studies,1.0 Foundation of Pre-Technical Studies,Core foundational competencies and practical orientation,1.1 Introduction to Pre-Technical Studies,Learners explain scope and importance of pre-technical learning,Introduction to Pre-Technical Studies,Learners describe pre-technical scope and identify applications in daily life,Textbook + projector + worksheet,Observation and rubric,Write two career paths linked to pre-technical studies,Adjust pace to learner readiness`
+    ].join("\n");
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", "attachment; filename=\"lesson-plan-template.csv\"");
+    res.send(csv);
+  })
+);
+
+app.get(
   "/api/institutions/letterhead",
   auth,
   enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.SYSTEM_ADMINISTRATOR]),
@@ -8653,6 +8675,7 @@ app.post(
   enforcePermission(PERMISSIONS.CREATE),
   asyncHandler(async (req, res) => {
     const replaceExisting = parseTruthy(req.body?.replace_existing);
+    const refreshDescriptions = parseTruthy(req.body?.refresh_descriptions ?? true);
     const sourceLabel = "PHOTO_JSS_CORE";
     const seedRows = getJuniorSecondaryCoreSeedRows();
     if (replaceExisting) {
@@ -8725,6 +8748,19 @@ app.post(
       ].join("::"))
     );
     let insertedCurriculumEntries = 0;
+    let updatedCurriculumEntries = 0;
+    let updatedMappings = 0;
+    const existingEntryIdByKey = new Map(
+      existingEntries.map((entry) => ([
+        [
+          cleanValue(entry.grade).toLowerCase(),
+          cleanValue(entry.learning_area).toLowerCase(),
+          cleanValue(entry.strand).toLowerCase(),
+          cleanValue(entry.sub_strand).toLowerCase()
+        ].join("::"),
+        Number(entry.id || 0)
+      ]))
+    );
     for (const row of seedRows) {
       const key = [
         cleanValue(row.grade).toLowerCase(),
@@ -8733,14 +8769,37 @@ app.post(
         cleanValue(row.sub_strand).toLowerCase()
       ].join("::");
       if (existingEntryKeys.has(key)) {
+        if (refreshDescriptions) {
+          const existingId = Number(existingEntryIdByKey.get(key) || 0);
+          if (existingId) {
+            await query(
+              `UPDATE cbc_curriculum_entries
+               SET specific_learning_outcomes = COALESCE(NULLIF(?, ''), specific_learning_outcomes),
+                   suggested_assessment_rubric = COALESCE(NULLIF(?, ''), suggested_assessment_rubric),
+                   learning_experiences = COALESCE(NULLIF(?, ''), learning_experiences),
+                   notes = COALESCE(NULLIF(?, ''), notes),
+                   updated_at = NOW()
+               WHERE id = ? AND institution_id = ?`,
+              [
+                cleanOptionalValue(row.sub_strand_description || row.specific_learning_outcomes),
+                cleanOptionalValue(row.strand_description),
+                cleanOptionalValue(row.learning_experiences),
+                cleanOptionalValue(row.notes),
+                existingId,
+                req.user.institution_id
+              ]
+            );
+            updatedCurriculumEntries += 1;
+          }
+        }
         // eslint-disable-next-line no-continue
         continue;
       }
       await query(
         `INSERT INTO cbc_curriculum_entries
           (institution_id, grade, form_name, learning_area, strand, sub_strand, specific_learning_outcomes,
-           learning_experiences, notes, created_by_user_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           suggested_assessment_rubric, learning_experiences, notes, created_by_user_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           req.user.institution_id,
           cleanOptionalValue(row.grade),
@@ -8748,29 +8807,56 @@ app.post(
           row.learning_area,
           row.strand,
           row.sub_strand,
-          "",
-          "",
-          "",
+          cleanOptionalValue(row.sub_strand_description || row.specific_learning_outcomes),
+          cleanOptionalValue(row.strand_description),
+          cleanOptionalValue(row.learning_experiences),
+          cleanOptionalValue(row.notes),
           req.user.id
         ]
       );
       existingEntryKeys.add(key);
       insertedCurriculumEntries += 1;
     }
+    if (refreshDescriptions) {
+      for (const row of seedRows) {
+        const updateResult = await query(
+          `UPDATE cbc_structure_mappings
+           SET notes = COALESCE(NULLIF(?, ''), notes), updated_at = NOW()
+           WHERE institution_id = ? AND source_label = ? AND grade = ? AND learning_area = ? AND strand = ? AND sub_strand = ?`,
+          [
+            cleanOptionalValue(row.notes),
+            req.user.institution_id,
+            sourceLabel,
+            cleanOptionalValue(row.grade),
+            row.learning_area,
+            row.strand,
+            row.sub_strand
+          ]
+        );
+        if (Number(updateResult?.affectedRows || 0) > 0) {
+          updatedMappings += 1;
+        }
+      }
+    }
 
     await auditLog(req.user, "SEED_JSS_PRETECHNICAL_STRANDS", "cbc_structure_mappings", null, {
       source_label: sourceLabel,
       replace_existing: replaceExisting,
+      refresh_descriptions: refreshDescriptions,
       inserted_mappings: insertedMappings,
       skipped_mappings: skippedMappings,
-      inserted_curriculum_entries: insertedCurriculumEntries
+      inserted_curriculum_entries: insertedCurriculumEntries,
+      updated_curriculum_entries: updatedCurriculumEntries,
+      updated_mappings: updatedMappings
     });
     res.json({
       message: "Grade 7-9 Pre-Technical + Social Studies strands/sub-strands seeded successfully.",
       source_label: sourceLabel,
       inserted_mappings: insertedMappings,
       skipped_mappings: skippedMappings,
-      inserted_curriculum_entries: insertedCurriculumEntries
+      inserted_curriculum_entries: insertedCurriculumEntries,
+      updated_curriculum_entries: updatedCurriculumEntries,
+      updated_mappings: updatedMappings
     });
   })
 );

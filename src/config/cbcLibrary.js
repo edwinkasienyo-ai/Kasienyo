@@ -368,18 +368,24 @@ function buildCbcSuggestion({ grade, formName, learningArea, mappingRows = [] })
 
 function getPreTechnicalSeedRows() {
   const rows = [];
+  const describeStrand = (strand) => `Focuses on ${strand.replace(/^\d+(\.\d+)?\s*/g, "").trim()} competencies, practical skills, and safe application in real-world contexts.`;
+  const describeSubStrand = (subStrand) => `Learners develop practical understanding of ${subStrand.replace(/^\d+(\.\d+)?\s*/g, "").trim()} through guided tasks, reflection, and assessment.`;
   Object.entries(PRE_TECHNICAL_JSS_LIBRARY).forEach(([grade, strandsMap]) => {
     Object.entries(strandsMap).forEach(([strand, subStrands]) => {
       subStrands.forEach((subStrand) => {
+        const strandDescription = describeStrand(strand);
+        const subStrandDescription = describeSubStrand(subStrand);
         rows.push({
           grade,
           form_name: null,
           learning_area: "Pre-Technical Studies",
           strand,
           sub_strand: subStrand,
-          specific_learning_outcomes: "",
-          learning_experiences: "",
-          notes: ""
+          strand_description: strandDescription,
+          sub_strand_description: subStrandDescription,
+          specific_learning_outcomes: subStrandDescription,
+          learning_experiences: "Warm-up, demonstration, guided practice, learner task, reflection and rubric-based assessment.",
+          notes: `Strand Description: ${strandDescription}\nSub-strand Description: ${subStrandDescription}`
         });
       });
     });
@@ -389,18 +395,24 @@ function getPreTechnicalSeedRows() {
 
 function getSocialStudiesSeedRows() {
   const rows = [];
+  const describeStrand = (strand) => `Builds learner competence in ${strand.replace(/^\d+(\.\d+)?\s*/g, "").trim()} with civic awareness, inquiry, and community-linked learning.`;
+  const describeSubStrand = (subStrand) => `Learners explore ${subStrand.replace(/^\d+(\.\d+)?\s*/g, "").trim()} through discussion, evidence-based interpretation, and context-based tasks.`;
   Object.entries(SOCIAL_STUDIES_JSS_LIBRARY).forEach(([grade, strandsMap]) => {
     Object.entries(strandsMap).forEach(([strand, subStrands]) => {
       subStrands.forEach((subStrand) => {
+        const strandDescription = describeStrand(strand);
+        const subStrandDescription = describeSubStrand(subStrand);
         rows.push({
           grade,
           form_name: null,
           learning_area: "Social Studies",
           strand,
           sub_strand: subStrand,
-          specific_learning_outcomes: "",
-          learning_experiences: "",
-          notes: ""
+          strand_description: strandDescription,
+          sub_strand_description: subStrandDescription,
+          specific_learning_outcomes: subStrandDescription,
+          learning_experiences: "Starter activity, source analysis, mapping/discussion, learner task, reflection and competency check.",
+          notes: `Strand Description: ${strandDescription}\nSub-strand Description: ${subStrandDescription}`
         });
       });
     });

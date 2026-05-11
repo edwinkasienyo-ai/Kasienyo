@@ -12,7 +12,7 @@ let portalContext = null;
 let searchRowDrafts = {};
 let dashboardAutoRefreshHandle = null;
 let currentSidebarSubmoduleId = null;
-const CLIENT_UI_BUNDLE_ID = "dash-bundle-main-v70-exam-template-import-fixes";
+const CLIENT_UI_BUNDLE_ID = "dash-bundle-main-v71-curriculum-description-seed";
 const examPanelState = {
   generatedExam: null,
   serials: [],
@@ -5648,9 +5648,13 @@ async function renderCbcCurriculumEditor(options = {}) {
             <input id="examV2CurrCbcLevel" placeholder="e.g. Junior Secondary" />
             <label>Strand</label>
             <input id="examV2CurrStrand" placeholder="Enter strand" />
+            <label>Strand Description</label>
+            <textarea id="examV2CurrStrandDesc" rows="2" placeholder="Describe the strand objectives and scope"></textarea>
             <label>Sub-strand</label>
             <input id="examV2CurrSubStrand" placeholder="Enter sub-strand" />
-            <label>Learning Outcome Notes</label>
+            <label>Sub-strand Description</label>
+            <textarea id="examV2CurrSubStrandDesc" rows="2" placeholder="Describe this sub-strand in detail"></textarea>
+            <label>Learning Outcome / Notes</label>
             <textarea id="examV2CurrNotes" rows="4" placeholder="Optional notes/outcomes"></textarea>
           </div>
           <div class="actions-row exam-icon-group">
@@ -5658,14 +5662,15 @@ async function renderCbcCurriculumEditor(options = {}) {
             <button class="ax-btn ax-btn--save ax-btn--sm" id="examV2CurrSaveBtn" title="Save all rows">Save</button>
             <button class="ax-btn ax-btn--edit ax-btn--sm" id="examV2CurrEditBtn" title="Edit row by ID">Edit</button>
             <button class="ax-btn ax-btn--delete ax-btn--sm" id="examV2CurrDeleteBtn" title="Delete row by ID">Delete</button>
+            <button class="ax-btn ax-btn--generate ax-btn--sm" id="examV2CurrSeedJssBtn" title="Load Grade 7-9 Pre-Tech + Social">Seed G7-9</button>
             <button class="ax-btn ax-btn--refresh ax-btn--sm" id="examV2CurrRefreshBtn" title="Refresh">Refresh</button>
             <button class="ax-btn ax-btn--download ax-btn--sm" id="examV2CurrTemplateBtn" title="Download import template">Template</button>
             <button class="ax-btn ax-btn--download ax-btn--sm" id="examV2CurrDownloadBtn" title="Download rows">Download</button>
           </div>
           <div class="dashboard-table-wrap">
             <table class="dashboard-table">
-              <thead><tr><th>#</th><th>Level</th><th>Learning Area</th><th>Strand</th><th>Sub-strand</th></tr></thead>
-              <tbody id="examV2CurrDraftRows"><tr><td colspan="5">No draft rows yet.</td></tr></tbody>
+              <thead><tr><th>#</th><th>Level</th><th>Learning Area</th><th>Strand</th><th>Strand Desc</th><th>Sub-strand</th><th>Sub Desc</th></tr></thead>
+              <tbody id="examV2CurrDraftRows"><tr><td colspan="7">No draft rows yet.</td></tr></tbody>
             </table>
           </div>
         </div>
@@ -5687,6 +5692,7 @@ async function renderCbcCurriculumEditor(options = {}) {
             <button class="ax-btn ax-btn--generate ax-btn--sm" id="examV2NotesGenerateBtn" title="AI generate notes">AI Generate</button>
             <button class="ax-btn ax-btn--print ax-btn--sm" id="examV2NotesPrintBtn" title="Print notes">Print</button>
             <button class="ax-btn ax-btn--download ax-btn--sm" id="examV2NotesDownloadBtn" title="Download notes">Download</button>
+            <button class="ax-btn ax-btn--download ax-btn--sm" id="examV2LessonPlanTemplateBtn" title="Lesson plan template">Lesson Plan</button>
             <button class="ax-btn ax-btn--view ax-btn--sm" id="examV2MaterialViewBtn" title="View materials">View</button>
           </div>
           <div class="dashboard-table-wrap">
@@ -5713,7 +5719,7 @@ async function renderCbcCurriculumEditor(options = {}) {
       <h4>Registered Curriculum Rows</h4>
       <div class="dashboard-table-wrap">
         <table class="dashboard-table">
-          <thead><tr><th>ID</th><th>Level</th><th>Learning Area</th><th>Strand</th><th>Sub-strand</th><th>Created</th></tr></thead>
+          <thead><tr><th>ID</th><th>Level</th><th>Learning Area</th><th>Strand</th><th>Strand Desc</th><th>Sub-strand</th><th>Sub Desc</th><th>Created</th></tr></thead>
           <tbody id="examV2CurrSavedRows">
             ${rows.length
               ? rows.slice(0, 200).map((row) => `
@@ -5722,11 +5728,13 @@ async function renderCbcCurriculumEditor(options = {}) {
                   <td>${escapeHtml(row.grade || row.form_name || "-")}</td>
                   <td>${escapeHtml(row.learning_area || "-")}</td>
                   <td>${escapeHtml(row.strand || "-")}</td>
+                  <td>${escapeHtml(row.suggested_assessment_rubric || "-")}</td>
                   <td>${escapeHtml(row.sub_strand || "-")}</td>
+                  <td>${escapeHtml(row.specific_learning_outcomes || "-")}</td>
                   <td>${escapeHtml(formatDateTime(row.created_at))}</td>
                 </tr>
               `).join("")
-              : `<tr><td colspan="6">No curriculum rows found.</td></tr>`
+              : `<tr><td colspan="8">No curriculum rows found.</td></tr>`
             }
           </tbody>
         </table>
@@ -5739,7 +5747,9 @@ async function renderCbcCurriculumEditor(options = {}) {
     const formEl = document.getElementById("examV2CurrForm");
     const areaEl = document.getElementById("examV2CurrLearningArea");
     const strandEl = document.getElementById("examV2CurrStrand");
+    const strandDescEl = document.getElementById("examV2CurrStrandDesc");
     const subEl = document.getElementById("examV2CurrSubStrand");
+    const subDescEl = document.getElementById("examV2CurrSubStrandDesc");
     const notesEl = document.getElementById("examV2CurrNotes");
     const cbcLevelEl = document.getElementById("examV2CurrCbcLevel");
     const draftBody = document.getElementById("examV2CurrDraftRows");
@@ -5764,10 +5774,12 @@ async function renderCbcCurriculumEditor(options = {}) {
             <td>${escapeHtml(row.grade || row.form_name || "-")}</td>
             <td>${escapeHtml(row.learning_area || "-")}</td>
             <td>${escapeHtml(row.strand || "-")}</td>
+            <td>${escapeHtml(row.strand_description || "-")}</td>
             <td>${escapeHtml(row.sub_strand || "-")}</td>
+            <td>${escapeHtml(row.sub_strand_description || "-")}</td>
           </tr>
         `).join("")
-        : `<tr><td colspan="5">No draft rows yet.</td></tr>`;
+        : `<tr><td colspan="7">No draft rows yet.</td></tr>`;
     };
 
     document.getElementById("examV2CurrAddRowBtn")?.addEventListener("click", async () => {
@@ -5775,21 +5787,27 @@ async function renderCbcCurriculumEditor(options = {}) {
       const form_name = String(formEl?.value || "");
       const learning_area = String(areaEl?.value || "");
       const strand = String(strandEl?.value || "").trim();
+      const strand_description = String(strandDescEl?.value || "").trim();
       const sub_strand = String(subEl?.value || "").trim();
+      const sub_strand_description = String(subDescEl?.value || "").trim();
       if ((!grade && !form_name) || !learning_area || !strand) {
         alert("Select level, learning area and strand.");
         return;
       }
+      const cbcLevel = String(cbcLevelEl?.value || "").trim();
+      const notes = String(notesEl?.value || "").trim();
       draftRows.push({
         grade,
         form_name,
         learning_area,
         strand,
+        strand_description,
         sub_strand,
-        notes: String(notesEl?.value || "").trim(),
-        specific_learning_outcomes: String(notesEl?.value || "").trim(),
+        sub_strand_description,
+        notes,
+        specific_learning_outcomes: sub_strand_description || notes,
         learning_experiences: "",
-        suggested_assessment_rubric: `CBC Level: ${String(cbcLevelEl?.value || "").trim()}`,
+        suggested_assessment_rubric: [cbcLevel ? `CBC Level: ${cbcLevel}` : "", strand_description].filter(Boolean).join(" | "),
         term: "Term One",
         year: new Date().getFullYear()
       });
@@ -5814,7 +5832,7 @@ async function renderCbcCurriculumEditor(options = {}) {
               strand: row.strand,
               sub_strand: row.sub_strand || "",
               source_label: "EXAM_V2_CURRICULUM",
-              notes: row.notes || ""
+              notes: [row.strand_description ? `Strand Description: ${row.strand_description}` : "", row.sub_strand_description ? `Sub-strand Description: ${row.sub_strand_description}` : "", row.notes || ""].filter(Boolean).join("\n")
             })
           });
         }
@@ -5829,11 +5847,20 @@ async function renderCbcCurriculumEditor(options = {}) {
       const id = Number(prompt("Enter curriculum row ID to edit:", "") || 0);
       if (!id) return;
       const nextStrand = prompt("New strand:", "") || "";
+      const nextStrandDesc = prompt("New strand description:", "") || "";
       const nextSub = prompt("New sub-strand:", "") || "";
+      const nextSubDesc = prompt("New sub-strand description:", "") || "";
+      const nextNotes = prompt("New notes (optional):", "") || "";
       try {
         await request(`/api/cbc/curriculum/${id}`, {
           method: "PUT",
-          body: JSON.stringify({ strand: nextStrand, sub_strand: nextSub })
+          body: JSON.stringify({
+            strand: nextStrand,
+            sub_strand: nextSub,
+            suggested_assessment_rubric: nextStrandDesc,
+            specific_learning_outcomes: nextSubDesc,
+            notes: nextNotes
+          })
         });
         setStatus(`Curriculum row ${id} updated.`);
         await renderCurriculumTab();
@@ -5859,6 +5886,19 @@ async function renderCbcCurriculumEditor(options = {}) {
     document.getElementById("examV2CurrTemplateBtn")?.addEventListener("click", async () => {
       await downloadWithAuth("/api/cbc/curriculum/structure-mappings/template", "cbc-structure-mappings-template.csv");
     });
+    document.getElementById("examV2CurrSeedJssBtn")?.addEventListener("click", async () => {
+      if (!window.confirm("Load Grade 7-9 Pre-Technical + Social Studies strands/sub-strands with descriptions?")) return;
+      try {
+        const result = await request("/api/cbc/curriculum/pretechnical-seed", {
+          method: "POST",
+          body: JSON.stringify({ replace_existing: false, refresh_descriptions: true })
+        });
+        setStatus(result?.message || "JSS seed loaded.");
+        await renderCurriculumTab();
+      } catch (error) {
+        alert(error.message);
+      }
+    });
     document.getElementById("examV2CurrDownloadBtn")?.addEventListener("click", () => {
       if (!rows.length) {
         alert("No rows to download.");
@@ -5869,7 +5909,9 @@ async function renderCbcCurriculumEditor(options = {}) {
         level: row.grade || row.form_name || "",
         learning_area: row.learning_area || "",
         strand: row.strand || "",
-        sub_strand: row.sub_strand || ""
+        strand_description: row.suggested_assessment_rubric || "",
+        sub_strand: row.sub_strand || "",
+        sub_strand_description: row.specific_learning_outcomes || ""
       })));
       downloadTextFile("exam-curriculum-rows.csv", csv, "text/csv;charset=utf-8");
     });
@@ -5953,6 +5995,9 @@ async function renderCbcCurriculumEditor(options = {}) {
         return;
       }
       downloadTextFile("exam-engine-notes.txt", text);
+    });
+    document.getElementById("examV2LessonPlanTemplateBtn")?.addEventListener("click", async () => {
+      await downloadWithAuth("/api/templates/lesson-plan.csv", "lesson-plan-template.csv");
     });
     document.getElementById("examV2MaterialViewBtn")?.addEventListener("click", renderCurriculumTab);
   };
