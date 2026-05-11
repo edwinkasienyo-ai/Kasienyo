@@ -6707,25 +6707,38 @@ app.patch(
     const isActive = req.body?.is_active;
     const isSuspended = req.body?.is_suspended;
     const reason = cleanOptionalValue(req.body?.reason) || null;
-    await query(
-      `UPDATE institutions
-       SET is_active = COALESCE(?, is_active),
-           is_suspended = COALESCE(?, is_suspended),
-           status_reason = CASE WHEN ? IS NOT NULL AND ? = 0 THEN ? ELSE status_reason END,
-           suspended_reason = CASE WHEN ? IS NOT NULL AND ? = 1 THEN ? ELSE suspended_reason END
-       WHERE id = ?`,
-      [
-        isActive === undefined ? null : Number(Boolean(isActive)),
-        isSuspended === undefined ? null : Number(Boolean(isSuspended)),
-        reason,
-        isActive === undefined ? null : Number(Boolean(isActive)),
-        reason,
-        reason,
-        isSuspended === undefined ? null : Number(Boolean(isSuspended)),
-        reason,
-        institutionId
-      ]
-    );
+    const institutionStatusColumns = await getExistingColumns("institutions", [
+      "is_active",
+      "is_suspended",
+      "status_reason",
+      "suspended_reason"
+    ]);
+    const updatePairs = [];
+    const updateParams = [];
+    if (institutionStatusColumns.includes("is_active") && isActive !== undefined) {
+      updatePairs.push("is_active = ?");
+      updateParams.push(Number(Boolean(isActive)));
+    }
+    if (institutionStatusColumns.includes("is_suspended") && isSuspended !== undefined) {
+      updatePairs.push("is_suspended = ?");
+      updateParams.push(Number(Boolean(isSuspended)));
+    }
+    if (institutionStatusColumns.includes("status_reason") && reason && isActive !== undefined && Number(Boolean(isActive)) === 0) {
+      updatePairs.push("status_reason = ?");
+      updateParams.push(reason);
+    }
+    if (institutionStatusColumns.includes("suspended_reason") && reason && isSuspended !== undefined && Number(Boolean(isSuspended)) === 1) {
+      updatePairs.push("suspended_reason = ?");
+      updateParams.push(reason);
+    }
+    if (updatePairs.length) {
+      await query(
+        `UPDATE institutions
+         SET ${updatePairs.join(", ")}
+         WHERE id = ?`,
+        [...updateParams, institutionId]
+      );
+    }
     await auditLog(req.user, "CHANGE_INSTITUTION_STATUS", "institutions", institutionId, {
       is_active: isActive,
       is_suspended: isSuspended,
@@ -6739,7 +6752,7 @@ app.delete(
   "/api/system/registry/institutions/:id",
   auth,
   enforceModuleAccess(MODULE_KEYS.INSTITUTIONS_USERS_REGISTRY),
-  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER]),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER]),
   asyncHandler(async (req, res) => {
     const institutionId = Number(req.params.id);
     if (!institutionId) return res.status(400).json({ error: "Valid institution id is required." });
@@ -6767,24 +6780,66 @@ app.delete(
       deletedByUserId: req.user.id
     });
     const deleteReason = "Institution moved to recycle bin";
-    await query(
-      `UPDATE users
-       SET is_active = 0,
-           is_suspended = 1,
-           status_reason = COALESCE(status_reason, ?),
-           suspended_reason = COALESCE(suspended_reason, ?)
-       WHERE institution_id = ?`,
-      [deleteReason, deleteReason, institutionId]
-    );
-    await query(
-      `UPDATE institutions
-       SET is_active = 0,
-           is_suspended = 1,
-           status_reason = COALESCE(status_reason, ?),
-           suspended_reason = COALESCE(suspended_reason, ?)
-       WHERE id = ?`,
-      [deleteReason, deleteReason, institutionId]
-    );
+    const userStatusColumns = await getExistingColumns("users", [
+      "is_active",
+      "is_suspended",
+      "status_reason",
+      "suspended_reason"
+    ]);
+    const userUpdatePairs = [];
+    const userUpdateParams = [];
+    if (userStatusColumns.includes("is_active")) {
+      userUpdatePairs.push("is_active = 0");
+    }
+    if (userStatusColumns.includes("is_suspended")) {
+      userUpdatePairs.push("is_suspended = 1");
+    }
+    if (userStatusColumns.includes("status_reason")) {
+      userUpdatePairs.push("status_reason = COALESCE(status_reason, ?)");
+      userUpdateParams.push(deleteReason);
+    }
+    if (userStatusColumns.includes("suspended_reason")) {
+      userUpdatePairs.push("suspended_reason = COALESCE(suspended_reason, ?)");
+      userUpdateParams.push(deleteReason);
+    }
+    if (userUpdatePairs.length) {
+      await query(
+        `UPDATE users
+         SET ${userUpdatePairs.join(", ")}
+         WHERE institution_id = ?`,
+        [...userUpdateParams, institutionId]
+      );
+    }
+    const institutionStatusColumns = await getExistingColumns("institutions", [
+      "is_active",
+      "is_suspended",
+      "status_reason",
+      "suspended_reason"
+    ]);
+    const institutionUpdatePairs = [];
+    const institutionUpdateParams = [];
+    if (institutionStatusColumns.includes("is_active")) {
+      institutionUpdatePairs.push("is_active = 0");
+    }
+    if (institutionStatusColumns.includes("is_suspended")) {
+      institutionUpdatePairs.push("is_suspended = 1");
+    }
+    if (institutionStatusColumns.includes("status_reason")) {
+      institutionUpdatePairs.push("status_reason = COALESCE(status_reason, ?)");
+      institutionUpdateParams.push(deleteReason);
+    }
+    if (institutionStatusColumns.includes("suspended_reason")) {
+      institutionUpdatePairs.push("suspended_reason = COALESCE(suspended_reason, ?)");
+      institutionUpdateParams.push(deleteReason);
+    }
+    if (institutionUpdatePairs.length) {
+      await query(
+        `UPDATE institutions
+         SET ${institutionUpdatePairs.join(", ")}
+         WHERE id = ?`,
+        [...institutionUpdateParams, institutionId]
+      );
+    }
     await auditLog(req.user, "DELETE_INSTITUTION", "institutions", institutionId, {
       institution_code: institution.institution_code,
       users_deactivated: users.length,
@@ -6973,25 +7028,38 @@ app.patch(
     const isActive = req.body?.is_active;
     const isSuspended = req.body?.is_suspended;
     const reason = cleanOptionalValue(req.body?.reason) || null;
-    await query(
-      `UPDATE users
-       SET is_active = COALESCE(?, is_active),
-           is_suspended = COALESCE(?, is_suspended),
-           status_reason = CASE WHEN ? IS NOT NULL AND ? = 0 THEN ? ELSE status_reason END,
-           suspended_reason = CASE WHEN ? IS NOT NULL AND ? = 1 THEN ? ELSE suspended_reason END
-       WHERE id = ?`,
-      [
-        isActive === undefined ? null : Number(Boolean(isActive)),
-        isSuspended === undefined ? null : Number(Boolean(isSuspended)),
-        reason,
-        isActive === undefined ? null : Number(Boolean(isActive)),
-        reason,
-        reason,
-        isSuspended === undefined ? null : Number(Boolean(isSuspended)),
-        reason,
-        userId
-      ]
-    );
+    const userStatusColumns = await getExistingColumns("users", [
+      "is_active",
+      "is_suspended",
+      "status_reason",
+      "suspended_reason"
+    ]);
+    const updatePairs = [];
+    const updateParams = [];
+    if (userStatusColumns.includes("is_active") && isActive !== undefined) {
+      updatePairs.push("is_active = ?");
+      updateParams.push(Number(Boolean(isActive)));
+    }
+    if (userStatusColumns.includes("is_suspended") && isSuspended !== undefined) {
+      updatePairs.push("is_suspended = ?");
+      updateParams.push(Number(Boolean(isSuspended)));
+    }
+    if (userStatusColumns.includes("status_reason") && reason && isActive !== undefined && Number(Boolean(isActive)) === 0) {
+      updatePairs.push("status_reason = ?");
+      updateParams.push(reason);
+    }
+    if (userStatusColumns.includes("suspended_reason") && reason && isSuspended !== undefined && Number(Boolean(isSuspended)) === 1) {
+      updatePairs.push("suspended_reason = ?");
+      updateParams.push(reason);
+    }
+    if (updatePairs.length) {
+      await query(
+        `UPDATE users
+         SET ${updatePairs.join(", ")}
+         WHERE id = ?`,
+        [...updateParams, userId]
+      );
+    }
     await auditLog(req.user, "CHANGE_REGISTRY_USER_STATUS", "users", userId, {
       is_active: isActive,
       is_suspended: isSuspended,
@@ -7227,7 +7295,7 @@ app.delete(
 app.get(
   "/api/cbc/curriculum",
   auth,
-  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER]),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER]),
   enforcePermission(PERMISSIONS.VIEW),
   asyncHandler(async (req, res) => {
     const rows = await getPaginatedRows({
@@ -7245,7 +7313,7 @@ app.get(
 app.get(
   "/api/cbc/curriculum/:id(\\d+)",
   auth,
-  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER]),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER]),
   enforcePermission(PERMISSIONS.VIEW),
   asyncHandler(async (req, res) => {
     const rows = await query(
@@ -7263,7 +7331,7 @@ app.get(
 app.post(
   "/api/cbc/curriculum",
   auth,
-  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER]),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER]),
   enforcePermission(PERMISSIONS.CREATE),
   asyncHandler(async (req, res) => {
     const data = pickFields(req.body, [
@@ -7301,7 +7369,7 @@ app.post(
 app.put(
   "/api/cbc/curriculum/:id(\\d+)",
   auth,
-  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER]),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER]),
   enforcePermission(PERMISSIONS.UPDATE),
   asyncHandler(async (req, res) => {
     const entryId = Number(req.params.id);
@@ -7339,7 +7407,7 @@ app.put(
 app.delete(
   "/api/cbc/curriculum/:id(\\d+)",
   auth,
-  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER]),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER]),
   enforcePermission(PERMISSIONS.DELETE),
   asyncHandler(async (req, res) => {
     const entryId = Number(req.params.id);
@@ -7375,7 +7443,7 @@ app.delete(
 app.post(
   "/api/cbc/curriculum/ai-suggest-structure",
   auth,
-  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER]),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.SENIOR_TEACHER, ROLES.HEAD_OF_DEPARTMENT, ROLES.TEACHER]),
   enforcePermission(PERMISSIONS.CREATE),
   asyncHandler(async (req, res) => {
     const grade = cleanValue(req.body?.grade);
@@ -7410,7 +7478,7 @@ app.post(
 app.post(
   "/api/cbc/curriculum/ai-suggest-strands",
   auth,
-  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER]),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.SENIOR_TEACHER, ROLES.HEAD_OF_DEPARTMENT, ROLES.TEACHER]),
   enforcePermission(PERMISSIONS.CREATE),
   asyncHandler(async (req, res) => {
     const grade = cleanValue(req.body?.grade);
@@ -7445,7 +7513,7 @@ app.post(
 app.post(
   "/api/cbc/curriculum/ai-suggest-substrands",
   auth,
-  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER]),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.SENIOR_TEACHER, ROLES.HEAD_OF_DEPARTMENT, ROLES.TEACHER]),
   enforcePermission(PERMISSIONS.CREATE),
   asyncHandler(async (req, res) => {
     const grade = cleanValue(req.body?.grade);
@@ -7480,7 +7548,7 @@ app.post(
 app.post(
   "/api/cbc/curriculum/ai-generate-notes",
   auth,
-  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER]),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.SENIOR_TEACHER, ROLES.HEAD_OF_DEPARTMENT, ROLES.TEACHER]),
   enforcePermission(PERMISSIONS.CREATE),
   asyncHandler(async (req, res) => {
     const grade = cleanValue(req.body?.grade);
@@ -7530,7 +7598,7 @@ app.post(
 app.get(
   "/api/cbc/curriculum/materials",
   auth,
-  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER]),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER]),
   enforcePermission(PERMISSIONS.VIEW),
   asyncHandler(async (req, res) => {
     const rows = await query(
@@ -7545,10 +7613,43 @@ app.get(
   })
 );
 
+async function extractUploadedMaterialSnippet(file = null) {
+  if (!file?.path) return null;
+  const extension = String(path.extname(file.originalname || file.path || "") || "").toLowerCase();
+  const textExtensions = new Set([".txt", ".md", ".csv", ".json", ".xml", ".html", ".htm", ".log"]);
+  try {
+    let sourceText = "";
+    if (extension === ".pdf") {
+      let parsePdf = null;
+      try {
+        // Lazy-load to avoid hard startup dependency failures.
+        // eslint-disable-next-line global-require
+        parsePdf = require("pdf-parse");
+      } catch (_) {
+        parsePdf = null;
+      }
+      if (parsePdf) {
+        const fileBuffer = await fs.promises.readFile(file.path);
+        const parsed = await parsePdf(fileBuffer);
+        sourceText = String(parsed?.text || "");
+      }
+    } else if (textExtensions.has(extension) || String(file.mimetype || "").startsWith("text/")) {
+      sourceText = await fs.promises.readFile(file.path, "utf8");
+    }
+    const compact = String(sourceText || "")
+      .replace(/\s+/g, " ")
+      .trim();
+    if (!compact) return null;
+    return compact.slice(0, 2600);
+  } catch (_) {
+    return null;
+  }
+}
+
 app.post(
   "/api/cbc/curriculum/materials/upload",
   auth,
-  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER]),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER]),
   enforcePermission(PERMISSIONS.CREATE),
   upload.single("file"),
   asyncHandler(async (req, res) => {
@@ -7565,6 +7666,15 @@ app.post(
     if (!cleanValue(payload.title)) {
       payload.title = req.file?.originalname || "CBC/CBE Material";
     }
+    const learningArea = cleanOptionalValue(req.body?.learning_area);
+    const uploadedSnippet = await extractUploadedMaterialSnippet(req.file);
+    const mergedDescription = [
+      cleanOptionalValue(payload.description),
+      learningArea ? `Learning Area: ${learningArea}` : null,
+      uploadedSnippet ? `Uploaded Content Extract: ${uploadedSnippet}` : null
+    ]
+      .filter(Boolean)
+      .join("\n\n");
     const result = await query(
       `INSERT INTO teacher_resources
        (institution_id, teacher_profile_id, resource_type, title, description, grade, stream, term, strand, sub_strand, file_path, auto_generated, created_by_user_id)
@@ -7573,7 +7683,7 @@ app.post(
         req.user.institution_id,
         cleanValue(payload.resource_type) || "CBC_CBE_MATERIAL_UPLOAD",
         cleanValue(payload.title),
-        cleanOptionalValue(payload.description),
+        cleanOptionalValue(mergedDescription),
         cleanOptionalValue(payload.grade),
         cleanOptionalValue(payload.form_name),
         cleanOptionalValue(payload.term),
@@ -7587,7 +7697,7 @@ app.post(
       title: cleanValue(payload.title),
       grade: cleanOptionalValue(payload.grade),
       form_name: cleanOptionalValue(payload.form_name),
-      learning_area: cleanOptionalValue(req.body?.learning_area)
+      learning_area: learningArea
     });
     res.status(201).json({
       id: result.insertId,
@@ -7599,7 +7709,7 @@ app.post(
 app.patch(
   "/api/cbc/curriculum/materials/:id(\\d+)",
   auth,
-  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER]),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER]),
   enforcePermission(PERMISSIONS.UPDATE),
   asyncHandler(async (req, res) => {
     const materialId = Number(req.params.id);
@@ -7620,10 +7730,46 @@ app.patch(
   })
 );
 
+app.delete(
+  "/api/cbc/curriculum/materials/:id(\\d+)",
+  auth,
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER]),
+  enforcePermission(PERMISSIONS.DELETE),
+  asyncHandler(async (req, res) => {
+    const materialId = Number(req.params.id);
+    if (!materialId) return res.status(400).json({ error: "Valid material id is required." });
+    const rows = await query(
+      `SELECT *
+       FROM teacher_resources
+       WHERE id = ? AND institution_id = ?
+       LIMIT 1`,
+      [materialId, req.user.institution_id]
+    );
+    if (!rows.length) {
+      return res.status(404).json({ error: "Material not found." });
+    }
+    const target = rows[0];
+    await archiveRecycleBinItem({
+      institutionId: req.user.institution_id,
+      entityName: "teacher_resources",
+      entityId: target.id,
+      payload: target,
+      deletedByUserId: req.user.id
+    });
+    await query(
+      `DELETE FROM teacher_resources
+       WHERE id = ? AND institution_id = ?`,
+      [materialId, req.user.institution_id]
+    );
+    await auditLog(req.user, "DELETE_CBC_CBE_MATERIAL", "teacher_resources", materialId, {});
+    res.json({ message: "Material deleted." });
+  })
+);
+
 app.post(
   "/api/cbc/curriculum/bulk-generate",
   auth,
-  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER]),
   enforcePermission(PERMISSIONS.CREATE),
   asyncHandler(async (req, res) => {
     const grade = cleanValue(req.body?.grade);
@@ -7868,7 +8014,7 @@ app.get(
 app.post(
   "/api/cbc/curriculum/structure-mappings/import",
   auth,
-  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER]),
   enforcePermission(PERMISSIONS.CREATE),
   upload.single("file"),
   asyncHandler(async (req, res) => {
@@ -7908,7 +8054,7 @@ app.post(
 app.post(
   "/api/cbc/curriculum/structure-mappings",
   auth,
-  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER]),
   enforcePermission(PERMISSIONS.CREATE),
   asyncHandler(async (req, res) => {
     const learningArea = cleanValue(req.body?.learning_area);
@@ -7978,7 +8124,7 @@ app.get(
 app.patch(
   "/api/cbc/curriculum/structure-mappings/:id(\\d+)",
   auth,
-  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER]),
   enforcePermission(PERMISSIONS.UPDATE),
   asyncHandler(async (req, res) => {
     const mappingId = Number(req.params.id);
@@ -8025,7 +8171,7 @@ app.post(
   "/api/cbc/kicd/import",
   auth,
   enforceModuleAccess(MODULE_KEYS.CBC_CURRICULUM_EDITOR),
-  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER]),
   enforcePermission(PERMISSIONS.CREATE),
   asyncHandler(async (req, res) => {
     const includeLevels = Array.isArray(req.body?.include_levels)
@@ -8227,7 +8373,7 @@ app.post(
   "/api/cbc/curriculum/pretechnical-seed",
   auth,
   enforceModuleAccess(MODULE_KEYS.CBC_CURRICULUM_EDITOR),
-  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER]),
   enforcePermission(PERMISSIONS.CREATE),
   asyncHandler(async (req, res) => {
     const replaceExisting = parseTruthy(req.body?.replace_existing);
@@ -8357,7 +8503,7 @@ app.post(
   "/api/cbc/local-curriculum/import",
   auth,
   enforceModuleAccess(MODULE_KEYS.CBC_CURRICULUM_EDITOR),
-  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER]),
   enforcePermission(PERMISSIONS.CREATE),
   asyncHandler(async (req, res) => {
     const baseDirectory = cleanOptionalValue(req.body?.base_directory) || path.join(process.cwd(), "uploads", "curriculum-design");
@@ -10048,7 +10194,7 @@ app.post(
     }
 
     const materialRows = await query(
-      `SELECT title, description, strand, sub_strand, grade, stream, term
+      `SELECT resource_type, title, description, strand, sub_strand, grade, stream, term
        FROM teacher_resources
        WHERE institution_id = ?
          AND (grade = ? OR ? = '' OR grade IS NULL OR grade = '')
@@ -10059,12 +10205,14 @@ app.post(
     );
     const supplementalMaterialNotes = materialRows
       .filter((row) => {
+        const areaText = `${cleanValue(row.title)} ${cleanValue(row.description)}`.toLowerCase();
+        if (selectedLearningArea && areaText && !areaText.includes(selectedLearningArea.toLowerCase())) return false;
         if (selectedStrand && cleanValue(row.strand) && cleanValue(row.strand) !== selectedStrand) return false;
         if (selectedSubStrand && cleanValue(row.sub_strand) && cleanValue(row.sub_strand) !== selectedSubStrand) return false;
         return true;
       })
       .slice(0, 6)
-      .map((row) => [cleanValue(row.title), cleanOptionalValue(row.description)].filter(Boolean).join(": "))
+      .map((row) => [cleanValue(row.resource_type), cleanValue(row.title), cleanOptionalValue(row.description)].filter(Boolean).join(": "))
       .filter(Boolean)
       .join("\n");
 

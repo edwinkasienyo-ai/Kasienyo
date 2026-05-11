@@ -683,16 +683,22 @@ async function performRegistryRowAction(entityType, row = {}, action = "view") {
         await renderInstitutionsRegistry();
         return;
       }
-      if (action === "suspend" || action === "deactivate") {
-        const reason = prompt("Reason is required", "");
-        if (!reason) {
+      if (["suspend", "deactivate", "activate", "desuspend"].includes(action)) {
+        const requiresReason = action === "suspend" || action === "deactivate";
+        const reasonPrompt = requiresReason ? "Reason is required" : "Reason (optional)";
+        const reason = prompt(reasonPrompt, "") || "";
+        if (requiresReason && !reason.trim()) {
           alert("Reason is required.");
           return;
         }
         const payload =
           action === "suspend"
-            ? { is_suspended: true, reason }
-            : { is_active: false, reason };
+            ? { is_suspended: true, reason: reason.trim() || null }
+            : action === "deactivate"
+              ? { is_active: false, reason: reason.trim() || null }
+              : action === "activate"
+                ? { is_active: true, reason: reason.trim() || null }
+                : { is_suspended: false, reason: reason.trim() || null };
         await request(`/api/system/registry/institutions/${rowId}/status`, {
           method: "PATCH",
           body: JSON.stringify(payload)
@@ -749,16 +755,22 @@ async function performRegistryRowAction(entityType, row = {}, action = "view") {
       await renderInstitutionsRegistry();
       return;
     }
-    if (action === "suspend" || action === "deactivate") {
-      const reason = prompt("Reason is required", "");
-      if (!reason) {
+    if (["suspend", "deactivate", "activate", "desuspend"].includes(action)) {
+      const requiresReason = action === "suspend" || action === "deactivate";
+      const reasonPrompt = requiresReason ? "Reason is required" : "Reason (optional)";
+      const reason = prompt(reasonPrompt, "") || "";
+      if (requiresReason && !reason.trim()) {
         alert("Reason is required.");
         return;
       }
       const payload =
         action === "suspend"
-          ? { is_suspended: true, reason }
-          : { is_active: false, reason };
+          ? { is_suspended: true, reason: reason.trim() || null }
+          : action === "deactivate"
+            ? { is_active: false, reason: reason.trim() || null }
+            : action === "activate"
+              ? { is_active: true, reason: reason.trim() || null }
+              : { is_suspended: false, reason: reason.trim() || null };
       await request(`/api/system/registry/users/${rowId}/status`, {
         method: "PATCH",
         body: JSON.stringify(payload)
@@ -942,6 +954,10 @@ async function renderSystemRegistration(options = {}) {
           <button class="search-action-icon pdf" title="PDF" onclick="performRegistryRowAction('user', { id: ${rowId} }, 'pdf')">📄</button>
           <button class="search-action-icon download" title="Download" onclick="performRegistryRowAction('user', { id: ${rowId} }, 'download')">⬇</button>
           <button class="search-action-icon delete" title="Delete" onclick="performRegistryRowAction('user', { id: ${rowId} }, 'delete')">🗑</button>
+          <button class="search-action-icon edit" title="Deactivate" onclick="performRegistryRowAction('user', { id: ${rowId} }, 'deactivate')">⛔</button>
+          <button class="search-action-icon view" title="Suspend" onclick="performRegistryRowAction('user', { id: ${rowId} }, 'suspend')">⏸</button>
+          <button class="search-action-icon save" title="Activate" onclick="performRegistryRowAction('user', { id: ${rowId} }, 'activate')">▶</button>
+          <button class="search-action-icon download" title="Desuspend" onclick="performRegistryRowAction('user', { id: ${rowId} }, 'desuspend')">⏯</button>
         </div>
       `;
     };
@@ -1355,7 +1371,11 @@ async function renderSystemRegistration(options = {}) {
             <button class="search-action-icon view" onclick="performRegistryRowAction('institution', { id: ${Number(row.id || 0)} }, 'view')" title="View">👁</button>
             <button class="search-action-icon edit" onclick="performRegistryRowAction('institution', { id: ${Number(row.id || 0)} }, 'edit')" title="Edit">✎</button>
             <button class="search-action-icon save" onclick="performRegistryRowAction('institution', { id: ${Number(row.id || 0)} }, 'save')" title="Save">💾</button>
-            <button class="search-action-icon delete" onclick="performRegistryRowAction('institution', { id: ${Number(row.id || 0)} }, 'delete')" title="Delete">🗑</button>
+            ${actorRole === "SUPER_SYSTEM_DEVELOPER" ? `<button class="search-action-icon delete" onclick="performRegistryRowAction('institution', { id: ${Number(row.id || 0)} }, 'delete')" title="Delete">🗑</button>` : ""}
+            <button class="search-action-icon edit" onclick="performRegistryRowAction('institution', { id: ${Number(row.id || 0)} }, 'deactivate')" title="Deactivate">⛔</button>
+            <button class="search-action-icon view" onclick="performRegistryRowAction('institution', { id: ${Number(row.id || 0)} }, 'suspend')" title="Suspend">⏸</button>
+            <button class="search-action-icon save" onclick="performRegistryRowAction('institution', { id: ${Number(row.id || 0)} }, 'activate')" title="Activate">▶</button>
+            <button class="search-action-icon download" onclick="performRegistryRowAction('institution', { id: ${Number(row.id || 0)} }, 'desuspend')" title="Desuspend">⏯</button>
             <button class="search-action-icon print" onclick="performRegistryRowAction('institution', { id: ${Number(row.id || 0)} }, 'print')" title="Print">🖨</button>
             <button class="search-action-icon pdf" onclick="performRegistryRowAction('institution', { id: ${Number(row.id || 0)} }, 'pdf')" title="PDF">📄</button>
           </div>`
@@ -2360,6 +2380,7 @@ async function renderInstitutionsRegistry() {
     const includeInstitutionRegistry = Boolean(registry?.include_institution_registry);
     const institutions = Array.isArray(registry?.institutions) ? registry.institutions : [];
     const users = Array.isArray(registry?.users) ? registry.users : [];
+    const canDeleteInstitution = normalizeRoleKey(portalContext?.role || "") === "SUPER_SYSTEM_DEVELOPER";
     const institutionRows = institutions;
     const userRows = users;
     const scopeOptions = resolveRegistryScopeOptions().filter(
@@ -2398,9 +2419,11 @@ async function renderInstitutionsRegistry() {
           <button class="search-action-icon save" onclick="performRegistryRowAction('institution', ${encoded}, 'save')" title="Save">💾</button>
           <button class="search-action-icon print" onclick="performRegistryRowAction('institution', { id: ${rowId} }, 'print')" title="Print">🖨</button>
           <button class="search-action-icon pdf" onclick="performRegistryRowAction('institution', { id: ${rowId} }, 'pdf')" title="PDF">📄</button>
-          <button class="search-action-icon delete" onclick="performRegistryRowAction('institution', { id: ${rowId} }, 'delete')" title="Delete">🗑</button>
+          ${canDeleteInstitution ? `<button class="search-action-icon delete" onclick="performRegistryRowAction('institution', { id: ${rowId} }, 'delete')" title="Delete">🗑</button>` : ""}
           <button class="search-action-icon edit" onclick="performRegistryRowAction('institution', { id: ${rowId} }, 'deactivate')" title="Deactivate">⛔</button>
           <button class="search-action-icon view" onclick="performRegistryRowAction('institution', { id: ${rowId} }, 'suspend')" title="Suspend">⏸</button>
+          <button class="search-action-icon save" onclick="performRegistryRowAction('institution', { id: ${rowId} }, 'activate')" title="Activate">▶</button>
+          <button class="search-action-icon download" onclick="performRegistryRowAction('institution', { id: ${rowId} }, 'desuspend')" title="Desuspend">⏯</button>
         </div>
       `;
     };
@@ -2424,6 +2447,8 @@ async function renderInstitutionsRegistry() {
           <button class="search-action-icon delete" onclick="performRegistryRowAction('user', { id: ${rowId} }, 'delete')" title="Delete">🗑</button>
           <button class="search-action-icon edit" onclick="performRegistryRowAction('user', { id: ${rowId} }, 'deactivate')" title="Deactivate">⛔</button>
           <button class="search-action-icon view" onclick="performRegistryRowAction('user', { id: ${rowId} }, 'suspend')" title="Suspend">⏸</button>
+          <button class="search-action-icon save" onclick="performRegistryRowAction('user', { id: ${rowId} }, 'activate')" title="Activate">▶</button>
+          <button class="search-action-icon download" onclick="performRegistryRowAction('user', { id: ${rowId} }, 'desuspend')" title="Desuspend">⏯</button>
         </div>
       `;
     };
@@ -3250,7 +3275,6 @@ function isExamNotesGenerationRole(role = "") {
     "SYSTEM_DEVELOPER",
     "ADMIN",
     "HEAD_OF_INSTITUTION",
-    "SYSTEM_ADMINISTRATOR",
     "SENIOR_TEACHER",
     "HEAD_OF_DEPARTMENT",
     "TEACHER"
@@ -3435,7 +3459,7 @@ function wireExamGenerationPanel() {
     setEnabled(fields.learningArea, Boolean((fields.grade?.value || fields.form?.value) && fields.term?.value));
     setEnabled(fields.strand, Boolean(fields.learningArea?.value));
     setEnabled(fields.subStrand, Boolean(fields.strand?.value));
-    setEnabled(fields.structure, Boolean(fields.subStrand?.value));
+    setEnabled(fields.structure, Boolean(fields.strand?.value));
     const structureChosen = Boolean(fields.structure?.value);
     setEnabled(fields.structureDetail, structureChosen && fields.structure?.value !== "unified");
     setEnabled(fields.percentage, structureChosen);
@@ -3448,7 +3472,6 @@ function wireExamGenerationPanel() {
       && (fields.grade?.value || fields.form?.value)
       && fields.learningArea?.value
       && fields.strand?.value
-      && fields.subStrand?.value
       && fields.structure?.value
       && detailOk
       && fields.percentage?.value
@@ -3594,7 +3617,7 @@ function wireExamGenerationPanel() {
       alert("The total percentage allocation cannot exceed 100%.");
       return null;
     }
-    if (!session || !academicYear || !term || (!grade && !formName) || !learningArea || !strand || !subStrand || !structure) {
+    if (!session || !academicYear || !term || (!grade && !formName) || !learningArea || !strand || !structure) {
       alert("Complete all required steps before generating.");
       return null;
     }
@@ -4821,10 +4844,13 @@ async function renderCbcCurriculumEditor(options = {}) {
     const rows = examPanelState.curriculumRows || [];
     const materials = examPanelState.curriculumMaterials || [];
     const tabs = [
-      { id: "curriculum-design", label: "Curriculum Design" },
-      { id: "learning-materials", label: "Learning Materials" },
-      { id: "notes-generation", label: "Notes Generation" }
-    ];
+      canAccessCurriculumCore ? { id: "curriculum-design", label: "Curriculum Design" } : null,
+      canAccessCurriculumCore ? { id: "learning-materials", label: "Learning Materials" } : null,
+      canAccessNotesGeneration ? { id: "notes-generation", label: "Notes Generation" } : null
+    ].filter(Boolean);
+    const resolvedCurriculumTab = tabs.some((tab) => tab.id === curriculumTab)
+      ? curriculumTab
+      : (tabs[0]?.id || "notes-generation");
     return `
       <div class="module-header-card">
         <h4>Curriculum (Engine)</h4>
@@ -4832,12 +4858,12 @@ async function renderCbcCurriculumEditor(options = {}) {
       </div>
       <div class="actions-row exam-curriculum-subtabs">
         ${tabs.map((tab) => `
-          <button class="ax-btn ax-btn--view ax-btn--sm exam-curriculum-tab${curriculumTab === tab.id ? " active" : ""}" data-curr-tab="${tab.id}">
+          <button class="ax-btn ax-btn--view ax-btn--sm exam-curriculum-tab${resolvedCurriculumTab === tab.id ? " active" : ""}" data-curr-tab="${tab.id}">
             ${escapeHtml(tab.label)}
           </button>
         `).join("")}
       </div>
-      <section id="examCurriculumDesignSection" style="${curriculumTab === "curriculum-design" ? "" : "display:none;"}">
+      <section id="examCurriculumDesignSection" style="${resolvedCurriculumTab === "curriculum-design" ? "" : "display:none;"}">
         ${
           canAccessCurriculumCore
             ? `
@@ -4883,10 +4909,11 @@ async function renderCbcCurriculumEditor(options = {}) {
         }
         <div id="currDesignRegistry" class="dashboard-section"></div>
       </section>
-      <section id="examLearningMaterialsSection" style="${curriculumTab === "learning-materials" ? "" : "display:none;"}">
+      <section id="examLearningMaterialsSection" style="${resolvedCurriculumTab === "learning-materials" ? "" : "display:none;"}">
         ${
           canAccessCurriculumCore
             ? `
+            <p class="small-note">Upload notes and sample exams/past papers for Grade/Form + Learning Area. Uploaded content is summarized and used by AI exam generation.</p>
             <div class="form-grid">
               <label>Grade</label>
               <select id="currMaterialsGrade"><option value="">Select grade</option>${gradeOptions.map((item) => `<option value="${escapeHtml(item)}">${escapeHtml(item)}</option>`).join("")}</select>
@@ -4898,6 +4925,7 @@ async function renderCbcCurriculumEditor(options = {}) {
               <select id="currMaterialsItemType">
                 <option value="notes">Notes</option>
                 <option value="past_papers">Past papers</option>
+                <option value="sample_exams">Sample exams</option>
                 <option value="other">Other</option>
               </select>
               <label>Generate system template?</label>
@@ -4923,7 +4951,7 @@ async function renderCbcCurriculumEditor(options = {}) {
         }
         <div id="currMaterialsRegistry" class="dashboard-section"></div>
       </section>
-      <section id="examNotesGenerationSection" style="${curriculumTab === "notes-generation" ? "" : "display:none;"}">
+      <section id="examNotesGenerationSection" style="${resolvedCurriculumTab === "notes-generation" ? "" : "display:none;"}">
         ${
           canAccessNotesGeneration
             ? `
@@ -5049,6 +5077,7 @@ async function renderCbcCurriculumEditor(options = {}) {
       const designCategoryEl = document.getElementById("currDesignCategory");
       const designLearningAreaEl = document.getElementById("currDesignLearningArea");
       const designCbcLevelEl = document.getElementById("currDesignCbcLevel");
+      const designStrandModeEl = document.getElementById("currDesignStrandMode");
 
       const renderStrandRows = () => {
         if (!strandsMount || !strandCountEl) return;
@@ -5061,10 +5090,26 @@ async function renderCbcCurriculumEditor(options = {}) {
               <input class="curr-strand-input" data-strand-idx="${index}" placeholder="e.g. Strand ${index + 1}" />
               <label>Sub-strand count</label>
               <input class="curr-substrand-count-input" data-strand-idx="${index}" type="number" min="1" value="1" />
-              <label>Sub-strands (one per line)</label>
-              <textarea class="curr-substrand-list-input" data-strand-idx="${index}" rows="4" placeholder="1.1 ...&#10;1.2 ..."></textarea>
             </div>
+            <div class="form-grid curr-substrand-rows-mount" data-strand-idx="${index}"></div>
           </div>
+        `).join("");
+        strandsMount.querySelectorAll(".curr-substrand-count-input").forEach((countInput) => {
+          countInput.addEventListener("change", () => {
+            const idx = Number(countInput.getAttribute("data-strand-idx") || 0);
+            renderSubStrandRows(idx);
+          });
+        });
+        Array.from({ length: count }, (_, index) => renderSubStrandRows(index));
+      };
+      const renderSubStrandRows = (strandIndex) => {
+        const mount = strandsMount?.querySelector(`.curr-substrand-rows-mount[data-strand-idx="${strandIndex}"]`);
+        const countEl = strandsMount?.querySelector(`.curr-substrand-count-input[data-strand-idx="${strandIndex}"]`);
+        if (!mount || !countEl) return;
+        const total = Math.max(1, Number(countEl.value || 1));
+        mount.innerHTML = Array.from({ length: total }, (_, subIndex) => `
+          <label>Sub-strand ${subIndex + 1}</label>
+          <input class="curr-substrand-input" data-strand-idx="${strandIndex}" data-substrand-idx="${subIndex}" placeholder="Enter sub-strand ${subIndex + 1}" />
         `).join("");
       };
       strandCountEl?.addEventListener("change", renderStrandRows);
@@ -5089,8 +5134,63 @@ async function renderCbcCurriculumEditor(options = {}) {
         if (String(designFormEl.value || "").trim() && designGradeEl) designGradeEl.value = "";
       });
       designLevelModeEl?.dispatchEvent(new Event("change"));
+      const applySystemStrandSuggestions = async () => {
+        if (!designStrandModeEl || designStrandModeEl.value !== "system") return;
+        const grade = String(designGradeEl?.value || "").trim();
+        const formName = String(designFormEl?.value || "").trim();
+        const learningArea = String(designLearningAreaEl?.value || "").trim();
+        if ((!grade && !formName) || !learningArea) {
+          setStatus("Select grade/form and learning area before loading system strand suggestions.");
+          return;
+        }
+        try {
+          const result = await request("/api/cbc/curriculum/ai-suggest-structure", {
+            method: "POST",
+            body: JSON.stringify({
+              grade,
+              form_name: formName,
+              learning_area: learningArea
+            })
+          });
+          const strands = Array.isArray(result?.strand_options) ? result.strand_options : [];
+          const map = result?.sub_strand_options_by_strand || {};
+          if (!strands.length) {
+            setStatus("No system strand suggestions found. Continue with manual entry.");
+            return;
+          }
+          if (strandCountEl) strandCountEl.value = String(strands.length);
+          renderStrandRows();
+          strands.forEach((strandName, index) => {
+            const strandInput = panel.querySelector(`.curr-strand-input[data-strand-idx="${index}"]`);
+            if (strandInput) strandInput.value = strandName;
+            const subList = Array.isArray(map[strandName]) ? map[strandName] : [];
+            const countInput = panel.querySelector(`.curr-substrand-count-input[data-strand-idx="${index}"]`);
+            if (countInput) {
+              countInput.value = String(Math.max(1, subList.length || 1));
+              renderSubStrandRows(index);
+            }
+            subList.forEach((subName, subIndex) => {
+              const subInput = panel.querySelector(`.curr-substrand-input[data-strand-idx="${index}"][data-substrand-idx="${subIndex}"]`);
+              if (subInput) subInput.value = subName;
+            });
+          });
+          setStatus("System strand/sub-strand suggestions loaded.");
+        } catch (error) {
+          setStatus(`Unable to load system suggestions: ${error.message}`);
+        }
+      };
+      designStrandModeEl?.addEventListener("change", () => {
+        if (designStrandModeEl.value === "system") {
+          applySystemStrandSuggestions();
+        }
+      });
 
-      document.getElementById("currDesignBuildTableButton")?.addEventListener("click", renderDesignRegistry);
+      document.getElementById("currDesignBuildTableButton")?.addEventListener("click", async () => {
+        if (designStrandModeEl?.value === "system") {
+          await applySystemStrandSuggestions();
+        }
+        renderDesignRegistry();
+      });
       document.getElementById("currDesignSaveButton")?.addEventListener("click", async () => {
         if (!canAccessCurriculumCore) {
           alert("Only Super System Developer can save curriculum design.");
@@ -5106,11 +5206,8 @@ async function renderCbcCurriculumEditor(options = {}) {
         const strandRows = Array.from(panel.querySelectorAll(".curr-strand-input")).map((input) => {
           const idx = String(input.getAttribute("data-strand-idx") || "0");
           const strand = String(input.value || "").trim();
-          const subList = String(
-            panel.querySelector(`.curr-substrand-list-input[data-strand-idx="${idx}"]`)?.value || ""
-          )
-            .split(/\r?\n/)
-            .map((line) => line.trim())
+          const subList = Array.from(panel.querySelectorAll(`.curr-substrand-input[data-strand-idx="${idx}"]`))
+            .map((node) => String(node.value || "").trim())
             .filter(Boolean);
           return { strand, subList };
         }).filter((row) => row.strand);
@@ -5231,24 +5328,57 @@ async function renderCbcCurriculumEditor(options = {}) {
       const matTemplateToggleEl = document.getElementById("currMaterialsTemplateToggle");
       const matTitleEl = document.getElementById("currMaterialsTitle");
       const matFileEl = document.getElementById("currMaterialsFile");
+      const matDownloadTemplateBtn = document.getElementById("currMaterialsDownloadTemplateButton");
+      const matContinueBtn = document.getElementById("currMaterialsContinueButton");
+      const matUploadBtn = document.getElementById("currMaterialsUploadButton");
+      const matEditBtn = document.getElementById("currMaterialsEditButton");
+      const matDeleteBtn = document.getElementById("currMaterialsDeleteButton");
+      const matViewBtn = document.getElementById("currMaterialsViewButton");
+      const setMaterialActivationFlow = () => {
+        const hasGrade = Boolean(String(matGradeEl?.value || "").trim());
+        const hasForm = Boolean(String(matFormEl?.value || "").trim());
+        const levelSelected = hasGrade || hasForm;
+        const hasLearningArea = Boolean(String(matLearningAreaEl?.value || "").trim());
+        const hasItem = Boolean(String(matItemTypeEl?.value || "").trim());
+        const readyForTemplateStage = levelSelected && hasLearningArea && hasItem;
+        if (matGradeEl) matGradeEl.disabled = hasForm;
+        if (matFormEl) matFormEl.disabled = hasGrade;
+        if (matLearningAreaEl) matLearningAreaEl.disabled = !levelSelected;
+        if (matItemTypeEl) matItemTypeEl.disabled = !levelSelected || !hasLearningArea;
+        if (matTemplateToggleEl) matTemplateToggleEl.disabled = !readyForTemplateStage;
+        if (matTitleEl) matTitleEl.disabled = !readyForTemplateStage;
+        if (matFileEl) matFileEl.disabled = !readyForTemplateStage;
+        const templateYes = String(matTemplateToggleEl?.value || "no") === "yes";
+        if (matDownloadTemplateBtn) matDownloadTemplateBtn.disabled = !readyForTemplateStage || !templateYes;
+        if (matContinueBtn) matContinueBtn.disabled = !readyForTemplateStage;
+        if (matUploadBtn) matUploadBtn.disabled = !readyForTemplateStage;
+        if (matEditBtn) matEditBtn.disabled = false;
+        if (matDeleteBtn) matDeleteBtn.disabled = false;
+        if (matViewBtn) matViewBtn.disabled = false;
+      };
 
       matGradeEl?.addEventListener("change", () => {
         if (String(matGradeEl.value || "").trim() && matFormEl) matFormEl.value = "";
+        setMaterialActivationFlow();
       });
       matFormEl?.addEventListener("change", () => {
         if (String(matFormEl.value || "").trim() && matGradeEl) matGradeEl.value = "";
+        setMaterialActivationFlow();
       });
+      matLearningAreaEl?.addEventListener("change", setMaterialActivationFlow);
+      matItemTypeEl?.addEventListener("change", setMaterialActivationFlow);
+      matTemplateToggleEl?.addEventListener("change", setMaterialActivationFlow);
 
-      document.getElementById("currMaterialsDownloadTemplateButton")?.addEventListener("click", () => {
+      matDownloadTemplateBtn?.addEventListener("click", () => {
         const rows = [
           { learning_area: "Pre-Technical Studies", strand: "2.0 Communication", sub_strand: "2.3 ICT Tools", notes: "Enter notes..." }
         ];
         downloadTextFile("learning-material-template.csv", rowsToCsv(rows), "text/csv;charset=utf-8");
       });
-      document.getElementById("currMaterialsContinueButton")?.addEventListener("click", () => {
+      matContinueBtn?.addEventListener("click", () => {
         setStatus("Template flow continued. Upload the completed material and press Upload & Save.");
       });
-      document.getElementById("currMaterialsUploadButton")?.addEventListener("click", async () => {
+      matUploadBtn?.addEventListener("click", async () => {
         const file = matFileEl?.files?.[0];
         if (!file) {
           alert("Select a file to upload.");
@@ -5268,6 +5398,7 @@ async function renderCbcCurriculumEditor(options = {}) {
         formData.append("resource_type", itemType.toUpperCase());
         formData.append("title", title);
         formData.append("description", `Uploaded from Learning Materials (${itemType})`);
+        formData.append("learning_area", learningArea);
         formData.append("grade", grade);
         formData.append("form_name", formName);
         formData.append("strand", "");
@@ -5287,7 +5418,7 @@ async function renderCbcCurriculumEditor(options = {}) {
         await fetchCurriculumData();
         renderMaterialsRegistry();
       });
-      document.getElementById("currMaterialsEditButton")?.addEventListener("click", async () => {
+      matEditBtn?.addEventListener("click", async () => {
         const id = Number(prompt("Enter material ID to edit:", "") || 0);
         if (!id) return;
         const title = prompt("New title:", "") || "";
@@ -5304,11 +5435,11 @@ async function renderCbcCurriculumEditor(options = {}) {
           alert(error.message);
         }
       });
-      document.getElementById("currMaterialsDeleteButton")?.addEventListener("click", async () => {
+      matDeleteBtn?.addEventListener("click", async () => {
         const id = Number(prompt("Enter material ID to delete:", "") || 0);
         if (!id) return;
         try {
-          await request(`/api/management/teacher-resources/${id}`, { method: "DELETE" });
+          await request(`/api/cbc/curriculum/materials/${id}`, { method: "DELETE" });
           await fetchCurriculumData();
           renderMaterialsRegistry();
           setStatus(`Material ${id} deleted.`);
@@ -5316,13 +5447,8 @@ async function renderCbcCurriculumEditor(options = {}) {
           alert(error.message || "Delete failed for this role.");
         }
       });
-      document.getElementById("currMaterialsViewButton")?.addEventListener("click", renderMaterialsRegistry);
-      matTemplateToggleEl?.addEventListener("change", () => {
-        const yes = String(matTemplateToggleEl.value || "no") === "yes";
-        const btn = document.getElementById("currMaterialsDownloadTemplateButton");
-        if (btn) btn.disabled = !yes;
-      });
-      matTemplateToggleEl?.dispatchEvent(new Event("change"));
+      matViewBtn?.addEventListener("click", renderMaterialsRegistry);
+      setMaterialActivationFlow();
 
       const notesGradeEl = document.getElementById("currNotesGrade");
       const notesFormEl = document.getElementById("currNotesForm");
@@ -5330,7 +5456,25 @@ async function renderCbcCurriculumEditor(options = {}) {
       const notesStrandEl = document.getElementById("currNotesStrand");
       const notesSubStrandEl = document.getElementById("currNotesSubStrand");
       const notesOutputEl = document.getElementById("currNotesOutput");
+      const notesGenerateBtn = document.getElementById("currNotesGenerateButton");
+      const notesPrintBtn = document.getElementById("currNotesPrintButton");
+      const notesDownloadBtn = document.getElementById("currNotesDownloadButton");
       let notesStrandMap = {};
+      const setNotesActivationFlow = () => {
+        const hasGrade = Boolean(String(notesGradeEl?.value || "").trim());
+        const hasForm = Boolean(String(notesFormEl?.value || "").trim());
+        const hasArea = Boolean(String(notesAreaEl?.value || "").trim());
+        const hasStrand = Boolean(String(notesStrandEl?.value || "").trim());
+        const hasOutput = Boolean(String(notesOutputEl?.value || "").trim());
+        if (notesGradeEl) notesGradeEl.disabled = hasForm;
+        if (notesFormEl) notesFormEl.disabled = hasGrade;
+        if (notesAreaEl) notesAreaEl.disabled = !(hasGrade || hasForm);
+        if (notesStrandEl) notesStrandEl.disabled = !(hasGrade || hasForm) || !hasArea;
+        if (notesSubStrandEl) notesSubStrandEl.disabled = !(hasGrade || hasForm) || !hasArea || !hasStrand;
+        if (notesGenerateBtn) notesGenerateBtn.disabled = !(hasGrade || hasForm) || !hasArea || !hasStrand;
+        if (notesPrintBtn) notesPrintBtn.disabled = !hasOutput;
+        if (notesDownloadBtn) notesDownloadBtn.disabled = !hasOutput;
+      };
 
       const refreshNotesStructure = async () => {
         if (!notesAreaEl || !notesStrandEl || !notesSubStrandEl) return;
@@ -5340,6 +5484,7 @@ async function renderCbcCurriculumEditor(options = {}) {
         if ((!grade && !formName) || !learningArea) {
           notesStrandEl.innerHTML = `<option value="">Select strand</option>`;
           notesSubStrandEl.innerHTML = `<option value="">Select sub-strand</option>`;
+          setNotesActivationFlow();
           return;
         }
         try {
@@ -5357,30 +5502,39 @@ async function renderCbcCurriculumEditor(options = {}) {
             .map((item) => `<option value="${escapeHtml(item)}">${escapeHtml(item)}</option>`)
             .join("")}`;
           notesSubStrandEl.innerHTML = `<option value="">Select sub-strand</option>`;
+          setNotesActivationFlow();
         } catch (_) {
           notesStrandEl.innerHTML = `<option value="">Select strand</option>`;
           notesSubStrandEl.innerHTML = `<option value="">Select sub-strand</option>`;
+          setNotesActivationFlow();
         }
       };
 
       notesGradeEl?.addEventListener("change", () => {
         if (String(notesGradeEl.value || "").trim() && notesFormEl) notesFormEl.value = "";
         refreshNotesStructure();
+        setNotesActivationFlow();
       });
       notesFormEl?.addEventListener("change", () => {
         if (String(notesFormEl.value || "").trim() && notesGradeEl) notesGradeEl.value = "";
         refreshNotesStructure();
+        setNotesActivationFlow();
       });
-      notesAreaEl?.addEventListener("change", refreshNotesStructure);
+      notesAreaEl?.addEventListener("change", () => {
+        refreshNotesStructure();
+        setNotesActivationFlow();
+      });
       notesStrandEl?.addEventListener("change", () => {
         const selected = String(notesStrandEl.value || "");
         const subs = Array.isArray(notesStrandMap[selected]) ? notesStrandMap[selected] : [];
         notesSubStrandEl.innerHTML = `<option value="">Select sub-strand</option>${subs
           .map((item) => `<option value="${escapeHtml(item)}">${escapeHtml(item)}</option>`)
           .join("")}`;
+        setNotesActivationFlow();
       });
+      notesSubStrandEl?.addEventListener("change", setNotesActivationFlow);
 
-      document.getElementById("currNotesGenerateButton")?.addEventListener("click", async () => {
+      notesGenerateBtn?.addEventListener("click", async () => {
         if (!canAccessNotesGeneration) {
           alert("You are not allowed to generate notes.");
           return;
@@ -5400,6 +5554,7 @@ async function renderCbcCurriculumEditor(options = {}) {
         if (examPanelState.notesCache[cacheKey]) {
           if (notesOutputEl) notesOutputEl.value = examPanelState.notesCache[cacheKey];
           setStatus("Loaded existing generated notes from cache.");
+          setNotesActivationFlow();
           return;
         }
         try {
@@ -5411,11 +5566,12 @@ async function renderCbcCurriculumEditor(options = {}) {
           if (notesOutputEl) notesOutputEl.value = text;
           examPanelState.notesCache[cacheKey] = text;
           setStatus("Notes generated successfully.");
+          setNotesActivationFlow();
         } catch (error) {
           alert(error.message);
         }
       });
-      document.getElementById("currNotesPrintButton")?.addEventListener("click", () => {
+      notesPrintBtn?.addEventListener("click", () => {
         const text = String(notesOutputEl?.value || "").trim();
         if (!text) {
           alert("Generate notes first.");
@@ -5427,7 +5583,7 @@ async function renderCbcCurriculumEditor(options = {}) {
         popup.document.close();
         popup.print();
       });
-      document.getElementById("currNotesDownloadButton")?.addEventListener("click", () => {
+      notesDownloadBtn?.addEventListener("click", () => {
         const text = String(notesOutputEl?.value || "").trim();
         if (!text) {
           alert("Generate notes first.");
@@ -5436,6 +5592,7 @@ async function renderCbcCurriculumEditor(options = {}) {
         downloadTextFile("teacher-notes.txt", text);
       });
       refreshNotesStructure();
+      setNotesActivationFlow();
 
       const templateTypeEl = document.getElementById("examTemplateType");
       const templateBodyEl = document.getElementById("examTemplateBody");
