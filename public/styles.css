@@ -3867,18 +3867,22 @@ td .ax-btn::before,
 
 .exam-stack-top.ax-btn.ax-btn--icon-only {
   flex-direction: column-reverse;
-  min-height: 40px;
-  padding: 3px 5px;
+  min-height: 30px;
+  min-width: 38px;
+  padding: 1px 3px;
+  border-radius: 5px;
 }
 
 .exam-stack-top.ax-btn.ax-btn--icon-only::after {
   margin-top: 0;
-  margin-bottom: 2px;
-  font-size: 8px;
+  margin-bottom: 1px;
+  font-size: 6px;
+  letter-spacing: 0.02em;
 }
 
 .exam-stack-top.ax-btn.ax-btn--icon-only::before {
   margin-right: 0;
+  font-size: 10px;
 }
 
 .exam-top-nav {
@@ -3886,9 +3890,9 @@ td .ax-btn::before,
   top: 0;
   z-index: 8;
   display: flex;
-  gap: 8px;
+  gap: 4px;
   overflow-x: auto;
-  padding: 8px;
+  padding: 4px;
   margin: 8px 0 12px;
   border: 1px solid #d7e3f2;
   border-radius: 10px;
@@ -3919,6 +3923,13 @@ td .ax-btn::before,
 .exam-icon-group button:hover {
   transform: translateY(-1px);
   filter: saturate(1.1);
+}
+
+#examTopNav .exam-stack-top.ax-btn.ax-btn--icon-only,
+#examMgmtSubmodulePanel .exam-stack-top.ax-btn.ax-btn--icon-only {
+  min-height: 28px;
+  min-width: 36px;
+  padding: 1px 2px;
 }
 
 .exam-analytics-grid {

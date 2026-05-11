@@ -12,7 +12,7 @@ let portalContext = null;
 let searchRowDrafts = {};
 let dashboardAutoRefreshHandle = null;
 let currentSidebarSubmoduleId = null;
-const CLIENT_UI_BUNDLE_ID = "dash-bundle-main-v71-curriculum-description-seed";
+const CLIENT_UI_BUNDLE_ID = "dash-bundle-main-v72-material-scope-security-audit";
 const examPanelState = {
   generatedExam: null,
   serials: [],
@@ -106,7 +106,7 @@ const MODULE_DESCRIPTIONS = {
     "Consolidated Staff Profile hub for teacher and support staff records, uploads, and portal registration workflows.",
   "management-service-providers": "Register service providers and companies supporting the institution.",
   "management-bom": "Maintain Board of Management member profiles and contact data.",
-  "management-teacher-resources": "Organize lesson plans, schemes, and class resources.",
+  "management-teacher-resources": "Teacher planning hub for lesson plans, schemes of work, records of work, templates, and curriculum-linked generation.",
   attendance: "Track daily attendance, punctuality, and attendance analytics.",
   "academic-exams": "Create and manage assessments by class, strand, and term.",
   "academic-marks": "Capture marks and compute performance bands and summaries.",
@@ -2304,6 +2304,8 @@ async function renderSecurityAudit() {
   try {
     const logs = await request("/api/system/audit-logs?limit=240");
     const rows = Array.isArray(logs?.logs) ? logs.logs : [];
+    const posture = logs?.security_posture || {};
+    const recommendations = Array.isArray(logs?.recommendations) ? logs.recommendations : [];
     const actorRole = normalizeRoleKey(portalContext?.role || "");
     const roleScopeNote =
       actorRole === "SUPER_SYSTEM_DEVELOPER"
@@ -2326,11 +2328,31 @@ async function renderSecurityAudit() {
         <h4>Scope</h4>
         <p>${escapeHtml(roleScopeNote)}</p>
       </div>
+      <div class="card stats-card">
+        <h4>Email OTP Channel</h4>
+        <p>${posture.otp_email_ready ? "Ready" : "Not configured"}</p>
+      </div>
+      <div class="card stats-card">
+        <h4>SMS OTP Channel</h4>
+        <p>${posture.otp_sms_ready ? "Ready" : "Not configured"}</p>
+      </div>
+      <div class="card stats-card">
+        <h4>JWT Secret</h4>
+        <p>${posture.jwt_secret_configured ? "Configured" : "Missing"}</p>
+      </div>
+      <div class="card stats-card">
+        <h4>CSP / HTTPS</h4>
+        <p>${posture.csp_enabled ? "CSP On" : "CSP Off"} · ${posture.force_https ? "HTTPS forced" : "HTTPS relaxed"}</p>
+      </div>
     `;
     document.getElementById("formArea").innerHTML = `
       <div class="module-header-card">
         <h3>Security & Logging Audit</h3>
         <p>Advanced audit workspace with filters and event cards. Entries include username, institution code, IP address, machine identifier, login status, login time, activity done, and logout time.</p>
+      </div>
+      <div class="module-header-card">
+        <h4>Security Posture Recommendations</h4>
+        <p class="small-note">${recommendations.length ? recommendations.map((item) => escapeHtml(item)).join("<br/>") : "No immediate hardening alerts. Continue rotating credentials, reviewing logs, and enforcing per-institution access policies."}</p>
       </div>
       <div class="form-grid">
         <label>Filter Username</label>
@@ -5676,10 +5698,22 @@ async function renderCbcCurriculumEditor(options = {}) {
         </div>
         <div class="exam-v2-pane">
           <h4>Learning Materials & AI Notes</h4>
-          <p class="small-note">Upload notes/past papers/sample exams and generate notes from curriculum structure.</p>
+          <p class="small-note">Select grade/form and learning area first, then upload notes/past papers against the exact curriculum scope.</p>
           <div class="form-grid">
+            <label>Level Mode</label>
+            <select id="examV2MatLevelMode"><option value="grade">Grade</option><option value="form">Form</option></select>
+            <label>Grade</label>
+            <select id="examV2MatGrade"><option value="">Select grade</option>${gradeOptions.map((v) => `<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`).join("")}</select>
+            <label>Form</label>
+            <select id="examV2MatForm"><option value="">Select form</option>${formOptions.map((v) => `<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`).join("")}</select>
+            <label>Learning Area</label>
+            <select id="examV2MatLearningArea"><option value="">Select learning area</option>${learningAreas.map((v) => `<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`).join("")}</select>
             <label>Material Type</label>
             <select id="examV2MaterialType"><option value="notes">Notes</option><option value="past_papers">Past Papers</option><option value="sample_exams">Sample Exams</option><option value="other">Other</option></select>
+            <label>Strand (Optional)</label>
+            <input id="examV2MatStrand" placeholder="Strand for this upload" />
+            <label>Sub-strand (Optional)</label>
+            <input id="examV2MatSubStrand" placeholder="Sub-strand for this upload" />
             <label>Material Title</label>
             <input id="examV2MaterialTitle" placeholder="Material title" />
             <label>Upload File</label>
@@ -5752,6 +5786,12 @@ async function renderCbcCurriculumEditor(options = {}) {
     const subDescEl = document.getElementById("examV2CurrSubStrandDesc");
     const notesEl = document.getElementById("examV2CurrNotes");
     const cbcLevelEl = document.getElementById("examV2CurrCbcLevel");
+    const matLevelModeEl = document.getElementById("examV2MatLevelMode");
+    const matGradeEl = document.getElementById("examV2MatGrade");
+    const matFormEl = document.getElementById("examV2MatForm");
+    const matAreaEl = document.getElementById("examV2MatLearningArea");
+    const matStrandEl = document.getElementById("examV2MatStrand");
+    const matSubEl = document.getElementById("examV2MatSubStrand");
     const draftBody = document.getElementById("examV2CurrDraftRows");
     const notesOutEl = document.getElementById("examV2NotesOutput");
 
@@ -5764,6 +5804,21 @@ async function renderCbcCurriculumEditor(options = {}) {
     };
     refreshLevelMode();
     levelModeEl?.addEventListener("change", refreshLevelMode);
+    const refreshMaterialLevelMode = () => {
+      const mode = String(matLevelModeEl?.value || "grade");
+      if (matGradeEl) matGradeEl.disabled = mode === "form";
+      if (matFormEl) matFormEl.disabled = mode === "grade";
+      if (mode === "form" && matGradeEl) matGradeEl.value = "";
+      if (mode === "grade" && matFormEl) matFormEl.value = "";
+    };
+    refreshMaterialLevelMode();
+    matLevelModeEl?.addEventListener("change", refreshMaterialLevelMode);
+    matGradeEl?.addEventListener("change", () => {
+      if (matGradeEl.value && matFormEl) matFormEl.value = "";
+    });
+    matFormEl?.addEventListener("change", () => {
+      if (matFormEl.value && matGradeEl) matGradeEl.value = "";
+    });
 
     const renderDraftRows = () => {
       if (!draftBody) return;
@@ -5922,11 +5977,11 @@ async function renderCbcCurriculumEditor(options = {}) {
         alert("Choose a file first.");
         return;
       }
-      const grade = String(gradeEl?.value || "");
-      const form_name = String(formEl?.value || "");
-      const learning_area = String(areaEl?.value || "");
+      const grade = String(matGradeEl?.value || "");
+      const form_name = String(matFormEl?.value || "");
+      const learning_area = String(matAreaEl?.value || "");
       if ((!grade && !form_name) || !learning_area) {
-        alert("Select level and learning area before upload.");
+        alert("Select grade/form and learning area in Learning Materials section before upload.");
         return;
       }
       const formData = new FormData();
@@ -5937,8 +5992,8 @@ async function renderCbcCurriculumEditor(options = {}) {
       formData.append("grade", grade);
       formData.append("form_name", form_name);
       formData.append("learning_area", learning_area);
-      formData.append("strand", String(strandEl?.value || "").trim());
-      formData.append("sub_strand", String(subEl?.value || "").trim());
+      formData.append("strand", String(matStrandEl?.value || "").trim());
+      formData.append("sub_strand", String(matSubEl?.value || "").trim());
       formData.append("term", "Term One");
       const response = await fetch("/api/cbc/curriculum/materials/upload", {
         method: "POST",
@@ -5956,14 +6011,14 @@ async function renderCbcCurriculumEditor(options = {}) {
 
     document.getElementById("examV2NotesGenerateBtn")?.addEventListener("click", async () => {
       const payload = {
-        grade: String(gradeEl?.value || ""),
-        form_name: String(formEl?.value || ""),
-        learning_area: String(areaEl?.value || ""),
-        strand: String(strandEl?.value || "").trim(),
-        sub_strand: String(subEl?.value || "").trim()
+        grade: String(matGradeEl?.value || gradeEl?.value || ""),
+        form_name: String(matFormEl?.value || formEl?.value || ""),
+        learning_area: String(matAreaEl?.value || areaEl?.value || ""),
+        strand: String(matStrandEl?.value || strandEl?.value || "").trim(),
+        sub_strand: String(matSubEl?.value || subEl?.value || "").trim()
       };
       if ((!payload.grade && !payload.form_name) || !payload.learning_area || !payload.strand) {
-        alert("Select level, learning area and strand before note generation.");
+        alert("Select grade/form, learning area and strand before note generation.");
         return;
       }
       try {
@@ -9653,6 +9708,12 @@ function renderCrudModule(moduleKey, options = {}) {
       <h3>${config.title}</h3>
       <p class="small-note">${escapeHtml(MODULE_DESCRIPTIONS[moduleKey] || "Manage records and actions for this module.")}</p>
     </div>
+    ${moduleKey === "management-teacher-resources" ? `
+      <div class="module-header-card">
+        <h4>Teacher Resource Instructions</h4>
+        <p class="small-note">1) Select grade/form, learning area strand/sub-strand, and resource type. 2) Download Lesson Plan/Scheme/Record templates. 3) Generate from curriculum or upload your customized file. 4) Save so each institution keeps distinct, role-scoped resources.</p>
+      </div>
+    ` : ""}
     <div class="form-grid">
       ${config.fields.map(buildInput).join("")}
     </div>
@@ -9670,6 +9731,9 @@ function renderCrudModule(moduleKey, options = {}) {
       ${moduleKey === "communication-messages" ? `<button id="${btnPrefix}-chat" type="button" class="ax-btn ax-btn--view ax-btn--sm">Open Chat</button>` : ""}
       ${moduleKey === "management-teacher-resources" ? `<button id="${btnPrefix}-resource-generate" type="button" class="ax-btn ax-btn--process ax-btn--sm">Generate from Curriculum</button>` : ""}
       ${moduleKey === "management-teacher-resources" ? `<button id="${btnPrefix}-resource-template-download" type="button" class="ax-btn ax-btn--download ax-btn--sm" data-template-control="true">Template</button>` : ""}
+      ${moduleKey === "management-teacher-resources" ? `<button id="${btnPrefix}-lesson-plan-template-download" type="button" class="ax-btn ax-btn--download ax-btn--sm">Lesson Plan</button>` : ""}
+      ${moduleKey === "management-teacher-resources" ? `<button id="${btnPrefix}-scheme-template-download" type="button" class="ax-btn ax-btn--download ax-btn--sm">Scheme</button>` : ""}
+      ${moduleKey === "management-teacher-resources" ? `<button id="${btnPrefix}-record-template-download" type="button" class="ax-btn ax-btn--download ax-btn--sm">Record</button>` : ""}
       ${moduleKey === "management-teacher-resources" ? `<button id="${btnPrefix}-resource-template-upload" type="button" class="ax-btn ax-btn--upload ax-btn--sm" data-template-control="true">Upload Template</button>` : ""}
       ${moduleKey === "management-teacher-resources" ? `<input id="${btnPrefix}-resource-template-file" type="file" accept=".txt,.csv,.doc,.docx,.pdf" style="display:none;" data-template-control="true" />` : ""}
     </div>
@@ -9789,6 +9853,9 @@ function renderCrudModule(moduleKey, options = {}) {
   if (moduleKey === "management-teacher-resources") {
     const generateBtn = document.getElementById(`${btnPrefix}-resource-generate`);
     const templateDownloadBtn = document.getElementById(`${btnPrefix}-resource-template-download`);
+    const lessonPlanTemplateBtn = document.getElementById(`${btnPrefix}-lesson-plan-template-download`);
+    const schemeTemplateBtn = document.getElementById(`${btnPrefix}-scheme-template-download`);
+    const recordTemplateBtn = document.getElementById(`${btnPrefix}-record-template-download`);
     const templateUploadBtn = document.getElementById(`${btnPrefix}-resource-template-upload`);
     const templateFileInput = document.getElementById(`${btnPrefix}-resource-template-file`);
     generateBtn?.addEventListener("click", async () => {
@@ -9838,6 +9905,15 @@ function renderCrudModule(moduleKey, options = {}) {
         "Record of Work Covered:"
       ].join("\n");
       downloadTextFile("teacher-resource-template.txt", template, "text/plain;charset=utf-8");
+    });
+    lessonPlanTemplateBtn?.addEventListener("click", async () => {
+      await downloadWithAuth("/api/templates/lesson-plan.csv", "lesson-plan-template.csv");
+    });
+    schemeTemplateBtn?.addEventListener("click", async () => {
+      await downloadWithAuth("/api/templates/scheme-of-work.csv", "scheme-of-work-template.csv");
+    });
+    recordTemplateBtn?.addEventListener("click", async () => {
+      await downloadWithAuth("/api/templates/record-of-work.csv", "record-of-work-template.csv");
     });
     templateUploadBtn?.addEventListener("click", () => templateFileInput?.click());
     templateFileInput?.addEventListener("change", async (event) => {

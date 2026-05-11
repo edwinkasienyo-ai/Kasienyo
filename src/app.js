@@ -5449,6 +5449,50 @@ app.get(
 );
 
 app.get(
+  "/api/templates/scheme-of-work.csv",
+  auth,
+  enforceRole([
+    ROLES.SUPER_SYSTEM_DEVELOPER,
+    ROLES.SYSTEM_DEVELOPER,
+    ROLES.ADMIN,
+    ROLES.HEAD_OF_INSTITUTION,
+    ROLES.SENIOR_TEACHER,
+    ROLES.TEACHER
+  ]),
+  asyncHandler(async (_, res) => {
+    const csv = [
+      "academic_year,term,grade,form_name,stream,learning_area,strand,strand_description,sub_strand,sub_strand_description,week,lesson_focus,learning_experience,resources,assessment,remarks",
+      `${new Date().getFullYear()}/${new Date().getFullYear() + 1},Term One,Grade 8,,,Social Studies,2.0 People and Relationships,Develops learner self-awareness and relational competencies,2.5 Building Healthy Relationships,Learners build healthy peer and community relationships,Week 2,Healthy Relationships,Discussion + case analysis + reflection,Textbook + chart + worksheet,Checklist + rubric,Institution-specific customization allowed`
+    ].join("\n");
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", "attachment; filename=\"scheme-of-work-template.csv\"");
+    res.send(csv);
+  })
+);
+
+app.get(
+  "/api/templates/record-of-work.csv",
+  auth,
+  enforceRole([
+    ROLES.SUPER_SYSTEM_DEVELOPER,
+    ROLES.SYSTEM_DEVELOPER,
+    ROLES.ADMIN,
+    ROLES.HEAD_OF_INSTITUTION,
+    ROLES.SENIOR_TEACHER,
+    ROLES.TEACHER
+  ]),
+  asyncHandler(async (_, res) => {
+    const csv = [
+      "date,academic_year,term,grade,form_name,stream,learning_area,strand,sub_strand,activity_done,evidence_of_learning,assessment_feedback,next_action,teacher_sign",
+      `${new Date().toISOString().slice(0, 10)},${new Date().getFullYear()}/${new Date().getFullYear() + 1},Term One,Grade 9,,,Pre-Technical Studies,4.0 Tools and Production,4.1 Holding Tools,Demonstrated safe holding tools usage,Practical checklist complete,Most learners met expectation,Reinforce safety procedure for two learners,`
+    ].join("\n");
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", "attachment; filename=\"record-of-work-template.csv\"");
+    res.send(csv);
+  })
+);
+
+app.get(
   "/api/institutions/letterhead",
   auth,
   enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.SYSTEM_ADMINISTRATOR]),
@@ -6302,7 +6346,13 @@ app.get(
   "/api/system/audit-logs",
   auth,
   enforceModuleAccess(MODULE_KEYS.SECURITY_AUDIT),
-  enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.HEAD_OF_INSTITUTION]),
+  enforceRole([
+    ROLES.SUPER_SYSTEM_DEVELOPER,
+    ROLES.SYSTEM_DEVELOPER,
+    ROLES.SYSTEM_ADMINISTRATOR,
+    ROLES.ADMIN,
+    ROLES.HEAD_OF_INSTITUTION
+  ]),
   asyncHandler(async (req, res) => {
     const limit = Math.min(Math.max(Number(req.query?.limit || 200), 1), 1000);
     const institutionScope = canManageAcrossInstitutions(req.user)
@@ -6354,12 +6404,35 @@ app.get(
        AND a.created_at >= DATE_SUB(NOW(), INTERVAL 1 DAY)`,
       params
     );
+    const postureRecommendations = [];
+    if (!emailChannelReady()) {
+      postureRecommendations.push("Email OTP channel is not configured. Set SENDGRID_API_KEY and SENDGRID_FROM_EMAIL.");
+    }
+    if (!smsChannelReady()) {
+      postureRecommendations.push("SMS OTP channel is not configured. Set Africa's Talking or Twilio SMS credentials.");
+    }
+    if (!configuredJwtSecret) {
+      postureRecommendations.push("JWT_SECRET is missing. Set a strong secret for production.");
+    }
+    if (String(process.env.ENABLE_CSP || "false").toLowerCase() !== "true") {
+      postureRecommendations.push("ENABLE_CSP is disabled. Enable Content Security Policy in production.");
+    }
     res.json({
       logs: filteredLogs,
       metrics: {
         failed_login_events_24h: Number(failedLoginsRow?.total || 0),
         otp_fail_events_24h: Number(otpFailuresRow?.total || 0)
-      }
+      },
+      security_posture: {
+        jwt_secret_configured: Boolean(configuredJwtSecret),
+        otp_default_channel: cleanValue(process.env.OTP_CHANNEL || "sms_email"),
+        otp_email_ready: emailChannelReady(),
+        otp_sms_ready: smsChannelReady(),
+        csp_enabled: String(process.env.ENABLE_CSP || "false").toLowerCase() === "true",
+        force_https: String(process.env.FORCE_HTTPS || "true").toLowerCase() !== "false",
+        node_env: cleanValue(process.env.NODE_ENV || "development")
+      },
+      recommendations: postureRecommendations
     });
   })
 );
