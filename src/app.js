@@ -10952,6 +10952,20 @@ function normalizeArchiveStatus(value = "") {
   return normalized === "ACTIVE" || normalized === "ARCHIVED" ? normalized : "ARCHIVED";
 }
 
+function readExamFilterInputs(queryParams = {}) {
+  const grade = cleanValue(queryParams?.grade || "");
+  const formName = cleanValue(queryParams?.form_name || "");
+  const stream = cleanValue(queryParams?.stream || "");
+  const term = cleanValue(queryParams?.term || "");
+  const yearRaw = Number(queryParams?.year || 0);
+  return {
+    classFilter: grade || formName,
+    stream,
+    term,
+    year: Number.isFinite(yearRaw) && yearRaw > 0 ? yearRaw : null
+  };
+}
+
 app.get(
   "/api/examinations/analytics/overview",
   auth,
@@ -11013,6 +11027,557 @@ app.get(
         mean_marks: Number(meanRows[0]?.mean_marks || 0).toFixed(2)
       },
       by_learning_area: byLearningArea
+    });
+  })
+);
+
+app.get(
+  "/api/examinations/gradebook/overview",
+  auth,
+  enforceModuleAccess(MODULE_KEYS.CBC_CURRICULUM_EDITOR),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER]),
+  enforcePermission(PERMISSIONS.VIEW),
+  asyncHandler(async (req, res) => {
+    const institutionId = Number(req.user.institution_id);
+    const filters = readExamFilterInputs(req.query);
+    const baseParams = [
+      institutionId,
+      filters.classFilter,
+      filters.classFilter,
+      filters.stream,
+      filters.stream,
+      filters.term,
+      filters.term,
+      filters.year,
+      filters.year
+    ];
+    const [summaryRows, learnerRows, bandRows, detailedRows] = await Promise.all([
+      query(
+        `SELECT subject,
+                COUNT(*) AS total_entries,
+                ROUND(AVG(marks), 2) AS avg_marks,
+                ROUND(AVG(percentage), 2) AS avg_percentage
+         FROM academic_marks
+         WHERE institution_id = ?
+           AND (? = '' OR grade = ?)
+           AND (? = '' OR stream = ?)
+           AND (? = '' OR term = ?)
+           AND (? IS NULL OR year = ?)
+         GROUP BY subject
+         ORDER BY subject ASC`,
+        baseParams
+      ),
+      query(
+        `SELECT learner_id,
+                learner_name,
+                grade,
+                stream,
+                ROUND(AVG(percentage), 2) AS mean_percentage,
+                ROUND(SUM(marks), 2) AS total_marks,
+                COUNT(*) AS subject_count
+         FROM academic_marks
+         WHERE institution_id = ?
+           AND (? = '' OR grade = ?)
+           AND (? = '' OR stream = ?)
+           AND (? = '' OR term = ?)
+           AND (? IS NULL OR year = ?)
+         GROUP BY learner_id, learner_name, grade, stream
+         ORDER BY mean_percentage DESC, learner_name ASC
+         LIMIT 600`,
+        baseParams
+      ),
+      query(
+        `SELECT cbc_grade_band,
+                COUNT(*) AS total
+         FROM academic_marks
+         WHERE institution_id = ?
+           AND (? = '' OR grade = ?)
+           AND (? = '' OR stream = ?)
+           AND (? = '' OR term = ?)
+           AND (? IS NULL OR year = ?)
+         GROUP BY cbc_grade_band
+         ORDER BY total DESC`,
+        baseParams
+      ),
+      query(
+        `SELECT learner_id,
+                learner_name,
+                grade,
+                stream,
+                exam_type,
+                subject,
+                marks,
+                percentage,
+                cbc_grade_band,
+                term,
+                year,
+                updated_at
+         FROM academic_marks
+         WHERE institution_id = ?
+           AND (? = '' OR grade = ?)
+           AND (? = '' OR stream = ?)
+           AND (? = '' OR term = ?)
+           AND (? IS NULL OR year = ?)
+         ORDER BY updated_at DESC
+         LIMIT 1200`,
+        baseParams
+      )
+    ]);
+    res.json({
+      filters,
+      totals: {
+        subjects: summaryRows.length,
+        learners: learnerRows.length,
+        marks_rows: detailedRows.length
+      },
+      by_subject: summaryRows.map((row) => ({
+        subject: cleanValue(row.subject),
+        total_entries: Number(row.total_entries || 0),
+        avg_marks: Number(row.avg_marks || 0),
+        avg_percentage: Number(row.avg_percentage || 0)
+      })),
+      learner_gradebook: learnerRows.map((row) => ({
+        learner_id: Number(row.learner_id || 0),
+        learner_name: cleanValue(row.learner_name),
+        grade: cleanValue(row.grade),
+        stream: cleanValue(row.stream),
+        mean_percentage: Number(row.mean_percentage || 0),
+        total_marks: Number(row.total_marks || 0),
+        subject_count: Number(row.subject_count || 0)
+      })),
+      competency_distribution: bandRows.map((row) => ({
+        cbc_grade_band: cleanValue(row.cbc_grade_band || "UNSET"),
+        total: Number(row.total || 0)
+      })),
+      rows: detailedRows
+    });
+  })
+);
+
+app.get(
+  "/api/examinations/assessment-tracking/overview",
+  auth,
+  enforceModuleAccess(MODULE_KEYS.CBC_CURRICULUM_EDITOR),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER]),
+  enforcePermission(PERMISSIONS.VIEW),
+  asyncHandler(async (req, res) => {
+    const institutionId = Number(req.user.institution_id);
+    const filters = readExamFilterInputs(req.query);
+    const params = [
+      institutionId,
+      filters.classFilter,
+      filters.classFilter,
+      filters.stream,
+      filters.stream,
+      filters.term,
+      filters.term,
+      filters.year,
+      filters.year
+    ];
+    const [learnerTrackingRows, subjectTrackingRows, atRiskRows, examTypeRows] = await Promise.all([
+      query(
+        `SELECT learner_id,
+                learner_name,
+                grade,
+                stream,
+                COUNT(*) AS assessments_done,
+                ROUND(AVG(percentage), 2) AS avg_percentage,
+                ROUND(MAX(percentage), 2) AS best_percentage,
+                ROUND(MIN(percentage), 2) AS lowest_percentage,
+                SUM(CASE WHEN cbc_grade_band = 'ABSENT' THEN 1 ELSE 0 END) AS absent_count
+         FROM academic_marks
+         WHERE institution_id = ?
+           AND (? = '' OR grade = ?)
+           AND (? = '' OR stream = ?)
+           AND (? = '' OR term = ?)
+           AND (? IS NULL OR year = ?)
+         GROUP BY learner_id, learner_name, grade, stream
+         ORDER BY avg_percentage DESC, learner_name ASC
+         LIMIT 800`,
+        params
+      ),
+      query(
+        `SELECT subject,
+                COUNT(*) AS total_assessments,
+                ROUND(AVG(percentage), 2) AS avg_percentage,
+                SUM(CASE WHEN cbc_grade_band IN ('EE', 'ME') THEN 1 ELSE 0 END) AS proficient_count,
+                SUM(CASE WHEN cbc_grade_band IN ('BE', 'ABSENT') THEN 1 ELSE 0 END) AS intervention_count
+         FROM academic_marks
+         WHERE institution_id = ?
+           AND (? = '' OR grade = ?)
+           AND (? = '' OR stream = ?)
+           AND (? = '' OR term = ?)
+           AND (? IS NULL OR year = ?)
+         GROUP BY subject
+         ORDER BY subject ASC`,
+        params
+      ),
+      query(
+        `SELECT learner_id,
+                learner_name,
+                grade,
+                stream,
+                ROUND(AVG(percentage), 2) AS avg_percentage,
+                COUNT(*) AS rows_count
+         FROM academic_marks
+         WHERE institution_id = ?
+           AND (? = '' OR grade = ?)
+           AND (? = '' OR stream = ?)
+           AND (? = '' OR term = ?)
+           AND (? IS NULL OR year = ?)
+         GROUP BY learner_id, learner_name, grade, stream
+         HAVING AVG(percentage) < 40
+         ORDER BY avg_percentage ASC
+         LIMIT 200`,
+        params
+      ),
+      query(
+        `SELECT exam_type,
+                COUNT(*) AS total_entries,
+                ROUND(AVG(percentage), 2) AS avg_percentage
+         FROM academic_marks
+         WHERE institution_id = ?
+           AND (? = '' OR grade = ?)
+           AND (? = '' OR stream = ?)
+           AND (? = '' OR term = ?)
+           AND (? IS NULL OR year = ?)
+         GROUP BY exam_type
+         ORDER BY total_entries DESC, exam_type ASC`,
+        params
+      )
+    ]);
+    res.json({
+      filters,
+      learner_tracking: learnerTrackingRows,
+      by_subject: subjectTrackingRows,
+      by_exam_type: examTypeRows,
+      intervention_watchlist: atRiskRows
+    });
+  })
+);
+
+app.get(
+  "/api/examinations/portals/overview",
+  auth,
+  enforceModuleAccess(MODULE_KEYS.CBC_CURRICULUM_EDITOR),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER]),
+  enforcePermission(PERMISSIONS.VIEW),
+  asyncHandler(async (req, res) => {
+    const institutionId = Number(req.user.institution_id);
+    const [learnerTotalsRows, assessedRows, parentMessageRows, topRows] = await Promise.all([
+      query(
+        `SELECT COUNT(*) AS total_learners,
+                SUM(CASE WHEN COALESCE(parent_phone, '') <> '' OR COALESCE(parent_email, '') <> '' OR COALESCE(parent_full_name, '') <> '' THEN 1 ELSE 0 END) AS learners_with_parent_profile
+         FROM learners
+         WHERE institution_id = ?`,
+        [institutionId]
+      ),
+      query(
+        `SELECT COUNT(DISTINCT learner_id) AS assessed_learners
+         FROM academic_marks
+         WHERE institution_id = ?`,
+        [institutionId]
+      ),
+      query(
+        `SELECT status, COUNT(*) AS total
+         FROM communication_messages
+         WHERE institution_id = ?
+           AND UPPER(COALESCE(recipient_role, '')) IN ('PARENT', 'PARENT/GUARDIAN', 'LEARNER', 'STUDENT')
+         GROUP BY status
+         ORDER BY total DESC`,
+        [institutionId]
+      ),
+      query(
+        `SELECT m.learner_id,
+                m.learner_name,
+                l.admission_number,
+                l.grade,
+                l.stream,
+                ROUND(AVG(m.percentage), 2) AS avg_percentage,
+                COUNT(*) AS exams_done
+         FROM academic_marks m
+         LEFT JOIN learners l ON l.id = m.learner_id AND l.institution_id = m.institution_id
+         WHERE m.institution_id = ?
+         GROUP BY m.learner_id, m.learner_name, l.admission_number, l.grade, l.stream
+         ORDER BY avg_percentage DESC, exams_done DESC
+         LIMIT 15`,
+        [institutionId]
+      )
+    ]);
+    const totalLearners = Number(learnerTotalsRows[0]?.total_learners || 0);
+    const learnersWithParentProfile = Number(learnerTotalsRows[0]?.learners_with_parent_profile || 0);
+    const assessedLearners = Number(assessedRows[0]?.assessed_learners || 0);
+    const parentEngagementRate = totalLearners > 0
+      ? Number(((learnersWithParentProfile / totalLearners) * 100).toFixed(2))
+      : 0;
+    const learnerPortalCoverageRate = totalLearners > 0
+      ? Number(((assessedLearners / totalLearners) * 100).toFixed(2))
+      : 0;
+    res.json({
+      counters: {
+        total_learners: totalLearners,
+        learners_with_parent_profile: learnersWithParentProfile,
+        assessed_learners: assessedLearners,
+        parent_engagement_rate_pct: parentEngagementRate,
+        learner_portal_coverage_rate_pct: learnerPortalCoverageRate
+      },
+      communication_status: parentMessageRows.map((row) => ({
+        status: cleanValue(row.status || "Queued"),
+        total: Number(row.total || 0)
+      })),
+      learner_portal_feed: topRows
+    });
+  })
+);
+
+app.get(
+  "/api/examinations/compliance/overview",
+  auth,
+  enforceModuleAccess(MODULE_KEYS.CBC_CURRICULUM_EDITOR),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER]),
+  enforcePermission(PERMISSIONS.VIEW),
+  asyncHandler(async (req, res) => {
+    const institutionId = Number(req.user.institution_id);
+    const [learnerRows, markRows, curriculumRows, missingRows] = await Promise.all([
+      query(
+        `SELECT COUNT(*) AS total_learners,
+                SUM(CASE WHEN COALESCE(admission_number, '') <> '' THEN 1 ELSE 0 END) AS admission_ready,
+                SUM(CASE WHEN COALESCE(upi_number, '') <> '' THEN 1 ELSE 0 END) AS upi_ready,
+                SUM(CASE WHEN COALESCE(birth_certificate_number, '') <> '' THEN 1 ELSE 0 END) AS birth_cert_ready,
+                SUM(CASE WHEN COALESCE(parent_phone, '') <> '' OR COALESCE(parent_email, '') <> '' THEN 1 ELSE 0 END) AS contact_ready
+         FROM learners
+         WHERE institution_id = ?`,
+        [institutionId]
+      ),
+      query(
+        `SELECT COUNT(*) AS total_marks,
+                SUM(CASE WHEN COALESCE(exam_type, '') <> '' THEN 1 ELSE 0 END) AS exam_type_ready,
+                SUM(CASE WHEN COALESCE(term, '') <> '' THEN 1 ELSE 0 END) AS term_ready,
+                SUM(CASE WHEN year IS NOT NULL THEN 1 ELSE 0 END) AS year_ready,
+                SUM(CASE WHEN COALESCE(cbc_grade_band, '') <> '' THEN 1 ELSE 0 END) AS competency_ready
+         FROM academic_marks
+         WHERE institution_id = ?`,
+        [institutionId]
+      ),
+      query(
+        `SELECT COUNT(*) AS curriculum_rows,
+                COUNT(DISTINCT learning_area) AS mapped_learning_areas,
+                COUNT(DISTINCT grade) AS mapped_grades
+         FROM cbc_curriculum_entries
+         WHERE institution_id = ?`,
+        [institutionId]
+      ),
+      query(
+        `SELECT l.id,
+                l.full_name,
+                l.admission_number,
+                l.grade,
+                l.stream
+         FROM learners l
+         LEFT JOIN academic_marks m
+           ON m.learner_id = l.id
+          AND m.institution_id = l.institution_id
+         WHERE l.institution_id = ?
+         GROUP BY l.id, l.full_name, l.admission_number, l.grade, l.stream
+         HAVING COUNT(m.id) = 0
+         ORDER BY l.full_name ASC
+         LIMIT 300`,
+        [institutionId]
+      )
+    ]);
+    const learnerStats = learnerRows[0] || {};
+    const markStats = markRows[0] || {};
+    const curriculumStats = curriculumRows[0] || {};
+    const totalLearners = Number(learnerStats.total_learners || 0);
+    const totalMarks = Number(markStats.total_marks || 0);
+    const pct = (value, total) => (total > 0 ? Number(((Number(value || 0) / total) * 100).toFixed(2)) : 0);
+    res.json({
+      coverage: {
+        learner_registry: {
+          total: totalLearners,
+          admission_ready_pct: pct(learnerStats.admission_ready, totalLearners),
+          upi_ready_pct: pct(learnerStats.upi_ready, totalLearners),
+          birth_cert_ready_pct: pct(learnerStats.birth_cert_ready, totalLearners),
+          contact_ready_pct: pct(learnerStats.contact_ready, totalLearners)
+        },
+        marks_registry: {
+          total: totalMarks,
+          exam_type_ready_pct: pct(markStats.exam_type_ready, totalMarks),
+          term_ready_pct: pct(markStats.term_ready, totalMarks),
+          year_ready_pct: pct(markStats.year_ready, totalMarks),
+          competency_ready_pct: pct(markStats.competency_ready, totalMarks)
+        },
+        curriculum_registry: {
+          curriculum_rows: Number(curriculumStats.curriculum_rows || 0),
+          mapped_learning_areas: Number(curriculumStats.mapped_learning_areas || 0),
+          mapped_grades: Number(curriculumStats.mapped_grades || 0)
+        }
+      },
+      learners_without_assessment: missingRows
+    });
+  })
+);
+
+app.get(
+  "/api/examinations/lifecycle/timeline",
+  auth,
+  enforceModuleAccess(MODULE_KEYS.CBC_CURRICULUM_EDITOR),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER]),
+  enforcePermission(PERMISSIONS.VIEW),
+  asyncHandler(async (req, res) => {
+    const institutionId = Number(req.user.institution_id);
+    const learnerId = Number(req.query?.learner_id || 0) || null;
+    const [examEvents, markEvents, archiveEvents, templateEvents, totals] = await Promise.all([
+      query(
+        `SELECT id,
+                title,
+                subject,
+                grade,
+                stream,
+                term,
+                year,
+                created_at
+         FROM academic_exams
+         WHERE institution_id = ?
+         ORDER BY created_at DESC
+         LIMIT 300`,
+        [institutionId]
+      ),
+      query(
+        `SELECT id,
+                learner_id,
+                learner_name,
+                subject,
+                exam_type,
+                grade,
+                stream,
+                term,
+                year,
+                percentage,
+                updated_at
+         FROM academic_marks
+         WHERE institution_id = ?
+           AND (? IS NULL OR learner_id = ?)
+         ORDER BY updated_at DESC
+         LIMIT 1200`,
+        [institutionId, learnerId, learnerId]
+      ),
+      query(
+        `SELECT id,
+                archive_type,
+                title,
+                status,
+                archived_at
+         FROM exam_archives
+         WHERE institution_id = ?
+         ORDER BY archived_at DESC
+         LIMIT 300`,
+        [institutionId]
+      ),
+      query(
+        `SELECT id,
+                template_key,
+                template_name,
+                version_tag,
+                created_at,
+                updated_at
+         FROM exam_templates
+         WHERE institution_id = ?
+           AND is_active = 1
+         ORDER BY updated_at DESC
+         LIMIT 200`,
+        [institutionId]
+      ),
+      query(
+        `SELECT
+          (SELECT COUNT(*) FROM cbc_curriculum_entries WHERE institution_id = ?) AS curriculum_rows,
+          (SELECT COUNT(*) FROM academic_exams WHERE institution_id = ?) AS generated_exams,
+          (SELECT COUNT(*) FROM academic_marks WHERE institution_id = ?) AS marks_rows,
+          (SELECT COUNT(*) FROM exam_archives WHERE institution_id = ?) AS archived_rows`,
+        [institutionId, institutionId, institutionId, institutionId]
+      )
+    ]);
+    const timelineRows = [
+      ...examEvents.map((row) => ({
+        event_type: "EXAM_GENERATED",
+        entity_type: "academic_exams",
+        entity_id: Number(row.id || 0),
+        title: cleanValue(row.title || row.subject || "Generated exam"),
+        details: {
+          subject: cleanValue(row.subject),
+          level: cleanValue(row.grade),
+          stream: cleanValue(row.stream),
+          term: cleanValue(row.term),
+          year: Number(row.year || 0) || null
+        },
+        occurred_at: row.created_at
+      })),
+      ...markEvents.map((row) => ({
+        event_type: "MARK_ENTRY",
+        entity_type: "academic_marks",
+        entity_id: Number(row.id || 0),
+        title: `${cleanValue(row.learner_name || "Learner")} · ${cleanValue(row.subject || "Learning Area")}`,
+        details: {
+          learner_id: Number(row.learner_id || 0),
+          exam_type: cleanValue(row.exam_type),
+          level: cleanValue(row.grade),
+          stream: cleanValue(row.stream),
+          term: cleanValue(row.term),
+          year: Number(row.year || 0) || null,
+          percentage: Number(row.percentage || 0)
+        },
+        occurred_at: row.updated_at
+      })),
+      ...archiveEvents.map((row) => ({
+        event_type: "ARCHIVE_EVENT",
+        entity_type: "exam_archives",
+        entity_id: Number(row.id || 0),
+        title: cleanValue(row.title || row.archive_type || "Archive event"),
+        details: {
+          archive_type: cleanValue(row.archive_type),
+          status: cleanValue(row.status)
+        },
+        occurred_at: row.archived_at
+      })),
+      ...templateEvents.map((row) => ({
+        event_type: "TEMPLATE_UPDATE",
+        entity_type: "exam_templates",
+        entity_id: Number(row.id || 0),
+        title: `${cleanValue(row.template_name || "Template")} ${cleanValue(row.version_tag || "")}`.trim(),
+        details: {
+          template_key: cleanValue(row.template_key),
+          version_tag: cleanValue(row.version_tag)
+        },
+        occurred_at: row.updated_at || row.created_at
+      }))
+    ]
+      .filter((row) => row.occurred_at)
+      .sort((a, b) => new Date(b.occurred_at).getTime() - new Date(a.occurred_at).getTime())
+      .slice(0, 1500);
+    const counter = totals[0] || {};
+    const recommendations = [];
+    if (Number(counter.curriculum_rows || 0) < 25) {
+      recommendations.push("Curriculum coverage is low. Import strands/sub-strands before bulk exam generation.");
+    }
+    if (Number(counter.generated_exams || 0) === 0) {
+      recommendations.push("No generated exams yet. Use Exam Generation to create term exam templates for each learning area.");
+    }
+    if (Number(counter.marks_rows || 0) === 0) {
+      recommendations.push("No marks registered. Use Exam Entry to feed marks and unlock assessment/progress reporting.");
+    }
+    if (Number(counter.archived_rows || 0) === 0) {
+      recommendations.push("No archives yet. Archive completed exam cycles for audit and compliance traceability.");
+    }
+    res.json({
+      filters: { learner_id: learnerId },
+      counters: {
+        curriculum_rows: Number(counter.curriculum_rows || 0),
+        generated_exams: Number(counter.generated_exams || 0),
+        marks_rows: Number(counter.marks_rows || 0),
+        archived_rows: Number(counter.archived_rows || 0)
+      },
+      recommendations,
+      timeline: timelineRows
     });
   })
 );

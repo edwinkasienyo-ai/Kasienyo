@@ -12,7 +12,7 @@ let portalContext = null;
 let searchRowDrafts = {};
 let dashboardAutoRefreshHandle = null;
 let currentSidebarSubmoduleId = null;
-const CLIENT_UI_BUNDLE_ID = "dash-bundle-main-v68-exam-engine-v2-redesign";
+const CLIENT_UI_BUNDLE_ID = "dash-bundle-main-v69-exam-engine-enterprise-expansion";
 const examPanelState = {
   generatedExam: null,
   serials: [],
@@ -134,7 +134,7 @@ const MODULE_DESCRIPTIONS = {
   "system-institution-uploads":
     "Institution uploads workspace: templates, logos, letterheads, admission/assessment samples, and generated document files per institution.",
   "system-recycle-bin": "Restore or permanently purge archived deleted records.",
-  "system-cbc-editor": "AI-powered examination lifecycle engine: curriculum, generation, scripts, assessment, progression, analytics, templates, archives and settings."
+  "system-cbc-editor": "Enterprise examination intelligence engine: curriculum, generation, entry, scripts, gradebooks, tracking, portals, compliance, lifecycle, analytics, templates, archives and settings."
 };
 
 const SIDEBAR_SUBMODULES = {
@@ -225,6 +225,26 @@ const SIDEBAR_SUBMODULES = {
       targetModule: "system-cbc-editor",
       options: { examTab: "progress-reports" }
     },
+    { id: "exam-gradebook", label: "Gradebook", targetModule: "system-cbc-editor", options: { examTab: "gradebook" } },
+    {
+      id: "exam-assessment-tracking",
+      label: "Assessment Tracking",
+      targetModule: "system-cbc-editor",
+      options: { examTab: "assessment-tracking" }
+    },
+    {
+      id: "exam-portal-insights",
+      label: "Portal Insights",
+      targetModule: "system-cbc-editor",
+      options: { examTab: "portal-insights" }
+    },
+    {
+      id: "exam-compliance",
+      label: "Compliance",
+      targetModule: "system-cbc-editor",
+      options: { examTab: "compliance" }
+    },
+    { id: "exam-lifecycle", label: "Lifecycle", targetModule: "system-cbc-editor", options: { examTab: "lifecycle" } },
     { id: "exam-analytics", label: "Analytics", targetModule: "system-cbc-editor", options: { examTab: "analytics" } },
     { id: "exam-templates", label: "Templates", targetModule: "system-cbc-editor", options: { examTab: "templates" } },
     { id: "exam-archives", label: "Archives", targetModule: "system-cbc-editor", options: { examTab: "archives" } },
@@ -4788,7 +4808,12 @@ function normalizeExamTabKey(tab = "") {
     "marks-entry": "exam-entry",
     "result-scripts": "exam-scripts",
     "assessment-report": "assessment-reports",
-    "learner-performance": "progress-reports"
+    "learner-performance": "progress-reports",
+    "grade-book": "gradebook",
+    "assessment-tracker": "assessment-tracking",
+    "portal": "portal-insights",
+    "compliance-reporting": "compliance",
+    "academic-lifecycle": "lifecycle"
   };
   return aliases[value] || value || "curriculum";
 }
@@ -5512,6 +5537,11 @@ async function renderCbcCurriculumEditor(options = {}) {
     { id: "exam-scripts", label: "Exam Scripts" },
     { id: "assessment-reports", label: "Assessment Reports" },
     { id: "progress-reports", label: "Progress Reports" },
+    { id: "gradebook", label: "Gradebook" },
+    { id: "assessment-tracking", label: "Assessment Tracking" },
+    { id: "portal-insights", label: "Portal Insights" },
+    { id: "compliance", label: "Compliance" },
+    { id: "lifecycle", label: "Lifecycle" },
     { id: "analytics", label: "Analytics" },
     { id: "templates", label: "Templates" },
     { id: "archives", label: "Archives" },
@@ -5545,7 +5575,7 @@ async function renderCbcCurriculumEditor(options = {}) {
   document.getElementById("formArea").innerHTML = `
     <div class="module-header-card exam-v2-header">
       <h3>Examination Management - Redefined Engine</h3>
-      <p>AI-powered, CBC-aligned, workflow-driven lifecycle for curriculum, generation, scripts, assessments, progression, analytics, templates, archives and settings.</p>
+      <p>AI-powered, CBC-aligned, workflow-driven lifecycle spanning curriculum, exam generation, scripts, gradebooks, assessment tracking, portals, compliance, analytics, archives and settings.</p>
     </div>
     <nav id="examTopNav" class="exam-top-nav" aria-label="Examination submodules"></nav>
     <section id="examMgmtSubmodulePanel" class="dashboard-section"></section>
@@ -6561,6 +6591,597 @@ async function renderCbcCurriculumEditor(options = {}) {
     await loadLearners();
   };
 
+  const renderGradebookTab = async () => {
+    panel.innerHTML = `
+      <div class="exam-v2-layout">
+        <div class="exam-v2-pane">
+          <h4>Gradebook Intelligence</h4>
+          <p class="small-note">SIS-style gradebook by subject, learner and competency distribution with class filters.</p>
+          <div class="form-grid">
+            <label>Grade</label>
+            <select id="examV2GradebookGrade"><option value="">All grades</option>${gradeOptions.map((v) => `<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`).join("")}</select>
+            <label>Form</label>
+            <select id="examV2GradebookForm"><option value="">All forms</option>${formOptions.map((v) => `<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`).join("")}</select>
+            <label>Stream</label>
+            <input id="examV2GradebookStream" placeholder="Optional stream" />
+            <label>Term</label>
+            <select id="examV2GradebookTerm"><option value="">All terms</option>${termOptions.map((v) => `<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`).join("")}</select>
+            <label>Year</label>
+            <input id="examV2GradebookYear" type="number" value="${new Date().getFullYear()}" />
+          </div>
+          <div class="actions-row exam-icon-group">
+            <button class="ax-btn ax-btn--refresh ax-btn--sm" id="examV2GradebookLoadBtn" title="Refresh gradebook">Refresh</button>
+            <button class="ax-btn ax-btn--view ax-btn--sm" id="examV2GradebookViewBtn" title="View gradebook">View</button>
+            <button class="ax-btn ax-btn--download ax-btn--sm" id="examV2GradebookDownloadBtn" title="Download gradebook">Download</button>
+            <button class="ax-btn ax-btn--print ax-btn--sm" id="examV2GradebookPrintBtn" title="Print gradebook">Print</button>
+          </div>
+          <div id="examV2GradebookCards" class="exam-analytics-grid"></div>
+          <div id="examV2GradebookStatus" class="small-note">Loading gradebook...</div>
+        </div>
+      </div>
+      <div class="exam-v2-layout">
+        <div class="exam-v2-pane">
+          <h4>Subject Performance</h4>
+          <div class="dashboard-table-wrap">
+            <table class="dashboard-table">
+              <thead><tr><th>Subject</th><th>Entries</th><th>Avg Marks</th><th>Avg %</th></tr></thead>
+              <tbody id="examV2GradebookSubjectRows"><tr><td colspan="4">No rows loaded yet.</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+        <div class="exam-v2-pane">
+          <h4>Learner Gradebook (Top)</h4>
+          <div class="dashboard-table-wrap">
+            <table class="dashboard-table">
+              <thead><tr><th>Learner</th><th>Grade</th><th>Stream</th><th>Mean %</th><th>Subjects</th></tr></thead>
+              <tbody id="examV2GradebookLearnerRows"><tr><td colspan="5">No rows loaded yet.</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    `;
+    stylePanel();
+    const gradeEl = document.getElementById("examV2GradebookGrade");
+    const formEl = document.getElementById("examV2GradebookForm");
+    const streamEl = document.getElementById("examV2GradebookStream");
+    const termEl = document.getElementById("examV2GradebookTerm");
+    const yearEl = document.getElementById("examV2GradebookYear");
+    const cardsEl = document.getElementById("examV2GradebookCards");
+    const statusEl = document.getElementById("examV2GradebookStatus");
+    const subjectRowsEl = document.getElementById("examV2GradebookSubjectRows");
+    const learnerRowsEl = document.getElementById("examV2GradebookLearnerRows");
+    let lastPayload = null;
+    const setStatus = (message) => {
+      if (statusEl) statusEl.textContent = message || "";
+    };
+    const load = async () => {
+      const params = new URLSearchParams();
+      const grade = String(gradeEl?.value || "");
+      const form_name = String(formEl?.value || "");
+      const stream = String(streamEl?.value || "").trim();
+      const term = String(termEl?.value || "");
+      const year = String(yearEl?.value || "").trim();
+      if (grade) params.set("grade", grade);
+      if (!grade && form_name) params.set("form_name", form_name);
+      if (stream) params.set("stream", stream);
+      if (term) params.set("term", term);
+      if (year) params.set("year", year);
+      try {
+        const payload = await request(`/api/examinations/gradebook/overview?${params.toString()}`);
+        lastPayload = payload;
+        const subjects = Array.isArray(payload?.by_subject) ? payload.by_subject : [];
+        const learners = Array.isArray(payload?.learner_gradebook) ? payload.learner_gradebook : [];
+        const bands = Array.isArray(payload?.competency_distribution) ? payload.competency_distribution : [];
+        if (cardsEl) {
+          cardsEl.innerHTML = `
+            <article class="exam-analytics-card"><h5>Subjects</h5><p>${formatNumber(payload?.totals?.subjects || 0)}</p></article>
+            <article class="exam-analytics-card"><h5>Learners</h5><p>${formatNumber(payload?.totals?.learners || 0)}</p></article>
+            <article class="exam-analytics-card"><h5>Rows</h5><p>${formatNumber(payload?.totals?.marks_rows || 0)}</p></article>
+            <article class="exam-analytics-card"><h5>Competency Bands</h5><p>${bands.map((row) => `${escapeHtml(row.cbc_grade_band)}:${formatNumber(row.total || 0)}`).join(" · ") || "N/A"}</p></article>
+          `;
+        }
+        if (subjectRowsEl) {
+          subjectRowsEl.innerHTML = subjects.length
+            ? subjects.map((row) => `
+              <tr>
+                <td>${escapeHtml(row.subject || "-")}</td>
+                <td>${escapeHtml(String(row.total_entries || 0))}</td>
+                <td>${escapeHtml(String(row.avg_marks || 0))}</td>
+                <td>${escapeHtml(String(row.avg_percentage || 0))}</td>
+              </tr>
+            `).join("")
+            : `<tr><td colspan="4">No gradebook subject rows found.</td></tr>`;
+        }
+        if (learnerRowsEl) {
+          learnerRowsEl.innerHTML = learners.length
+            ? learners.slice(0, 120).map((row) => `
+              <tr>
+                <td>${escapeHtml(row.learner_name || "-")}</td>
+                <td>${escapeHtml(row.grade || "-")}</td>
+                <td>${escapeHtml(row.stream || "-")}</td>
+                <td>${escapeHtml(String(row.mean_percentage || 0))}</td>
+                <td>${escapeHtml(String(row.subject_count || 0))}</td>
+              </tr>
+            `).join("")
+            : `<tr><td colspan="5">No learner gradebook rows found.</td></tr>`;
+        }
+        setStatus(`Gradebook loaded: ${subjects.length} subjects and ${learners.length} learner summaries.`);
+      } catch (error) {
+        setStatus(error.message);
+      }
+    };
+    gradeEl?.addEventListener("change", () => { if (gradeEl.value && formEl) formEl.value = ""; });
+    formEl?.addEventListener("change", () => { if (formEl.value && gradeEl) gradeEl.value = ""; });
+    document.getElementById("examV2GradebookLoadBtn")?.addEventListener("click", load);
+    document.getElementById("examV2GradebookViewBtn")?.addEventListener("click", load);
+    document.getElementById("examV2GradebookDownloadBtn")?.addEventListener("click", () => {
+      const payload = lastPayload || {};
+      const subjects = Array.isArray(payload?.by_subject) ? payload.by_subject : [];
+      const learners = Array.isArray(payload?.learner_gradebook) ? payload.learner_gradebook : [];
+      if (!subjects.length && !learners.length) {
+        alert("Load gradebook first.");
+        return;
+      }
+      const csv = rowsToCsv([
+        ...subjects.map((row) => ({ section: "subject", ...row })),
+        ...learners.map((row) => ({ section: "learner", ...row }))
+      ]);
+      downloadTextFile("exam-gradebook-overview.csv", csv, "text/csv;charset=utf-8");
+    });
+    document.getElementById("examV2GradebookPrintBtn")?.addEventListener("click", () => window.print());
+    await load();
+  };
+
+  const renderAssessmentTrackingTab = async () => {
+    panel.innerHTML = `
+      <div class="exam-v2-layout">
+        <div class="exam-v2-pane">
+          <h4>Assessment Tracking Engine</h4>
+          <p class="small-note">Track performance movement, subject competency coverage and intervention watchlist in real time.</p>
+          <div class="form-grid">
+            <label>Grade</label>
+            <select id="examV2TrackGrade"><option value="">All grades</option>${gradeOptions.map((v) => `<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`).join("")}</select>
+            <label>Form</label>
+            <select id="examV2TrackForm"><option value="">All forms</option>${formOptions.map((v) => `<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`).join("")}</select>
+            <label>Stream</label>
+            <input id="examV2TrackStream" placeholder="Optional stream" />
+            <label>Term</label>
+            <select id="examV2TrackTerm"><option value="">All terms</option>${termOptions.map((v) => `<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`).join("")}</select>
+            <label>Year</label>
+            <input id="examV2TrackYear" type="number" value="${new Date().getFullYear()}" />
+          </div>
+          <div class="actions-row exam-icon-group">
+            <button class="ax-btn ax-btn--refresh ax-btn--sm" id="examV2TrackLoadBtn" title="Refresh tracking">Refresh</button>
+            <button class="ax-btn ax-btn--view ax-btn--sm" id="examV2TrackViewBtn" title="View tracking">View</button>
+            <button class="ax-btn ax-btn--download ax-btn--sm" id="examV2TrackDownloadBtn" title="Download tracking">Download</button>
+            <button class="ax-btn ax-btn--print ax-btn--sm" id="examV2TrackPrintBtn" title="Print tracking">Print</button>
+          </div>
+          <div id="examV2TrackCards" class="exam-analytics-grid"></div>
+          <div id="examV2TrackStatus" class="small-note">Loading assessment tracking...</div>
+        </div>
+      </div>
+      <div class="exam-v2-layout">
+        <div class="exam-v2-pane">
+          <h4>Subject Tracking</h4>
+          <div class="dashboard-table-wrap">
+            <table class="dashboard-table">
+              <thead><tr><th>Subject</th><th>Assessments</th><th>Avg %</th><th>Proficient</th><th>Intervention</th></tr></thead>
+              <tbody id="examV2TrackSubjectRows"><tr><td colspan="5">No rows loaded yet.</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+        <div class="exam-v2-pane">
+          <h4>Intervention Watchlist</h4>
+          <div class="dashboard-table-wrap">
+            <table class="dashboard-table">
+              <thead><tr><th>Learner</th><th>Grade</th><th>Stream</th><th>Avg %</th><th>Rows</th></tr></thead>
+              <tbody id="examV2TrackRiskRows"><tr><td colspan="5">No learner needs intervention yet.</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    `;
+    stylePanel();
+    const gradeEl = document.getElementById("examV2TrackGrade");
+    const formEl = document.getElementById("examV2TrackForm");
+    const streamEl = document.getElementById("examV2TrackStream");
+    const termEl = document.getElementById("examV2TrackTerm");
+    const yearEl = document.getElementById("examV2TrackYear");
+    const cardsEl = document.getElementById("examV2TrackCards");
+    const statusEl = document.getElementById("examV2TrackStatus");
+    const subjectRowsEl = document.getElementById("examV2TrackSubjectRows");
+    const riskRowsEl = document.getElementById("examV2TrackRiskRows");
+    let lastPayload = null;
+    const setStatus = (message) => {
+      if (statusEl) statusEl.textContent = message || "";
+    };
+    const load = async () => {
+      const params = new URLSearchParams();
+      const grade = String(gradeEl?.value || "");
+      const form_name = String(formEl?.value || "");
+      const stream = String(streamEl?.value || "").trim();
+      const term = String(termEl?.value || "");
+      const year = String(yearEl?.value || "").trim();
+      if (grade) params.set("grade", grade);
+      if (!grade && form_name) params.set("form_name", form_name);
+      if (stream) params.set("stream", stream);
+      if (term) params.set("term", term);
+      if (year) params.set("year", year);
+      try {
+        const payload = await request(`/api/examinations/assessment-tracking/overview?${params.toString()}`);
+        lastPayload = payload;
+        const bySubject = Array.isArray(payload?.by_subject) ? payload.by_subject : [];
+        const risk = Array.isArray(payload?.intervention_watchlist) ? payload.intervention_watchlist : [];
+        const byLearner = Array.isArray(payload?.learner_tracking) ? payload.learner_tracking : [];
+        if (cardsEl) {
+          cardsEl.innerHTML = `
+            <article class="exam-analytics-card"><h5>Learners Tracked</h5><p>${formatNumber(byLearner.length)}</p></article>
+            <article class="exam-analytics-card"><h5>Subjects Tracked</h5><p>${formatNumber(bySubject.length)}</p></article>
+            <article class="exam-analytics-card"><h5>Watchlist</h5><p>${formatNumber(risk.length)}</p></article>
+          `;
+        }
+        if (subjectRowsEl) {
+          subjectRowsEl.innerHTML = bySubject.length
+            ? bySubject.map((row) => `
+              <tr>
+                <td>${escapeHtml(row.subject || "-")}</td>
+                <td>${escapeHtml(String(row.total_assessments || 0))}</td>
+                <td>${escapeHtml(String(row.avg_percentage || 0))}</td>
+                <td>${escapeHtml(String(row.proficient_count || 0))}</td>
+                <td>${escapeHtml(String(row.intervention_count || 0))}</td>
+              </tr>
+            `).join("")
+            : `<tr><td colspan="5">No subject tracking rows found.</td></tr>`;
+        }
+        if (riskRowsEl) {
+          riskRowsEl.innerHTML = risk.length
+            ? risk.map((row) => `
+              <tr>
+                <td>${escapeHtml(row.learner_name || "-")}</td>
+                <td>${escapeHtml(row.grade || "-")}</td>
+                <td>${escapeHtml(row.stream || "-")}</td>
+                <td>${escapeHtml(String(row.avg_percentage || 0))}</td>
+                <td>${escapeHtml(String(row.rows_count || 0))}</td>
+              </tr>
+            `).join("")
+            : `<tr><td colspan="5">No learners in intervention watchlist.</td></tr>`;
+        }
+        setStatus(`Assessment tracking loaded for ${byLearner.length} learner profile(s).`);
+      } catch (error) {
+        setStatus(error.message);
+      }
+    };
+    gradeEl?.addEventListener("change", () => { if (gradeEl.value && formEl) formEl.value = ""; });
+    formEl?.addEventListener("change", () => { if (formEl.value && gradeEl) gradeEl.value = ""; });
+    document.getElementById("examV2TrackLoadBtn")?.addEventListener("click", load);
+    document.getElementById("examV2TrackViewBtn")?.addEventListener("click", load);
+    document.getElementById("examV2TrackDownloadBtn")?.addEventListener("click", () => {
+      const payload = lastPayload || {};
+      const rows = [
+        ...(Array.isArray(payload?.by_subject) ? payload.by_subject.map((row) => ({ section: "subject", ...row })) : []),
+        ...(Array.isArray(payload?.intervention_watchlist) ? payload.intervention_watchlist.map((row) => ({ section: "watchlist", ...row })) : []),
+        ...(Array.isArray(payload?.learner_tracking) ? payload.learner_tracking.map((row) => ({ section: "learner", ...row })) : [])
+      ];
+      if (!rows.length) {
+        alert("Load tracking data first.");
+        return;
+      }
+      downloadTextFile("exam-assessment-tracking.csv", rowsToCsv(rows), "text/csv;charset=utf-8");
+    });
+    document.getElementById("examV2TrackPrintBtn")?.addEventListener("click", () => window.print());
+    await load();
+  };
+
+  const renderPortalInsightsTab = async () => {
+    panel.innerHTML = `
+      <div class="exam-v2-layout">
+        <div class="exam-v2-pane">
+          <h4>Parent & Learner Portal Insights</h4>
+          <p class="small-note">Parent engagement, learner portal readiness, communication outcomes and high performers feed.</p>
+          <div class="actions-row exam-icon-group">
+            <button class="ax-btn ax-btn--refresh ax-btn--sm" id="examV2PortalLoadBtn" title="Refresh insights">Refresh</button>
+            <button class="ax-btn ax-btn--download ax-btn--sm" id="examV2PortalDownloadBtn" title="Download insights">Download</button>
+            <button class="ax-btn ax-btn--print ax-btn--sm" id="examV2PortalPrintBtn" title="Print insights">Print</button>
+          </div>
+          <div id="examV2PortalCards" class="exam-analytics-grid"></div>
+          <div id="examV2PortalStatus" class="small-note">Loading portal insights...</div>
+        </div>
+      </div>
+      <div class="exam-v2-layout">
+        <div class="exam-v2-pane">
+          <h4>Parent/Learner Communication Status</h4>
+          <div class="dashboard-table-wrap">
+            <table class="dashboard-table">
+              <thead><tr><th>Status</th><th>Total</th></tr></thead>
+              <tbody id="examV2PortalCommRows"><tr><td colspan="2">No rows available yet.</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+        <div class="exam-v2-pane">
+          <h4>Learner Portal Feed (Top Performance)</h4>
+          <div class="dashboard-table-wrap">
+            <table class="dashboard-table">
+              <thead><tr><th>Learner</th><th>Admission</th><th>Grade</th><th>Stream</th><th>Avg %</th><th>Exams</th></tr></thead>
+              <tbody id="examV2PortalFeedRows"><tr><td colspan="6">No rows available yet.</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    `;
+    stylePanel();
+    const cardsEl = document.getElementById("examV2PortalCards");
+    const statusEl = document.getElementById("examV2PortalStatus");
+    const commRowsEl = document.getElementById("examV2PortalCommRows");
+    const feedRowsEl = document.getElementById("examV2PortalFeedRows");
+    let lastPayload = null;
+    const setStatus = (message) => {
+      if (statusEl) statusEl.textContent = message || "";
+    };
+    const load = async () => {
+      try {
+        const payload = await request("/api/examinations/portals/overview");
+        lastPayload = payload;
+        const counters = payload?.counters || {};
+        const commRows = Array.isArray(payload?.communication_status) ? payload.communication_status : [];
+        const feedRows = Array.isArray(payload?.learner_portal_feed) ? payload.learner_portal_feed : [];
+        if (cardsEl) {
+          cardsEl.innerHTML = `
+            <article class="exam-analytics-card"><h5>Total Learners</h5><p>${formatNumber(counters.total_learners || 0)}</p></article>
+            <article class="exam-analytics-card"><h5>With Parent Profile</h5><p>${formatNumber(counters.learners_with_parent_profile || 0)}</p></article>
+            <article class="exam-analytics-card"><h5>Assessed Learners</h5><p>${formatNumber(counters.assessed_learners || 0)}</p></article>
+            <article class="exam-analytics-card"><h5>Parent Engagement %</h5><p>${escapeHtml(String(counters.parent_engagement_rate_pct || 0))}</p></article>
+            <article class="exam-analytics-card"><h5>Learner Portal Coverage %</h5><p>${escapeHtml(String(counters.learner_portal_coverage_rate_pct || 0))}</p></article>
+          `;
+        }
+        if (commRowsEl) {
+          commRowsEl.innerHTML = commRows.length
+            ? commRows.map((row) => `<tr><td>${escapeHtml(row.status || "-")}</td><td>${escapeHtml(String(row.total || 0))}</td></tr>`).join("")
+            : `<tr><td colspan="2">No communication status rows found.</td></tr>`;
+        }
+        if (feedRowsEl) {
+          feedRowsEl.innerHTML = feedRows.length
+            ? feedRows.map((row) => `
+              <tr>
+                <td>${escapeHtml(row.learner_name || "-")}</td>
+                <td>${escapeHtml(row.admission_number || "-")}</td>
+                <td>${escapeHtml(row.grade || "-")}</td>
+                <td>${escapeHtml(row.stream || "-")}</td>
+                <td>${escapeHtml(String(row.avg_percentage || 0))}</td>
+                <td>${escapeHtml(String(row.exams_done || 0))}</td>
+              </tr>
+            `).join("")
+            : `<tr><td colspan="6">No portal feed rows found.</td></tr>`;
+        }
+        setStatus("Portal insights refreshed.");
+      } catch (error) {
+        setStatus(error.message);
+      }
+    };
+    document.getElementById("examV2PortalLoadBtn")?.addEventListener("click", load);
+    document.getElementById("examV2PortalDownloadBtn")?.addEventListener("click", () => {
+      const payload = lastPayload || {};
+      const rows = [
+        ...(Array.isArray(payload?.communication_status) ? payload.communication_status.map((row) => ({ section: "communication_status", ...row })) : []),
+        ...(Array.isArray(payload?.learner_portal_feed) ? payload.learner_portal_feed.map((row) => ({ section: "learner_portal_feed", ...row })) : [])
+      ];
+      if (!rows.length) {
+        alert("Load portal insights first.");
+        return;
+      }
+      downloadTextFile("exam-portal-insights.csv", rowsToCsv(rows), "text/csv;charset=utf-8");
+    });
+    document.getElementById("examV2PortalPrintBtn")?.addEventListener("click", () => window.print());
+    await load();
+  };
+
+  const renderComplianceTab = async () => {
+    panel.innerHTML = `
+      <div class="exam-v2-layout">
+        <div class="exam-v2-pane">
+          <h4>Compliance Reporting Hub</h4>
+          <p class="small-note">Institutional, CBC and learner-record completeness metrics for national/state-style reporting.</p>
+          <div class="actions-row exam-icon-group">
+            <button class="ax-btn ax-btn--refresh ax-btn--sm" id="examV2ComplianceLoadBtn" title="Refresh compliance">Refresh</button>
+            <button class="ax-btn ax-btn--download ax-btn--sm" id="examV2ComplianceDownloadBtn" title="Download compliance">Download</button>
+            <button class="ax-btn ax-btn--print ax-btn--sm" id="examV2CompliancePrintBtn" title="Print compliance">Print</button>
+          </div>
+          <div id="examV2ComplianceCards" class="exam-analytics-grid"></div>
+          <div id="examV2ComplianceStatus" class="small-note">Loading compliance indicators...</div>
+        </div>
+      </div>
+      <div class="exam-v2-layout">
+        <div class="exam-v2-pane">
+          <h4>Learners Missing Assessment Records</h4>
+          <div class="dashboard-table-wrap">
+            <table class="dashboard-table">
+              <thead><tr><th>Learner</th><th>Admission</th><th>Grade</th><th>Stream</th></tr></thead>
+              <tbody id="examV2ComplianceMissingRows"><tr><td colspan="4">No rows loaded yet.</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    `;
+    stylePanel();
+    const cardsEl = document.getElementById("examV2ComplianceCards");
+    const statusEl = document.getElementById("examV2ComplianceStatus");
+    const missingRowsEl = document.getElementById("examV2ComplianceMissingRows");
+    let lastPayload = null;
+    const setStatus = (message) => {
+      if (statusEl) statusEl.textContent = message || "";
+    };
+    const load = async () => {
+      try {
+        const payload = await request("/api/examinations/compliance/overview");
+        lastPayload = payload;
+        const coverage = payload?.coverage || {};
+        const learner = coverage?.learner_registry || {};
+        const marks = coverage?.marks_registry || {};
+        const curriculum = coverage?.curriculum_registry || {};
+        if (cardsEl) {
+          cardsEl.innerHTML = `
+            <article class="exam-analytics-card"><h5>Learner Admission Ready %</h5><p>${escapeHtml(String(learner.admission_ready_pct || 0))}</p></article>
+            <article class="exam-analytics-card"><h5>Learner Contact Ready %</h5><p>${escapeHtml(String(learner.contact_ready_pct || 0))}</p></article>
+            <article class="exam-analytics-card"><h5>Marks Metadata Ready %</h5><p>${escapeHtml(String(marks.exam_type_ready_pct || 0))}</p></article>
+            <article class="exam-analytics-card"><h5>Competency Ready %</h5><p>${escapeHtml(String(marks.competency_ready_pct || 0))}</p></article>
+            <article class="exam-analytics-card"><h5>Curriculum Rows</h5><p>${formatNumber(curriculum.curriculum_rows || 0)}</p></article>
+            <article class="exam-analytics-card"><h5>Mapped Learning Areas</h5><p>${formatNumber(curriculum.mapped_learning_areas || 0)}</p></article>
+          `;
+        }
+        const missing = Array.isArray(payload?.learners_without_assessment) ? payload.learners_without_assessment : [];
+        if (missingRowsEl) {
+          missingRowsEl.innerHTML = missing.length
+            ? missing.map((row) => `
+              <tr>
+                <td>${escapeHtml(row.full_name || "-")}</td>
+                <td>${escapeHtml(row.admission_number || "-")}</td>
+                <td>${escapeHtml(row.grade || "-")}</td>
+                <td>${escapeHtml(row.stream || "-")}</td>
+              </tr>
+            `).join("")
+            : `<tr><td colspan="4">All learners have at least one assessment record.</td></tr>`;
+        }
+        setStatus(`Compliance report ready. Learners without assessments: ${missing.length}.`);
+      } catch (error) {
+        setStatus(error.message);
+      }
+    };
+    document.getElementById("examV2ComplianceLoadBtn")?.addEventListener("click", load);
+    document.getElementById("examV2ComplianceDownloadBtn")?.addEventListener("click", () => {
+      const payload = lastPayload || {};
+      const learner = payload?.coverage?.learner_registry || {};
+      const marks = payload?.coverage?.marks_registry || {};
+      const curriculum = payload?.coverage?.curriculum_registry || {};
+      const rows = [
+        {
+          section: "learner_registry",
+          total: learner.total || 0,
+          admission_ready_pct: learner.admission_ready_pct || 0,
+          upi_ready_pct: learner.upi_ready_pct || 0,
+          birth_cert_ready_pct: learner.birth_cert_ready_pct || 0,
+          contact_ready_pct: learner.contact_ready_pct || 0
+        },
+        {
+          section: "marks_registry",
+          total: marks.total || 0,
+          exam_type_ready_pct: marks.exam_type_ready_pct || 0,
+          term_ready_pct: marks.term_ready_pct || 0,
+          year_ready_pct: marks.year_ready_pct || 0,
+          competency_ready_pct: marks.competency_ready_pct || 0
+        },
+        {
+          section: "curriculum_registry",
+          curriculum_rows: curriculum.curriculum_rows || 0,
+          mapped_learning_areas: curriculum.mapped_learning_areas || 0,
+          mapped_grades: curriculum.mapped_grades || 0
+        },
+        ...(Array.isArray(payload?.learners_without_assessment) ? payload.learners_without_assessment.map((row) => ({ section: "missing_assessment", ...row })) : [])
+      ];
+      if (!rows.length) {
+        alert("Load compliance report first.");
+        return;
+      }
+      downloadTextFile("exam-compliance-report.csv", rowsToCsv(rows), "text/csv;charset=utf-8");
+    });
+    document.getElementById("examV2CompliancePrintBtn")?.addEventListener("click", () => window.print());
+    await load();
+  };
+
+  const renderLifecycleTab = async () => {
+    panel.innerHTML = `
+      <div class="exam-v2-layout">
+        <div class="exam-v2-pane">
+          <h4>Academic Lifecycle Tracking</h4>
+          <p class="small-note">Examination lifecycle timeline from curriculum setup to generated exams, marks, archives and template updates.</p>
+          <div class="form-grid">
+            <label>Learner ID (Optional)</label>
+            <input id="examV2LifecycleLearnerId" type="number" placeholder="Filter by learner id" />
+          </div>
+          <div class="actions-row exam-icon-group">
+            <button class="ax-btn ax-btn--refresh ax-btn--sm" id="examV2LifecycleLoadBtn" title="Refresh lifecycle">Refresh</button>
+            <button class="ax-btn ax-btn--download ax-btn--sm" id="examV2LifecycleDownloadBtn" title="Download lifecycle">Download</button>
+            <button class="ax-btn ax-btn--print ax-btn--sm" id="examV2LifecyclePrintBtn" title="Print lifecycle">Print</button>
+          </div>
+          <div id="examV2LifecycleCards" class="exam-analytics-grid"></div>
+          <div id="examV2LifecycleRecommendations" class="small-note"></div>
+          <div id="examV2LifecycleStatus" class="small-note">Loading lifecycle timeline...</div>
+        </div>
+      </div>
+      <div class="exam-v2-layout">
+        <div class="exam-v2-pane">
+          <h4>Timeline Events</h4>
+          <div class="dashboard-table-wrap">
+            <table class="dashboard-table">
+              <thead><tr><th>Date</th><th>Event</th><th>Entity</th><th>Title</th><th>Details</th></tr></thead>
+              <tbody id="examV2LifecycleRows"><tr><td colspan="5">No timeline rows loaded yet.</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    `;
+    stylePanel();
+    const learnerIdEl = document.getElementById("examV2LifecycleLearnerId");
+    const cardsEl = document.getElementById("examV2LifecycleCards");
+    const recEl = document.getElementById("examV2LifecycleRecommendations");
+    const statusEl = document.getElementById("examV2LifecycleStatus");
+    const rowsEl = document.getElementById("examV2LifecycleRows");
+    let lastPayload = null;
+    const setStatus = (message) => {
+      if (statusEl) statusEl.textContent = message || "";
+    };
+    const load = async () => {
+      const params = new URLSearchParams();
+      const learnerId = Number(learnerIdEl?.value || 0);
+      if (learnerId > 0) params.set("learner_id", String(learnerId));
+      try {
+        const payload = await request(`/api/examinations/lifecycle/timeline?${params.toString()}`);
+        lastPayload = payload;
+        const counters = payload?.counters || {};
+        const recommendations = Array.isArray(payload?.recommendations) ? payload.recommendations : [];
+        const rows = Array.isArray(payload?.timeline) ? payload.timeline : [];
+        if (cardsEl) {
+          cardsEl.innerHTML = `
+            <article class="exam-analytics-card"><h5>Curriculum Rows</h5><p>${formatNumber(counters.curriculum_rows || 0)}</p></article>
+            <article class="exam-analytics-card"><h5>Generated Exams</h5><p>${formatNumber(counters.generated_exams || 0)}</p></article>
+            <article class="exam-analytics-card"><h5>Marks Rows</h5><p>${formatNumber(counters.marks_rows || 0)}</p></article>
+            <article class="exam-analytics-card"><h5>Archive Rows</h5><p>${formatNumber(counters.archived_rows || 0)}</p></article>
+          `;
+        }
+        if (recEl) {
+          recEl.innerHTML = recommendations.length
+            ? `<strong>Workflow Recommendations:</strong><br/>${recommendations.map((item) => `- ${escapeHtml(item)}`).join("<br/>")}`
+            : "Workflow recommendations: No immediate blockers detected.";
+        }
+        if (rowsEl) {
+          rowsEl.innerHTML = rows.length
+            ? rows.slice(0, 300).map((row) => `
+              <tr>
+                <td>${escapeHtml(formatDateTime(row.occurred_at))}</td>
+                <td>${escapeHtml(row.event_type || "-")}</td>
+                <td>${escapeHtml(row.entity_type || "-")} #${escapeHtml(String(row.entity_id || "-"))}</td>
+                <td>${escapeHtml(row.title || "-")}</td>
+                <td>${escapeHtml(JSON.stringify(row.details || {}))}</td>
+              </tr>
+            `).join("")
+            : `<tr><td colspan="5">No timeline events found.</td></tr>`;
+        }
+        setStatus(`Lifecycle timeline loaded with ${rows.length} event(s).`);
+      } catch (error) {
+        setStatus(error.message);
+      }
+    };
+    document.getElementById("examV2LifecycleLoadBtn")?.addEventListener("click", load);
+    document.getElementById("examV2LifecycleDownloadBtn")?.addEventListener("click", () => {
+      const rows = Array.isArray(lastPayload?.timeline) ? lastPayload.timeline : [];
+      if (!rows.length) {
+        alert("Load lifecycle timeline first.");
+        return;
+      }
+      downloadTextFile("exam-lifecycle-timeline.csv", rowsToCsv(rows), "text/csv;charset=utf-8");
+    });
+    document.getElementById("examV2LifecyclePrintBtn")?.addEventListener("click", () => window.print());
+    await load();
+  };
+
   const activateTab = async (targetTab = "curriculum") => {
     const tab = normalizeExamTabKey(targetTab || "curriculum");
     renderNav(tab);
@@ -6574,6 +7195,11 @@ async function renderCbcCurriculumEditor(options = {}) {
     else if (tab === "exam-scripts" || tab === "result-scripts") await renderExamScriptsTab();
     else if (tab === "assessment-reports" || tab === "assessment-report") await renderAssessmentReportsTab();
     else if (tab === "progress-reports" || tab === "learner-performance") await renderProgressReportsTab();
+    else if (tab === "gradebook" || tab === "grade-book") await renderGradebookTab();
+    else if (tab === "assessment-tracking" || tab === "assessment-tracker") await renderAssessmentTrackingTab();
+    else if (tab === "portal-insights" || tab === "portal") await renderPortalInsightsTab();
+    else if (tab === "compliance" || tab === "compliance-reporting") await renderComplianceTab();
+    else if (tab === "lifecycle" || tab === "academic-lifecycle") await renderLifecycleTab();
     else if (tab === "analytics") {
       panel.innerHTML = renderExamAnalyticsPanel();
       await wireExamAnalyticsPanel();
