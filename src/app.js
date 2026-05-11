@@ -575,6 +575,14 @@ function parseTruthy(value) {
   return ["1", "true", "yes", "y", "on"].includes(normalized);
 }
 
+function parseBoundedInt(value, { fallback = 0, min = 0, max = Number.MAX_SAFE_INTEGER } = {}) {
+  const parsed = Number.parseInt(String(value ?? ""), 10);
+  if (!Number.isFinite(parsed)) return fallback;
+  if (parsed < min) return min;
+  if (parsed > max) return max;
+  return parsed;
+}
+
 function isSuperSystemDeveloperUsername(value) {
   return SUPER_SYSTEM_DEVELOPER_USERNAMES.includes(cleanValue(value));
 }
@@ -6354,7 +6362,7 @@ app.get(
     ROLES.HEAD_OF_INSTITUTION
   ]),
   asyncHandler(async (req, res) => {
-    const limit = Math.min(Math.max(Number(req.query?.limit || 200), 1), 1000);
+    const limit = parseBoundedInt(req.query?.limit, { fallback: 200, min: 1, max: 1000 });
     const institutionScope = canManageAcrossInstitutions(req.user)
       ? Number(req.query?.institution_id || 0)
       : req.user.institution_id;
@@ -7210,7 +7218,7 @@ app.get(
   asyncHandler(async (req, res) => {
     await purgeExpiredRecycleBinItems();
     await normalizeLegacyRecycleBinVisibility();
-    const limit = Math.min(Math.max(Number(req.query?.limit || 200), 1), 1000);
+    const limit = parseBoundedInt(req.query?.limit, { fallback: 200, min: 1, max: 1000 });
     const statusFilter = cleanValue(req.query?.status).toUpperCase();
     const visibilityScope = determineRecycleVisibilityScope(req.user);
     const requestedScope = Number(req.query?.institution_id || 0) || null;
