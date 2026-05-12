@@ -6433,12 +6433,18 @@ async function renderCbcCurriculumEditor(options = {}) {
             <label>Select Strands (tick multiple)</label>
             <div id="examV2GenStrandsPanel" class="dashboard-table-wrap" style="max-height: 170px; padding: 8px; overflow:auto;"></div>
             <div class="actions-row exam-icon-group">
+              <button class="ax-btn ax-btn--view ax-btn--sm" id="examV2GenSelectAllStrandsBtn" title="Select all strands" disabled>Select All</button>
+              <button class="ax-btn ax-btn--delete ax-btn--sm" id="examV2GenDeselectStrandsBtn" title="Deselect all strands" disabled>Deselect</button>
+              <button class="ax-btn ax-btn--refresh ax-btn--sm" id="examV2GenInvertStrandsBtn" title="Invert strand selection" disabled>Invert</button>
               <button class="ax-btn ax-btn--delete ax-btn--sm" id="examV2GenClearStrandsBtn" title="Delete strand selections" disabled>Clear Strands</button>
             </div>
             <div id="examV2GenSelectedStrands" class="small-note">No strand selected.</div>
             <label>Select Sub-strands (tick multiple)</label>
             <div id="examV2GenSubsPanel" class="dashboard-table-wrap" style="max-height: 170px; padding: 8px; overflow:auto;"></div>
             <div class="actions-row exam-icon-group">
+              <button class="ax-btn ax-btn--view ax-btn--sm" id="examV2GenSelectAllSubsBtn" title="Select all sub-strands" disabled>Select All</button>
+              <button class="ax-btn ax-btn--delete ax-btn--sm" id="examV2GenDeselectSubsBtn" title="Deselect all sub-strands" disabled>Deselect</button>
+              <button class="ax-btn ax-btn--refresh ax-btn--sm" id="examV2GenInvertSubsBtn" title="Invert sub-strand selection" disabled>Invert</button>
               <button class="ax-btn ax-btn--delete ax-btn--sm" id="examV2GenClearSubsBtn" title="Delete sub-strand selections" disabled>Clear Sub-strands</button>
             </div>
             <div id="examV2GenSelectedSubs" class="small-note">No sub-strand selected.</div>
@@ -6547,6 +6553,12 @@ async function renderCbcCurriculumEditor(options = {}) {
     const subsPanelEl = document.getElementById("examV2GenSubsPanel");
     const clearStrandsBtn = document.getElementById("examV2GenClearStrandsBtn");
     const clearSubsBtn = document.getElementById("examV2GenClearSubsBtn");
+    const selectAllStrandsBtn = document.getElementById("examV2GenSelectAllStrandsBtn");
+    const deselectStrandsBtn = document.getElementById("examV2GenDeselectStrandsBtn");
+    const invertStrandsBtn = document.getElementById("examV2GenInvertStrandsBtn");
+    const selectAllSubsBtn = document.getElementById("examV2GenSelectAllSubsBtn");
+    const deselectSubsBtn = document.getElementById("examV2GenDeselectSubsBtn");
+    const invertSubsBtn = document.getElementById("examV2GenInvertSubsBtn");
     const selectedStrandsInfoEl = document.getElementById("examV2GenSelectedStrands");
     const selectedSubsInfoEl = document.getElementById("examV2GenSelectedSubs");
     const structureEl = document.getElementById("examV2GenStructure");
@@ -7001,12 +7013,12 @@ async function renderCbcCurriculumEditor(options = {}) {
     const renderSelectionInfo = () => {
       if (selectedStrandsInfoEl) {
         selectedStrandsInfoEl.textContent = selectedStrandsState.size
-          ? `Selected strands: ${Array.from(selectedStrandsState.values()).join(" | ")}`
+          ? `Selected strands (${selectedStrandsState.size}/${availableStrands.length || selectedStrandsState.size}): ${Array.from(selectedStrandsState.values()).join(" | ")}`
           : "No strand selected.";
       }
       if (selectedSubsInfoEl) {
         selectedSubsInfoEl.textContent = selectedSubsState.size
-          ? `Selected sub-strands: ${Array.from(selectedSubsState.values()).join(" | ")}`
+          ? `Selected sub-strands (${selectedSubsState.size}/${availableSubs.length || selectedSubsState.size}): ${Array.from(selectedSubsState.values()).join(" | ")}`
           : "No sub-strand selected.";
       }
     };
@@ -7179,6 +7191,12 @@ async function renderCbcCurriculumEditor(options = {}) {
       setEnabled(areaEl, streamOk);
       setEnabled(clearStrandsBtn, areaOk && selectedStrands().length > 0);
       setEnabled(clearSubsBtn, strandsOk && selectedSubs().length > 0);
+      setEnabled(selectAllStrandsBtn, areaOk && availableStrands.length > 0);
+      setEnabled(deselectStrandsBtn, areaOk && selectedStrands().length > 0);
+      setEnabled(invertStrandsBtn, areaOk && availableStrands.length > 0);
+      setEnabled(selectAllSubsBtn, strandsOk && availableSubs.length > 0);
+      setEnabled(deselectSubsBtn, strandsOk && selectedSubs().length > 0);
+      setEnabled(invertSubsBtn, strandsOk && availableSubs.length > 0);
       setChecklistEnabled(strandsPanelEl, areaOk);
       setChecklistEnabled(subsPanelEl, strandsOk);
       setEnabled(structureEl, subsOk);
@@ -7233,8 +7251,109 @@ async function renderCbcCurriculumEditor(options = {}) {
       renderSelectionInfo();
       updateActivation();
     });
+    selectAllStrandsBtn?.addEventListener("click", async () => {
+      availableStrands.forEach((value) => selectedStrandsState.add(value));
+      await refreshSubStrandOptions();
+      renderChecklist({
+        panelEl: strandsPanelEl,
+        values: availableStrands,
+        selectedSet: selectedStrandsState,
+        name: "Strand",
+        onChange: async () => {
+          await refreshSubStrandOptions();
+          renderSelectionInfo();
+          updateActivation();
+        }
+      });
+      renderSelectionInfo();
+      updateActivation();
+    });
+    deselectStrandsBtn?.addEventListener("click", async () => {
+      selectedStrandsState.clear();
+      selectedSubsState.clear();
+      await refreshSubStrandOptions();
+      renderChecklist({
+        panelEl: strandsPanelEl,
+        values: availableStrands,
+        selectedSet: selectedStrandsState,
+        name: "Strand",
+        onChange: async () => {
+          await refreshSubStrandOptions();
+          renderSelectionInfo();
+          updateActivation();
+        }
+      });
+      renderSelectionInfo();
+      updateActivation();
+    });
+    invertStrandsBtn?.addEventListener("click", async () => {
+      const next = new Set(availableStrands.filter((value) => !selectedStrandsState.has(value)));
+      selectedStrandsState.clear();
+      next.forEach((value) => selectedStrandsState.add(value));
+      await refreshSubStrandOptions();
+      renderChecklist({
+        panelEl: strandsPanelEl,
+        values: availableStrands,
+        selectedSet: selectedStrandsState,
+        name: "Strand",
+        onChange: async () => {
+          await refreshSubStrandOptions();
+          renderSelectionInfo();
+          updateActivation();
+        }
+      });
+      renderSelectionInfo();
+      updateActivation();
+    });
     clearSubsBtn?.addEventListener("click", () => {
       selectedSubsState.clear();
+      renderChecklist({
+        panelEl: subsPanelEl,
+        values: availableSubs,
+        selectedSet: selectedSubsState,
+        name: "SubStrand",
+        onChange: () => {
+          renderSelectionInfo();
+          updateActivation();
+        }
+      });
+      renderSelectionInfo();
+      updateActivation();
+    });
+    selectAllSubsBtn?.addEventListener("click", () => {
+      availableSubs.forEach((value) => selectedSubsState.add(value));
+      renderChecklist({
+        panelEl: subsPanelEl,
+        values: availableSubs,
+        selectedSet: selectedSubsState,
+        name: "SubStrand",
+        onChange: () => {
+          renderSelectionInfo();
+          updateActivation();
+        }
+      });
+      renderSelectionInfo();
+      updateActivation();
+    });
+    deselectSubsBtn?.addEventListener("click", () => {
+      selectedSubsState.clear();
+      renderChecklist({
+        panelEl: subsPanelEl,
+        values: availableSubs,
+        selectedSet: selectedSubsState,
+        name: "SubStrand",
+        onChange: () => {
+          renderSelectionInfo();
+          updateActivation();
+        }
+      });
+      renderSelectionInfo();
+      updateActivation();
+    });
+    invertSubsBtn?.addEventListener("click", () => {
+      const next = new Set(availableSubs.filter((value) => !selectedSubsState.has(value)));
+      selectedSubsState.clear();
+      next.forEach((value) => selectedSubsState.add(value));
       renderChecklist({
         panelEl: subsPanelEl,
         values: availableSubs,
