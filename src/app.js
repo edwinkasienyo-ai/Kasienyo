@@ -10948,6 +10948,7 @@ function buildAdvancedExamText({
     `ACADEMIC YEAR: ${academicYear || "-"}`,
     `TERM: ${term || "-"}`,
     `EXAM SESSION: ${examSession || "-"}`,
+    `EXAM TYPE: ${examSession || "-"}`,
     `COVERAGE STRANDS: ${strandCoverageText}`,
     `COVERAGE SUB-STRANDS: ${subStrandCoverageText}`,
     `STRUCTURE: ${structure || "unified"} ${structureDetail ? `(${structureDetail})` : ""}`.trim(),
@@ -10988,48 +10989,48 @@ function buildAdvancedExamText({
   });
   const sectionBQuestions = Array.from({ length: 5 }).map((_, index) => {
     const topic = promptFor(index + 2);
-    return `${index + 11}. Explain ${topic} and give one practical example in school/community context.`;
+    return `${index + 1}. Explain ${topic} and give one practical example in school/community context.`;
   });
   const sectionCQuestions = Array.from({ length: 3 }).map((_, index) => {
     const topic = promptFor(index + 5);
-    return `${index + 16}. Apply ${topic} in a real-life task and outline safety/quality steps.`;
+    return `${index + 1}. Apply ${topic} in a real-life task and outline safety/quality steps.`;
   });
   let body = [];
   if (String(structure || "unified") === "structured") {
     body = [
       "STRUCTURED PAPER",
       "",
-      "SECTION A (Objective Questions)",
-      ...sectionAQuestions,
+      "SECTION A (Structured / Short Response Questions)",
+      ...sectionBQuestions,
       "",
-      "SECTION B (Short Answer Questions)",
-      ...sectionBQuestions
+      "SECTION B (Objective Questions)",
+      ...sectionAQuestions
     ];
     if (cleanValue(structureDetail) === "A_B_C") {
-      body.push("", "SECTION C (Extended Response / Application)", ...sectionCQuestions);
+      body.push("", "SECTION C (Objective / Application Questions)", ...sectionCQuestions);
     }
   } else if (String(structure || "unified") === "multi-section") {
     body = [
       "MULTI-SECTION PAPER",
       "",
-      "PAPER 1",
-      ...sectionAQuestions.slice(0, 6),
+      "PAPER 1 (Structured / Short Response)",
+      ...sectionBQuestions,
       "",
-      "PAPER 2",
-      ...sectionBQuestions
+      "PAPER 2 (Objective Questions)",
+      ...sectionAQuestions.slice(0, 8)
     ];
     if (cleanValue(structureDetail) === "PAPER_1_2_3") {
-      body.push("", "PAPER 3", ...sectionCQuestions);
+      body.push("", "PAPER 3 (Objective / Application)", ...sectionCQuestions);
     }
   } else {
     body = [
       "UNIFIED PAPER",
       "",
-      "SECTION A (Objective Questions)",
-      ...sectionAQuestions,
+      "SECTION A (Structured / Short Response Questions)",
+      ...sectionBQuestions,
       "",
-      "SECTION B (Short Answer Questions)",
-      ...sectionBQuestions
+      "SECTION B (Objective Questions)",
+      ...sectionAQuestions
     ];
   }
   return [
@@ -11244,22 +11245,38 @@ app.post(
       strand: primaryStrand,
       subStrand: primarySubStrand || null
     });
-    const derivedTemplateKey = normalizeExamTemplateKey(
-      selectedStructure !== "unified"
-        ? `exam-structure-${selectedStructure}-${cleanValue(selectedStructureDetail || "default").toLowerCase()}`
-        : `exam-structure-${selectedStructure}-default`
-    );
-    const templateRows = await query(
-      `SELECT content
-       FROM exam_templates
-       WHERE institution_id = ?
-         AND template_key = ?
-         AND is_active = 1
-       ORDER BY updated_at DESC
-       LIMIT 1`,
-      [req.user.institution_id, derivedTemplateKey]
-    );
-    const templateSampleText = cleanOptionalValue(templateRows[0]?.content) || "";
+    const toTemplateToken = (value = "") =>
+      cleanValue(value || "")
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-+|-+$/g, "");
+    const structureToken = toTemplateToken(selectedStructure) || "unified";
+    const detailToken = selectedStructure !== "unified"
+      ? (toTemplateToken(selectedStructureDetail || "default") || "default")
+      : "default";
+    const levelToken = toTemplateToken(selectedGrade || selectedForm || "general") || "general";
+    const areaToken = toTemplateToken(selectedLearningArea || "general") || "general";
+    const candidateTemplateKeys = Array.from(new Set([
+      `exam-structure-${structureToken}-${detailToken}-${levelToken}-${areaToken}`,
+      `exam-structure-${structureToken}-${detailToken}-${areaToken}`,
+      `exam-structure-${structureToken}-${detailToken}-${levelToken}`,
+      `exam-structure-${structureToken}-${detailToken}`
+    ]));
+    const placeholders = candidateTemplateKeys.map(() => "?").join(", ");
+    const templateRows = candidateTemplateKeys.length
+      ? await query(
+        `SELECT template_key, content
+         FROM exam_templates
+         WHERE institution_id = ?
+           AND template_key IN (${placeholders})
+           AND is_active = 1
+         ORDER BY updated_at DESC`,
+        [req.user.institution_id, ...candidateTemplateKeys]
+      )
+      : [];
+    const templatesByKey = new Map((Array.isArray(templateRows) ? templateRows : []).map((row) => [cleanValue(row.template_key), row.content]));
+    const matchedTemplateKey = candidateTemplateKeys.find((key) => templatesByKey.has(key)) || "";
+    const templateSampleText = cleanOptionalValue(templatesByKey.get(matchedTemplateKey) || "") || "";
     const examText = buildAdvancedExamText({
       title: cleanOptionalValue(body.title) || `${selectedSession || "Exam"} - ${selectedLearningArea}`,
       learningArea: selectedLearningArea,

@@ -6439,6 +6439,36 @@ async function renderCbcCurriculumEditor(options = {}) {
               <tbody id="examV2GenSerialRows"><tr><td colspan="7">No serials generated yet.</td></tr></tbody>
             </table>
           </div>
+          <div class="module-header-card">
+            <h4>Sample Template Factory (All Structures)</h4>
+            <p class="small-note">Generate editable samples per structure, download in Word format, modify, and upload final template.</p>
+          </div>
+          <div class="form-grid">
+            <label>Sample Grade/Form</label>
+            <select id="examV2SampleLevel">${gradeFormOptions.map((v) => `<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`).join("")}</select>
+            <label>Sample Learning Area</label>
+            <select id="examV2SampleArea">${learningAreas.map((v) => `<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`).join("")}</select>
+            <label>Sample Structure</label>
+            <select id="examV2SampleStructure"><option value="unified">Unified</option><option value="structured">Structured</option><option value="multi-section">Multi-section</option></select>
+            <label>Sample Detail</label>
+            <select id="examV2SampleDetail"><option value="">Default</option></select>
+            <label>Sample Exam Session</label>
+            <select id="examV2SampleSession">${examSessions.map((v) => `<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`).join("")}</select>
+            <label>Sample Academic Year</label>
+            <input id="examV2SampleAcademicYear" value="${new Date().getFullYear()}/${new Date().getFullYear() + 1}" />
+            <label>Sample Term</label>
+            <select id="examV2SampleTerm">${termOptions.map((v) => `<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`).join("")}</select>
+          </div>
+          <div class="actions-row exam-icon-group">
+            <button class="ax-btn ax-btn--generate ax-btn--sm" id="examV2SampleGenerateBtn" title="Generate sample">Generate Sample</button>
+            <button class="ax-btn ax-btn--download ax-btn--sm" id="examV2SampleWordBtn" title="Download Word template">Word</button>
+            <button class="ax-btn ax-btn--download ax-btn--sm" id="examV2SampleTextBtn" title="Download text template">Text</button>
+            <button class="ax-btn ax-btn--save ax-btn--sm" id="examV2SampleSaveBtn" title="Save sample as template">Save Template</button>
+            <button class="ax-btn ax-btn--download ax-btn--sm" id="examV2SamplePackBtn" title="Generate all JSS sample pack">JSS Pack</button>
+            <label for="examV2SampleUploadInput" class="ax-btn ax-btn--upload ax-btn--sm exam-stack-top">Upload Final</label>
+            <input id="examV2SampleUploadInput" type="file" accept=".txt,.md,.csv,.doc,.docx,.html" hidden />
+          </div>
+          <textarea id="examV2SamplePreview" rows="12" class="template-spacious" placeholder="Generated sample preview appears here..."></textarea>
           <div id="examV2GenStatus" class="small-note">Select examination session to activate workflow.</div>
         </div>
       </div>
@@ -6482,12 +6512,27 @@ async function renderCbcCurriculumEditor(options = {}) {
     const templateDownloadBtn = document.getElementById("examV2GenTemplateDownloadBtn");
     const sampleBtn = document.getElementById("examV2GenSampleBtn");
     const templateUploadInput = document.getElementById("examV2GenTemplateUploadFile");
+    const sampleLevelEl = document.getElementById("examV2SampleLevel");
+    const sampleAreaEl = document.getElementById("examV2SampleArea");
+    const sampleStructureEl = document.getElementById("examV2SampleStructure");
+    const sampleDetailEl = document.getElementById("examV2SampleDetail");
+    const sampleSessionEl = document.getElementById("examV2SampleSession");
+    const sampleAcademicYearEl = document.getElementById("examV2SampleAcademicYear");
+    const sampleTermEl = document.getElementById("examV2SampleTerm");
+    const samplePreviewEl = document.getElementById("examV2SamplePreview");
+    const sampleGenerateBtn = document.getElementById("examV2SampleGenerateBtn");
+    const sampleWordBtn = document.getElementById("examV2SampleWordBtn");
+    const sampleTextBtn = document.getElementById("examV2SampleTextBtn");
+    const sampleSaveBtn = document.getElementById("examV2SampleSaveBtn");
+    const samplePackBtn = document.getElementById("examV2SamplePackBtn");
+    const sampleUploadInput = document.getElementById("examV2SampleUploadInput");
     let curriculumRows = [];
     let mappingRows = [];
     let generatedExamId = null;
     let allocatedSerials = [];
     let processed = false;
     const institutionCode = String(portalContext?.institution_code || portalContext?.institutionCode || "-");
+    let latestSampleText = "";
     const selectedStrandsState = new Set();
     const selectedSubsState = new Set();
     let availableStrands = [];
@@ -6496,36 +6541,134 @@ async function renderCbcCurriculumEditor(options = {}) {
     const setGenStatus = (message) => {
       if (statusNode) statusNode.textContent = message || "";
     };
-    const buildSamplePaperText = () => {
-      const structure = String(structureEl?.value || "unified");
-      const detail = String(structureDetailEl?.value || "");
-      const learningArea = String(areaEl?.value || "Pre-Technical Studies");
-      const level = String(levelEl?.value || "Grade 7");
+    const downloadWordDocument = (filename, text) => {
+      const html = `
+        <html>
+          <head><meta charset="utf-8"><title>${escapeHtml(filename)}</title></head>
+          <body><pre>${escapeHtml(text)}</pre></body>
+        </html>
+      `;
+      downloadTextFile(filename.endsWith(".doc") ? filename : `${filename}.doc`, html, "application/msword;charset=utf-8");
+    };
+    const slugToken = (value = "") =>
+      String(value || "")
+        .trim()
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-+|-+$/g, "");
+    const templateKeyForSample = ({
+      structure = "unified",
+      detail = "default",
+      level = "",
+      learningArea = ""
+    } = {}) => {
+      const struct = slugToken(structure) || "unified";
+      const detailToken = struct === "unified" ? "default" : (slugToken(detail) || "default");
+      const levelToken = slugToken(level) || "general";
+      const areaToken = slugToken(learningArea) || "general";
+      return `exam-structure-${struct}-${detailToken}-${levelToken}-${areaToken}`;
+    };
+    const structureDetailsFor = (structure = "unified") => {
+      if (structure === "structured") {
+        return [
+          { value: "A_B", label: "A & B" },
+          { value: "A_B_C", label: "A, B & C" }
+        ];
+      }
+      if (structure === "multi-section") {
+        return [
+          { value: "PAPER_1_2", label: "Paper 1 & 2" },
+          { value: "PAPER_1_2_3", label: "Paper 1, 2 & 3" }
+        ];
+      }
+      return [{ value: "", label: "Default" }];
+    };
+    const refreshSampleDetailChoices = () => {
+      if (!sampleStructureEl || !sampleDetailEl) return;
+      const structure = String(sampleStructureEl?.value || "unified");
+      const rows = structureDetailsFor(structure);
+      const current = String(sampleDetailEl?.value || "");
+      sampleDetailEl.innerHTML = rows.map((row) => `<option value="${escapeHtmlAttribute(row.value)}">${escapeHtml(row.label)}</option>`).join("");
+      if (rows.some((row) => row.value === current)) {
+        sampleDetailEl.value = current;
+      }
+    };
+    const buildSamplePaperText = ({
+      structure = String(structureEl?.value || "unified"),
+      detail = String(structureDetailEl?.value || ""),
+      learningArea = String(areaEl?.value || "Pre-Technical Studies"),
+      level = String(levelEl?.value || "Grade 7"),
+      examSession = String(sessionEl?.value || "Midterm"),
+      academicYear = String(yearEl?.value || `${new Date().getFullYear()}/${new Date().getFullYear() + 1}`),
+      term = String(termEl?.value || "Term One")
+    } = {}) => {
+      const examType = examSession;
       const lines = [
         `SCHOOL BASED ASSESSMENT`,
         `${learningArea.toUpperCase()}`,
         `${level.toUpperCase()} SAMPLE PAPER`,
+        `EXAM SESSION: ${examSession}`,
+        `EXAM TYPE: ${examType}`,
+        `ACADEMIC YEAR: ${academicYear}`,
+        `TERM: ${term}`,
+        `STRUCTURE: ${structure}${detail ? ` (${detail})` : ""}`,
+        `INSTITUTION CODE: ${institutionCode || "-"}`,
+        `SERIAL NUMBER: [AUTO GENERATED PER INSTITUTION / LEVEL / LEARNING AREA / STREAM / LEARNER]`,
         "",
-        `SECTION A (Objective)`,
+        `SECTION A (STRUCTURED / SHORT RESPONSE)`,
         `1. What is ${learningArea.toLowerCase()}?`,
         `2. What is fire?`,
         `3. What is computer?`,
-        `4. Which tool is used for measuring angles?`,
-        `5. Which of the following is an input device?`,
+        `4. Explain one practical use of ${learningArea.toLowerCase()} in school.`,
+        `5. State two safety rules relevant to this learning area.`,
         ""
       ];
       if (structure === "structured") {
-        lines.push("SECTION B (Short Answer)", "6. Explain one safety rule in a workshop.", "7. Define budget.", "8. State two characteristics of money.");
+        lines.push(
+          "SECTION B (OBJECTIVE QUESTIONS)",
+          "6. Which of the following is correct in relation to the topic above?",
+          "   A. ...  B. ...  C. ...  D. ...",
+          "7. Choose the best definition from the alternatives given.",
+          "   A. ...  B. ...  C. ...  D. ...",
+          "8. Identify the correct tool/device/symbol from the options.",
+          "   A. ...  B. ...  C. ...  D. ..."
+        );
         if (detail === "A_B_C") {
-          lines.push("", "SECTION C (Extended Response)", "9. Discuss record keeping in business and suggest solutions to two challenges.");
+          lines.push(
+            "",
+            "SECTION C (OBJECTIVE / APPLICATION)",
+            "9. Which statement best applies to the given scenario?",
+            "   A. ...  B. ...  C. ...  D. ...",
+            "10. Choose the correct response.",
+            "   A. ...  B. ...  C. ...  D. ..."
+          );
         }
       } else if (structure === "multi-section") {
-        lines.push("PAPER 2", "6. Explain the importance of marketing in business success.", "7. State three characteristics of a successful entrepreneur.");
+        lines.push(
+          "PAPER 2 (OBJECTIVE)",
+          "6. Which of the following statements is true?",
+          "   A. ...  B. ...  C. ...  D. ...",
+          "7. Choose the correct option.",
+          "   A. ...  B. ...  C. ...  D. ..."
+        );
         if (detail === "PAPER_1_2_3") {
-          lines.push("", "PAPER 3", "8. Applied task: Design a simple production workflow and show quality checkpoints.");
+          lines.push(
+            "",
+            "PAPER 3 (OBJECTIVE / COMPREHENSION)",
+            "8. Read the passage/map/image and answer by selecting the best alternative.",
+            "   A. ...  B. ...  C. ...  D. ...",
+            "9. Identify the best response.",
+            "   A. ...  B. ...  C. ...  D. ..."
+          );
         }
       } else {
-        lines.push("SECTION B (Short Answer)", "6. Explain one cause of fire and one prevention method.", "7. State two examples of output devices.");
+        lines.push(
+          "SECTION B (OBJECTIVE QUESTIONS)",
+          "6. Which is the most accurate answer?",
+          "   A. ...  B. ...  C. ...  D. ...",
+          "7. Choose the correct statement.",
+          "   A. ...  B. ...  C. ...  D. ..."
+        );
       }
       lines.push("", "Use this sample as editable template.");
       return lines.join("\n");
@@ -6593,12 +6736,21 @@ async function renderCbcCurriculumEditor(options = {}) {
       const selected = String(streamSelectEl?.value || "").trim();
       return selected || "N/A";
     };
-    const templateKeyForCurrentStructure = () => {
+    const templateKeysForCurrentStructure = () => {
       const structure = String(structureEl?.value || "unified").toLowerCase();
       const detail = structure !== "unified"
         ? String(structureDetailEl?.value || "default").toLowerCase()
         : "default";
-      return `exam-structure-${structure}-${detail}`;
+      const level = String(levelEl?.value || "general");
+      const learningArea = String(areaEl?.value || "general");
+      const specific = templateKeyForSample({
+        structure,
+        detail,
+        level,
+        learningArea
+      });
+      const generic = `exam-structure-${slugToken(structure)}-${slugToken(detail) || "default"}`;
+      return [specific, generic];
     };
     const refreshStructureDetailChoices = () => {
       const structure = String(structureEl?.value || "unified");
@@ -6852,12 +7004,14 @@ async function renderCbcCurriculumEditor(options = {}) {
     levelEl?.addEventListener("change", async () => {
       await refreshStreamOptions();
       await refreshStrandOptions();
+      if (sampleLevelEl && levelEl?.value) sampleLevelEl.value = levelEl.value;
       updateActivation();
     });
     streamSelectEl?.addEventListener("change", updateActivation);
     streamManualEl?.addEventListener("input", updateActivation);
     areaEl?.addEventListener("change", async () => {
       await refreshStrandOptions();
+      if (sampleAreaEl && areaEl?.value) sampleAreaEl.value = areaEl.value;
       updateActivation();
     });
     clearStrandsBtn?.addEventListener("click", async () => {
@@ -6942,6 +7096,8 @@ async function renderCbcCurriculumEditor(options = {}) {
         allocatedSerials = [];
         renderSerialRows([]);
         if (outputEl) outputEl.value = String(generated?.examText || "").trim();
+        examPanelState.generatedExam = { id: generatedExamId, payload };
+        examPanelState.serials = [];
         setGenStatus(`Generated exam #${generatedExamId || "-"} using ${selectedStrandsList.length} strand(s) and ${selectedSubsList.length} sub-strand(s).`);
         updateActivation();
       } catch (error) {
@@ -6990,6 +7146,32 @@ async function renderCbcCurriculumEditor(options = {}) {
           institution_code: row.institution_code || institutionCode || "-",
           learning_area: String(areaEl?.value || "")
         }));
+        const serialLines = allocatedSerials.length
+          ? allocatedSerials.slice(0, 30).map((row, index) =>
+            `${index + 1}. ${row.learner_name || "-"} | Adm ${row.admission_number || "-"} | ${row.grade || "-"} ${row.stream || "-"} | Serial ${row.serial || "-"}`
+          )
+          : ["No learner serials generated."];
+        const metaBlock = [
+          "",
+          "==== GENERATED SERIAL & EXAM METADATA ====",
+          `Institution: ${institutionCode || "-"}`,
+          `Academic Year: ${String(yearEl?.value || "-")}`,
+          `Term: ${String(termEl?.value || "-")}`,
+          `Exam Type: ${String(sessionEl?.value || "-")}`,
+          `Exam Session: ${String(sessionEl?.value || "-")}`,
+          `Grade/Form: ${grade || form_name || "-"}`,
+          `Learning Area: ${String(areaEl?.value || "-")}`,
+          `Output Mode: ${String(outputModeEl?.value || "-")}`,
+          "Serials:",
+          ...serialLines
+        ].join("\n");
+        if (outputEl) {
+          const existing = String(outputEl.value || "");
+          outputEl.value = existing.includes("==== GENERATED SERIAL & EXAM METADATA ====")
+            ? existing.replace(/==== GENERATED SERIAL & EXAM METADATA ====([\s\S]*)$/m, metaBlock.trim())
+            : `${existing}\n${metaBlock}`;
+        }
+        examPanelState.serials = allocatedSerials;
         renderSerialRows(allocatedSerials);
         processed = true;
         setGenStatus(`Processed output mode ${String(outputModeEl?.value || "")}. Generated ${allocatedSerials.length} serial records.`);
@@ -7040,12 +7222,40 @@ async function renderCbcCurriculumEditor(options = {}) {
       const sampleText = buildSamplePaperText();
       downloadTextFile("exam-sample-paper-template.txt", sampleText);
     });
+    const saveTemplateByKey = async ({ key, content, versionTag = "v1" }) => {
+      const rows = await request("/api/examinations/templates");
+      const existing = (Array.isArray(rows) ? rows : []).find((row) => String(row.template_key || "").toLowerCase() === String(key || "").toLowerCase());
+      if (existing?.id) {
+        await request(`/api/examinations/templates/${existing.id}`, {
+          method: "PUT",
+          body: JSON.stringify({
+            template_key: key,
+            template_name: `Exam Structure Template - ${key}`,
+            version_tag: versionTag,
+            content
+          })
+        });
+      } else {
+        await request("/api/examinations/templates", {
+          method: "POST",
+          body: JSON.stringify({
+            template_key: key,
+            template_name: `Exam Structure Template - ${key}`,
+            version_tag: versionTag,
+            content
+          })
+        });
+      }
+    };
     templateDownloadBtn?.addEventListener("click", async () => {
       try {
-        const key = templateKeyForCurrentStructure();
+        const [specificKey, genericKey] = templateKeysForCurrentStructure();
+        const key = specificKey || genericKey;
         const templates = await request("/api/examinations/templates");
         const rows = Array.isArray(templates) ? templates : [];
-        const selected = rows.find((row) => String(row.template_key || "").toLowerCase() === key.toLowerCase());
+        const selected =
+          rows.find((row) => String(row.template_key || "").toLowerCase() === String(specificKey || "").toLowerCase()) ||
+          rows.find((row) => String(row.template_key || "").toLowerCase() === String(genericKey || "").toLowerCase());
         if (selected?.content) {
           downloadTextFile(`${key}.txt`, selected.content);
           return;
@@ -7061,30 +7271,8 @@ async function renderCbcCurriculumEditor(options = {}) {
       if (!file) return;
       try {
         const content = await file.text();
-        const key = templateKeyForCurrentStructure();
-        const rows = await request("/api/examinations/templates");
-        const existing = (Array.isArray(rows) ? rows : []).find((row) => String(row.template_key || "").toLowerCase() === key.toLowerCase());
-        if (existing?.id) {
-          await request(`/api/examinations/templates/${existing.id}`, {
-            method: "PUT",
-            body: JSON.stringify({
-              template_key: key,
-              template_name: `Exam Structure Template - ${key}`,
-              version_tag: "v2",
-              content
-            })
-          });
-        } else {
-          await request("/api/examinations/templates", {
-            method: "POST",
-            body: JSON.stringify({
-              template_key: key,
-              template_name: `Exam Structure Template - ${key}`,
-              version_tag: "v1",
-              content
-            })
-          });
-        }
+        const [key] = templateKeysForCurrentStructure();
+        await saveTemplateByKey({ key, content, versionTag: "v2" });
         setGenStatus(`Template sample uploaded for ${key}.`);
       } catch (error) {
         alert(error.message);
@@ -7092,8 +7280,115 @@ async function renderCbcCurriculumEditor(options = {}) {
         templateUploadInput.value = "";
       }
     });
+    const buildSampleFromFactory = () => {
+      const text = buildSamplePaperText({
+        structure: String(sampleStructureEl?.value || "unified"),
+        detail: String(sampleDetailEl?.value || ""),
+        learningArea: String(sampleAreaEl?.value || ""),
+        level: String(sampleLevelEl?.value || ""),
+        examSession: String(sampleSessionEl?.value || ""),
+        academicYear: String(sampleAcademicYearEl?.value || ""),
+        term: String(sampleTermEl?.value || "")
+      });
+      latestSampleText = text;
+      if (samplePreviewEl) samplePreviewEl.value = text;
+      return text;
+    };
+    sampleStructureEl?.addEventListener("change", () => {
+      refreshSampleDetailChoices();
+      buildSampleFromFactory();
+    });
+    sampleDetailEl?.addEventListener("change", buildSampleFromFactory);
+    sampleAreaEl?.addEventListener("change", buildSampleFromFactory);
+    sampleLevelEl?.addEventListener("change", buildSampleFromFactory);
+    sampleSessionEl?.addEventListener("change", buildSampleFromFactory);
+    sampleTermEl?.addEventListener("change", buildSampleFromFactory);
+    sampleAcademicYearEl?.addEventListener("input", buildSampleFromFactory);
+    sampleGenerateBtn?.addEventListener("click", () => {
+      buildSampleFromFactory();
+      setGenStatus("Sample generated from factory settings.");
+    });
+    sampleTextBtn?.addEventListener("click", () => {
+      const sampleText = latestSampleText || buildSampleFromFactory();
+      downloadTextFile("exam-sample-template.txt", sampleText);
+    });
+    sampleWordBtn?.addEventListener("click", () => {
+      const sampleText = latestSampleText || buildSampleFromFactory();
+      downloadWordDocument("exam-sample-template.doc", sampleText);
+    });
+    sampleSaveBtn?.addEventListener("click", async () => {
+      const sampleText = latestSampleText || buildSampleFromFactory();
+      const key = templateKeyForSample({
+        structure: String(sampleStructureEl?.value || "unified"),
+        detail: String(sampleDetailEl?.value || ""),
+        level: String(sampleLevelEl?.value || ""),
+        learningArea: String(sampleAreaEl?.value || "")
+      });
+      try {
+        await saveTemplateByKey({ key, content: sampleText, versionTag: "v1" });
+        setGenStatus(`Sample template saved as ${key}.`);
+      } catch (error) {
+        alert(error.message);
+      }
+    });
+    samplePackBtn?.addEventListener("click", () => {
+      const selectedLevel = String(sampleLevelEl?.value || "Grade 7");
+      const selectedSession = String(sampleSessionEl?.value || "Midterm");
+      const selectedYear = String(sampleAcademicYearEl?.value || `${new Date().getFullYear()}/${new Date().getFullYear() + 1}`);
+      const selectedTerm = String(sampleTermEl?.value || "Term One");
+      const structures = [
+        { structure: "unified", detail: "" },
+        { structure: "structured", detail: "A_B_C" },
+        { structure: "multi-section", detail: "PAPER_1_2_3" }
+      ];
+      const sections = [];
+      learningAreas.forEach((area) => {
+        structures.forEach((item) => {
+          sections.push(
+            `====================================================`,
+            `LEARNING AREA: ${area} | STRUCTURE: ${item.structure}${item.detail ? ` (${item.detail})` : ""}`,
+            `====================================================`,
+            buildSamplePaperText({
+              structure: item.structure,
+              detail: item.detail,
+              learningArea: area,
+              level: selectedLevel,
+              examSession: selectedSession,
+              academicYear: selectedYear,
+              term: selectedTerm
+            }),
+            ""
+          );
+        });
+      });
+      const packText = sections.join("\n");
+      downloadWordDocument("jss-learning-areas-sample-pack.doc", packText);
+    });
+    sampleUploadInput?.addEventListener("change", async () => {
+      const file = sampleUploadInput.files?.[0];
+      if (!file) return;
+      try {
+        const content = await file.text();
+        const key = templateKeyForSample({
+          structure: String(sampleStructureEl?.value || "unified"),
+          detail: String(sampleDetailEl?.value || ""),
+          level: String(sampleLevelEl?.value || ""),
+          learningArea: String(sampleAreaEl?.value || "")
+        });
+        await saveTemplateByKey({ key, content, versionTag: "v2" });
+        latestSampleText = content;
+        if (samplePreviewEl) samplePreviewEl.value = content;
+        setGenStatus(`Uploaded final sample for ${key}.`);
+      } catch (error) {
+        alert(error.message);
+      } finally {
+        sampleUploadInput.value = "";
+      }
+    });
     renderSerialRows([]);
     refreshStructureDetailChoices();
+    refreshSampleDetailChoices();
+    buildSampleFromFactory();
     updateActivation();
   };
 
@@ -7147,6 +7442,17 @@ async function renderCbcCurriculumEditor(options = {}) {
     const yearEl = document.getElementById("examV2EntryYear");
     const rowsEl = document.getElementById("examV2EntryRows");
     const statusNode = document.getElementById("examV2EntryStatus");
+    const generatedPayload = examPanelState.generatedExam?.payload || {};
+    if (sessionEl && generatedPayload.exam_type) sessionEl.value = String(generatedPayload.exam_type);
+    if (termEl && generatedPayload.term) termEl.value = String(generatedPayload.term);
+    if (yearEl && generatedPayload.year) {
+      const start = Number(generatedPayload.year);
+      if (Number.isFinite(start) && start > 2000) yearEl.value = `${start}/${start + 1}`;
+    }
+    if (gradeEl && generatedPayload.grade) gradeEl.value = String(generatedPayload.grade);
+    if (formEl && generatedPayload.form_name) formEl.value = String(generatedPayload.form_name);
+    if (streamEl && generatedPayload.stream) streamEl.value = String(generatedPayload.stream);
+    if (areaEl && generatedPayload.learning_area) areaEl.value = String(generatedPayload.learning_area);
     let loadedRows = [];
     const setEntryStatus = (message) => {
       if (statusNode) statusNode.textContent = message || "";
