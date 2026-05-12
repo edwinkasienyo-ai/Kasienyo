@@ -11072,17 +11072,27 @@ app.post(
       : null;
     const selectedOutputMode = cleanValue(body.output_mode || "per_learner").toLowerCase();
     const selectedAllocationMode = cleanValue(body.allocation_mode || "manual").toLowerCase();
+    const MAX_SELECTION_ITEMS = 120;
+    const MAX_SELECTION_ITEM_LENGTH = 180;
     const normalizeStringArray = (value) => {
       if (Array.isArray(value)) {
-        return Array.from(new Set(value.map((item) => cleanValue(item)).filter(Boolean)));
+        return Array.from(
+          new Set(
+            value
+              .map((item) => cleanValue(item).slice(0, MAX_SELECTION_ITEM_LENGTH))
+              .filter(Boolean)
+              .slice(0, MAX_SELECTION_ITEMS)
+          )
+        );
       }
       if (typeof value === "string") {
         return Array.from(
           new Set(
             value
               .split(",")
-              .map((item) => cleanValue(item))
+              .map((item) => cleanValue(item).slice(0, MAX_SELECTION_ITEM_LENGTH))
               .filter(Boolean)
+              .slice(0, MAX_SELECTION_ITEMS)
           )
         );
       }
@@ -11099,6 +11109,9 @@ app.post(
       return res.status(400).json({
         error: "Select at least one strand and one sub-strand. Generation is restricted to selected coverage only."
       });
+    }
+    if (selectedStrands.length > MAX_SELECTION_ITEMS || selectedSubStrands.length > MAX_SELECTION_ITEMS) {
+      return res.status(400).json({ error: "Selection is too large. Reduce selected strands/sub-strands and retry." });
     }
     const levelCriteria = resolveLevelSelectionCriteria({ grade: selectedGrade, formName: selectedForm });
     if (levelCriteria.track === "unknown") {
@@ -11818,6 +11831,7 @@ app.post(
   auth,
   enforceAnyModuleAccess([MODULE_KEYS.ACADEMIC_EXAMS, MODULE_KEYS.CBC_CURRICULUM_EDITOR]),
   enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER]),
+  enforcePermission(PERMISSIONS.CREATE),
   asyncHandler(async (req, res) => {
     const institutionId = Number(req.user.institution_id);
     const body = req.body || {};
@@ -11922,7 +11936,9 @@ app.post(
 app.get(
   "/api/academic/results/ranked",
   auth,
+  enforceAnyModuleAccess([MODULE_KEYS.ACADEMIC_MARKS, MODULE_KEYS.CBC_CURRICULUM_EDITOR]),
   enforceRole([ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER]),
+  enforcePermission(PERMISSIONS.VIEW),
   asyncHandler(async (req, res) => {
     const institutionId = Number(req.user.institution_id);
     const grade = cleanValue(req.query?.grade || "");
@@ -11955,6 +11971,18 @@ app.get(
 app.get(
   "/api/academic/assessment-report/:learnerId",
   auth,
+  enforceRole([
+    ROLES.SUPER_SYSTEM_DEVELOPER,
+    ROLES.SYSTEM_DEVELOPER,
+    ROLES.SYSTEM_ADMINISTRATOR,
+    ROLES.ADMIN,
+    ROLES.HEAD_OF_INSTITUTION,
+    ROLES.SENIOR_TEACHER,
+    ROLES.HEAD_OF_DEPARTMENT,
+    ROLES.TEACHER,
+    ROLES.PARENT,
+    ROLES.LEARNER
+  ]),
   asyncHandler(async (req, res) => {
     const institutionId = Number(req.user.institution_id);
     const learnerId = Number(req.params.learnerId || 0);
@@ -12029,6 +12057,8 @@ const EXAM_SETTINGS_DEFAULTS = {
   realtime_sync_enabled: false,
   offline_cache_enabled: true
 };
+const MAX_EXAM_TEMPLATE_NAME_LENGTH = 180;
+const MAX_EXAM_TEMPLATE_CONTENT_LENGTH = 200000;
 
 function normalizeExamTemplateKey(value = "") {
   const key = cleanValue(value || "").toLowerCase();
@@ -12789,10 +12819,13 @@ app.post(
   enforcePermission(PERMISSIONS.CREATE),
   asyncHandler(async (req, res) => {
     const templateKey = normalizeExamTemplateKey(req.body?.template_key);
-    const templateName = cleanValue(req.body?.template_name || "");
-    const content = cleanValue(req.body?.content || "");
+    const templateName = cleanValue(req.body?.template_name || "").slice(0, MAX_EXAM_TEMPLATE_NAME_LENGTH);
+    const content = cleanValue(req.body?.content || "").slice(0, MAX_EXAM_TEMPLATE_CONTENT_LENGTH);
     if (!templateName || !content) {
       return res.status(400).json({ error: "template_name and content are required." });
+    }
+    if (cleanValue(req.body?.content || "").length > MAX_EXAM_TEMPLATE_CONTENT_LENGTH) {
+      return res.status(400).json({ error: `template content exceeds ${MAX_EXAM_TEMPLATE_CONTENT_LENGTH} characters.` });
     }
     const result = await query(
       `INSERT INTO exam_templates
@@ -12825,10 +12858,13 @@ app.put(
     const templateId = Number(req.params.id || 0);
     if (!templateId) return res.status(400).json({ error: "Valid template id is required." });
     const templateKey = normalizeExamTemplateKey(req.body?.template_key);
-    const templateName = cleanValue(req.body?.template_name || "");
-    const content = cleanValue(req.body?.content || "");
+    const templateName = cleanValue(req.body?.template_name || "").slice(0, MAX_EXAM_TEMPLATE_NAME_LENGTH);
+    const content = cleanValue(req.body?.content || "").slice(0, MAX_EXAM_TEMPLATE_CONTENT_LENGTH);
     if (!templateName || !content) {
       return res.status(400).json({ error: "template_name and content are required." });
+    }
+    if (cleanValue(req.body?.content || "").length > MAX_EXAM_TEMPLATE_CONTENT_LENGTH) {
+      return res.status(400).json({ error: `template content exceeds ${MAX_EXAM_TEMPLATE_CONTENT_LENGTH} characters.` });
     }
     await query(
       `UPDATE exam_templates
