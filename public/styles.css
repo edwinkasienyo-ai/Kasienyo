@@ -4061,6 +4061,27 @@ td .ax-btn::before,
   resize: vertical;
 }
 
+.exam-v2-collapse {
+  margin-top: 10px;
+  border: 1px solid #d7e3f2;
+  border-radius: 10px;
+  background: #f8fbff;
+  padding: 8px;
+}
+
+.exam-v2-collapse > summary {
+  cursor: pointer;
+  font-weight: 700;
+  color: #0f3f70;
+  margin-bottom: 8px;
+}
+
+#examV2GenOutput,
+#examV2GenSchemeOutput,
+#examV2SamplePreview {
+  min-height: 150px;
+}
+
 .dashboard-ai-assistant[data-collapsed="1"] {
   width: 44px;
   padding: 6px 4px;

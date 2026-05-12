@@ -6053,12 +6053,15 @@ async function renderCbcCurriculumEditor(options = {}) {
             <button class="ax-btn ax-btn--generate ax-btn--sm" id="examV2NotesGenerateBtn" title="AI generate notes">AI Generate</button>
             <button class="ax-btn ax-btn--print ax-btn--sm" id="examV2NotesPrintBtn" title="Print notes">Print</button>
             <button class="ax-btn ax-btn--download ax-btn--sm" id="examV2NotesDownloadBtn" title="Download notes">Download</button>
+            <button class="ax-btn ax-btn--download ax-btn--sm" id="examV2NotesTemplateBtn" title="Download notes template">Notes Template</button>
+            <label for="examV2NotesTemplateUploadInput" class="ax-btn ax-btn--upload ax-btn--sm exam-stack-top">Upload Notes Template</label>
+            <input id="examV2NotesTemplateUploadInput" type="file" accept=".txt,.md,.csv" hidden />
             <button class="ax-btn ax-btn--download ax-btn--sm" id="examV2LessonPlanTemplateBtn" title="Lesson plan template">Lesson Plan</button>
             <button class="ax-btn ax-btn--view ax-btn--sm" id="examV2MaterialViewBtn" title="View materials">View</button>
           </div>
           <div class="dashboard-table-wrap">
             <table class="dashboard-table">
-              <thead><tr><th>ID</th><th>Type</th><th>Title</th><th>Grade/Form</th><th>Path</th></tr></thead>
+              <thead><tr><th>ID</th><th>Type</th><th>Title</th><th>Grade/Form</th><th>Path</th><th>Actions</th></tr></thead>
               <tbody id="examV2MaterialRows">
                 ${materials.length
                   ? materials.slice(0, 120).map((row) => `
@@ -6068,9 +6071,12 @@ async function renderCbcCurriculumEditor(options = {}) {
                       <td>${escapeHtml(row.title || "-")}</td>
                       <td>${escapeHtml(row.grade || row.form_name || "-")}</td>
                       <td>${escapeHtml(row.file_path || "-")}</td>
+                      <td>
+                        <button class="ax-btn ax-btn--delete ax-btn--sm" data-material-delete="${Number(row.id || 0)}" title="Delete uploaded material">Delete</button>
+                      </td>
                     </tr>
                   `).join("")
-                  : `<tr><td colspan="5">No materials uploaded yet.</td></tr>`
+                  : `<tr><td colspan="6">No materials uploaded yet.</td></tr>`
                 }
               </tbody>
             </table>
@@ -6117,12 +6123,89 @@ async function renderCbcCurriculumEditor(options = {}) {
     const matSubEl = document.getElementById("examV2MatSubStrand");
     const draftBody = document.getElementById("examV2CurrDraftRows");
     const notesOutEl = document.getElementById("examV2NotesOutput");
+    const materialRowsEl = document.getElementById("examV2MaterialRows");
 
     const parseLevelChoice = (value = "") => {
       const label = String(value || "").trim();
       if (!label) return { grade: "", form_name: "" };
       if (/^form/i.test(label)) return { grade: "", form_name: label };
       return { grade: label, form_name: "" };
+    };
+    const parseLevelToken = (label = "") => {
+      const raw = String(label || "").trim();
+      const pp = raw.match(/^pp\s*(\d+)/i);
+      if (pp) return { kind: "pp", level: Number(pp[1]) };
+      const grade = raw.match(/^grade\s*(\d+)/i);
+      if (grade) return { kind: "grade", level: Number(grade[1]) };
+      const form = raw.match(/^form\s*(\d+)/i);
+      if (form) return { kind: "form", level: Number(form[1]) };
+      return { kind: "unknown", level: null };
+    };
+    const minLevelByBand = ({ kind, level }) => {
+      if (kind === "pp") return 1;
+      if (kind === "form") return 3;
+      if (kind !== "grade") return null;
+      if (level <= 3) return 1;
+      if (level <= 6) return 4;
+      if (level <= 9) return 7;
+      return 10;
+    };
+    const withinCurriculumRange = (rowLevel = "", selectedLevel = "") => {
+      const rowMeta = parseLevelToken(rowLevel);
+      const selectedMeta = parseLevelToken(selectedLevel);
+      if (selectedMeta.kind === "unknown" || rowMeta.kind === "unknown") return false;
+      if (selectedMeta.kind !== rowMeta.kind) return false;
+      const floor = minLevelByBand(selectedMeta);
+      if (floor === null) return String(rowLevel).trim().toLowerCase() === String(selectedLevel).trim().toLowerCase();
+      return Number(rowMeta.level) >= Number(floor) && Number(rowMeta.level) <= Number(selectedMeta.level);
+    };
+    const buildNotesTemplateText = () => {
+      const selectedLevel = String(matLevelEl?.value || "").trim();
+      const selectedArea = String(matAreaEl?.value || "").trim();
+      if (!selectedLevel || !selectedArea) {
+        return [
+          "NOTES TEMPLATE",
+          "Select Grade/Form and Learning Area before downloading template.",
+          "",
+          "Fields:",
+          "- Strand",
+          "- Sub-strand",
+          "- Lesson Objectives",
+          "- Content Notes",
+          "- Activities",
+          "- Assessment",
+          "- Missing Gaps To Cover"
+        ].join("\n");
+      }
+      const scopedRows = rows
+        .filter((row) => String(row.learning_area || "").trim().toLowerCase() === selectedArea.toLowerCase())
+        .filter((row) => withinCurriculumRange(String(row.grade || row.form_name || "").trim(), selectedLevel));
+      const grouped = new Map();
+      scopedRows.forEach((row) => {
+        const strand = String(row.strand || "").trim();
+        const sub = String(row.sub_strand || "").trim();
+        if (!strand) return;
+        if (!grouped.has(strand)) grouped.set(strand, []);
+        if (sub) grouped.get(strand).push(sub);
+      });
+      const sections = Array.from(grouped.entries()).map(([strand, subs], index) => [
+        `${index + 1}. STRAND: ${strand}`,
+        `   GRADE/FORM SCOPE: ${selectedLevel}`,
+        `   SUB-STRANDS: ${subs.length ? subs.join(" | ") : "-"}`,
+        "   LESSON OBJECTIVES:",
+        "   CONTENT NOTES:",
+        "   CLASS ACTIVITIES:",
+        "   ASSESSMENT TASKS:",
+        "   MISSING GAPS TO ADD:"
+      ].join("\n"));
+      return [
+        "ADVANCED NOTES TEMPLATE",
+        `LEARNING AREA: ${selectedArea}`,
+        `GRADE/FORM: ${selectedLevel}`,
+        "INSTRUCTIONS: Edit this template, then upload via Upload Notes Template button.",
+        "",
+        sections.length ? sections.join("\n\n") : "No curriculum rows found yet for this level/learning area."
+      ].join("\n");
     };
 
     const renderDraftRows = () => {
@@ -6402,8 +6485,73 @@ async function renderCbcCurriculumEditor(options = {}) {
       }
       downloadTextFile("exam-engine-notes.txt", text);
     });
+    document.getElementById("examV2NotesTemplateBtn")?.addEventListener("click", () => {
+      const templateText = buildNotesTemplateText();
+      const areaToken = String(matAreaEl?.value || "learning-area")
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-+|-+$/g, "") || "learning-area";
+      const levelToken = String(matLevelEl?.value || "level")
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-+|-+$/g, "") || "level";
+      downloadTextFile(`notes-template-${areaToken}-${levelToken}.txt`, templateText);
+      if (notesOutEl) notesOutEl.value = templateText;
+    });
+    document.getElementById("examV2NotesTemplateUploadInput")?.addEventListener("change", async (event) => {
+      const file = event?.target?.files?.[0];
+      if (!file) return;
+      const levelPayload = parseLevelChoice(String(matLevelEl?.value || ""));
+      const grade = levelPayload.grade;
+      const form_name = levelPayload.form_name;
+      const learning_area = String(matAreaEl?.value || "");
+      if ((!grade && !form_name) || !learning_area) {
+        alert("Select grade/form and learning area before uploading notes template.");
+        event.target.value = "";
+        return;
+      }
+      const formData = new FormData();
+      formData.append("file", file);
+      formData.append("resource_type", "notes_template");
+      formData.append("title", `${learning_area} Notes Template ${grade || form_name}`);
+      formData.append("description", `Learning Area: ${learning_area}\nTemplate Kind: NOTES_TEMPLATE`);
+      formData.append("grade", grade);
+      formData.append("form_name", form_name);
+      formData.append("learning_area", learning_area);
+      formData.append("strand", String(matStrandEl?.value || "").trim());
+      formData.append("sub_strand", String(matSubEl?.value || "").trim());
+      formData.append("term", "Term One");
+      const response = await fetch("/api/cbc/curriculum/materials/upload", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+        body: formData
+      });
+      const result = await response.json();
+      if (!response.ok) {
+        alert(result.error || "Template upload failed.");
+        event.target.value = "";
+        return;
+      }
+      setStatus(result.message || "Notes template uploaded.");
+      event.target.value = "";
+      await renderCurriculumTab();
+    });
     document.getElementById("examV2LessonPlanTemplateBtn")?.addEventListener("click", async () => {
       await downloadWithAuth("/api/templates/lesson-plan.csv", "lesson-plan-template.csv");
+    });
+    materialRowsEl?.addEventListener("click", async (event) => {
+      const targetBtn = event.target?.closest?.("[data-material-delete]");
+      if (!targetBtn) return;
+      const materialId = Number(targetBtn.getAttribute("data-material-delete") || 0);
+      if (!materialId) return;
+      if (!window.confirm(`Delete uploaded material #${materialId}?`)) return;
+      try {
+        await request(`/api/cbc/curriculum/materials/${materialId}`, { method: "DELETE" });
+        setStatus(`Material #${materialId} deleted.`);
+        await renderCurriculumTab();
+      } catch (error) {
+        alert(error.message);
+      }
     });
     document.getElementById("examV2MaterialViewBtn")?.addEventListener("click", renderCurriculumTab);
   };
@@ -6483,59 +6631,59 @@ async function renderCbcCurriculumEditor(options = {}) {
             <input id="examV2GenTemplateUploadFile" type="file" accept=".txt,.md,.csv,.doc,.docx" hidden />
           </div>
           <textarea id="examV2GenOutput" rows="16" class="template-spacious" placeholder="Generated exam text appears here..." readonly></textarea>
-          <div class="module-header-card">
-            <h4>Teacher Marking Scheme Center</h4>
+          <details class="exam-v2-collapse" open>
+            <summary>Teacher Marking Scheme Center</summary>
             <p class="small-note">After processing the exam, generate a fully aligned marking scheme with correct answers, then review/edit/print/download.</p>
-          </div>
-          <div class="actions-row exam-icon-group">
-            <button class="ax-btn ax-btn--generate ax-btn--sm" id="examV2GenSchemeGenerateBtn" title="Generate marking scheme" disabled>Generate Scheme</button>
-            <button class="ax-btn ax-btn--view ax-btn--sm" id="examV2GenSchemeViewBtn" title="View marking scheme" disabled>View</button>
-            <button class="ax-btn ax-btn--save ax-btn--sm" id="examV2GenSchemeSaveBtn" title="Save marking scheme" disabled>Save</button>
-            <button class="ax-btn ax-btn--download ax-btn--sm" id="examV2GenSchemeDownloadBtn" title="Download marking scheme" disabled>Download</button>
-            <button class="ax-btn ax-btn--print ax-btn--sm" id="examV2GenSchemePrintBtn" title="Print marking scheme" disabled>Print</button>
-          </div>
-          <textarea id="examV2GenSchemeOutput" rows="14" class="template-spacious" placeholder="Generated teacher marking scheme appears here..." readonly></textarea>
-          <div id="examV2GenSchemeStatus" class="small-note">Marking scheme will activate after Process.</div>
-          <div class="module-header-card">
-            <h4>Serial Number Generation Center</h4>
+            <div class="actions-row exam-icon-group">
+              <button class="ax-btn ax-btn--generate ax-btn--sm" id="examV2GenSchemeGenerateBtn" title="Generate marking scheme" disabled>Generate Scheme</button>
+              <button class="ax-btn ax-btn--view ax-btn--sm" id="examV2GenSchemeViewBtn" title="View marking scheme" disabled>View</button>
+              <button class="ax-btn ax-btn--save ax-btn--sm" id="examV2GenSchemeSaveBtn" title="Save marking scheme" disabled>Save</button>
+              <button class="ax-btn ax-btn--download ax-btn--sm" id="examV2GenSchemeDownloadBtn" title="Download marking scheme" disabled>Download</button>
+              <button class="ax-btn ax-btn--print ax-btn--sm" id="examV2GenSchemePrintBtn" title="Print marking scheme" disabled>Print</button>
+            </div>
+            <textarea id="examV2GenSchemeOutput" rows="14" class="template-spacious" placeholder="Generated teacher marking scheme appears here..." readonly></textarea>
+            <div id="examV2GenSchemeStatus" class="small-note">Marking scheme will activate after Process.</div>
+          </details>
+          <details class="exam-v2-collapse">
+            <summary>Serial Number Generation Center</summary>
             <p class="small-note">Serials are generated per institution, grade/form, learning area, stream and learner after Process.</p>
-          </div>
-          <div class="dashboard-table-wrap">
-            <table class="dashboard-table">
-              <thead><tr><th>Institution</th><th>Grade/Form</th><th>Learning Area</th><th>Stream</th><th>Learner</th><th>Admission</th><th>Serial</th></tr></thead>
-              <tbody id="examV2GenSerialRows"><tr><td colspan="7">No serials generated yet.</td></tr></tbody>
-            </table>
-          </div>
-          <div class="module-header-card">
-            <h4>Sample Template Factory (All Structures)</h4>
+            <div class="dashboard-table-wrap">
+              <table class="dashboard-table">
+                <thead><tr><th>Institution</th><th>Grade/Form</th><th>Learning Area</th><th>Stream</th><th>Learner</th><th>Admission</th><th>Serial</th></tr></thead>
+                <tbody id="examV2GenSerialRows"><tr><td colspan="7">No serials generated yet.</td></tr></tbody>
+              </table>
+            </div>
+          </details>
+          <details class="exam-v2-collapse">
+            <summary>Sample Template Factory (All Structures)</summary>
             <p class="small-note">Generate editable samples per structure, download in Word format, modify, and upload final template.</p>
-          </div>
-          <div class="form-grid">
-            <label>Sample Grade/Form</label>
-            <select id="examV2SampleLevel">${gradeFormOptions.map((v) => `<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`).join("")}</select>
-            <label>Sample Learning Area</label>
-            <select id="examV2SampleArea">${learningAreas.map((v) => `<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`).join("")}</select>
-            <label>Sample Structure</label>
-            <select id="examV2SampleStructure"><option value="unified">Unified</option><option value="structured">Structured</option><option value="multi-section">Multi-section</option></select>
-            <label>Sample Detail</label>
-            <select id="examV2SampleDetail"><option value="">Default</option></select>
-            <label>Sample Exam Session</label>
-            <select id="examV2SampleSession">${examSessions.map((v) => `<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`).join("")}</select>
-            <label>Sample Academic Year</label>
-            <input id="examV2SampleAcademicYear" value="${new Date().getFullYear()}/${new Date().getFullYear() + 1}" />
-            <label>Sample Term</label>
-            <select id="examV2SampleTerm">${termOptions.map((v) => `<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`).join("")}</select>
-          </div>
-          <div class="actions-row exam-icon-group">
-            <button class="ax-btn ax-btn--generate ax-btn--sm" id="examV2SampleGenerateBtn" title="Generate sample">Generate Sample</button>
-            <button class="ax-btn ax-btn--download ax-btn--sm" id="examV2SampleWordBtn" title="Download Word template">Word</button>
-            <button class="ax-btn ax-btn--download ax-btn--sm" id="examV2SampleTextBtn" title="Download text template">Text</button>
-            <button class="ax-btn ax-btn--save ax-btn--sm" id="examV2SampleSaveBtn" title="Save sample as template">Save Template</button>
-            <button class="ax-btn ax-btn--download ax-btn--sm" id="examV2SamplePackBtn" title="Generate all JSS sample pack">JSS Pack</button>
-            <label for="examV2SampleUploadInput" class="ax-btn ax-btn--upload ax-btn--sm exam-stack-top">Upload Final</label>
-            <input id="examV2SampleUploadInput" type="file" accept=".txt,.md,.csv,.doc,.docx,.html" hidden />
-          </div>
-          <textarea id="examV2SamplePreview" rows="12" class="template-spacious" placeholder="Generated sample preview appears here..."></textarea>
+            <div class="form-grid">
+              <label>Sample Grade/Form</label>
+              <select id="examV2SampleLevel">${gradeFormOptions.map((v) => `<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`).join("")}</select>
+              <label>Sample Learning Area</label>
+              <select id="examV2SampleArea">${learningAreas.map((v) => `<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`).join("")}</select>
+              <label>Sample Structure</label>
+              <select id="examV2SampleStructure"><option value="unified">Unified</option><option value="structured">Structured</option><option value="multi-section">Multi-section</option></select>
+              <label>Sample Detail</label>
+              <select id="examV2SampleDetail"><option value="">Default</option></select>
+              <label>Sample Exam Session</label>
+              <select id="examV2SampleSession">${examSessions.map((v) => `<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`).join("")}</select>
+              <label>Sample Academic Year</label>
+              <input id="examV2SampleAcademicYear" value="${new Date().getFullYear()}/${new Date().getFullYear() + 1}" />
+              <label>Sample Term</label>
+              <select id="examV2SampleTerm">${termOptions.map((v) => `<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`).join("")}</select>
+            </div>
+            <div class="actions-row exam-icon-group">
+              <button class="ax-btn ax-btn--generate ax-btn--sm" id="examV2SampleGenerateBtn" title="Generate sample">Generate Sample</button>
+              <button class="ax-btn ax-btn--download ax-btn--sm" id="examV2SampleWordBtn" title="Download Word template">Word</button>
+              <button class="ax-btn ax-btn--download ax-btn--sm" id="examV2SampleTextBtn" title="Download text template">Text</button>
+              <button class="ax-btn ax-btn--save ax-btn--sm" id="examV2SampleSaveBtn" title="Save sample as template">Save Template</button>
+              <button class="ax-btn ax-btn--download ax-btn--sm" id="examV2SamplePackBtn" title="Generate all JSS sample pack">JSS Pack</button>
+              <label for="examV2SampleUploadInput" class="ax-btn ax-btn--upload ax-btn--sm exam-stack-top">Upload Final</label>
+              <input id="examV2SampleUploadInput" type="file" accept=".txt,.md,.csv,.doc,.docx,.html" hidden />
+            </div>
+            <textarea id="examV2SamplePreview" rows="12" class="template-spacious" placeholder="Generated sample preview appears here..."></textarea>
+          </details>
           <div id="examV2GenStatus" class="small-note">Select examination session to activate workflow.</div>
         </div>
       </div>
@@ -6617,6 +6765,8 @@ async function renderCbcCurriculumEditor(options = {}) {
     const selectedSubsState = new Set();
     let availableStrands = [];
     let availableSubs = [];
+    let availableStrandOptions = [];
+    let availableSubOptions = [];
 
     const setGenStatus = (message) => {
       if (statusNode) statusNode.textContent = message || "";
@@ -7011,30 +7161,47 @@ async function renderCbcCurriculumEditor(options = {}) {
       mappingRows = Array.isArray(mapRows) ? mapRows : [];
     };
     const renderSelectionInfo = () => {
+      const strandLabelMap = new Map(availableStrandOptions.map((row) => [row.value, row.label]));
+      const subLabelMap = new Map(availableSubOptions.map((row) => [row.value, row.label]));
       if (selectedStrandsInfoEl) {
         selectedStrandsInfoEl.textContent = selectedStrandsState.size
-          ? `Selected strands (${selectedStrandsState.size}/${availableStrands.length || selectedStrandsState.size}): ${Array.from(selectedStrandsState.values()).join(" | ")}`
+          ? `Selected strands (${selectedStrandsState.size}/${availableStrands.length || selectedStrandsState.size}): ${Array.from(selectedStrandsState.values()).map((value) => strandLabelMap.get(value) || value).join(" | ")}`
           : "No strand selected.";
       }
       if (selectedSubsInfoEl) {
         selectedSubsInfoEl.textContent = selectedSubsState.size
-          ? `Selected sub-strands (${selectedSubsState.size}/${availableSubs.length || selectedSubsState.size}): ${Array.from(selectedSubsState.values()).join(" | ")}`
+          ? `Selected sub-strands (${selectedSubsState.size}/${availableSubs.length || selectedSubsState.size}): ${Array.from(selectedSubsState.values()).map((value) => subLabelMap.get(value) || value).join(" | ")}`
           : "No sub-strand selected.";
       }
     };
     const renderChecklist = ({ panelEl, values = [], selectedSet, name, disabled = false, onChange }) => {
       if (!panelEl) return;
-      if (!values.length) {
+      const normalizedValues = (Array.isArray(values) ? values : [])
+        .map((value) => {
+          if (value && typeof value === "object" && !Array.isArray(value)) {
+            const rawValue = String(value.value || "").trim();
+            if (!rawValue) return null;
+            return {
+              value: rawValue,
+              label: String(value.label || rawValue)
+            };
+          }
+          const rawValue = String(value || "").trim();
+          if (!rawValue) return null;
+          return { value: rawValue, label: rawValue };
+        })
+        .filter(Boolean);
+      if (!normalizedValues.length) {
         panelEl.innerHTML = `<p class="small-note">No ${name} found for this level/learning area.</p>`;
         return;
       }
-      panelEl.innerHTML = values
-        .map((value, idx) => {
+      panelEl.innerHTML = normalizedValues
+        .map((valueRow, idx) => {
           const id = `examV2Gen${name}${idx}`.replace(/[^a-zA-Z0-9_-]/g, "");
           return `
             <label for="${id}" style="display:flex; gap:8px; align-items:flex-start; margin:4px 0;">
-              <input id="${id}" type="checkbox" value="${escapeHtmlAttribute(value)}" ${selectedSet.has(value) ? "checked" : ""} ${disabled ? "disabled" : ""} />
-              <span>${escapeHtml(value)}</span>
+              <input id="${id}" type="checkbox" value="${escapeHtmlAttribute(valueRow.value)}" ${selectedSet.has(valueRow.value) ? "checked" : ""} ${disabled ? "disabled" : ""} />
+              <span>${escapeHtml(valueRow.label)}</span>
             </label>
           `;
         })
@@ -7078,6 +7245,8 @@ async function renderCbcCurriculumEditor(options = {}) {
       if (!learningArea || !selectedLevel) {
         availableStrands = [];
         availableSubs = [];
+        availableStrandOptions = [];
+        availableSubOptions = [];
         selectedStrandsState.clear();
         selectedSubsState.clear();
         renderChecklist({ panelEl: strandsPanelEl, values: [], selectedSet: selectedStrandsState, name: "Strand" });
@@ -7086,23 +7255,38 @@ async function renderCbcCurriculumEditor(options = {}) {
         return;
       }
       const pool = [...curriculumRows, ...mappingRows];
-      availableStrands = Array.from(
-        new Set(
-          pool
-            .filter((row) => String(row.learning_area || "").trim().toLowerCase() === learningArea)
-            .filter((row) => inSelectedRange(String(row.grade || row.form_name || "").trim(), selectedLevel))
-            .map((row) => String(row.strand || "").trim())
-            .filter(Boolean)
-        )
-      );
+      const strandCoverageMap = new Map();
+      pool
+        .filter((row) => String(row.learning_area || "").trim().toLowerCase() === learningArea)
+        .filter((row) => inSelectedRange(String(row.grade || row.form_name || "").trim(), selectedLevel))
+        .forEach((row) => {
+          const strandValue = String(row.strand || "").trim();
+          if (!strandValue) return;
+          if (!strandCoverageMap.has(strandValue)) {
+            strandCoverageMap.set(strandValue, new Set());
+          }
+          const rowLevel = String(row.grade || row.form_name || "").trim();
+          if (rowLevel) strandCoverageMap.get(strandValue).add(rowLevel);
+        });
+      availableStrandOptions = Array.from(strandCoverageMap.entries())
+        .map(([value, levels]) => {
+          const levelLabel = Array.from(levels.values()).sort((a, b) => a.localeCompare(b)).join(", ");
+          return {
+            value,
+            label: `${value} [${levelLabel || "No Grade"}]`
+          };
+        })
+        .sort((a, b) => a.value.localeCompare(b.value));
+      availableStrands = availableStrandOptions.map((row) => row.value);
       Array.from(selectedStrandsState.values()).forEach((value) => {
         if (!availableStrands.includes(value)) selectedStrandsState.delete(value);
       });
       selectedSubsState.clear();
       availableSubs = [];
+      availableSubOptions = [];
       renderChecklist({
         panelEl: strandsPanelEl,
-        values: availableStrands,
+        values: availableStrandOptions,
         selectedSet: selectedStrandsState,
         name: "Strand",
         onChange: async () => {
@@ -7121,6 +7305,7 @@ async function renderCbcCurriculumEditor(options = {}) {
       const selectedStrandValues = selectedStrands();
       if (!learningArea || !selectedLevel || !selectedStrandValues.length) {
         availableSubs = [];
+        availableSubOptions = [];
         selectedSubsState.clear();
         renderChecklist({ panelEl: subsPanelEl, values: [], selectedSet: selectedSubsState, name: "SubStrand" });
         renderSelectionInfo();
@@ -7128,22 +7313,42 @@ async function renderCbcCurriculumEditor(options = {}) {
       }
       const selectedStrandSet = new Set(selectedStrandValues.map((item) => item.toLowerCase()));
       const pool = [...curriculumRows, ...mappingRows];
-      availableSubs = Array.from(
-        new Set(
-          pool
-            .filter((row) => String(row.learning_area || "").trim().toLowerCase() === learningArea)
-            .filter((row) => inSelectedRange(String(row.grade || row.form_name || "").trim(), selectedLevel))
-            .filter((row) => selectedStrandSet.has(String(row.strand || "").trim().toLowerCase()))
-            .map((row) => String(row.sub_strand || "").trim())
-            .filter(Boolean)
-        )
-      );
+      const subCoverageMap = new Map();
+      pool
+        .filter((row) => String(row.learning_area || "").trim().toLowerCase() === learningArea)
+        .filter((row) => inSelectedRange(String(row.grade || row.form_name || "").trim(), selectedLevel))
+        .filter((row) => selectedStrandSet.has(String(row.strand || "").trim().toLowerCase()))
+        .forEach((row) => {
+          const subValue = String(row.sub_strand || "").trim();
+          if (!subValue) return;
+          if (!subCoverageMap.has(subValue)) {
+            subCoverageMap.set(subValue, {
+              levels: new Set(),
+              strands: new Set()
+            });
+          }
+          const levelValue = String(row.grade || row.form_name || "").trim();
+          if (levelValue) subCoverageMap.get(subValue).levels.add(levelValue);
+          const strandValue = String(row.strand || "").trim();
+          if (strandValue) subCoverageMap.get(subValue).strands.add(strandValue);
+        });
+      availableSubOptions = Array.from(subCoverageMap.entries())
+        .map(([value, meta]) => {
+          const levelLabel = Array.from(meta.levels.values()).sort((a, b) => a.localeCompare(b)).join(", ");
+          const strandLabel = Array.from(meta.strands.values()).sort((a, b) => a.localeCompare(b)).join(" / ");
+          return {
+            value,
+            label: `${value} [${levelLabel || "No Grade"}${strandLabel ? ` | ${strandLabel}` : ""}]`
+          };
+        })
+        .sort((a, b) => a.value.localeCompare(b.value));
+      availableSubs = availableSubOptions.map((row) => row.value);
       Array.from(selectedSubsState.values()).forEach((value) => {
         if (!availableSubs.includes(value)) selectedSubsState.delete(value);
       });
       renderChecklist({
         panelEl: subsPanelEl,
-        values: availableSubs,
+        values: availableSubOptions,
         selectedSet: selectedSubsState,
         name: "SubStrand",
         onChange: () => {
@@ -7256,7 +7461,7 @@ async function renderCbcCurriculumEditor(options = {}) {
       await refreshSubStrandOptions();
       renderChecklist({
         panelEl: strandsPanelEl,
-        values: availableStrands,
+        values: availableStrandOptions,
         selectedSet: selectedStrandsState,
         name: "Strand",
         onChange: async () => {
@@ -7274,7 +7479,7 @@ async function renderCbcCurriculumEditor(options = {}) {
       await refreshSubStrandOptions();
       renderChecklist({
         panelEl: strandsPanelEl,
-        values: availableStrands,
+        values: availableStrandOptions,
         selectedSet: selectedStrandsState,
         name: "Strand",
         onChange: async () => {
@@ -7293,7 +7498,7 @@ async function renderCbcCurriculumEditor(options = {}) {
       await refreshSubStrandOptions();
       renderChecklist({
         panelEl: strandsPanelEl,
-        values: availableStrands,
+        values: availableStrandOptions,
         selectedSet: selectedStrandsState,
         name: "Strand",
         onChange: async () => {
@@ -7309,7 +7514,7 @@ async function renderCbcCurriculumEditor(options = {}) {
       selectedSubsState.clear();
       renderChecklist({
         panelEl: subsPanelEl,
-        values: availableSubs,
+        values: availableSubOptions,
         selectedSet: selectedSubsState,
         name: "SubStrand",
         onChange: () => {
@@ -7324,7 +7529,7 @@ async function renderCbcCurriculumEditor(options = {}) {
       availableSubs.forEach((value) => selectedSubsState.add(value));
       renderChecklist({
         panelEl: subsPanelEl,
-        values: availableSubs,
+        values: availableSubOptions,
         selectedSet: selectedSubsState,
         name: "SubStrand",
         onChange: () => {
@@ -7339,7 +7544,7 @@ async function renderCbcCurriculumEditor(options = {}) {
       selectedSubsState.clear();
       renderChecklist({
         panelEl: subsPanelEl,
-        values: availableSubs,
+        values: availableSubOptions,
         selectedSet: selectedSubsState,
         name: "SubStrand",
         onChange: () => {
@@ -7356,7 +7561,7 @@ async function renderCbcCurriculumEditor(options = {}) {
       next.forEach((value) => selectedSubsState.add(value));
       renderChecklist({
         panelEl: subsPanelEl,
-        values: availableSubs,
+        values: availableSubOptions,
         selectedSet: selectedSubsState,
         name: "SubStrand",
         onChange: () => {

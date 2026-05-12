@@ -8104,13 +8104,106 @@ app.post(
       buildSuggestionFromMappings({ grade, formName, learningArea, mappings: mappingRows }) ||
       buildCbcSuggestion({ grade, formName, learningArea });
     const resolvedSubStrand = subStrand || fallbackStructure.sub_strand;
-    const generated = makeNotes({
+    const baseGenerated = makeNotes({
       grade,
       formName,
       learningArea,
       strand,
       subStrand: resolvedSubStrand
     });
+    const levelCriteria = resolveLevelSelectionCriteria({ grade, formName });
+    const curriculumRows = await query(
+      `SELECT grade, form_name, strand, sub_strand, specific_learning_outcomes, learning_experiences, notes
+       FROM cbc_curriculum_entries
+       WHERE institution_id = ?
+         AND learning_area = ?
+       ORDER BY id DESC
+       LIMIT 2400`,
+      [req.user.institution_id, learningArea]
+    ).catch(() => []);
+    const scopedRows = (Array.isArray(curriculumRows) ? curriculumRows : [])
+      .filter((row) => rowWithinSelectedLevelRange({ row, criteria: levelCriteria }));
+    const scopedByStrand = scopedRows.filter((row) => {
+      if (!strand) return true;
+      return cleanValue(row.strand || "").toLowerCase() === strand.toLowerCase();
+    });
+    const strandCoverage = new Map();
+    scopedByStrand.forEach((row) => {
+      const strandName = cleanValue(row.strand || "");
+      if (!strandName) return;
+      if (!strandCoverage.has(strandName)) strandCoverage.set(strandName, new Set());
+      const sub = cleanValue(row.sub_strand || "");
+      if (sub) strandCoverage.get(strandName).add(sub);
+    });
+    const missingContentRows = scopedByStrand
+      .filter((row) => {
+        const hasOutcomes = Boolean(cleanOptionalValue(row.specific_learning_outcomes));
+        const hasExperiences = Boolean(cleanOptionalValue(row.learning_experiences));
+        const hasNotes = Boolean(cleanOptionalValue(row.notes));
+        return !(hasOutcomes || hasExperiences || hasNotes);
+      })
+      .slice(0, 25)
+      .map((row) => `${cleanValue(row.strand || "-")} -> ${cleanValue(row.sub_strand || "-")}`);
+    const materialRows = await query(
+      `SELECT resource_type, title, description, strand, sub_strand, grade, stream AS form_name, created_at
+       FROM teacher_resources
+       WHERE institution_id = ?
+         AND ((? = '' AND ? = '') OR grade = ? OR stream = ?)
+       ORDER BY id DESC
+       LIMIT 300`,
+      [req.user.institution_id, grade, formName, grade, formName]
+    ).catch(() => []);
+    const scopedMaterials = (Array.isArray(materialRows) ? materialRows : [])
+      .filter((row) => {
+        const text = `${cleanValue(row.title)} ${cleanValue(row.description)}`.toLowerCase();
+        return learningArea ? text.includes(learningArea.toLowerCase()) : true;
+      });
+    const templateSnippets = scopedMaterials
+      .filter((row) => cleanValue(row.resource_type).toLowerCase() === "notes_template")
+      .map((row) => cleanValue(row.description))
+      .map((text) => {
+        const extracted = text.match(/uploaded content extract:\s*([\s\S]*)/i);
+        return cleanValue((extracted && extracted[1]) || text).slice(0, 800);
+      })
+      .filter(Boolean)
+      .slice(0, 3);
+    const referenceSnippets = scopedMaterials
+      .filter((row) => ["notes", "past_papers", "sample_exams"].includes(cleanValue(row.resource_type).toLowerCase()))
+      .map((row) => cleanValue(row.description))
+      .map((text) => {
+        const extracted = text.match(/uploaded content extract:\s*([\s\S]*)/i);
+        return cleanValue((extracted && extracted[1]) || text).slice(0, 400);
+      })
+      .filter(Boolean)
+      .slice(0, 5);
+    const enrichmentLines = [];
+    if (strandCoverage.size) {
+      enrichmentLines.push("FULL STRAND/SUB-STRAND COVERAGE IN SCOPE:");
+      Array.from(strandCoverage.entries()).forEach(([strandName, subs]) => {
+        const subList = Array.from(subs.values());
+        enrichmentLines.push(`- ${strandName}: ${subList.length ? subList.join(" | ") : "No sub-strands captured"}`);
+      });
+    }
+    if (missingContentRows.length) {
+      enrichmentLines.push("", "MISSING CONTENT AREAS TO COMPLETE:");
+      missingContentRows.forEach((item) => enrichmentLines.push(`- ${item}`));
+    }
+    if (templateSnippets.length) {
+      enrichmentLines.push("", "UPLOADED NOTES TEMPLATE BASIS:");
+      templateSnippets.forEach((snippet, index) => enrichmentLines.push(`${index + 1}. ${snippet}`));
+    }
+    if (referenceSnippets.length) {
+      enrichmentLines.push("", "UPLOADED NOTES/PAPERS INSIGHTS:");
+      referenceSnippets.forEach((snippet, index) => enrichmentLines.push(`${index + 1}. ${snippet}`));
+    }
+    const generated = [
+      baseGenerated,
+      "",
+      "ADVANCED ENRICHMENT (AUTO-ADDED):",
+      enrichmentLines.length ? enrichmentLines.join("\n") : "No additional enrichment data found. Continue uploading scoped notes/templates."
+    ]
+      .join("\n")
+      .slice(0, 24000);
     await auditLog(req.user, "GENERATE_CBC_AI_NOTES", "cbc_curriculum_entries", null, {
       grade: grade || null,
       form_name: formName || null,
