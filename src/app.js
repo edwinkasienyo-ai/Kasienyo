@@ -11074,12 +11074,18 @@ function buildAdvancedExamText({
   const priorityPrompts = isPreTechnicalPaper
     ? ["pre-technical studies", "fire", "computer"]
     : [cleanValue(learningArea || "the learning area")];
-  const promptPool = Array.from(new Set([...priorityPrompts, ...topicPool])).slice(0, 12);
-  const promptFor = (index) => promptPool[index] || promptPool[promptPool.length - 1] || "the selected topic";
-  const sectionAQuestions = Array.from({ length: 10 }).map((_, index) => {
-    const topic = promptFor(index);
-    return `${index + 1}. What is ${topic}?\n   A. Correct definition\n   B. Unrelated statement\n   C. Incorrect process\n   D. Opposite meaning`;
-  });
+  const isSocialStudiesPaper = cleanValue(learningArea).toLowerCase().includes("social studies");
+  const promptPool = Array.from(new Set([...priorityPrompts, ...topicPool])).slice(0, 24);
+  const promptFor = (index) => {
+    if (!promptPool.length) return "the selected topic";
+    return promptPool[index % promptPool.length];
+  };
+  const buildObjectiveQuestions = ({ count, startNumber = 1 }) =>
+    Array.from({ length: count }).map((_, index) => {
+      const topic = promptFor(index);
+      return `${startNumber + index}. What is ${topic}?\n   A. Correct definition\n   B. Unrelated statement\n   C. Incorrect process\n   D. Opposite meaning`;
+    });
+  const sectionAQuestions = buildObjectiveQuestions({ count: 10, startNumber: 1 });
   const sectionBQuestions = Array.from({ length: 5 }).map((_, index) => {
     const topic = promptFor(index + 2);
     return `${index + 1}. Explain ${topic} and give one practical example in school/community context.`;
@@ -11089,7 +11095,34 @@ function buildAdvancedExamText({
     return `${index + 1}. Apply ${topic} in a real-life task and outline safety/quality steps.`;
   });
   let body = [];
-  if (String(structure || "unified") === "structured") {
+  if (isSocialStudiesPaper) {
+    const sectionA20 = buildObjectiveQuestions({ count: 20, startNumber: 1 });
+    body = [
+      "SOCIAL STUDIES PAPER",
+      "TOTAL MARKS: 20",
+      "",
+      "SECTION A (20 Marks) - Objective Questions",
+      ...sectionA20
+    ];
+  } else if (isPreTechnicalPaper) {
+    const sectionA30 = buildObjectiveQuestions({ count: 30, startNumber: 1 });
+    const sectionB60 = Array.from({ length: 12 }).map((_, index) => {
+      const topic = promptFor(index + 6);
+      return `${index + 31}. Explain ${topic} and apply it in practical school/community context. (5 marks)`;
+    });
+    body = [
+      "PRE-TECHNICAL STUDIES PAPER",
+      "TOTAL MARKS: 80",
+      "",
+      "SECTION A (30 Marks) - Objective Questions",
+      ...sectionA30,
+      "",
+      "SECTION B (60 Marks) - Structured / Practical Questions",
+      ...sectionB60,
+      "",
+      "MARKING STRUCTURE SUMMARY: SECTION A = 30, SECTION B = 60, TOTAL = 80"
+    ];
+  } else if (String(structure || "unified") === "structured") {
     body = [
       "STRUCTURED PAPER",
       "",
@@ -11919,6 +11952,41 @@ function buildExamSerialSegment({
   return bits.join("-");
 }
 
+function buildExamQrPayload({
+  institutionId,
+  institutionCode,
+  learnerId,
+  learnerName,
+  admissionNumber,
+  grade,
+  form,
+  learningArea,
+  examType,
+  term,
+  year,
+  stream,
+  serial
+}) {
+  const payload = {
+    schema: "IMIS_EXAM_QR_V1",
+    institution_id: Number(institutionId || 0) || null,
+    institution_code: cleanOptionalValue(institutionCode),
+    learner_id: learnerId ? Number(learnerId) : null,
+    learner_name: cleanOptionalValue(learnerName),
+    admission_number: cleanOptionalValue(admissionNumber),
+    grade: cleanOptionalValue(grade || form),
+    form_name: cleanOptionalValue(form),
+    learning_area: cleanOptionalValue(learningArea),
+    exam_type: cleanOptionalValue(examType),
+    exam_session: cleanOptionalValue(examType),
+    term: cleanOptionalValue(term),
+    year: Number(year || 0) || null,
+    stream: cleanOptionalValue(stream),
+    serial: cleanOptionalValue(serial)
+  };
+  return `IMIS_EXAM_QR_V1|${JSON.stringify(payload)}`;
+}
+
 app.post(
   "/api/academic/exams/allocate-serials",
   auth,
@@ -11980,6 +12048,24 @@ app.post(
         serial: buildExamSerialSegment({
           grade, form, learningArea, examType, term, year, stream,
           learnerSerialNumber: learner.learner_serial_number || learner.id
+        }),
+        qr_payload: buildExamQrPayload({
+          institutionId,
+          institutionCode,
+          learnerId: learner.id,
+          learnerName: learner.full_name,
+          admissionNumber: learner.admission_number,
+          grade: learner.grade || grade,
+          form,
+          learningArea,
+          examType,
+          term,
+          year,
+          stream: learner.stream || stream,
+          serial: buildExamSerialSegment({
+            grade, form, learningArea, examType, term, year, stream,
+            learnerSerialNumber: learner.learner_serial_number || learner.id
+          })
         })
       }));
     } else if (mode === "per_stream") {
@@ -12003,6 +12089,24 @@ app.post(
         serial: buildExamSerialSegment({
           grade, form, learningArea, examType, term, year, stream: streamName,
           learnerSerialNumber: index + 1
+        }),
+        qr_payload: buildExamQrPayload({
+          institutionId,
+          institutionCode,
+          learnerId: null,
+          learnerName: `STREAM ${streamName}`,
+          admissionNumber: "STREAM",
+          grade,
+          form,
+          learningArea,
+          examType,
+          term,
+          year,
+          stream: streamName,
+          serial: buildExamSerialSegment({
+            grade, form, learningArea, examType, term, year, stream: streamName,
+            learnerSerialNumber: index + 1
+          })
         })
       }));
     } else {
@@ -12019,10 +12123,55 @@ app.post(
         serial: buildExamSerialSegment({
           grade, form, learningArea, examType, term, year, stream: stream || "N/A",
           learnerSerialNumber: null
+        }),
+        qr_payload: buildExamQrPayload({
+          institutionId,
+          institutionCode,
+          learnerId: null,
+          learnerName: "CLASS",
+          admissionNumber: "CLASS",
+          grade,
+          form,
+          learningArea,
+          examType,
+          term,
+          year,
+          stream: stream || "N/A",
+          serial: buildExamSerialSegment({
+            grade, form, learningArea, examType, term, year, stream: stream || "N/A",
+            learnerSerialNumber: null
+          })
         })
       }];
     }
     res.json({ count: serials.length, mode, serials });
+  })
+);
+
+app.post(
+  "/api/academic/exams/serials/qr.png",
+  auth,
+  enforceAnyModuleAccess([MODULE_KEYS.ACADEMIC_EXAMS, MODULE_KEYS.CBC_CURRICULUM_EDITOR, MODULE_KEYS.ACADEMIC_MARKS]),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.SENIOR_TEACHER, ROLES.HEAD_OF_DEPARTMENT, ROLES.TEACHER]),
+  enforcePermission(PERMISSIONS.VIEW),
+  asyncHandler(async (req, res) => {
+    const payload = cleanValue(req.body?.payload || "");
+    if (!payload) return res.status(400).json({ error: "payload is required." });
+    if (payload.length > 2400) return res.status(400).json({ error: "QR payload is too long." });
+    try {
+      const QRCode = require("qrcode");
+      const pngBuffer = await QRCode.toBuffer(payload, {
+        type: "png",
+        margin: 1,
+        width: 260,
+        errorCorrectionLevel: "M"
+      });
+      res.setHeader("Content-Type", "image/png");
+      res.setHeader("Cache-Control", "no-store");
+      return res.send(pngBuffer);
+    } catch (error) {
+      return res.status(500).json({ error: `Unable to generate exam QR code: ${error?.message || "Unknown error"}` });
+    }
   })
 );
 

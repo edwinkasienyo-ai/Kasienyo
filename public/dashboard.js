@@ -6649,8 +6649,8 @@ async function renderCbcCurriculumEditor(options = {}) {
             <p class="small-note">Serials are generated per institution, grade/form, learning area, stream and learner after Process.</p>
             <div class="dashboard-table-wrap">
               <table class="dashboard-table">
-                <thead><tr><th>Institution</th><th>Grade/Form</th><th>Learning Area</th><th>Stream</th><th>Learner</th><th>Admission</th><th>Serial</th></tr></thead>
-                <tbody id="examV2GenSerialRows"><tr><td colspan="7">No serials generated yet.</td></tr></tbody>
+                <thead><tr><th>Institution</th><th>Grade/Form</th><th>Learning Area</th><th>Stream</th><th>Learner</th><th>Admission</th><th>Serial</th><th>QR</th></tr></thead>
+                <tbody id="examV2GenSerialRows"><tr><td colspan="8">No serials generated yet.</td></tr></tbody>
               </table>
             </div>
           </details>
@@ -6970,6 +6970,14 @@ async function renderCbcCurriculumEditor(options = {}) {
       term = String(termEl?.value || "Term One")
     } = {}) => {
       const examType = examSession;
+      const lowerArea = String(learningArea || "").toLowerCase();
+      const isSocial = lowerArea.includes("social studies");
+      const isPreTechnical = lowerArea.includes("pre-technical");
+      const objectiveBlock = ({ count = 10, start = 1 }) =>
+        Array.from({ length: count }).map((_, index) => [
+          `${start + index}. Choose the correct answer.`,
+          "   A. ...  B. ...  C. ...  D. ..."
+        ].join("\n"));
       const lines = [
         `SCHOOL BASED ASSESSMENT`,
         `${learningArea.toUpperCase()}`,
@@ -6982,15 +6990,22 @@ async function renderCbcCurriculumEditor(options = {}) {
         `INSTITUTION CODE: ${institutionCode || "-"}`,
         `SERIAL NUMBER: [AUTO GENERATED PER INSTITUTION / LEVEL / LEARNING AREA / STREAM / LEARNER]`,
         "",
-        `SECTION A (STRUCTURED / SHORT RESPONSE)`,
-        `1. What is ${learningArea.toLowerCase()}?`,
-        `2. What is fire?`,
-        `3. What is computer?`,
-        `4. Explain one practical use of ${learningArea.toLowerCase()} in school.`,
-        `5. State two safety rules relevant to this learning area.`,
-        ""
+        "QR CODE: [AUTO GENERATED FROM SERIAL DETAILS]"
       ];
-      if (structure === "structured") {
+      if (isSocial) {
+        lines.push("", "SECTION A (20 Marks) - Objective (A, B, C, D)", ...objectiveBlock({ count: 20, start: 1 }));
+      } else if (isPreTechnical) {
+        lines.push(
+          "",
+          "SECTION A (30 Marks) - Objective (A, B, C, D)",
+          ...objectiveBlock({ count: 30, start: 1 }),
+          "",
+          "SECTION B (60 Marks) - Structured Questions",
+          ...Array.from({ length: 12 }).map((_, index) => `${index + 31}. Explain and apply the selected competency in context. (5 marks)`),
+          "",
+          "TOTAL = 80 MARKS"
+        );
+      } else if (structure === "structured") {
         lines.push(
           "SECTION B (OBJECTIVE QUESTIONS)",
           "6. Which of the following is correct in relation to the topic above?",
@@ -7043,7 +7058,7 @@ async function renderCbcCurriculumEditor(options = {}) {
     const renderSerialRows = (rows = []) => {
       if (!serialRowsEl) return;
       serialRowsEl.innerHTML = rows.length
-        ? rows.map((row) => `
+        ? rows.map((row, index) => `
           <tr>
             <td>${escapeHtml(row.institution_code || institutionCode || "-")}</td>
             <td>${escapeHtml(row.grade || "-")}</td>
@@ -7052,10 +7067,64 @@ async function renderCbcCurriculumEditor(options = {}) {
             <td>${escapeHtml(row.learner_name || "-")}</td>
             <td>${escapeHtml(row.admission_number || "-")}</td>
             <td>${escapeHtml(row.serial || "-")}</td>
+            <td><button class="ax-btn ax-btn--view ax-btn--sm" data-qr-index="${escapeHtmlAttribute(String(index))}" title="View QR">QR</button></td>
           </tr>
         `).join("")
-        : `<tr><td colspan="7">No serials generated yet.</td></tr>`;
+        : `<tr><td colspan="8">No serials generated yet.</td></tr>`;
     };
+    const showSerialQrPreview = async (serialRow) => {
+      const payload = String(serialRow?.qr_payload || "").trim();
+      if (!payload) {
+        alert("QR payload is not available for this serial.");
+        return;
+      }
+      try {
+        const response = await fetch("/api/academic/exams/serials/qr.png", {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({ payload })
+        });
+        if (!response.ok) {
+          const raw = await response.text();
+          throw new Error(raw || `QR request failed (${response.status})`);
+        }
+        const blob = await response.blob();
+        const url = URL.createObjectURL(blob);
+        const popup = window.open("", "_blank");
+        if (!popup) {
+          URL.revokeObjectURL(url);
+          throw new Error("Popup blocked. Allow popups to preview QR code.");
+        }
+        popup.document.write(`
+          <html>
+            <head><title>Exam QR - ${escapeHtml(serialRow?.serial || "Serial")}</title></head>
+            <body style="font-family: Arial, sans-serif; padding: 16px;">
+              <h3>Exam QR Code</h3>
+              <p><strong>Serial:</strong> ${escapeHtml(serialRow?.serial || "-")}</p>
+              <img alt="Exam QR code" src="${url}" style="width:260px;height:260px;border:1px solid #d1d5db;padding:6px;" />
+              <p style="margin-top:12px;"><strong>Payload:</strong></p>
+              <pre style="white-space:pre-wrap;border:1px solid #d1d5db;padding:8px;">${escapeHtml(payload)}</pre>
+              <button onclick="window.print()">Print QR</button>
+            </body>
+          </html>
+        `);
+        popup.document.close();
+      } catch (error) {
+        alert(error.message);
+      }
+    };
+    serialRowsEl?.addEventListener("click", (event) => {
+      const target = event.target?.closest?.("[data-qr-index]");
+      if (!target) return;
+      const index = Number(target.getAttribute("data-qr-index") || -1);
+      if (!Number.isInteger(index) || index < 0) return;
+      const row = allocatedSerials[index];
+      if (!row) return;
+      showSerialQrPreview(row);
+    });
     const setEnabled = (node, state) => {
       if (!node) return;
       node.disabled = !state;
@@ -7706,6 +7775,7 @@ async function renderCbcCurriculumEditor(options = {}) {
           `Grade/Form: ${grade || form_name || "-"}`,
           `Learning Area: ${String(areaEl?.value || "-")}`,
           `Output Mode: ${String(outputModeEl?.value || "-")}`,
+          "QR PAYLOAD: Included per serial row in Serial Number Generation Center.",
           "Serials:",
           ...serialLines
         ].join("\n");
@@ -7744,7 +7814,8 @@ async function renderCbcCurriculumEditor(options = {}) {
             admission_number: row.admission_number || "",
             grade: row.grade || "",
             stream: row.stream || "",
-            serial: row.serial || ""
+            serial: row.serial || "",
+            qr_payload: row.qr_payload || ""
           })));
           downloadTextFile("exam-serials.csv", csv, "text/csv;charset=utf-8");
         }
@@ -8051,6 +8122,27 @@ async function renderCbcCurriculumEditor(options = {}) {
             <button class="ax-btn ax-btn--download ax-btn--sm" id="examV2EntryDownloadBtn" title="Download marks">Download</button>
             <button class="ax-btn ax-btn--print ax-btn--sm" id="examV2EntryPrintBtn" title="Print marks">Print</button>
           </div>
+          <details class="exam-v2-collapse" open>
+            <summary>Upload Learner Exam Details (Code / Manual / QR)</summary>
+            <div class="form-grid" style="margin-top:8px;">
+              <label>Upload Mode</label>
+              <select id="examV2EntryUploadMode">
+                <option value="manual">Manual Entry</option>
+                <option value="code">Serial Code</option>
+                <option value="qr">QR Code</option>
+              </select>
+              <label>Code / QR Payload</label>
+              <textarea id="examV2EntryPayloadInput" rows="3" placeholder="Paste IMIS_EXAM_QR_V1 payload, serial metadata, or JSON details."></textarea>
+            </div>
+            <div class="actions-row exam-icon-group" style="margin-top:8px;">
+              <button class="ax-btn ax-btn--save ax-btn--sm" id="examV2EntryApplyPayloadBtn" title="Apply code payload">Apply Code</button>
+              <button class="ax-btn ax-btn--generate ax-btn--sm" id="examV2EntryStartQrBtn" title="Open camera and scan QR">Scan QR</button>
+              <button class="ax-btn ax-btn--delete ax-btn--sm" id="examV2EntryStopQrBtn" title="Stop camera">Stop Camera</button>
+            </div>
+            <video id="examV2EntryQrVideo" style="display:none;width:100%;max-width:420px;border:1px solid #d1d5db;border-radius:8px;margin-top:8px;" autoplay playsinline muted></video>
+            <canvas id="examV2EntryQrCanvas" style="display:none;"></canvas>
+            <div id="examV2EntryQrStatus" class="small-note">Use manual or serial code mode, or scan QR to auto-fill learner exam details without marks.</div>
+          </details>
           <div id="examV2EntryStatus" class="small-note">Ready.</div>
           <div class="dashboard-table-wrap">
             <table class="dashboard-table">
@@ -8072,6 +8164,11 @@ async function renderCbcCurriculumEditor(options = {}) {
     const yearEl = document.getElementById("examV2EntryYear");
     const rowsEl = document.getElementById("examV2EntryRows");
     const statusNode = document.getElementById("examV2EntryStatus");
+    const uploadModeEl = document.getElementById("examV2EntryUploadMode");
+    const payloadInputEl = document.getElementById("examV2EntryPayloadInput");
+    const qrStatusEl = document.getElementById("examV2EntryQrStatus");
+    const qrVideoEl = document.getElementById("examV2EntryQrVideo");
+    const qrCanvasEl = document.getElementById("examV2EntryQrCanvas");
     const generatedPayload = examPanelState.generatedExam?.payload || {};
     if (sessionEl && generatedPayload.exam_type) sessionEl.value = String(generatedPayload.exam_type);
     if (termEl && generatedPayload.term) termEl.value = String(generatedPayload.term);
@@ -8084,6 +8181,11 @@ async function renderCbcCurriculumEditor(options = {}) {
     if (streamEl && generatedPayload.stream) streamEl.value = String(generatedPayload.stream);
     if (areaEl && generatedPayload.learning_area) areaEl.value = String(generatedPayload.learning_area);
     let loadedRows = [];
+    let qrStream = null;
+    let qrLoopHandle = null;
+    const setQrStatus = (message) => {
+      if (qrStatusEl) qrStatusEl.textContent = message || "";
+    };
     const setEntryStatus = (message) => {
       if (statusNode) statusNode.textContent = message || "";
     };
@@ -8100,6 +8202,136 @@ async function renderCbcCurriculumEditor(options = {}) {
           </tr>
         `).join("")
         : `<tr><td colspan="5">No learners found for current filters.</td></tr>`;
+    };
+    const stopQrScan = () => {
+      if (qrLoopHandle) {
+        cancelAnimationFrame(qrLoopHandle);
+        qrLoopHandle = null;
+      }
+      if (qrStream) {
+        qrStream.getTracks().forEach((track) => track.stop());
+        qrStream = null;
+      }
+      if (qrVideoEl) {
+        qrVideoEl.pause();
+        qrVideoEl.srcObject = null;
+        qrVideoEl.style.display = "none";
+      }
+    };
+    const parseUploadedPayload = (rawValue) => {
+      const raw = String(rawValue || "").trim();
+      if (!raw) return null;
+      const parseLineBased = () => {
+        const map = {};
+        raw.split(/\r?\n/).forEach((line) => {
+          const idx = line.indexOf(":");
+          if (idx <= 0) return;
+          const key = line.slice(0, idx).trim().toLowerCase().replace(/\s+/g, "_");
+          const value = line.slice(idx + 1).trim();
+          if (key) map[key] = value;
+        });
+        if (!Object.keys(map).length) return null;
+        return {
+          grade: map.grade_form || map.grade || "",
+          form_name: map.form_name || "",
+          stream: map.stream || "",
+          learning_area: map.learning_area || "",
+          exam_type: map.exam_session || map.exam_type || "",
+          term: map.term || "",
+          year: map.academic_year || map.year || "",
+          admission_number: map.admission || map.admission_number || "",
+          serial: map.serial || map.serial_number || ""
+        };
+      };
+      try {
+        if (raw.startsWith("IMIS_EXAM_QR_V1|")) {
+          const jsonText = raw.split("|").slice(1).join("|");
+          return JSON.parse(jsonText);
+        }
+        if (raw.startsWith("{")) {
+          const parsed = JSON.parse(raw);
+          if (parsed && typeof parsed === "object") {
+            if (String(parsed.schema || "").toUpperCase() === "IMIS_EXAM_QR_V1") return parsed;
+            return parsed;
+          }
+        }
+      } catch (_error) {
+        // fall through to line parser
+      }
+      return parseLineBased();
+    };
+    const parseYearToken = (value) => {
+      const match = String(value || "").match(/(\d{4})/);
+      return match ? Number(match[1]) : null;
+    };
+    const applyUploadedDetails = async (details) => {
+      if (!details || typeof details !== "object") throw new Error("Unable to parse code/QR details.");
+      const gradeValue = String(details.grade || "").trim();
+      const formValue = String(details.form_name || "").trim();
+      if (gradeValue) {
+        if (/^form/i.test(gradeValue)) {
+          if (formEl) formEl.value = gradeValue;
+          if (gradeEl) gradeEl.value = "";
+        } else if (gradeEl) {
+          gradeEl.value = gradeValue;
+          if (formEl) formEl.value = "";
+        }
+      }
+      if (formValue) {
+        if (formEl) formEl.value = formValue;
+        if (gradeEl) gradeEl.value = "";
+      }
+      if (streamEl && details.stream) streamEl.value = String(details.stream);
+      if (areaEl && details.learning_area) areaEl.value = String(details.learning_area);
+      if (sessionEl && details.exam_type) sessionEl.value = String(details.exam_type);
+      if (termEl && details.term) termEl.value = String(details.term);
+      const year = parseYearToken(details.year);
+      if (yearEl && Number.isFinite(year) && year > 2000) yearEl.value = `${year}/${year + 1}`;
+      await loadLearners();
+      const admission = String(details.admission_number || "").trim().toLowerCase();
+      const learnerId = Number(details.learner_id || 0);
+      const matched = loadedRows.find((row) => {
+        if (learnerId && Number(row.id || 0) === learnerId) return true;
+        if (admission && String(row.admission_number || "").trim().toLowerCase() === admission) return true;
+        return false;
+      });
+      if (matched) {
+        setEntryStatus(`Loaded learner from QR/code: ${matched.full_name || "-"} (${matched.admission_number || "-"}) with exam details prefilled. Marks remain blank.`);
+      } else {
+        setEntryStatus("Exam details filled from QR/code. Learner marks remain blank as requested.");
+      }
+    };
+    const runQrDetectorLoop = async () => {
+      if (!qrVideoEl || !qrCanvasEl) return;
+      if (!("BarcodeDetector" in window)) {
+        setQrStatus("QR scanning via camera is unsupported in this browser. Paste payload manually or use code mode.");
+        return;
+      }
+      let detector;
+      try {
+        detector = new window.BarcodeDetector({ formats: ["qr_code"] });
+      } catch (_error) {
+        setQrStatus("This device cannot initialize QR detector. Use manual/code upload mode.");
+        return;
+      }
+      const tick = async () => {
+        if (!qrVideoEl || !qrStream) return;
+        try {
+          const barcodes = await detector.detect(qrVideoEl);
+          const match = Array.isArray(barcodes) ? barcodes.find((item) => String(item.rawValue || "").trim()) : null;
+          if (match?.rawValue) {
+            if (payloadInputEl) payloadInputEl.value = String(match.rawValue);
+            await applyUploadedDetails(parseUploadedPayload(match.rawValue));
+            setQrStatus("QR scanned successfully and learner exam details updated (marks unchanged).");
+            stopQrScan();
+            return;
+          }
+        } catch (_error) {
+          // keep scanning
+        }
+        qrLoopHandle = requestAnimationFrame(tick);
+      };
+      qrLoopHandle = requestAnimationFrame(tick);
     };
 
     const loadLearners = async () => {
@@ -8124,6 +8356,41 @@ async function renderCbcCurriculumEditor(options = {}) {
     gradeEl?.addEventListener("change", () => { if (gradeEl.value && formEl) formEl.value = ""; });
     formEl?.addEventListener("change", () => { if (formEl.value && gradeEl) gradeEl.value = ""; });
     document.getElementById("examV2EntryLoadBtn")?.addEventListener("click", loadLearners);
+    document.getElementById("examV2EntryApplyPayloadBtn")?.addEventListener("click", async () => {
+      try {
+        const parsed = parseUploadedPayload(String(payloadInputEl?.value || ""));
+        await applyUploadedDetails(parsed);
+        setQrStatus(`Applied details using ${String(uploadModeEl?.value || "manual")} mode.`);
+      } catch (error) {
+        setQrStatus(error.message);
+      }
+    });
+    document.getElementById("examV2EntryStartQrBtn")?.addEventListener("click", async () => {
+      try {
+        stopQrScan();
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            facingMode: { ideal: "environment" },
+            width: { ideal: 1280 },
+            height: { ideal: 720 }
+          }
+        });
+        qrStream = stream;
+        if (qrVideoEl) {
+          qrVideoEl.srcObject = stream;
+          qrVideoEl.style.display = "block";
+          await qrVideoEl.play();
+        }
+        setQrStatus("Camera opened. Position the QR code inside the frame.");
+        runQrDetectorLoop();
+      } catch (error) {
+        setQrStatus(`Unable to open camera for QR scanning: ${error.message}`);
+      }
+    });
+    document.getElementById("examV2EntryStopQrBtn")?.addEventListener("click", () => {
+      stopQrScan();
+      setQrStatus("Camera stopped.");
+    });
 
     document.getElementById("examV2EntrySaveBtn")?.addEventListener("click", async () => {
       if (!loadedRows.length) {
