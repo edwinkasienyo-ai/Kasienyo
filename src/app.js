@@ -2374,6 +2374,8 @@ async function getPaginatedRows({
     if (parsed > max) return max;
     return parsed;
   };
+  const scopedInstitutionId = parseBoundedInt(institutionId, { fallback: 0, min: 0, max: 999999999 });
+  if (!scopedInstitutionId) return [];
   const safeLimit = normalizePaginationValue(limit, { fallback: 50, min: 1, max: 5000 });
   const safeOffset = normalizePaginationValue(offset, { fallback: 0, min: 0, max: 1000000 });
   const usableFields = Array.isArray(searchFields)
@@ -2382,13 +2384,13 @@ async function getPaginatedRows({
   const search = buildSearchWhere({
     fields: usableFields,
     queryValue: q,
-    params: [institutionId, ...extraParams]
+    params: [scopedInstitutionId, ...(Array.isArray(extraParams) ? extraParams : [])]
   });
   const sql = `SELECT * FROM ${table}
                WHERE institution_id = ? ${extraWhere}${search.where}
                ORDER BY id DESC
-               LIMIT ? OFFSET ?`;
-  return query(sql, [...search.params, safeLimit, safeOffset]);
+               LIMIT ${safeLimit} OFFSET ${safeOffset}`;
+  return query(sql, search.params);
 }
 
 async function getExistingColumns(tableName, candidateColumns = []) {
@@ -4627,7 +4629,7 @@ app.get(
     } = req.query;
     const institutionId = req.user.institution_id;
     const normalizedTarget = cleanValue(target).toLowerCase();
-    const rowLimit = Math.min(Math.max(Number(limit) || 20, 1), 100);
+    const rowLimit = parseBoundedInt(limit, { fallback: 20, min: 1, max: 100 });
 
     const includeLearners = ["all", "learners", "learner", "grade", "stream"].includes(normalizedTarget);
     const includeTeachers = ["all", "teachers", "teacher"].includes(normalizedTarget);
@@ -6375,8 +6377,8 @@ app.get(
        LEFT JOIN institutions i ON i.id = a.institution_id
        ${whereClause}
        ORDER BY a.id DESC
-       LIMIT ?`,
-      [...params, limit]
+       LIMIT ${limit}`,
+      params
     );
     const normalizedLogs = logs.map((row) => {
       const details = parseStoredJson(row.details_json) || {};
@@ -7239,8 +7241,7 @@ app.get(
       sql += " AND status = ?";
       params.push(statusFilter);
     }
-    sql += " ORDER BY id DESC LIMIT ?";
-    params.push(limit);
+    sql += ` ORDER BY id DESC LIMIT ${limit}`;
     const rows = await query(sql, params);
     const normalizedRows = rows
       .filter((row) => !roleHiddenFromItem(req.user.role, row))
