@@ -5851,6 +5851,7 @@ async function renderCbcCurriculumEditor(options = {}) {
   const canonicalGrades = [
     "PP1",
     "PP2",
+    "PP3",
     "Grade 1",
     "Grade 2",
     "Grade 3",
@@ -6394,20 +6395,20 @@ async function renderCbcCurriculumEditor(options = {}) {
             </div>
             <div id="examV2GenSelectedSubs" class="small-note">No sub-strand selected.</div>
             <label>Exam Structure</label>
-            <select id="examV2GenStructure" disabled><option value="unified">Unified</option><option value="structured">Structured</option></select>
+            <select id="examV2GenStructure" disabled><option value="unified">Unified</option><option value="structured">Structured</option><option value="multi-section">Multi-section</option></select>
             <label>Structure Details</label>
-            <select id="examV2GenStructureDetail" disabled><option value="">Select details</option><option value="A_B">A & B</option><option value="A_B_C">A, B & C</option></select>
+            <select id="examV2GenStructureDetail" disabled><option value="">Select details</option></select>
             <label>Unified Allocation Mode</label>
             <select id="examV2GenAllocMode" disabled><option value="manual">Manual Entry</option><option value="automated">Automated</option></select>
             <label>Unified Automated %</label>
             <select id="examV2GenAutoPercent" disabled><option value="">Select %</option>${[100, 90, 80, 70, 60, 50, 40, 30, 20, 10].map((v) => `<option value="${v}">${v}</option>`).join("")}</select>
             <label>Unified Manual %</label>
             <input id="examV2GenManualPercent" type="number" min="10" max="100" step="1" value="100" disabled />
-            <label>Structured Section A %</label>
+            <label id="examV2GenSectionALabel">Section/Paper A %</label>
             <input id="examV2GenSectionA" type="number" min="0" max="100" step="1" value="0" disabled />
-            <label>Structured Section B %</label>
+            <label id="examV2GenSectionBLabel">Section/Paper B %</label>
             <input id="examV2GenSectionB" type="number" min="0" max="100" step="1" value="0" disabled />
-            <label>Structured Section C %</label>
+            <label id="examV2GenSectionCLabel">Section/Paper C %</label>
             <input id="examV2GenSectionC" type="number" min="0" max="100" step="1" value="0" disabled />
             <label>Output Mode</label>
             <select id="examV2GenMode" disabled><option value="">Select output mode</option><option value="per_learner">Per Learner</option><option value="per_stream">Per Stream</option><option value="per_class">Per Class</option></select>
@@ -6451,6 +6452,9 @@ async function renderCbcCurriculumEditor(options = {}) {
     const allocModeEl = document.getElementById("examV2GenAllocMode");
     const autoPercentEl = document.getElementById("examV2GenAutoPercent");
     const manualPercentEl = document.getElementById("examV2GenManualPercent");
+    const sectionALabelEl = document.getElementById("examV2GenSectionALabel");
+    const sectionBLabelEl = document.getElementById("examV2GenSectionBLabel");
+    const sectionCLabelEl = document.getElementById("examV2GenSectionCLabel");
     const sectionAEl = document.getElementById("examV2GenSectionA");
     const sectionBEl = document.getElementById("examV2GenSectionB");
     const sectionCEl = document.getElementById("examV2GenSectionC");
@@ -6527,10 +6531,42 @@ async function renderCbcCurriculumEditor(options = {}) {
     };
     const templateKeyForCurrentStructure = () => {
       const structure = String(structureEl?.value || "unified").toLowerCase();
-      const detail = structure === "structured"
+      const detail = structure !== "unified"
         ? String(structureDetailEl?.value || "default").toLowerCase()
         : "default";
       return `exam-structure-${structure}-${detail}`;
+    };
+    const refreshStructureDetailChoices = () => {
+      const structure = String(structureEl?.value || "unified");
+      const current = String(structureDetailEl?.value || "");
+      let options = [`<option value="">Select details</option>`];
+      if (structure === "structured") {
+        options = [
+          `<option value="">Select details</option>`,
+          `<option value="A_B">A & B</option>`,
+          `<option value="A_B_C">A, B & C</option>`
+        ];
+        if (sectionALabelEl) sectionALabelEl.textContent = "Section A %";
+        if (sectionBLabelEl) sectionBLabelEl.textContent = "Section B %";
+        if (sectionCLabelEl) sectionCLabelEl.textContent = "Section C %";
+      } else if (structure === "multi-section") {
+        options = [
+          `<option value="">Select details</option>`,
+          `<option value="PAPER_1_2">Paper 1 & 2</option>`,
+          `<option value="PAPER_1_2_3">Paper 1, 2 & 3</option>`
+        ];
+        if (sectionALabelEl) sectionALabelEl.textContent = "Paper 1 %";
+        if (sectionBLabelEl) sectionBLabelEl.textContent = "Paper 2 %";
+        if (sectionCLabelEl) sectionCLabelEl.textContent = "Paper 3 %";
+      } else {
+        if (sectionALabelEl) sectionALabelEl.textContent = "Section/Paper A %";
+        if (sectionBLabelEl) sectionBLabelEl.textContent = "Section/Paper B %";
+        if (sectionCLabelEl) sectionCLabelEl.textContent = "Section/Paper C %";
+      }
+      structureDetailEl.innerHTML = options.join("");
+      if (current && options.some((row) => row.includes(`value="${current}"`))) {
+        structureDetailEl.value = current;
+      }
     };
     const loadCurriculumPools = async () => {
       if (curriculumRows.length || mappingRows.length) return;
@@ -6697,14 +6733,18 @@ async function renderCbcCurriculumEditor(options = {}) {
       const subsOk = strandsOk && selectedSubs().length > 0;
       const structureOk = subsOk && Boolean(String(structureEl?.value || "").trim());
       const isStructured = String(structureEl?.value || "") === "structured";
-      const structuredDetailOk = isStructured ? Boolean(String(structureDetailEl?.value || "").trim()) : true;
-      const structuredMarksOk = isStructured
+      const isMultiSection = String(structureEl?.value || "") === "multi-section";
+      const nonUnified = isStructured || isMultiSection;
+      const detailValue = String(structureDetailEl?.value || "").trim();
+      const needsThreeSections = detailValue === "A_B_C" || detailValue === "PAPER_1_2_3";
+      const structuredDetailOk = nonUnified ? Boolean(detailValue) : true;
+      const structuredMarksOk = nonUnified
         ? (Number(sectionAEl?.value || 0) > 0
           && Number(sectionBEl?.value || 0) > 0
-          && (String(structureDetailEl?.value || "") !== "A_B_C" || Number(sectionCEl?.value || 0) > 0)
+          && (!needsThreeSections || Number(sectionCEl?.value || 0) > 0)
           && structuredTotal() <= 100)
         : true;
-      const unifiedPercentOk = !isStructured
+      const unifiedPercentOk = !nonUnified
         ? (String(allocModeEl?.value || "manual") === "automated"
           ? Boolean(String(autoPercentEl?.value || "").trim())
           : Number(manualPercentEl?.value || 0) >= 10 && Number(manualPercentEl?.value || 0) <= 100)
@@ -6721,13 +6761,13 @@ async function renderCbcCurriculumEditor(options = {}) {
       setChecklistEnabled(strandsPanelEl, areaOk);
       setChecklistEnabled(subsPanelEl, strandsOk);
       setEnabled(structureEl, subsOk);
-      setEnabled(structureDetailEl, structureOk && isStructured);
-      setEnabled(allocModeEl, structureOk && !isStructured);
-      setEnabled(autoPercentEl, structureOk && !isStructured && String(allocModeEl?.value || "manual") === "automated");
-      setEnabled(manualPercentEl, structureOk && !isStructured && String(allocModeEl?.value || "manual") !== "automated");
-      setEnabled(sectionAEl, structureOk && isStructured);
-      setEnabled(sectionBEl, structureOk && isStructured);
-      setEnabled(sectionCEl, structureOk && isStructured && String(structureDetailEl?.value || "") === "A_B_C");
+      setEnabled(structureDetailEl, structureOk && nonUnified);
+      setEnabled(allocModeEl, structureOk && !nonUnified);
+      setEnabled(autoPercentEl, structureOk && !nonUnified && String(allocModeEl?.value || "manual") === "automated");
+      setEnabled(manualPercentEl, structureOk && !nonUnified && String(allocModeEl?.value || "manual") !== "automated");
+      setEnabled(sectionAEl, structureOk && nonUnified);
+      setEnabled(sectionBEl, structureOk && nonUnified);
+      setEnabled(sectionCEl, structureOk && nonUnified && needsThreeSections);
       setEnabled(outputModeEl, structureOk && structuredDetailOk && structuredMarksOk && unifiedPercentOk);
       setEnabled(generateBtn, outputOk);
       setEnabled(templateDownloadBtn, structureOk);
@@ -6738,7 +6778,7 @@ async function renderCbcCurriculumEditor(options = {}) {
       setEnabled(processBtn, Boolean(generatedExamId) && (!editing || processed));
       setEnabled(deliveryModeEl, Boolean(generatedExamId) && processed);
       setEnabled(runDeliveryBtn, Boolean(generatedExamId) && processed && Boolean(String(deliveryModeEl?.value || "").trim()));
-      if (isStructured && structuredTotal() > 100) {
+      if (nonUnified && structuredTotal() > 100) {
         setGenStatus("Structured section marks cannot exceed total 100.");
       }
     };
@@ -6778,7 +6818,10 @@ async function renderCbcCurriculumEditor(options = {}) {
       renderSelectionInfo();
       updateActivation();
     });
-    structureEl?.addEventListener("change", updateActivation);
+    structureEl?.addEventListener("change", () => {
+      refreshStructureDetailChoices();
+      updateActivation();
+    });
     structureDetailEl?.addEventListener("change", updateActivation);
     allocModeEl?.addEventListener("change", updateActivation);
     autoPercentEl?.addEventListener("change", updateActivation);
@@ -6814,7 +6857,7 @@ async function renderCbcCurriculumEditor(options = {}) {
         academic_year: String(yearEl?.value || ""),
         year: parseAcademicYearStart(String(yearEl?.value || "")),
         structure,
-        structure_detail: structure === "structured" ? String(structureDetailEl?.value || "") : null,
+        structure_detail: structure !== "unified" ? String(structureDetailEl?.value || "") : null,
         allocation_mode: String(allocModeEl?.value || "manual"),
         automated_percentage: String(autoPercentEl?.value || ""),
         manual_percentage: String(manualPercentEl?.value || "100"),
@@ -6983,6 +7026,7 @@ async function renderCbcCurriculumEditor(options = {}) {
         templateUploadInput.value = "";
       }
     });
+    refreshStructureDetailChoices();
     updateActivation();
   };
 

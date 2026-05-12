@@ -11015,8 +11015,10 @@ app.post(
     const selectedSession = cleanOptionalValue(body.exam_type);
     const selectedStream = cleanOptionalValue(body.stream) || "N/A";
     const selectedStructureRaw = cleanValue(body.structure || "unified").toLowerCase();
-    const selectedStructure = selectedStructureRaw === "structured" ? "structured" : "unified";
-    const selectedStructureDetail = selectedStructure === "structured"
+    const selectedStructure = ["structured", "multi-section"].includes(selectedStructureRaw)
+      ? selectedStructureRaw
+      : "unified";
+    const selectedStructureDetail = selectedStructure !== "unified"
       ? cleanOptionalValue(body.structure_detail)
       : null;
     const selectedOutputMode = cleanValue(body.output_mode || "per_learner").toLowerCase();
@@ -11078,18 +11080,26 @@ app.post(
       percentageText = String(totalMarks);
       sectionAllocationText = `UNIFIED TOTAL: ${totalMarks}`;
     } else {
-      if (!["A_B", "A_B_C"].includes(cleanValue(selectedStructureDetail))) {
-        return res.status(400).json({ error: "Structured exams require structure_detail as A_B or A_B_C." });
+      const normalizedDetail = cleanValue(selectedStructureDetail);
+      const validDetails = selectedStructure === "structured"
+        ? ["A_B", "A_B_C"]
+        : ["PAPER_1_2", "PAPER_1_2_3"];
+      if (!validDetails.includes(normalizedDetail)) {
+        return res.status(400).json({
+          error: selectedStructure === "structured"
+            ? "Structured exams require structure_detail as A_B or A_B_C."
+            : "Multi-section exams require structure_detail as PAPER_1_2 or PAPER_1_2_3."
+        });
       }
       const sectionAlloc = body.section_allocations && typeof body.section_allocations === "object"
         ? body.section_allocations
         : {};
       const aMarks = parseMark(sectionAlloc.A ?? body.section_a_marks, 0);
       const bMarks = parseMark(sectionAlloc.B ?? body.section_b_marks, 0);
-      const cMarks = cleanValue(selectedStructureDetail) === "A_B_C"
+      const cMarks = ["A_B_C", "PAPER_1_2_3"].includes(normalizedDetail)
         ? parseMark(sectionAlloc.C ?? body.section_c_marks, 0)
         : 0;
-      if (aMarks <= 0 || bMarks <= 0 || (cleanValue(selectedStructureDetail) === "A_B_C" && cMarks <= 0)) {
+      if (aMarks <= 0 || bMarks <= 0 || (["A_B_C", "PAPER_1_2_3"].includes(normalizedDetail) && cMarks <= 0)) {
         return res.status(400).json({ error: "Structured section marks must be greater than zero for required sections." });
       }
       const total = aMarks + bMarks + cMarks;
@@ -11097,9 +11107,15 @@ app.post(
         return res.status(400).json({ error: "Structured section marks total cannot exceed 100." });
       }
       percentageText = String(total);
-      sectionAllocationText = cleanValue(selectedStructureDetail) === "A_B_C"
-        ? `A:${aMarks}, B:${bMarks}, C:${cMarks} (Total ${total})`
-        : `A:${aMarks}, B:${bMarks} (Total ${total})`;
+      if (selectedStructure === "multi-section") {
+        sectionAllocationText = normalizedDetail === "PAPER_1_2_3"
+          ? `Paper 1:${aMarks}, Paper 2:${bMarks}, Paper 3:${cMarks} (Total ${total})`
+          : `Paper 1:${aMarks}, Paper 2:${bMarks} (Total ${total})`;
+      } else {
+        sectionAllocationText = normalizedDetail === "A_B_C"
+          ? `A:${aMarks}, B:${bMarks}, C:${cMarks} (Total ${total})`
+          : `A:${aMarks}, B:${bMarks} (Total ${total})`;
+      }
     }
 
     const curriculumRowsRaw = await query(
@@ -11181,7 +11197,7 @@ app.post(
       subStrand: primarySubStrand || null
     });
     const derivedTemplateKey = normalizeExamTemplateKey(
-      selectedStructure === "structured"
+      selectedStructure !== "unified"
         ? `exam-structure-${selectedStructure}-${cleanValue(selectedStructureDetail || "default").toLowerCase()}`
         : `exam-structure-${selectedStructure}-default`
     );
