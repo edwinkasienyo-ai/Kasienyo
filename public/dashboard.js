@@ -5848,8 +5848,29 @@ async function renderCbcCurriculumEditor(options = {}) {
   }
 
   const initialTab = normalizeExamTabKey(options?.examTab || "curriculum");
-  const gradeOptions = Array.isArray(meta?.gradeOptions) ? meta.gradeOptions : [];
-  const formOptions = Array.isArray(meta?.formOptions) ? meta.formOptions : [];
+  const canonicalGrades = [
+    "PP1",
+    "PP2",
+    "Grade 1",
+    "Grade 2",
+    "Grade 3",
+    "Grade 4",
+    "Grade 5",
+    "Grade 6",
+    "Grade 7",
+    "Grade 8",
+    "Grade 9",
+    "Grade 10",
+    "Grade 11",
+    "Grade 12"
+  ];
+  const canonicalForms = ["Form 3", "Form 4"];
+  const gradeOptions = Array.from(
+    new Set([...(Array.isArray(meta?.gradeOptions) ? meta.gradeOptions : []), ...canonicalGrades].filter(Boolean))
+  );
+  const formOptions = Array.from(
+    new Set([...(Array.isArray(meta?.formOptions) ? meta.formOptions : []), ...canonicalForms].filter(Boolean))
+  );
   const learningAreas = Array.from(
     new Set(
       [
@@ -5967,12 +5988,8 @@ async function renderCbcCurriculumEditor(options = {}) {
           <h4>Curriculum Engine</h4>
           <p class="small-note">Define grade/form, learning area, strands and sub-strands. Save one or many rows at once.</p>
           <div class="form-grid">
-            <label>Level Mode</label>
-            <select id="examV2CurrLevelMode"><option value="grade">Grade</option><option value="form">Form</option></select>
-            <label>Grade</label>
-            <select id="examV2CurrGrade"><option value="">Select grade</option>${gradeOptions.map((v) => `<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`).join("")}</select>
-            <label>Form</label>
-            <select id="examV2CurrForm"><option value="">Select form</option>${formOptions.map((v) => `<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`).join("")}</select>
+            <label>Grade/Form</label>
+            <select id="examV2CurrLevel"><option value="">Select grade or form</option>${[...gradeOptions, ...formOptions].map((v) => `<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`).join("")}</select>
             <label>Learning Area</label>
             <select id="examV2CurrLearningArea"><option value="">Select learning area</option>${learningAreas.map((v) => `<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`).join("")}</select>
             <label>CBC Level</label>
@@ -6009,12 +6026,8 @@ async function renderCbcCurriculumEditor(options = {}) {
           <h4>Learning Materials & AI Notes</h4>
           <p class="small-note">Select grade/form and learning area first, then upload notes/past papers against the exact curriculum scope.</p>
           <div class="form-grid">
-            <label>Level Mode</label>
-            <select id="examV2MatLevelMode"><option value="grade">Grade</option><option value="form">Form</option></select>
-            <label>Grade</label>
-            <select id="examV2MatGrade"><option value="">Select grade</option>${gradeOptions.map((v) => `<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`).join("")}</select>
-            <label>Form</label>
-            <select id="examV2MatForm"><option value="">Select form</option>${formOptions.map((v) => `<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`).join("")}</select>
+            <label>Grade/Form</label>
+            <select id="examV2MatLevel"><option value="">Select grade or form</option>${[...gradeOptions, ...formOptions].map((v) => `<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`).join("")}</select>
             <label>Learning Area</label>
             <select id="examV2MatLearningArea"><option value="">Select learning area</option>${learningAreas.map((v) => `<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`).join("")}</select>
             <label>Material Type</label>
@@ -6085,9 +6098,7 @@ async function renderCbcCurriculumEditor(options = {}) {
     `;
     stylePanel();
 
-    const levelModeEl = document.getElementById("examV2CurrLevelMode");
-    const gradeEl = document.getElementById("examV2CurrGrade");
-    const formEl = document.getElementById("examV2CurrForm");
+    const levelEl = document.getElementById("examV2CurrLevel");
     const areaEl = document.getElementById("examV2CurrLearningArea");
     const strandEl = document.getElementById("examV2CurrStrand");
     const strandDescEl = document.getElementById("examV2CurrStrandDesc");
@@ -6095,39 +6106,19 @@ async function renderCbcCurriculumEditor(options = {}) {
     const subDescEl = document.getElementById("examV2CurrSubStrandDesc");
     const notesEl = document.getElementById("examV2CurrNotes");
     const cbcLevelEl = document.getElementById("examV2CurrCbcLevel");
-    const matLevelModeEl = document.getElementById("examV2MatLevelMode");
-    const matGradeEl = document.getElementById("examV2MatGrade");
-    const matFormEl = document.getElementById("examV2MatForm");
+    const matLevelEl = document.getElementById("examV2MatLevel");
     const matAreaEl = document.getElementById("examV2MatLearningArea");
     const matStrandEl = document.getElementById("examV2MatStrand");
     const matSubEl = document.getElementById("examV2MatSubStrand");
     const draftBody = document.getElementById("examV2CurrDraftRows");
     const notesOutEl = document.getElementById("examV2NotesOutput");
 
-    const refreshLevelMode = () => {
-      const mode = String(levelModeEl?.value || "grade");
-      if (gradeEl) gradeEl.disabled = mode === "form";
-      if (formEl) formEl.disabled = mode === "grade";
-      if (mode === "form" && gradeEl) gradeEl.value = "";
-      if (mode === "grade" && formEl) formEl.value = "";
+    const parseLevelChoice = (value = "") => {
+      const label = String(value || "").trim();
+      if (!label) return { grade: "", form_name: "" };
+      if (/^form/i.test(label)) return { grade: "", form_name: label };
+      return { grade: label, form_name: "" };
     };
-    refreshLevelMode();
-    levelModeEl?.addEventListener("change", refreshLevelMode);
-    const refreshMaterialLevelMode = () => {
-      const mode = String(matLevelModeEl?.value || "grade");
-      if (matGradeEl) matGradeEl.disabled = mode === "form";
-      if (matFormEl) matFormEl.disabled = mode === "grade";
-      if (mode === "form" && matGradeEl) matGradeEl.value = "";
-      if (mode === "grade" && matFormEl) matFormEl.value = "";
-    };
-    refreshMaterialLevelMode();
-    matLevelModeEl?.addEventListener("change", refreshMaterialLevelMode);
-    matGradeEl?.addEventListener("change", () => {
-      if (matGradeEl.value && matFormEl) matFormEl.value = "";
-    });
-    matFormEl?.addEventListener("change", () => {
-      if (matFormEl.value && matGradeEl) matGradeEl.value = "";
-    });
 
     const renderDraftRows = () => {
       if (!draftBody) return;
@@ -6147,8 +6138,9 @@ async function renderCbcCurriculumEditor(options = {}) {
     };
 
     document.getElementById("examV2CurrAddRowBtn")?.addEventListener("click", async () => {
-      const grade = String(gradeEl?.value || "");
-      const form_name = String(formEl?.value || "");
+      const levelPayload = parseLevelChoice(String(levelEl?.value || ""));
+      const grade = levelPayload.grade;
+      const form_name = levelPayload.form_name;
       const learning_area = String(areaEl?.value || "");
       const strand = String(strandEl?.value || "").trim();
       const strand_description = String(strandDescEl?.value || "").trim();
@@ -6286,8 +6278,9 @@ async function renderCbcCurriculumEditor(options = {}) {
         alert("Choose a file first.");
         return;
       }
-      const grade = String(matGradeEl?.value || "");
-      const form_name = String(matFormEl?.value || "");
+      const levelPayload = parseLevelChoice(String(matLevelEl?.value || ""));
+      const grade = levelPayload.grade;
+      const form_name = levelPayload.form_name;
       const learning_area = String(matAreaEl?.value || "");
       if ((!grade && !form_name) || !learning_area) {
         alert("Select grade/form and learning area in Learning Materials section before upload.");
@@ -6320,8 +6313,8 @@ async function renderCbcCurriculumEditor(options = {}) {
 
     document.getElementById("examV2NotesGenerateBtn")?.addEventListener("click", async () => {
       const payload = {
-        grade: String(matGradeEl?.value || gradeEl?.value || ""),
-        form_name: String(matFormEl?.value || formEl?.value || ""),
+        grade: parseLevelChoice(String(matLevelEl?.value || levelEl?.value || "")).grade,
+        form_name: parseLevelChoice(String(matLevelEl?.value || levelEl?.value || "")).form_name,
         learning_area: String(matAreaEl?.value || areaEl?.value || ""),
         strand: String(matStrandEl?.value || strandEl?.value || "").trim(),
         sub_strand: String(matSubEl?.value || subEl?.value || "").trim()
@@ -6367,148 +6360,372 @@ async function renderCbcCurriculumEditor(options = {}) {
   };
 
   const renderExamGenerationTab = async () => {
+    const gradeFormOptions = [...gradeOptions, ...formOptions];
     panel.innerHTML = `
       <div class="exam-v2-layout">
         <div class="exam-v2-pane">
           <h4>Exam Generation Engine</h4>
-          <p class="small-note">Generate AI-powered exams from selected curriculum scope with printable output.</p>
+          <p class="small-note">Strict workflow: Session → Academic Year → Term → Grade/Form → Stream → Learning Area → Strands → Sub-strands → Structure → Output.</p>
           <div class="form-grid">
             <label>Examination Session</label>
             <select id="examV2GenSession"><option value="">Select session</option>${examSessions.map((v) => `<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`).join("")}</select>
             <label>Academic Year</label>
-            <input id="examV2GenYear" value="${new Date().getFullYear()}/${new Date().getFullYear() + 1}" />
+            <input id="examV2GenYear" value="${new Date().getFullYear()}/${new Date().getFullYear() + 1}" disabled />
             <label>Term</label>
-            <select id="examV2GenTerm">${termOptions.map((v) => `<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`).join("")}</select>
-            <label>Grade</label>
-            <select id="examV2GenGrade"><option value="">Select grade</option>${gradeOptions.map((v) => `<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`).join("")}</select>
-            <label>Form</label>
-            <select id="examV2GenForm"><option value="">Select form</option>${formOptions.map((v) => `<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`).join("")}</select>
-            <label>Stream</label>
-            <input id="examV2GenStream" placeholder="e.g. East" />
+            <select id="examV2GenTerm" disabled><option value="">Select term</option>${termOptions.map((v) => `<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`).join("")}</select>
+            <label>Grade/Form</label>
+            <select id="examV2GenLevel" disabled><option value="">Select Grade/Form</option>${gradeFormOptions.map((v) => `<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`).join("")}</select>
+            <label>Stream (from learners)</label>
+            <select id="examV2GenStreamSelect" disabled><option value="">Select stream</option><option value="N/A">N/A</option></select>
+            <label>Stream (manual optional)</label>
+            <input id="examV2GenStreamManual" placeholder="Type stream if missing" disabled />
             <label>Learning Area</label>
-            <select id="examV2GenArea"><option value="">Select learning area</option>${learningAreas.map((v) => `<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`).join("")}</select>
-            <label>Strand</label>
-            <select id="examV2GenStrand"><option value="">Select strand</option></select>
-            <label>Sub-strand</label>
-            <select id="examV2GenSub"><option value="">Select sub-strand</option></select>
+            <select id="examV2GenArea" disabled><option value="">Select learning area</option>${learningAreas.map((v) => `<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`).join("")}</select>
+            <label>Select Strands (multi-select)</label>
+            <select id="examV2GenStrands" multiple size="7" disabled></select>
+            <label>Select Sub-strands (multi-select)</label>
+            <select id="examV2GenSubs" multiple size="7" disabled></select>
             <label>Exam Structure</label>
-            <select id="examV2GenStructure"><option value="unified">Unified</option><option value="structured">Structured</option><option value="multi-section">Multi-section</option></select>
-            <label>Structure Detail</label>
-            <select id="examV2GenStructureDetail"><option value="">None</option><option value="A_B">Section A & B</option><option value="A_B_C">Section A, B & C</option><option value="PAPER_1_2">Paper 1 & 2</option><option value="PAPER_1_2_3">Paper 1,2,3</option></select>
-            <label>Percentage Allocation</label>
-            <input id="examV2GenPercent" placeholder="e.g. 40,30,30" value="100" />
+            <select id="examV2GenStructure" disabled><option value="unified">Unified</option><option value="structured">Structured</option></select>
+            <label>Structure Details</label>
+            <select id="examV2GenStructureDetail" disabled><option value="">Select details</option><option value="A_B">A & B</option><option value="A_B_C">A, B & C</option></select>
+            <label>Unified Allocation Mode</label>
+            <select id="examV2GenAllocMode" disabled><option value="manual">Manual Entry</option><option value="automated">Automated</option></select>
+            <label>Unified Automated %</label>
+            <select id="examV2GenAutoPercent" disabled><option value="">Select %</option>${[100, 90, 80, 70, 60, 50, 40, 30, 20, 10].map((v) => `<option value="${v}">${v}</option>`).join("")}</select>
+            <label>Unified Manual %</label>
+            <input id="examV2GenManualPercent" type="number" min="10" max="100" step="1" value="100" disabled />
+            <label>Structured Section A %</label>
+            <input id="examV2GenSectionA" type="number" min="0" max="100" step="1" value="0" disabled />
+            <label>Structured Section B %</label>
+            <input id="examV2GenSectionB" type="number" min="0" max="100" step="1" value="0" disabled />
+            <label>Structured Section C %</label>
+            <input id="examV2GenSectionC" type="number" min="0" max="100" step="1" value="0" disabled />
             <label>Output Mode</label>
-            <select id="examV2GenMode"><option value="per_learner">Per Learner</option><option value="bulk_class">Per Class</option></select>
+            <select id="examV2GenMode" disabled><option value="">Select output mode</option><option value="per_learner">Per Learner</option><option value="per_stream">Per Stream</option><option value="per_class">Per Class</option></select>
+            <label>Edit Generated Exam?</label>
+            <select id="examV2GenEditChoice" disabled><option value="no">No</option><option value="yes">Yes</option></select>
+            <label>Download Output Mode</label>
+            <select id="examV2GenDeliveryMode" disabled><option value="">Select mode</option><option value="download">Download</option><option value="print">Print</option></select>
           </div>
           <div class="actions-row exam-icon-group">
-            <button class="ax-btn ax-btn--generate ax-btn--sm" id="examV2GenGenerateBtn" title="Generate exam">Generate</button>
-            <button class="ax-btn ax-btn--save ax-btn--sm" id="examV2GenSaveBtn" title="Save exam">Save</button>
+            <button class="ax-btn ax-btn--generate ax-btn--sm" id="examV2GenGenerateBtn" title="Generate exam with selected scope" disabled>Generate</button>
+            <button class="ax-btn ax-btn--save ax-btn--sm" id="examV2GenSaveEditedBtn" title="Save edited exam" disabled>Save Edit</button>
+            <button class="ax-btn ax-btn--process ax-btn--sm" id="examV2GenProcessBtn" title="Process output" disabled>Process</button>
+            <button class="ax-btn ax-btn--download ax-btn--sm" id="examV2GenRunDeliveryBtn" title="Run output mode" disabled>Output</button>
             <button class="ax-btn ax-btn--view ax-btn--sm" id="examV2GenViewBtn" title="View recent exams">View</button>
-            <button class="ax-btn ax-btn--download ax-btn--sm" id="examV2GenDownloadBtn" title="Download exam">Download</button>
-            <button class="ax-btn ax-btn--print ax-btn--sm" id="examV2GenPrintBtn" title="Print exam">Print</button>
-            <button class="ax-btn ax-btn--export-excel ax-btn--sm" id="examV2GenSerialsBtn" title="Download serials">Serials</button>
+            <button class="ax-btn ax-btn--download ax-btn--sm" id="examV2GenTemplateDownloadBtn" title="Download structure template" disabled>Tpl Download</button>
+            <label for="examV2GenTemplateUploadFile" class="ax-btn ax-btn--upload ax-btn--sm exam-stack-top">Tpl Upload</label>
+            <input id="examV2GenTemplateUploadFile" type="file" accept=".txt,.md,.csv,.doc,.docx" hidden />
           </div>
-          <textarea id="examV2GenOutput" rows="16" class="template-spacious" placeholder="Generated exam text appears here..."></textarea>
-          <div id="examV2GenStatus" class="small-note"></div>
+          <textarea id="examV2GenOutput" rows="16" class="template-spacious" placeholder="Generated exam text appears here..." readonly></textarea>
+          <div id="examV2GenStatus" class="small-note">Select examination session to activate workflow.</div>
         </div>
       </div>
     `;
     stylePanel();
 
-    const gradeEl = document.getElementById("examV2GenGrade");
-    const formEl = document.getElementById("examV2GenForm");
-    const areaEl = document.getElementById("examV2GenArea");
-    const strandEl = document.getElementById("examV2GenStrand");
-    const subEl = document.getElementById("examV2GenSub");
     const sessionEl = document.getElementById("examV2GenSession");
     const yearEl = document.getElementById("examV2GenYear");
     const termEl = document.getElementById("examV2GenTerm");
+    const levelEl = document.getElementById("examV2GenLevel");
+    const streamSelectEl = document.getElementById("examV2GenStreamSelect");
+    const streamManualEl = document.getElementById("examV2GenStreamManual");
+    const areaEl = document.getElementById("examV2GenArea");
+    const strandsEl = document.getElementById("examV2GenStrands");
+    const subsEl = document.getElementById("examV2GenSubs");
+    const structureEl = document.getElementById("examV2GenStructure");
+    const structureDetailEl = document.getElementById("examV2GenStructureDetail");
+    const allocModeEl = document.getElementById("examV2GenAllocMode");
+    const autoPercentEl = document.getElementById("examV2GenAutoPercent");
+    const manualPercentEl = document.getElementById("examV2GenManualPercent");
+    const sectionAEl = document.getElementById("examV2GenSectionA");
+    const sectionBEl = document.getElementById("examV2GenSectionB");
+    const sectionCEl = document.getElementById("examV2GenSectionC");
+    const outputModeEl = document.getElementById("examV2GenMode");
+    const editChoiceEl = document.getElementById("examV2GenEditChoice");
+    const deliveryModeEl = document.getElementById("examV2GenDeliveryMode");
     const outputEl = document.getElementById("examV2GenOutput");
     const statusNode = document.getElementById("examV2GenStatus");
-    const structureMap = { strands: [], subs: {} };
+    const generateBtn = document.getElementById("examV2GenGenerateBtn");
+    const saveEditedBtn = document.getElementById("examV2GenSaveEditedBtn");
+    const processBtn = document.getElementById("examV2GenProcessBtn");
+    const runDeliveryBtn = document.getElementById("examV2GenRunDeliveryBtn");
+    const templateDownloadBtn = document.getElementById("examV2GenTemplateDownloadBtn");
+    const templateUploadInput = document.getElementById("examV2GenTemplateUploadFile");
+    let curriculumRows = [];
+    let mappingRows = [];
     let generatedExamId = null;
     let allocatedSerials = [];
+    let processed = false;
+
     const setGenStatus = (message) => {
       if (statusNode) statusNode.textContent = message || "";
     };
-
-    const refreshStructure = async () => {
-      const grade = String(gradeEl?.value || "");
-      const form_name = String(formEl?.value || "");
-      const learning_area = String(areaEl?.value || "");
-      const suggestions = await fetchStructureSuggestions({ grade, form_name, learning_area });
-      structureMap.strands = suggestions.strand_options || [];
-      structureMap.subs = suggestions.sub_strand_options_by_strand || {};
-      strandEl.innerHTML = `<option value="">Select strand</option>${structureMap.strands.map((v) => `<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`).join("")}`;
-      subEl.innerHTML = `<option value="">Select sub-strand</option>`;
+    const setEnabled = (node, state) => {
+      if (!node) return;
+      node.disabled = !state;
     };
+    const parseLevel = (label = "") => {
+      const raw = String(label || "").trim();
+      const pp = raw.match(/^pp\s*(\d+)/i);
+      if (pp) return { type: "pp", num: Number(pp[1]) };
+      const grade = raw.match(/^grade\s*(\d+)/i);
+      if (grade) return { type: "grade", num: Number(grade[1]) };
+      const form = raw.match(/^form\s*(\d+)/i);
+      if (form) return { type: "form", num: Number(form[1]) };
+      return { type: "unknown", num: null };
+    };
+    const minByGroup = (type, num) => {
+      if (type === "pp") return 1;
+      if (type === "form") return 3;
+      if (type !== "grade") return null;
+      if (num <= 3) return 1;
+      if (num <= 6) return 4;
+      if (num <= 9) return 7;
+      return 10;
+    };
+    const inSelectedRange = (rowLevelLabel, selectedLevelLabel) => {
+      const selected = parseLevel(selectedLevelLabel);
+      const row = parseLevel(rowLevelLabel);
+      if (selected.type === "unknown") return false;
+      if (row.type === "unknown") return false;
+      if (row.type !== selected.type) return false;
+      const floor = minByGroup(selected.type, Number(selected.num || 0));
+      if (!Number.isFinite(Number(floor)) || !Number.isFinite(Number(row.num)) || !Number.isFinite(Number(selected.num))) return false;
+      return Number(row.num) >= Number(floor) && Number(row.num) <= Number(selected.num);
+    };
+    const selectedOptions = (selectNode) =>
+      Array.from(selectNode?.selectedOptions || [])
+        .map((opt) => String(opt.value || "").trim())
+        .filter(Boolean);
+    const levelPayload = () => {
+      const selected = String(levelEl?.value || "").trim();
+      if (!selected) return { grade: "", form_name: "" };
+      if (/^form/i.test(selected)) return { grade: "", form_name: selected };
+      return { grade: selected, form_name: "" };
+    };
+    const selectedStream = () => {
+      const manual = String(streamManualEl?.value || "").trim();
+      if (manual) return manual;
+      const selected = String(streamSelectEl?.value || "").trim();
+      return selected || "N/A";
+    };
+    const templateKeyForCurrentStructure = () => {
+      const structure = String(structureEl?.value || "unified").toLowerCase();
+      const detail = structure === "structured"
+        ? String(structureDetailEl?.value || "default").toLowerCase()
+        : "default";
+      return `exam-structure-${structure}-${detail}`;
+    };
+    const loadCurriculumPools = async () => {
+      if (curriculumRows.length || mappingRows.length) return;
+      const [currRows, mapRows] = await Promise.all([
+        request("/api/cbc/curriculum?limit=1000").catch(() => []),
+        request("/api/cbc/curriculum/structure-mappings").catch(() => [])
+      ]);
+      curriculumRows = Array.isArray(currRows) ? currRows : [];
+      mappingRows = Array.isArray(mapRows) ? mapRows : [];
+    };
+    const refreshStreamOptions = async () => {
+      const { grade, form_name } = levelPayload();
+      if (!grade && !form_name) {
+        streamSelectEl.innerHTML = `<option value="">Select stream</option><option value="N/A">N/A</option>`;
+        return;
+      }
+      const rows = await request(`/api/admission/learners?limit=700&search=${encodeURIComponent(grade || form_name)}`).catch(() => []);
+      const streams = Array.from(
+        new Set(
+          (Array.isArray(rows) ? rows : [])
+            .filter((row) => (grade ? String(row.grade || "").trim() === grade : String(row.form_name || "").trim() === form_name))
+            .map((row) => String(row.stream || "").trim())
+            .filter(Boolean)
+        )
+      );
+      streamSelectEl.innerHTML = `<option value="">Select stream</option><option value="N/A">N/A</option>${streams.map((item) => `<option value="${escapeHtml(item)}">${escapeHtml(item)}</option>`).join("")}`;
+    };
+    const refreshStrandOptions = async () => {
+      await loadCurriculumPools();
+      const learningArea = String(areaEl?.value || "").trim().toLowerCase();
+      const selectedLevel = String(levelEl?.value || "").trim();
+      if (!learningArea || !selectedLevel) {
+        strandsEl.innerHTML = "";
+        subsEl.innerHTML = "";
+        return;
+      }
+      const pool = [...curriculumRows, ...mappingRows];
+      const strands = Array.from(
+        new Set(
+          pool
+            .filter((row) => String(row.learning_area || "").trim().toLowerCase() === learningArea)
+            .filter((row) => inSelectedRange(String(row.grade || row.form_name || "").trim(), selectedLevel))
+            .map((row) => String(row.strand || "").trim())
+            .filter(Boolean)
+        )
+      );
+      strandsEl.innerHTML = strands.map((item) => `<option value="${escapeHtml(item)}">${escapeHtml(item)}</option>`).join("");
+      subsEl.innerHTML = "";
+    };
+    const refreshSubStrandOptions = async () => {
+      await loadCurriculumPools();
+      const learningArea = String(areaEl?.value || "").trim().toLowerCase();
+      const selectedLevel = String(levelEl?.value || "").trim();
+      const selectedStrands = selectedOptions(strandsEl);
+      if (!learningArea || !selectedLevel || !selectedStrands.length) {
+        subsEl.innerHTML = "";
+        return;
+      }
+      const selectedStrandSet = new Set(selectedStrands.map((item) => item.toLowerCase()));
+      const pool = [...curriculumRows, ...mappingRows];
+      const subs = Array.from(
+        new Set(
+          pool
+            .filter((row) => String(row.learning_area || "").trim().toLowerCase() === learningArea)
+            .filter((row) => inSelectedRange(String(row.grade || row.form_name || "").trim(), selectedLevel))
+            .filter((row) => selectedStrandSet.has(String(row.strand || "").trim().toLowerCase()))
+            .map((row) => String(row.sub_strand || "").trim())
+            .filter(Boolean)
+        )
+      );
+      subsEl.innerHTML = subs.map((item) => `<option value="${escapeHtml(item)}">${escapeHtml(item)}</option>`).join("");
+    };
+    const structuredTotal = () =>
+      Number(sectionAEl?.value || 0) + Number(sectionBEl?.value || 0) + Number(sectionCEl?.value || 0);
+    const updateActivation = () => {
+      const sessionOk = Boolean(String(sessionEl?.value || "").trim());
+      const yearOk = sessionOk && Boolean(String(yearEl?.value || "").trim());
+      const termOk = yearOk && Boolean(String(termEl?.value || "").trim());
+      const levelOk = termOk && Boolean(String(levelEl?.value || "").trim());
+      const streamOk = levelOk && Boolean(selectedStream());
+      const areaOk = streamOk && Boolean(String(areaEl?.value || "").trim());
+      const strandsOk = areaOk && selectedOptions(strandsEl).length > 0;
+      const subsOk = strandsOk && selectedOptions(subsEl).length > 0;
+      const structureOk = subsOk && Boolean(String(structureEl?.value || "").trim());
+      const isStructured = String(structureEl?.value || "") === "structured";
+      const structuredDetailOk = isStructured ? Boolean(String(structureDetailEl?.value || "").trim()) : true;
+      const structuredMarksOk = isStructured
+        ? (Number(sectionAEl?.value || 0) > 0
+          && Number(sectionBEl?.value || 0) > 0
+          && (String(structureDetailEl?.value || "") !== "A_B_C" || Number(sectionCEl?.value || 0) > 0)
+          && structuredTotal() <= 100)
+        : true;
+      const unifiedPercentOk = !isStructured
+        ? (String(allocModeEl?.value || "manual") === "automated"
+          ? Boolean(String(autoPercentEl?.value || "").trim())
+          : Number(manualPercentEl?.value || 0) >= 10 && Number(manualPercentEl?.value || 0) <= 100)
+        : true;
+      const outputOk = structureOk && structuredDetailOk && structuredMarksOk && unifiedPercentOk && Boolean(String(outputModeEl?.value || "").trim());
+      setEnabled(yearEl, sessionOk);
+      setEnabled(termEl, yearOk);
+      setEnabled(levelEl, termOk);
+      setEnabled(streamSelectEl, levelOk);
+      setEnabled(streamManualEl, levelOk);
+      setEnabled(areaEl, streamOk);
+      setEnabled(strandsEl, areaOk);
+      setEnabled(subsEl, strandsOk);
+      setEnabled(structureEl, subsOk);
+      setEnabled(structureDetailEl, structureOk && isStructured);
+      setEnabled(allocModeEl, structureOk && !isStructured);
+      setEnabled(autoPercentEl, structureOk && !isStructured && String(allocModeEl?.value || "manual") === "automated");
+      setEnabled(manualPercentEl, structureOk && !isStructured && String(allocModeEl?.value || "manual") !== "automated");
+      setEnabled(sectionAEl, structureOk && isStructured);
+      setEnabled(sectionBEl, structureOk && isStructured);
+      setEnabled(sectionCEl, structureOk && isStructured && String(structureDetailEl?.value || "") === "A_B_C");
+      setEnabled(outputModeEl, structureOk && structuredDetailOk && structuredMarksOk && unifiedPercentOk);
+      setEnabled(generateBtn, outputOk);
+      setEnabled(templateDownloadBtn, structureOk);
+      setEnabled(editChoiceEl, Boolean(generatedExamId));
+      const editing = String(editChoiceEl?.value || "no") === "yes";
+      if (outputEl) outputEl.readOnly = !editing;
+      setEnabled(saveEditedBtn, Boolean(generatedExamId) && editing);
+      setEnabled(processBtn, Boolean(generatedExamId) && (!editing || processed));
+      setEnabled(deliveryModeEl, Boolean(generatedExamId) && processed);
+      setEnabled(runDeliveryBtn, Boolean(generatedExamId) && processed && Boolean(String(deliveryModeEl?.value || "").trim()));
+      if (isStructured && structuredTotal() > 100) {
+        setGenStatus("Structured section marks cannot exceed total 100.");
+      }
+    };
+    sessionEl?.addEventListener("change", updateActivation);
+    yearEl?.addEventListener("input", updateActivation);
+    termEl?.addEventListener("change", updateActivation);
+    levelEl?.addEventListener("change", async () => {
+      await refreshStreamOptions();
+      await refreshStrandOptions();
+      updateActivation();
+    });
+    streamSelectEl?.addEventListener("change", updateActivation);
+    streamManualEl?.addEventListener("input", updateActivation);
+    areaEl?.addEventListener("change", async () => {
+      await refreshStrandOptions();
+      updateActivation();
+    });
+    strandsEl?.addEventListener("change", async () => {
+      await refreshSubStrandOptions();
+      updateActivation();
+    });
+    subsEl?.addEventListener("change", updateActivation);
+    structureEl?.addEventListener("change", updateActivation);
+    structureDetailEl?.addEventListener("change", updateActivation);
+    allocModeEl?.addEventListener("change", updateActivation);
+    autoPercentEl?.addEventListener("change", updateActivation);
+    manualPercentEl?.addEventListener("input", updateActivation);
+    sectionAEl?.addEventListener("input", updateActivation);
+    sectionBEl?.addEventListener("input", updateActivation);
+    sectionCEl?.addEventListener("input", updateActivation);
+    outputModeEl?.addEventListener("change", updateActivation);
+    editChoiceEl?.addEventListener("change", () => {
+      processed = String(editChoiceEl?.value || "no") === "no";
+      updateActivation();
+    });
+    deliveryModeEl?.addEventListener("change", updateActivation);
 
-    gradeEl?.addEventListener("change", () => {
-      if (gradeEl.value && formEl) formEl.value = "";
-      refreshStructure();
-    });
-    formEl?.addEventListener("change", () => {
-      if (formEl.value && gradeEl) gradeEl.value = "";
-      refreshStructure();
-    });
-    areaEl?.addEventListener("change", refreshStructure);
-    strandEl?.addEventListener("change", () => {
-      const selected = String(strandEl.value || "");
-      const subOptions = Array.isArray(structureMap.subs[selected]) ? structureMap.subs[selected] : [];
-      subEl.innerHTML = `<option value="">Select sub-strand</option>${subOptions.map((v) => `<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`).join("")}`;
-    });
-
-    document.getElementById("examV2GenGenerateBtn")?.addEventListener("click", async () => {
+    generateBtn?.addEventListener("click", async () => {
+      const { grade, form_name } = levelPayload();
+      const selectedStrands = selectedOptions(strandsEl);
+      const selectedSubs = selectedOptions(subsEl);
+      const structure = String(structureEl?.value || "unified");
       const payload = {
         title: `${String(sessionEl?.value || "Exam")} - ${String(areaEl?.value || "Learning Area")}`,
         exam_type: String(sessionEl?.value || ""),
-        grade: String(gradeEl?.value || ""),
-        form_name: String(formEl?.value || ""),
-        stream: String(document.getElementById("examV2GenStream")?.value || "").trim(),
+        grade,
+        form_name,
+        stream: selectedStream(),
         learning_area: String(areaEl?.value || ""),
         subject: String(areaEl?.value || ""),
-        strand: String(strandEl?.value || ""),
-        sub_strand: String(subEl?.value || ""),
+        selected_strands: selectedStrands,
+        selected_sub_strands: selectedSubs,
+        strand: selectedStrands[0] || "",
+        sub_strand: selectedSubs[0] || "",
         term: String(termEl?.value || ""),
         academic_year: String(yearEl?.value || ""),
         year: parseAcademicYearStart(String(yearEl?.value || "")),
-        structure: String(document.getElementById("examV2GenStructure")?.value || "unified"),
-        structure_detail: String(document.getElementById("examV2GenStructureDetail")?.value || ""),
-        total_percentage: String(document.getElementById("examV2GenPercent")?.value || "100")
+        structure,
+        structure_detail: structure === "structured" ? String(structureDetailEl?.value || "") : null,
+        allocation_mode: String(allocModeEl?.value || "manual"),
+        automated_percentage: String(autoPercentEl?.value || ""),
+        manual_percentage: String(manualPercentEl?.value || "100"),
+        output_mode: String(outputModeEl?.value || "per_learner"),
+        section_allocations: {
+          A: Number(sectionAEl?.value || 0),
+          B: Number(sectionBEl?.value || 0),
+          C: Number(sectionCEl?.value || 0)
+        }
       };
-      if ((!payload.grade && !payload.form_name) || !payload.learning_area || !payload.strand || !payload.exam_type) {
-        alert("Select exam session, level, learning area and strand.");
-        return;
-      }
       try {
         const generated = await request("/api/academic/exams/auto-generate", {
           method: "POST",
           body: JSON.stringify(payload)
         });
         generatedExamId = Number(generated?.id || 0) || null;
-        const serials = await request("/api/academic/exams/allocate-serials", {
-          method: "POST",
-          body: JSON.stringify({
-            grade: payload.grade,
-            form_name: payload.form_name,
-            stream: payload.stream,
-            learning_area: payload.learning_area,
-            exam_type: payload.exam_type,
-            term: payload.term,
-            year: payload.year,
-            mode: String(document.getElementById("examV2GenMode")?.value || "per_learner")
-          })
-        });
-        allocatedSerials = Array.isArray(serials?.serials) ? serials.serials : [];
-        const finalText = String(generated?.examText || "").trim();
-        if (outputEl) outputEl.value = finalText;
-        setGenStatus(`Generated exam ID ${generatedExamId || "-"} with ${allocatedSerials.length} serial(s).`);
+        processed = false;
+        if (outputEl) outputEl.value = String(generated?.examText || "").trim();
+        setGenStatus(`Generated exam #${generatedExamId || "-"} using ${selectedStrands.length} strand(s) and ${selectedSubs.length} sub-strand(s).`);
+        updateActivation();
       } catch (error) {
         alert(error.message);
       }
     });
-
-    document.getElementById("examV2GenSaveBtn")?.addEventListener("click", async () => {
+    saveEditedBtn?.addEventListener("click", async () => {
       if (!generatedExamId) {
         alert("Generate exam first.");
         return;
@@ -6518,9 +6735,68 @@ async function renderCbcCurriculumEditor(options = {}) {
           method: "PUT",
           body: JSON.stringify({ generated_exam_text: String(outputEl?.value || "") })
         });
-        setGenStatus(`Exam ${generatedExamId} saved.`);
+        processed = true;
+        setGenStatus(`Edited exam #${generatedExamId} saved. You can now process output.`);
+        updateActivation();
       } catch (error) {
         alert(error.message);
+      }
+    });
+    processBtn?.addEventListener("click", async () => {
+      if (!generatedExamId) {
+        alert("Generate exam first.");
+        return;
+      }
+      const { grade, form_name } = levelPayload();
+      try {
+        const serialResponse = await request("/api/academic/exams/allocate-serials", {
+          method: "POST",
+          body: JSON.stringify({
+            grade,
+            form_name,
+            stream: selectedStream(),
+            learning_area: String(areaEl?.value || ""),
+            exam_type: String(sessionEl?.value || ""),
+            term: String(termEl?.value || ""),
+            year: parseAcademicYearStart(String(yearEl?.value || "")),
+            mode: String(outputModeEl?.value || "per_learner")
+          })
+        });
+        allocatedSerials = Array.isArray(serialResponse?.serials) ? serialResponse.serials : [];
+        processed = true;
+        setGenStatus(`Processed output mode ${String(outputModeEl?.value || "")}. Generated ${allocatedSerials.length} serial records.`);
+        updateActivation();
+      } catch (error) {
+        alert(error.message);
+      }
+    });
+    runDeliveryBtn?.addEventListener("click", () => {
+      const mode = String(deliveryModeEl?.value || "");
+      const text = String(outputEl?.value || "").trim();
+      if (!text) {
+        alert("Generate exam first.");
+        return;
+      }
+      if (mode === "download") {
+        downloadTextFile("generated-exam-paper.txt", text);
+        if (allocatedSerials.length) {
+          const csv = rowsToCsv(allocatedSerials.map((row) => ({
+            learner_name: row.learner_name || "",
+            admission_number: row.admission_number || "",
+            grade: row.grade || "",
+            stream: row.stream || "",
+            serial: row.serial || ""
+          })));
+          downloadTextFile("exam-serials.csv", csv, "text/csv;charset=utf-8");
+        }
+        return;
+      }
+      if (mode === "print") {
+        const popup = window.open("", "_blank");
+        if (!popup) return;
+        popup.document.write(`<pre>${escapeHtml(text)}</pre>`);
+        popup.document.close();
+        popup.print();
       }
     });
     document.getElementById("examV2GenViewBtn")?.addEventListener("click", async () => {
@@ -6532,40 +6808,68 @@ async function renderCbcCurriculumEditor(options = {}) {
         alert(error.message);
       }
     });
-    document.getElementById("examV2GenDownloadBtn")?.addEventListener("click", () => {
-      const text = String(outputEl?.value || "").trim();
-      if (!text) {
-        alert("Generate exam first.");
-        return;
+    templateDownloadBtn?.addEventListener("click", async () => {
+      try {
+        const key = templateKeyForCurrentStructure();
+        const templates = await request("/api/examinations/templates");
+        const rows = Array.isArray(templates) ? templates : [];
+        const selected = rows.find((row) => String(row.template_key || "").toLowerCase() === key.toLowerCase());
+        if (selected?.content) {
+          downloadTextFile(`${key}.txt`, selected.content);
+          return;
+        }
+        const fallback = [
+          `Template Key: ${key}`,
+          `Structure: ${String(structureEl?.value || "unified")}`,
+          `Structure Detail: ${String(structureDetailEl?.value || "default")}`,
+          "",
+          "Section Instructions",
+          "- Keep total marks within 100.",
+          "- Align questions to selected strands/sub-strands only.",
+          "- Include question marks clearly."
+        ].join("\n");
+        downloadTextFile(`${key}.txt`, fallback);
+      } catch (error) {
+        alert(error.message);
       }
-      downloadTextFile("generated-exam-paper.txt", text);
     });
-    document.getElementById("examV2GenPrintBtn")?.addEventListener("click", () => {
-      const text = String(outputEl?.value || "").trim();
-      if (!text) {
-        alert("Generate exam first.");
-        return;
+    templateUploadInput?.addEventListener("change", async () => {
+      const file = templateUploadInput.files?.[0];
+      if (!file) return;
+      try {
+        const content = await file.text();
+        const key = templateKeyForCurrentStructure();
+        const rows = await request("/api/examinations/templates");
+        const existing = (Array.isArray(rows) ? rows : []).find((row) => String(row.template_key || "").toLowerCase() === key.toLowerCase());
+        if (existing?.id) {
+          await request(`/api/examinations/templates/${existing.id}`, {
+            method: "PUT",
+            body: JSON.stringify({
+              template_key: key,
+              template_name: `Exam Structure Template - ${key}`,
+              version_tag: "v2",
+              content
+            })
+          });
+        } else {
+          await request("/api/examinations/templates", {
+            method: "POST",
+            body: JSON.stringify({
+              template_key: key,
+              template_name: `Exam Structure Template - ${key}`,
+              version_tag: "v1",
+              content
+            })
+          });
+        }
+        setGenStatus(`Template sample uploaded for ${key}.`);
+      } catch (error) {
+        alert(error.message);
+      } finally {
+        templateUploadInput.value = "";
       }
-      const popup = window.open("", "_blank");
-      if (!popup) return;
-      popup.document.write(`<pre>${escapeHtml(text)}</pre>`);
-      popup.document.close();
-      popup.print();
     });
-    document.getElementById("examV2GenSerialsBtn")?.addEventListener("click", () => {
-      if (!allocatedSerials.length) {
-        alert("No serials generated yet.");
-        return;
-      }
-      const csv = rowsToCsv(allocatedSerials.map((row) => ({
-        learner_name: row.learner_name || "",
-        admission_number: row.admission_number || "",
-        grade: row.grade || "",
-        stream: row.stream || "",
-        serial: row.serial || ""
-      })));
-      downloadTextFile("exam-serials.csv", csv, "text/csv;charset=utf-8");
-    });
+    updateActivation();
   };
 
   const renderExamEntryTab = async () => {

@@ -6372,13 +6372,40 @@ app.get(
       : req.user.institution_id;
     const whereClause = institutionScope ? "WHERE a.institution_id = ?" : "";
     const params = institutionScope ? [institutionScope] : [];
+    const auditColumns = await getExistingColumns("activity_logs", [
+      "id",
+      "institution_id",
+      "actor_user_id",
+      "actor_role",
+      "action",
+      "entity_name",
+      "entity_id",
+      "details_json",
+      "created_at"
+    ]);
+    const institutionColumns = await getExistingColumns("institutions", ["institution_code"]);
+    const hasAuditDetails = auditColumns.includes("details_json");
+    const hasInstitutionCode = institutionColumns.includes("institution_code");
+    const auditOrderBy = auditColumns.includes("id") ? "a.id DESC" : (auditColumns.includes("created_at") ? "a.created_at DESC" : "1 DESC");
+    const hasCreatedAt = auditColumns.includes("created_at");
+    const safeAuditSelect = [
+      auditColumns.includes("id") ? "a.id AS id" : "NULL AS id",
+      auditColumns.includes("institution_id") ? "a.institution_id AS institution_id" : "NULL AS institution_id",
+      hasInstitutionCode ? "i.institution_code AS joined_institution_code" : "NULL AS joined_institution_code",
+      auditColumns.includes("actor_user_id") ? "a.actor_user_id AS actor_user_id" : "NULL AS actor_user_id",
+      auditColumns.includes("actor_role") ? "a.actor_role AS actor_role" : "NULL AS actor_role",
+      auditColumns.includes("action") ? "a.action AS action" : "'UNKNOWN' AS action",
+      auditColumns.includes("entity_name") ? "a.entity_name AS entity_name" : "NULL AS entity_name",
+      auditColumns.includes("entity_id") ? "a.entity_id AS entity_id" : "NULL AS entity_id",
+      hasAuditDetails ? "a.details_json AS details_json" : "NULL AS details_json",
+      auditColumns.includes("created_at") ? "a.created_at AS created_at" : "NOW() AS created_at"
+    ];
     const logs = await query(
-      `SELECT a.id, a.institution_id, i.institution_code AS joined_institution_code,
-              a.actor_user_id, a.actor_role, a.action, a.entity_name, a.entity_id, a.details_json, a.created_at
+      `SELECT ${safeAuditSelect.join(", ")}
        FROM activity_logs a
        LEFT JOIN institutions i ON i.id = a.institution_id
        ${whereClause}
-       ORDER BY a.id DESC
+       ORDER BY ${auditOrderBy}
        LIMIT ${limit}`,
       params
     );
@@ -6405,15 +6432,15 @@ app.get(
     const [failedLoginsRow] = await query(
       `SELECT COUNT(*) total
        FROM activity_logs a
-       ${whereClause ? `${whereClause} AND` : "WHERE"} a.action IN ('LOGIN_FAILED', 'ACCOUNT_LOCKED')
-       AND a.created_at >= DATE_SUB(NOW(), INTERVAL 1 DAY)`,
+       ${whereClause ? `${whereClause} AND` : "WHERE"} ${auditColumns.includes("action") ? "a.action" : "''"} IN ('LOGIN_FAILED', 'ACCOUNT_LOCKED')
+       ${hasCreatedAt ? "AND a.created_at >= DATE_SUB(NOW(), INTERVAL 1 DAY)" : ""}`,
       params
     );
     const [otpFailuresRow] = await query(
       `SELECT COUNT(*) total
        FROM activity_logs a
-       ${whereClause ? `${whereClause} AND` : "WHERE"} a.action IN ('OTP_VERIFY_FAILED', 'OTP_EXHAUSTED')
-       AND a.created_at >= DATE_SUB(NOW(), INTERVAL 1 DAY)`,
+       ${whereClause ? `${whereClause} AND` : "WHERE"} ${auditColumns.includes("action") ? "a.action" : "''"} IN ('OTP_VERIFY_FAILED', 'OTP_EXHAUSTED')
+       ${hasCreatedAt ? "AND a.created_at >= DATE_SUB(NOW(), INTERVAL 1 DAY)" : ""}`,
       params
     );
     const postureRecommendations = [];
@@ -10805,16 +10832,70 @@ function extractLevelNumber(rawLevel = "") {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-function rowWithinExamCoverage({ row, selectedStrand, selectedSubStrand }) {
-  const selectedStrandNum = extractNumericToken(selectedStrand);
-  const selectedSubStrandNum = extractNumericToken(selectedSubStrand);
-  const rowStrandNum = extractNumericToken(row?.strand || "");
-  const rowSubStrandNum = extractNumericToken(row?.sub_strand || "");
-  if (selectedStrandNum === null || rowStrandNum === null) return true;
-  if (rowStrandNum < selectedStrandNum) return true;
-  if (rowStrandNum > selectedStrandNum) return false;
-  if (selectedSubStrandNum === null || rowSubStrandNum === null) return true;
-  return rowSubStrandNum <= selectedSubStrandNum;
+function classifyLevelTrack(rawLevel = "") {
+  const normalized = cleanValue(rawLevel || "").toLowerCase();
+  if (!normalized) return "unknown";
+  if (normalized.startsWith("pp")) return "pre-primary";
+  if (normalized.startsWith("form")) return "senior-secondary";
+  if (normalized.startsWith("grade")) {
+    const num = extractLevelNumber(normalized);
+    if (!Number.isFinite(num)) return "unknown";
+    if (num <= 3) return "lower-primary";
+    if (num <= 6) return "upper-primary";
+    if (num <= 9) return "junior-secondary";
+    return "senior-secondary";
+  }
+  return "unknown";
+}
+
+function baseLevelByTrack(track = "unknown") {
+  if (track === "pre-primary") return 1;
+  if (track === "lower-primary") return 1;
+  if (track === "upper-primary") return 4;
+  if (track === "junior-secondary") return 7;
+  if (track === "senior-secondary") return 3;
+  return null;
+}
+
+function resolveLevelSelectionCriteria({ grade = "", formName = "" } = {}) {
+  const selectedLabel = cleanValue(grade || formName || "");
+  const track = classifyLevelTrack(selectedLabel);
+  const levelNumber = extractLevelNumber(selectedLabel);
+  const baseLevel = baseLevelByTrack(track);
+  return {
+    selected_label: selectedLabel,
+    track,
+    level_number: Number.isFinite(levelNumber) ? levelNumber : null,
+    base_level: Number.isFinite(baseLevel) ? baseLevel : null
+  };
+}
+
+function rowWithinSelectedLevelRange({ row, criteria }) {
+  if (!criteria || !criteria.selected_label) return true;
+  const rowLabel = cleanValue(row?.grade || row?.form_name || "");
+  if (!rowLabel) return true;
+  const rowTrack = classifyLevelTrack(rowLabel);
+  if (criteria.track !== "unknown" && rowTrack !== "unknown" && rowTrack !== criteria.track) {
+    return false;
+  }
+  const rowLevel = extractLevelNumber(rowLabel);
+  if (criteria.level_number === null || rowLevel === null) {
+    return cleanValue(rowLabel) === criteria.selected_label;
+  }
+  if (criteria.base_level !== null) {
+    return rowLevel >= criteria.base_level && rowLevel <= criteria.level_number;
+  }
+  return rowLevel <= criteria.level_number;
+}
+
+function rowWithinExamCoverage({ row, selectedStrands = [], selectedSubStrands = [] }) {
+  const selectedStrandSet = new Set((Array.isArray(selectedStrands) ? selectedStrands : []).map((item) => cleanValue(item)).filter(Boolean));
+  const selectedSubStrandSet = new Set((Array.isArray(selectedSubStrands) ? selectedSubStrands : []).map((item) => cleanValue(item)).filter(Boolean));
+  const rowStrand = cleanValue(row?.strand || "");
+  const rowSubStrand = cleanValue(row?.sub_strand || "");
+  if (selectedStrandSet.size && !selectedStrandSet.has(rowStrand)) return false;
+  if (selectedSubStrandSet.size && rowSubStrand && !selectedSubStrandSet.has(rowSubStrand)) return false;
+  return true;
 }
 
 function buildAdvancedExamText({
@@ -10827,9 +10908,14 @@ function buildAdvancedExamText({
   examSession,
   strand,
   subStrand,
+  selectedStrands,
+  selectedSubStrands,
   structure,
   structureDetail,
   percentageText,
+  sectionAllocationText,
+  outputMode,
+  templateSampleText,
   referenceRows,
   generatedNotes,
   supplementalMaterialNotes
@@ -10847,6 +10933,12 @@ function buildAdvancedExamText({
     return parts.join("\n");
   });
 
+  const strandCoverageText = Array.isArray(selectedStrands) && selectedStrands.length
+    ? selectedStrands.join(" | ")
+    : (strand || "-");
+  const subStrandCoverageText = Array.isArray(selectedSubStrands) && selectedSubStrands.length
+    ? selectedSubStrands.join(" | ")
+    : (subStrand || "-");
   const sharedHeader = [
     "INSTITUTION LETTERHEAD: [AUTO-INJECTED FROM INSTITUTION SETTINGS]",
     `EXAM TITLE: ${title || `${examSession} ${learningArea}`}`.trim(),
@@ -10856,9 +10948,12 @@ function buildAdvancedExamText({
     `ACADEMIC YEAR: ${academicYear || "-"}`,
     `TERM: ${term || "-"}`,
     `EXAM SESSION: ${examSession || "-"}`,
-    `COVERAGE LIMIT: STRAND ${strand || "-"} | SUB-STRAND ${subStrand || "-"}`,
+    `COVERAGE STRANDS: ${strandCoverageText}`,
+    `COVERAGE SUB-STRANDS: ${subStrandCoverageText}`,
     `STRUCTURE: ${structure || "unified"} ${structureDetail ? `(${structureDetail})` : ""}`.trim(),
     `PERCENTAGE ALLOCATION: ${percentageText || "-"}`,
+    `SECTION ALLOCATION: ${sectionAllocationText || "-"}`,
+    `OUTPUT MODE: ${outputMode || "-"}`,
     "CANDIDATE IDENTIFIER: Assessment No / UPI / Admission No",
     "QR CODE: [AUTO-GENERATED AT PRINT/DOWNLOAD]",
     "DISTINCT SERIAL: [AUTO-GENERATED PER LEARNER/GRADE/STREAM]",
@@ -10893,6 +10988,7 @@ function buildAdvancedExamText({
     ...sharedHeader,
     "AI GENERATED EXAM PAPER",
     ...body,
+    templateSampleText ? "\nSTRUCTURE TEMPLATE SAMPLE BASIS:\n" + templateSampleText : "",
     "",
     "AI NOTES BASIS (NO UPLOADED NOTES REQUIRED):",
     generatedNotes || "Notes generated directly from strands/sub-strands and curriculum mappings.",
@@ -10910,38 +11006,100 @@ app.post(
   enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER]),
   enforcePermission(PERMISSIONS.CREATE),
   asyncHandler(async (req, res) => {
-    const {
-      grade,
-      form_name,
-      stream,
-      subject,
-      learning_area,
-      strand,
-      sub_strand,
-      term,
-      year,
-      title,
-      notes_file_path,
-      exam_type,
-      structure,
-      structure_detail,
-      total_percentage,
-      percentage_allocation,
-      academic_year
-    } = req.body;
-
-    const selectedGrade = cleanOptionalValue(grade);
-    const selectedForm = cleanOptionalValue(form_name);
-    const selectedLearningArea = cleanValue(learning_area || subject || "");
-    const selectedStrand = cleanValue(strand || "");
-    const selectedSubStrand = cleanOptionalValue(sub_strand);
-    const selectedTerm = cleanOptionalValue(term);
-    const selectedYear = Number(year || 0) || new Date().getFullYear();
-    const selectedSession = cleanOptionalValue(exam_type);
-    if ((!selectedGrade && !selectedForm) || !selectedLearningArea || !selectedStrand) {
+    const body = req.body || {};
+    const selectedGrade = cleanOptionalValue(body.grade);
+    const selectedForm = cleanOptionalValue(body.form_name);
+    const selectedLearningArea = cleanValue(body.learning_area || body.subject || "");
+    const selectedTerm = cleanOptionalValue(body.term);
+    const selectedYear = Number(body.year || 0) || new Date().getFullYear();
+    const selectedSession = cleanOptionalValue(body.exam_type);
+    const selectedStream = cleanOptionalValue(body.stream) || "N/A";
+    const selectedStructureRaw = cleanValue(body.structure || "unified").toLowerCase();
+    const selectedStructure = selectedStructureRaw === "structured" ? "structured" : "unified";
+    const selectedStructureDetail = selectedStructure === "structured"
+      ? cleanOptionalValue(body.structure_detail)
+      : null;
+    const selectedOutputMode = cleanValue(body.output_mode || "per_learner").toLowerCase();
+    const selectedAllocationMode = cleanValue(body.allocation_mode || "manual").toLowerCase();
+    const normalizeStringArray = (value) => {
+      if (Array.isArray(value)) {
+        return Array.from(new Set(value.map((item) => cleanValue(item)).filter(Boolean)));
+      }
+      if (typeof value === "string") {
+        return Array.from(
+          new Set(
+            value
+              .split(",")
+              .map((item) => cleanValue(item))
+              .filter(Boolean)
+          )
+        );
+      }
+      return [];
+    };
+    const selectedStrands = normalizeStringArray(body.selected_strands || body.strand);
+    const selectedSubStrands = normalizeStringArray(body.selected_sub_strands || body.sub_strand);
+    if ((!selectedGrade && !selectedForm) || !selectedLearningArea || !selectedSession) {
       return res.status(400).json({
-        error: "grade/form_name, learning_area/subject, and strand are required for AI exam generation."
+        error: "exam_type, grade/form_name and learning_area are required for AI exam generation."
       });
+    }
+    if (!selectedStrands.length || !selectedSubStrands.length) {
+      return res.status(400).json({
+        error: "Select at least one strand and one sub-strand. Generation is restricted to selected coverage only."
+      });
+    }
+    const levelCriteria = resolveLevelSelectionCriteria({ grade: selectedGrade, formName: selectedForm });
+    if (levelCriteria.track === "unknown") {
+      return res.status(400).json({ error: "Selected level is invalid or unsupported for exam generation." });
+    }
+    const parseMark = (value, fallback = 0) => {
+      const parsed = Number(value);
+      if (!Number.isFinite(parsed)) return fallback;
+      return Math.max(0, Math.round(parsed));
+    };
+    let sectionAllocationText = "";
+    let percentageText = "";
+    if (selectedStructure === "unified") {
+      let totalMarks = 100;
+      if (selectedAllocationMode === "automated") {
+        const automated = parseMark(body.automated_percentage || body.total_percentage || 100, 100);
+        const allowed = new Set([100, 90, 80, 70, 60, 50, 40, 30, 20, 10]);
+        if (!allowed.has(automated)) {
+          return res.status(400).json({ error: "Automated percentage must be one of 100,90,80,70,60,50,40,30,20,10." });
+        }
+        totalMarks = automated;
+      } else {
+        totalMarks = parseMark(body.manual_percentage || body.total_percentage || body.percentage_allocation || 100, 100);
+      }
+      if (totalMarks < 10 || totalMarks > 100) {
+        return res.status(400).json({ error: "Unified structure total percentage/marks must be between 10 and 100." });
+      }
+      percentageText = String(totalMarks);
+      sectionAllocationText = `UNIFIED TOTAL: ${totalMarks}`;
+    } else {
+      if (!["A_B", "A_B_C"].includes(cleanValue(selectedStructureDetail))) {
+        return res.status(400).json({ error: "Structured exams require structure_detail as A_B or A_B_C." });
+      }
+      const sectionAlloc = body.section_allocations && typeof body.section_allocations === "object"
+        ? body.section_allocations
+        : {};
+      const aMarks = parseMark(sectionAlloc.A ?? body.section_a_marks, 0);
+      const bMarks = parseMark(sectionAlloc.B ?? body.section_b_marks, 0);
+      const cMarks = cleanValue(selectedStructureDetail) === "A_B_C"
+        ? parseMark(sectionAlloc.C ?? body.section_c_marks, 0)
+        : 0;
+      if (aMarks <= 0 || bMarks <= 0 || (cleanValue(selectedStructureDetail) === "A_B_C" && cMarks <= 0)) {
+        return res.status(400).json({ error: "Structured section marks must be greater than zero for required sections." });
+      }
+      const total = aMarks + bMarks + cMarks;
+      if (total > 100) {
+        return res.status(400).json({ error: "Structured section marks total cannot exceed 100." });
+      }
+      percentageText = String(total);
+      sectionAllocationText = cleanValue(selectedStructureDetail) === "A_B_C"
+        ? `A:${aMarks}, B:${bMarks}, C:${cMarks} (Total ${total})`
+        : `A:${aMarks}, B:${bMarks} (Total ${total})`;
     }
 
     const curriculumRowsRaw = await query(
@@ -10951,29 +11109,17 @@ app.post(
        WHERE institution_id = ?
          AND learning_area = ?
        ORDER BY id ASC
-       LIMIT 2500`,
+       LIMIT 4000`,
       [req.user.institution_id, selectedLearningArea]
     );
-    const selectedLevelNumber = extractLevelNumber(selectedGrade || selectedForm);
-    const scopedCurriculumRows = curriculumRowsRaw.filter((row) => {
-      if (selectedGrade && cleanValue(row.grade) && cleanValue(row.grade) !== selectedGrade) {
-        const rowLevel = extractLevelNumber(row.grade);
-        if (!(rowLevel !== null && selectedLevelNumber !== null && rowLevel <= selectedLevelNumber && rowLevel >= selectedLevelNumber - 2)) {
-          return false;
-        }
-      }
-      if (selectedForm && cleanValue(row.form_name) && cleanValue(row.form_name) !== selectedForm) {
-        const rowLevel = extractLevelNumber(row.form_name);
-        if (!(rowLevel !== null && selectedLevelNumber !== null && rowLevel <= selectedLevelNumber && rowLevel >= selectedLevelNumber - 2)) {
-          return false;
-        }
-      }
-      return rowWithinExamCoverage({
+    const scopedCurriculumRows = curriculumRowsRaw.filter((row) =>
+      rowWithinSelectedLevelRange({ row, criteria: levelCriteria })
+      && rowWithinExamCoverage({
         row,
-        selectedStrand,
-        selectedSubStrand
-      });
-    });
+        selectedStrands,
+        selectedSubStrands
+      })
+    );
 
     let referenceRows = scopedCurriculumRows;
     if (!referenceRows.length) {
@@ -10983,20 +11129,23 @@ app.post(
          WHERE institution_id = ?
            AND learning_area = ?
          ORDER BY id ASC
-         LIMIT 1000`,
+         LIMIT 3000`,
         [req.user.institution_id, selectedLearningArea]
       );
-      referenceRows = mappingRows.filter((row) =>
-        rowWithinExamCoverage({
-          row,
-          selectedStrand,
-          selectedSubStrand
-        })
-      ).map((row) => ({
-        ...row,
-        specific_learning_outcomes: "",
-        learning_experiences: ""
-      }));
+      referenceRows = mappingRows
+        .filter((row) =>
+          rowWithinSelectedLevelRange({ row, criteria: levelCriteria })
+          && rowWithinExamCoverage({
+            row,
+            selectedStrands,
+            selectedSubStrands
+          })
+        )
+        .map((row) => ({
+          ...row,
+          specific_learning_outcomes: "",
+          learning_experiences: ""
+        }));
     }
 
     const materialRows = await query(
@@ -11006,43 +11155,65 @@ app.post(
          AND (grade = ? OR ? = '' OR grade IS NULL OR grade = '')
          AND (term = ? OR ? = '' OR term IS NULL OR term = '')
        ORDER BY id DESC
-       LIMIT 120`,
+       LIMIT 160`,
       [req.user.institution_id, selectedGrade || selectedForm || "", selectedGrade || selectedForm || "", selectedTerm || "", selectedTerm || ""]
     );
     const supplementalMaterialNotes = materialRows
       .filter((row) => {
         const areaText = `${cleanValue(row.title)} ${cleanValue(row.description)}`.toLowerCase();
         if (selectedLearningArea && areaText && !areaText.includes(selectedLearningArea.toLowerCase())) return false;
-        if (selectedStrand && cleanValue(row.strand) && cleanValue(row.strand) !== selectedStrand) return false;
-        if (selectedSubStrand && cleanValue(row.sub_strand) && cleanValue(row.sub_strand) !== selectedSubStrand) return false;
+        if (selectedStrands.length && cleanValue(row.strand) && !selectedStrands.includes(cleanValue(row.strand))) return false;
+        if (selectedSubStrands.length && cleanValue(row.sub_strand) && !selectedSubStrands.includes(cleanValue(row.sub_strand))) return false;
         return true;
       })
-      .slice(0, 6)
+      .slice(0, 8)
       .map((row) => [cleanValue(row.resource_type), cleanValue(row.title), cleanOptionalValue(row.description)].filter(Boolean).join(": "))
       .filter(Boolean)
       .join("\n");
 
+    const primaryStrand = selectedStrands[0] || "";
+    const primarySubStrand = selectedSubStrands[0] || "";
     const generatedNotes = makeNotes({
       grade: selectedGrade || null,
       formName: selectedForm || null,
       learningArea: selectedLearningArea,
-      strand: selectedStrand,
-      subStrand: selectedSubStrand || null
+      strand: primaryStrand,
+      subStrand: primarySubStrand || null
     });
-    const percentageText = cleanOptionalValue(total_percentage || percentage_allocation) || "";
+    const derivedTemplateKey = normalizeExamTemplateKey(
+      selectedStructure === "structured"
+        ? `exam-structure-${selectedStructure}-${cleanValue(selectedStructureDetail || "default").toLowerCase()}`
+        : `exam-structure-${selectedStructure}-default`
+    );
+    const templateRows = await query(
+      `SELECT content
+       FROM exam_templates
+       WHERE institution_id = ?
+         AND template_key = ?
+         AND is_active = 1
+       ORDER BY updated_at DESC
+       LIMIT 1`,
+      [req.user.institution_id, derivedTemplateKey]
+    );
+    const templateSampleText = cleanOptionalValue(templateRows[0]?.content) || "";
     const examText = buildAdvancedExamText({
-      title: cleanOptionalValue(title) || `${selectedSession || "Exam"} - ${selectedLearningArea}`,
+      title: cleanOptionalValue(body.title) || `${selectedSession || "Exam"} - ${selectedLearningArea}`,
       learningArea: selectedLearningArea,
       levelLabel: selectedGrade || selectedForm,
-      stream: cleanOptionalValue(stream),
+      stream: selectedStream,
       term: selectedTerm,
-      academicYear: cleanOptionalValue(academic_year) || `${selectedYear}/${selectedYear + 1}`,
+      academicYear: cleanOptionalValue(body.academic_year) || `${selectedYear}/${selectedYear + 1}`,
       examSession: selectedSession || "Exam",
-      strand: selectedStrand,
-      subStrand: selectedSubStrand,
-      structure: cleanOptionalValue(structure) || "unified",
-      structureDetail: cleanOptionalValue(structure_detail),
+      strand: primaryStrand,
+      subStrand: primarySubStrand,
+      selectedStrands,
+      selectedSubStrands,
+      structure: selectedStructure,
+      structureDetail: cleanOptionalValue(selectedStructureDetail),
       percentageText,
+      sectionAllocationText,
+      outputMode: selectedOutputMode,
+      templateSampleText,
       referenceRows,
       generatedNotes,
       supplementalMaterialNotes
@@ -11054,13 +11225,13 @@ app.post(
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         req.user.institution_id,
-        cleanOptionalValue(title) || `${selectedSession || "Auto Generated Exam"} - ${selectedLearningArea}`,
+        cleanOptionalValue(body.title) || `${selectedSession || "Auto Generated Exam"} - ${selectedLearningArea}`,
         selectedGrade || selectedForm || null,
-        cleanOptionalValue(stream) || null,
+        selectedStream || null,
         selectedLearningArea || null,
-        selectedStrand || null,
-        selectedSubStrand || null,
-        notes_file_path || null,
+        primaryStrand || null,
+        primarySubStrand || null,
+        cleanOptionalValue(body.notes_file_path) || null,
         examText,
         selectedTerm || null,
         selectedYear || null,
@@ -11073,6 +11244,13 @@ app.post(
       id: result.insertId,
       examText,
       notes_required: false,
+      structure: selectedStructure,
+      structure_detail: selectedStructureDetail || null,
+      selected_strands: selectedStrands,
+      selected_sub_strands: selectedSubStrands,
+      output_mode: selectedOutputMode,
+      percentage_allocation: percentageText,
+      section_allocation: sectionAllocationText,
       used_curriculum_rows: referenceRows.length,
       used_material_rows: supplementalMaterialNotes ? supplementalMaterialNotes.split("\n").length : 0
     });
@@ -11569,13 +11747,16 @@ app.post(
     const term = cleanValue(body.term || "");
     const year = Number(body.year || new Date().getFullYear());
     const stream = cleanValue(body.stream || "");
-    const mode = (cleanValue(body.mode || "per_learner") || "per_learner").toLowerCase();
+    const modeRaw = (cleanValue(body.mode || "per_learner") || "per_learner").toLowerCase();
+    const mode = modeRaw === "per_stream" || modeRaw === "per_class" || modeRaw === "per_learner"
+      ? modeRaw
+      : "per_learner";
     if (!(grade || form) || !learningArea || !examType) {
       return res.status(400).json({ error: "grade/form, learning_area/subject and exam_type are required." });
     }
     const learnerSerialColumns = await getExistingColumns("learners", ["learner_serial_number"]);
     const hasLearnerSerialColumn = learnerSerialColumns.includes("learner_serial_number");
-    const learners = mode === "per_learner"
+    const learners = mode === "per_learner" || mode === "per_stream"
       ? await query(
           `SELECT id, full_name, admission_number, grade, stream${
             hasLearnerSerialColumn ? ", learner_serial_number" : ""
@@ -11588,18 +11769,54 @@ app.post(
           [institutionId, grade || "", form || "", grade || form || "", stream || "", stream || ""]
         )
       : [{ id: null, full_name: "BULK", admission_number: "BULK", learner_serial_number: null }];
-    const serials = learners.map((learner) => ({
-      learner_id: learner.id,
-      learner_serial_number: learner.learner_serial_number || null,
-      learner_name: learner.full_name,
-      admission_number: learner.admission_number,
-      grade: learner.grade || grade || form,
-      stream: learner.stream || stream || null,
-      serial: buildExamSerialSegment({
-        grade, form, learningArea, examType, term, year, stream,
-        learnerSerialNumber: learner.learner_serial_number || learner.id
-      })
-    }));
+    let serials = [];
+    if (mode === "per_learner") {
+      serials = learners.map((learner) => ({
+        learner_id: learner.id,
+        learner_serial_number: learner.learner_serial_number || null,
+        learner_name: learner.full_name,
+        admission_number: learner.admission_number,
+        grade: learner.grade || grade || form,
+        stream: learner.stream || stream || null,
+        serial: buildExamSerialSegment({
+          grade, form, learningArea, examType, term, year, stream,
+          learnerSerialNumber: learner.learner_serial_number || learner.id
+        })
+      }));
+    } else if (mode === "per_stream") {
+      const streams = Array.from(
+        new Set(
+          learners
+            .map((learner) => cleanValue(learner.stream || "N/A"))
+            .filter(Boolean)
+        )
+      );
+      serials = streams.map((streamName, index) => ({
+        learner_id: null,
+        learner_serial_number: null,
+        learner_name: `STREAM ${streamName}`,
+        admission_number: "STREAM",
+        grade: grade || form,
+        stream: streamName,
+        serial: buildExamSerialSegment({
+          grade, form, learningArea, examType, term, year, stream: streamName,
+          learnerSerialNumber: index + 1
+        })
+      }));
+    } else {
+      serials = [{
+        learner_id: null,
+        learner_serial_number: null,
+        learner_name: "CLASS",
+        admission_number: "CLASS",
+        grade: grade || form,
+        stream: stream || "N/A",
+        serial: buildExamSerialSegment({
+          grade, form, learningArea, examType, term, year, stream: stream || "N/A",
+          learnerSerialNumber: null
+        })
+      }];
+    }
     res.json({ count: serials.length, mode, serials });
   })
 );
@@ -11717,7 +11934,9 @@ const EXAM_SETTINGS_DEFAULTS = {
 
 function normalizeExamTemplateKey(value = "") {
   const key = cleanValue(value || "").toLowerCase();
-  return EXAM_TEMPLATE_KEY_ALLOWLIST.has(key) ? key : "exam-paper";
+  if (EXAM_TEMPLATE_KEY_ALLOWLIST.has(key)) return key;
+  if (/^exam-structure-[a-z0-9_-]+$/.test(key)) return key;
+  return "exam-paper";
 }
 
 function normalizeArchiveStatus(value = "") {
