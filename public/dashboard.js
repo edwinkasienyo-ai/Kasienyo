@@ -6381,10 +6381,18 @@ async function renderCbcCurriculumEditor(options = {}) {
             <input id="examV2GenStreamManual" placeholder="Type stream if missing" disabled />
             <label>Learning Area</label>
             <select id="examV2GenArea" disabled><option value="">Select learning area</option>${learningAreas.map((v) => `<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`).join("")}</select>
-            <label>Select Strands (multi-select)</label>
-            <select id="examV2GenStrands" multiple size="7" disabled></select>
-            <label>Select Sub-strands (multi-select)</label>
-            <select id="examV2GenSubs" multiple size="7" disabled></select>
+            <label>Select Strands (tick multiple)</label>
+            <div id="examV2GenStrandsPanel" class="dashboard-table-wrap" style="max-height: 170px; padding: 8px; overflow:auto;"></div>
+            <div class="actions-row exam-icon-group">
+              <button class="ax-btn ax-btn--delete ax-btn--sm" id="examV2GenClearStrandsBtn" title="Delete strand selections" disabled>Clear Strands</button>
+            </div>
+            <div id="examV2GenSelectedStrands" class="small-note">No strand selected.</div>
+            <label>Select Sub-strands (tick multiple)</label>
+            <div id="examV2GenSubsPanel" class="dashboard-table-wrap" style="max-height: 170px; padding: 8px; overflow:auto;"></div>
+            <div class="actions-row exam-icon-group">
+              <button class="ax-btn ax-btn--delete ax-btn--sm" id="examV2GenClearSubsBtn" title="Delete sub-strand selections" disabled>Clear Sub-strands</button>
+            </div>
+            <div id="examV2GenSelectedSubs" class="small-note">No sub-strand selected.</div>
             <label>Exam Structure</label>
             <select id="examV2GenStructure" disabled><option value="unified">Unified</option><option value="structured">Structured</option></select>
             <label>Structure Details</label>
@@ -6432,8 +6440,12 @@ async function renderCbcCurriculumEditor(options = {}) {
     const streamSelectEl = document.getElementById("examV2GenStreamSelect");
     const streamManualEl = document.getElementById("examV2GenStreamManual");
     const areaEl = document.getElementById("examV2GenArea");
-    const strandsEl = document.getElementById("examV2GenStrands");
-    const subsEl = document.getElementById("examV2GenSubs");
+    const strandsPanelEl = document.getElementById("examV2GenStrandsPanel");
+    const subsPanelEl = document.getElementById("examV2GenSubsPanel");
+    const clearStrandsBtn = document.getElementById("examV2GenClearStrandsBtn");
+    const clearSubsBtn = document.getElementById("examV2GenClearSubsBtn");
+    const selectedStrandsInfoEl = document.getElementById("examV2GenSelectedStrands");
+    const selectedSubsInfoEl = document.getElementById("examV2GenSelectedSubs");
     const structureEl = document.getElementById("examV2GenStructure");
     const structureDetailEl = document.getElementById("examV2GenStructureDetail");
     const allocModeEl = document.getElementById("examV2GenAllocMode");
@@ -6458,6 +6470,10 @@ async function renderCbcCurriculumEditor(options = {}) {
     let generatedExamId = null;
     let allocatedSerials = [];
     let processed = false;
+    const selectedStrandsState = new Set();
+    const selectedSubsState = new Set();
+    let availableStrands = [];
+    let availableSubs = [];
 
     const setGenStatus = (message) => {
       if (statusNode) statusNode.textContent = message || "";
@@ -6495,10 +6511,8 @@ async function renderCbcCurriculumEditor(options = {}) {
       if (!Number.isFinite(Number(floor)) || !Number.isFinite(Number(row.num)) || !Number.isFinite(Number(selected.num))) return false;
       return Number(row.num) >= Number(floor) && Number(row.num) <= Number(selected.num);
     };
-    const selectedOptions = (selectNode) =>
-      Array.from(selectNode?.selectedOptions || [])
-        .map((opt) => String(opt.value || "").trim())
-        .filter(Boolean);
+    const selectedStrands = () => Array.from(selectedStrandsState.values());
+    const selectedSubs = () => Array.from(selectedSubsState.values());
     const levelPayload = () => {
       const selected = String(levelEl?.value || "").trim();
       if (!selected) return { grade: "", form_name: "" };
@@ -6527,6 +6541,50 @@ async function renderCbcCurriculumEditor(options = {}) {
       curriculumRows = Array.isArray(currRows) ? currRows : [];
       mappingRows = Array.isArray(mapRows) ? mapRows : [];
     };
+    const renderSelectionInfo = () => {
+      if (selectedStrandsInfoEl) {
+        selectedStrandsInfoEl.textContent = selectedStrandsState.size
+          ? `Selected strands: ${Array.from(selectedStrandsState.values()).join(" | ")}`
+          : "No strand selected.";
+      }
+      if (selectedSubsInfoEl) {
+        selectedSubsInfoEl.textContent = selectedSubsState.size
+          ? `Selected sub-strands: ${Array.from(selectedSubsState.values()).join(" | ")}`
+          : "No sub-strand selected.";
+      }
+    };
+    const renderChecklist = ({ panelEl, values = [], selectedSet, name, disabled = false, onChange }) => {
+      if (!panelEl) return;
+      if (!values.length) {
+        panelEl.innerHTML = `<p class="small-note">No ${name} found for this level/learning area.</p>`;
+        return;
+      }
+      panelEl.innerHTML = values
+        .map((value, idx) => {
+          const id = `examV2Gen${name}${idx}`.replace(/[^a-zA-Z0-9_-]/g, "");
+          return `
+            <label for="${id}" style="display:flex; gap:8px; align-items:flex-start; margin:4px 0;">
+              <input id="${id}" type="checkbox" value="${escapeHtmlAttribute(value)}" ${selectedSet.has(value) ? "checked" : ""} ${disabled ? "disabled" : ""} />
+              <span>${escapeHtml(value)}</span>
+            </label>
+          `;
+        })
+        .join("");
+      panelEl.querySelectorAll("input[type='checkbox']").forEach((node) => {
+        node.addEventListener("change", () => {
+          const value = String(node.value || "").trim();
+          if (!value) return;
+          if (node.checked) selectedSet.add(value);
+          else selectedSet.delete(value);
+          onChange?.();
+        });
+      });
+    };
+    const setChecklistEnabled = (panelEl, enabled) => {
+      panelEl?.querySelectorAll("input[type='checkbox']").forEach((input) => {
+        input.disabled = !enabled;
+      });
+    };
     const refreshStreamOptions = async () => {
       const { grade, form_name } = levelPayload();
       if (!grade && !form_name) {
@@ -6549,12 +6607,17 @@ async function renderCbcCurriculumEditor(options = {}) {
       const learningArea = String(areaEl?.value || "").trim().toLowerCase();
       const selectedLevel = String(levelEl?.value || "").trim();
       if (!learningArea || !selectedLevel) {
-        strandsEl.innerHTML = "";
-        subsEl.innerHTML = "";
+        availableStrands = [];
+        availableSubs = [];
+        selectedStrandsState.clear();
+        selectedSubsState.clear();
+        renderChecklist({ panelEl: strandsPanelEl, values: [], selectedSet: selectedStrandsState, name: "Strand" });
+        renderChecklist({ panelEl: subsPanelEl, values: [], selectedSet: selectedSubsState, name: "SubStrand" });
+        renderSelectionInfo();
         return;
       }
       const pool = [...curriculumRows, ...mappingRows];
-      const strands = Array.from(
+      availableStrands = Array.from(
         new Set(
           pool
             .filter((row) => String(row.learning_area || "").trim().toLowerCase() === learningArea)
@@ -6563,21 +6626,40 @@ async function renderCbcCurriculumEditor(options = {}) {
             .filter(Boolean)
         )
       );
-      strandsEl.innerHTML = strands.map((item) => `<option value="${escapeHtml(item)}">${escapeHtml(item)}</option>`).join("");
-      subsEl.innerHTML = "";
+      Array.from(selectedStrandsState.values()).forEach((value) => {
+        if (!availableStrands.includes(value)) selectedStrandsState.delete(value);
+      });
+      selectedSubsState.clear();
+      availableSubs = [];
+      renderChecklist({
+        panelEl: strandsPanelEl,
+        values: availableStrands,
+        selectedSet: selectedStrandsState,
+        name: "Strand",
+        onChange: async () => {
+          await refreshSubStrandOptions();
+          renderSelectionInfo();
+          updateActivation();
+        }
+      });
+      renderChecklist({ panelEl: subsPanelEl, values: [], selectedSet: selectedSubsState, name: "SubStrand" });
+      renderSelectionInfo();
     };
     const refreshSubStrandOptions = async () => {
       await loadCurriculumPools();
       const learningArea = String(areaEl?.value || "").trim().toLowerCase();
       const selectedLevel = String(levelEl?.value || "").trim();
-      const selectedStrands = selectedOptions(strandsEl);
-      if (!learningArea || !selectedLevel || !selectedStrands.length) {
-        subsEl.innerHTML = "";
+      const selectedStrandValues = selectedStrands();
+      if (!learningArea || !selectedLevel || !selectedStrandValues.length) {
+        availableSubs = [];
+        selectedSubsState.clear();
+        renderChecklist({ panelEl: subsPanelEl, values: [], selectedSet: selectedSubsState, name: "SubStrand" });
+        renderSelectionInfo();
         return;
       }
-      const selectedStrandSet = new Set(selectedStrands.map((item) => item.toLowerCase()));
+      const selectedStrandSet = new Set(selectedStrandValues.map((item) => item.toLowerCase()));
       const pool = [...curriculumRows, ...mappingRows];
-      const subs = Array.from(
+      availableSubs = Array.from(
         new Set(
           pool
             .filter((row) => String(row.learning_area || "").trim().toLowerCase() === learningArea)
@@ -6587,7 +6669,20 @@ async function renderCbcCurriculumEditor(options = {}) {
             .filter(Boolean)
         )
       );
-      subsEl.innerHTML = subs.map((item) => `<option value="${escapeHtml(item)}">${escapeHtml(item)}</option>`).join("");
+      Array.from(selectedSubsState.values()).forEach((value) => {
+        if (!availableSubs.includes(value)) selectedSubsState.delete(value);
+      });
+      renderChecklist({
+        panelEl: subsPanelEl,
+        values: availableSubs,
+        selectedSet: selectedSubsState,
+        name: "SubStrand",
+        onChange: () => {
+          renderSelectionInfo();
+          updateActivation();
+        }
+      });
+      renderSelectionInfo();
     };
     const structuredTotal = () =>
       Number(sectionAEl?.value || 0) + Number(sectionBEl?.value || 0) + Number(sectionCEl?.value || 0);
@@ -6598,8 +6693,8 @@ async function renderCbcCurriculumEditor(options = {}) {
       const levelOk = termOk && Boolean(String(levelEl?.value || "").trim());
       const streamOk = levelOk && Boolean(selectedStream());
       const areaOk = streamOk && Boolean(String(areaEl?.value || "").trim());
-      const strandsOk = areaOk && selectedOptions(strandsEl).length > 0;
-      const subsOk = strandsOk && selectedOptions(subsEl).length > 0;
+      const strandsOk = areaOk && selectedStrands().length > 0;
+      const subsOk = strandsOk && selectedSubs().length > 0;
       const structureOk = subsOk && Boolean(String(structureEl?.value || "").trim());
       const isStructured = String(structureEl?.value || "") === "structured";
       const structuredDetailOk = isStructured ? Boolean(String(structureDetailEl?.value || "").trim()) : true;
@@ -6621,8 +6716,10 @@ async function renderCbcCurriculumEditor(options = {}) {
       setEnabled(streamSelectEl, levelOk);
       setEnabled(streamManualEl, levelOk);
       setEnabled(areaEl, streamOk);
-      setEnabled(strandsEl, areaOk);
-      setEnabled(subsEl, strandsOk);
+      setEnabled(clearStrandsBtn, areaOk && selectedStrands().length > 0);
+      setEnabled(clearSubsBtn, strandsOk && selectedSubs().length > 0);
+      setChecklistEnabled(strandsPanelEl, areaOk);
+      setChecklistEnabled(subsPanelEl, strandsOk);
       setEnabled(structureEl, subsOk);
       setEnabled(structureDetailEl, structureOk && isStructured);
       setEnabled(allocModeEl, structureOk && !isStructured);
@@ -6659,11 +6756,28 @@ async function renderCbcCurriculumEditor(options = {}) {
       await refreshStrandOptions();
       updateActivation();
     });
-    strandsEl?.addEventListener("change", async () => {
-      await refreshSubStrandOptions();
+    clearStrandsBtn?.addEventListener("click", async () => {
+      selectedStrandsState.clear();
+      selectedSubsState.clear();
+      await refreshStrandOptions();
+      renderSelectionInfo();
       updateActivation();
     });
-    subsEl?.addEventListener("change", updateActivation);
+    clearSubsBtn?.addEventListener("click", () => {
+      selectedSubsState.clear();
+      renderChecklist({
+        panelEl: subsPanelEl,
+        values: availableSubs,
+        selectedSet: selectedSubsState,
+        name: "SubStrand",
+        onChange: () => {
+          renderSelectionInfo();
+          updateActivation();
+        }
+      });
+      renderSelectionInfo();
+      updateActivation();
+    });
     structureEl?.addEventListener("change", updateActivation);
     structureDetailEl?.addEventListener("change", updateActivation);
     allocModeEl?.addEventListener("change", updateActivation);
@@ -6681,8 +6795,8 @@ async function renderCbcCurriculumEditor(options = {}) {
 
     generateBtn?.addEventListener("click", async () => {
       const { grade, form_name } = levelPayload();
-      const selectedStrands = selectedOptions(strandsEl);
-      const selectedSubs = selectedOptions(subsEl);
+      const selectedStrandsList = selectedStrands();
+      const selectedSubsList = selectedSubs();
       const structure = String(structureEl?.value || "unified");
       const payload = {
         title: `${String(sessionEl?.value || "Exam")} - ${String(areaEl?.value || "Learning Area")}`,
@@ -6692,10 +6806,10 @@ async function renderCbcCurriculumEditor(options = {}) {
         stream: selectedStream(),
         learning_area: String(areaEl?.value || ""),
         subject: String(areaEl?.value || ""),
-        selected_strands: selectedStrands,
-        selected_sub_strands: selectedSubs,
-        strand: selectedStrands[0] || "",
-        sub_strand: selectedSubs[0] || "",
+        selected_strands: selectedStrandsList,
+        selected_sub_strands: selectedSubsList,
+        strand: selectedStrandsList[0] || "",
+        sub_strand: selectedSubsList[0] || "",
         term: String(termEl?.value || ""),
         academic_year: String(yearEl?.value || ""),
         year: parseAcademicYearStart(String(yearEl?.value || "")),
@@ -6719,7 +6833,7 @@ async function renderCbcCurriculumEditor(options = {}) {
         generatedExamId = Number(generated?.id || 0) || null;
         processed = false;
         if (outputEl) outputEl.value = String(generated?.examText || "").trim();
-        setGenStatus(`Generated exam #${generatedExamId || "-"} using ${selectedStrands.length} strand(s) and ${selectedSubs.length} sub-strand(s).`);
+        setGenStatus(`Generated exam #${generatedExamId || "-"} using ${selectedStrandsList.length} strand(s) and ${selectedSubsList.length} sub-strand(s).`);
         updateActivation();
       } catch (error) {
         alert(error.message);
