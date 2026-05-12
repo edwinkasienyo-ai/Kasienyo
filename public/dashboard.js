@@ -16,6 +16,7 @@ const CLIENT_UI_BUNDLE_ID = "dash-bundle-main-v73-phase2-hardening-redesign";
 const examPanelState = {
   generatedExam: null,
   serials: [],
+  markingScheme: "",
   marksRows: [],
   resultRows: [],
   assessmentReport: null,
@@ -6430,6 +6431,19 @@ async function renderCbcCurriculumEditor(options = {}) {
           </div>
           <textarea id="examV2GenOutput" rows="16" class="template-spacious" placeholder="Generated exam text appears here..." readonly></textarea>
           <div class="module-header-card">
+            <h4>Teacher Marking Scheme Center</h4>
+            <p class="small-note">After processing the exam, generate a fully aligned marking scheme with correct answers, then review/edit/print/download.</p>
+          </div>
+          <div class="actions-row exam-icon-group">
+            <button class="ax-btn ax-btn--generate ax-btn--sm" id="examV2GenSchemeGenerateBtn" title="Generate marking scheme" disabled>Generate Scheme</button>
+            <button class="ax-btn ax-btn--view ax-btn--sm" id="examV2GenSchemeViewBtn" title="View marking scheme" disabled>View</button>
+            <button class="ax-btn ax-btn--save ax-btn--sm" id="examV2GenSchemeSaveBtn" title="Save marking scheme" disabled>Save</button>
+            <button class="ax-btn ax-btn--download ax-btn--sm" id="examV2GenSchemeDownloadBtn" title="Download marking scheme" disabled>Download</button>
+            <button class="ax-btn ax-btn--print ax-btn--sm" id="examV2GenSchemePrintBtn" title="Print marking scheme" disabled>Print</button>
+          </div>
+          <textarea id="examV2GenSchemeOutput" rows="14" class="template-spacious" placeholder="Generated teacher marking scheme appears here..." readonly></textarea>
+          <div id="examV2GenSchemeStatus" class="small-note">Marking scheme will activate after Process.</div>
+          <div class="module-header-card">
             <h4>Serial Number Generation Center</h4>
             <p class="small-note">Serials are generated per institution, grade/form, learning area, stream and learner after Process.</p>
           </div>
@@ -6503,6 +6517,13 @@ async function renderCbcCurriculumEditor(options = {}) {
     const editChoiceEl = document.getElementById("examV2GenEditChoice");
     const deliveryModeEl = document.getElementById("examV2GenDeliveryMode");
     const outputEl = document.getElementById("examV2GenOutput");
+    const schemeOutputEl = document.getElementById("examV2GenSchemeOutput");
+    const schemeStatusNode = document.getElementById("examV2GenSchemeStatus");
+    const schemeGenerateBtn = document.getElementById("examV2GenSchemeGenerateBtn");
+    const schemeViewBtn = document.getElementById("examV2GenSchemeViewBtn");
+    const schemeSaveBtn = document.getElementById("examV2GenSchemeSaveBtn");
+    const schemeDownloadBtn = document.getElementById("examV2GenSchemeDownloadBtn");
+    const schemePrintBtn = document.getElementById("examV2GenSchemePrintBtn");
     const serialRowsEl = document.getElementById("examV2GenSerialRows");
     const statusNode = document.getElementById("examV2GenStatus");
     const generateBtn = document.getElementById("examV2GenGenerateBtn");
@@ -6540,6 +6561,143 @@ async function renderCbcCurriculumEditor(options = {}) {
 
     const setGenStatus = (message) => {
       if (statusNode) statusNode.textContent = message || "";
+    };
+    const setSchemeStatus = (message) => {
+      if (schemeStatusNode) schemeStatusNode.textContent = message || "";
+    };
+    let latestMarkingSchemeText = String(examPanelState.markingScheme || "");
+    const countTokenFromQuestion = (questionText = "") => {
+      const direct = String(questionText || "").match(/\b(\d+)\b/);
+      if (direct) return Number(direct[1]);
+      const words = {
+        one: 1,
+        two: 2,
+        three: 3,
+        four: 4,
+        five: 5,
+        six: 6,
+        seven: 7,
+        eight: 8,
+        nine: 9,
+        ten: 10
+      };
+      const lowered = String(questionText || "").toLowerCase();
+      const matched = Object.entries(words).find(([word]) => lowered.includes(word));
+      return matched ? matched[1] : null;
+    };
+    const buildModelAnswer = (questionText = "") => {
+      const text = String(questionText || "").trim();
+      const lowered = text.toLowerCase();
+      const whatIs = lowered.match(/what is ([^?]+)/i);
+      if (whatIs?.[1]) {
+        const topic = whatIs[1].trim();
+        return `${topic.charAt(0).toUpperCase()}${topic.slice(1)} is the correctly defined concept according to the selected strand/sub-strand.`;
+      }
+      if (lowered.startsWith("define ")) {
+        const topic = text.replace(/^define\s+/i, "").replace(/\?+$/, "");
+        return `${topic} should be defined accurately using curriculum language and one clear example.`;
+      }
+      if (lowered.startsWith("explain ")) {
+        return "Expected answer should explain the concept clearly and include one practical school/community application.";
+      }
+      if (lowered.includes("state")) {
+        const count = countTokenFromQuestion(text);
+        return `Award marks for any ${count || 2} valid point(s) that are technically correct and relevant to the question.`;
+      }
+      if (lowered.includes("identify") || lowered.includes("choose")) {
+        return "Expected response is the most accurate option/statement aligned to curriculum facts.";
+      }
+      if (lowered.includes("apply")) {
+        return "Expected answer should show practical application steps and include safety/quality considerations.";
+      }
+      return "Provide the correct curriculum-aligned response and award marks based on key content points.";
+    };
+    const extractQuestionsFromExam = (examText = "") => {
+      const source = String(examText || "").split("==== GENERATED SERIAL & EXAM METADATA ====")[0] || "";
+      const lines = source.split(/\r?\n/);
+      const questions = [];
+      let currentSection = "GENERAL";
+      lines.forEach((rawLine) => {
+        const line = String(rawLine || "").trim();
+        if (!line) return;
+        if (/^(SECTION|PAPER)\b/i.test(line)) {
+          currentSection = line;
+          return;
+        }
+        const questionMatch = line.match(/^(\d+)\.\s+(.+)$/);
+        if (questionMatch) {
+          questions.push({
+            number: Number(questionMatch[1]),
+            question: questionMatch[2].trim(),
+            section: currentSection,
+            options: []
+          });
+          return;
+        }
+        const optionMatch = line.match(/^([A-D])[\.\)]\s*(.+)$/i);
+        if (optionMatch && questions.length) {
+          questions[questions.length - 1].options.push({
+            label: optionMatch[1].toUpperCase(),
+            text: optionMatch[2].trim()
+          });
+        }
+      });
+      return questions;
+    };
+    const resolveObjectiveAnswer = ({ questionText = "", options = [] } = {}) => {
+      if (!Array.isArray(options) || !options.length) return null;
+      const ranked = options.map((option) => ({
+        ...option,
+        weight: [
+          /\bcorrect\b/i.test(option.text) ? 5 : 0,
+          /\btrue\b/i.test(option.text) ? 3 : 0,
+          /\bbest\b/i.test(option.text) ? 2 : 0,
+          /\baccurate\b/i.test(option.text) ? 2 : 0,
+          /\bappropriate\b/i.test(option.text) ? 2 : 0
+        ].reduce((sum, n) => sum + n, 0)
+      }));
+      ranked.sort((a, b) => b.weight - a.weight);
+      const chosen = ranked[0]?.weight > 0
+        ? ranked[0]
+        : options[0];
+      return {
+        ...chosen,
+        reason: `Selected as best-fit answer for "${questionText}" under generated objective options.`
+      };
+    };
+    const buildMarkingSchemeText = (examText = "") => {
+      const questions = extractQuestionsFromExam(examText);
+      if (!questions.length) return "No questions found in generated exam. Generate/process exam first.";
+      const metaHeader = [
+        "TEACHER MARKING SCHEME (AUTO GENERATED)",
+        `Institution: ${institutionCode || "-"}`,
+        `Exam Session: ${String(sessionEl?.value || "-")}`,
+        `Academic Year: ${String(yearEl?.value || "-")}`,
+        `Term: ${String(termEl?.value || "-")}`,
+        `Grade/Form: ${String(levelEl?.value || "-")}`,
+        `Learning Area: ${String(areaEl?.value || "-")}`,
+        `Aligned Questions: ${questions.length}`,
+        ""
+      ];
+      const answerLines = questions.map((row, index) => {
+        const header = `${index + 1}. Q${row.number} [${row.section}] ${row.question}`;
+        if (row.options.length) {
+          const answer = resolveObjectiveAnswer({ questionText: row.question, options: row.options });
+          return [
+            header,
+            `   Correct Answer: ${answer?.label || "A"}. ${answer?.text || ""}`,
+            `   Rationale: ${answer?.reason || "Best aligned option for generated question."}`,
+            ""
+          ].join("\n");
+        }
+        return [
+          header,
+          `   Model Answer: ${buildModelAnswer(row.question)}`,
+          "   Marking Guide: award marks for accuracy, relevance, and key curriculum terms.",
+          ""
+        ].join("\n");
+      });
+      return [...metaHeader, ...answerLines].join("\n");
     };
     const downloadWordDocument = (filename, text) => {
       const html = `
@@ -6994,6 +7152,13 @@ async function renderCbcCurriculumEditor(options = {}) {
       setEnabled(processBtn, Boolean(generatedExamId) && (!editing || processed));
       setEnabled(deliveryModeEl, Boolean(generatedExamId) && processed);
       setEnabled(runDeliveryBtn, Boolean(generatedExamId) && processed && Boolean(String(deliveryModeEl?.value || "").trim()));
+      const schemeReady = Boolean(String(schemeOutputEl?.value || "").trim());
+      setEnabled(schemeGenerateBtn, Boolean(generatedExamId) && processed && Boolean(String(outputEl?.value || "").trim()));
+      setEnabled(schemeViewBtn, Boolean(generatedExamId) && schemeReady);
+      setEnabled(schemeSaveBtn, Boolean(generatedExamId) && schemeReady);
+      setEnabled(schemeDownloadBtn, schemeReady);
+      setEnabled(schemePrintBtn, schemeReady);
+      if (schemeOutputEl) schemeOutputEl.readOnly = !processed;
       if (nonUnified && structuredTotal() > 100) {
         setGenStatus("Structured section marks cannot exceed total 100.");
       }
@@ -7096,6 +7261,10 @@ async function renderCbcCurriculumEditor(options = {}) {
         allocatedSerials = [];
         renderSerialRows([]);
         if (outputEl) outputEl.value = String(generated?.examText || "").trim();
+        if (schemeOutputEl) schemeOutputEl.value = "";
+        latestMarkingSchemeText = "";
+        examPanelState.markingScheme = "";
+        setSchemeStatus("Marking scheme will activate after Process.");
         examPanelState.generatedExam = { id: generatedExamId, payload };
         examPanelState.serials = [];
         setGenStatus(`Generated exam #${generatedExamId || "-"} using ${selectedStrandsList.length} strand(s) and ${selectedSubsList.length} sub-strand(s).`);
@@ -7115,6 +7284,10 @@ async function renderCbcCurriculumEditor(options = {}) {
           body: JSON.stringify({ generated_exam_text: String(outputEl?.value || "") })
         });
         processed = true;
+        if (schemeOutputEl) schemeOutputEl.value = "";
+        latestMarkingSchemeText = "";
+        examPanelState.markingScheme = "";
+        setSchemeStatus("Exam text updated. Generate marking scheme to align with final exam.");
         setGenStatus(`Edited exam #${generatedExamId} saved. You can now process output.`);
         updateActivation();
       } catch (error) {
@@ -7172,6 +7345,11 @@ async function renderCbcCurriculumEditor(options = {}) {
             : `${existing}\n${metaBlock}`;
         }
         examPanelState.serials = allocatedSerials;
+        const schemeText = buildMarkingSchemeText(String(outputEl?.value || ""));
+        latestMarkingSchemeText = schemeText;
+        examPanelState.markingScheme = schemeText;
+        if (schemeOutputEl) schemeOutputEl.value = schemeText;
+        setSchemeStatus(`Marking scheme generated and aligned to ${allocatedSerials.length ? `${allocatedSerials.length} processed serial record(s)` : "current exam questions"}.`);
         renderSerialRows(allocatedSerials);
         processed = true;
         setGenStatus(`Processed output mode ${String(outputModeEl?.value || "")}. Generated ${allocatedSerials.length} serial records.`);
@@ -7208,6 +7386,81 @@ async function renderCbcCurriculumEditor(options = {}) {
         popup.document.close();
         popup.print();
       }
+    });
+    schemeGenerateBtn?.addEventListener("click", () => {
+      if (!processed) {
+        alert("Process exam first to activate marking scheme generation.");
+        return;
+      }
+      const examText = String(outputEl?.value || "").trim();
+      if (!examText) {
+        alert("No generated exam found.");
+        return;
+      }
+      const schemeText = buildMarkingSchemeText(examText);
+      latestMarkingSchemeText = schemeText;
+      examPanelState.markingScheme = schemeText;
+      if (schemeOutputEl) schemeOutputEl.value = schemeText;
+      setSchemeStatus("Teacher marking scheme generated from final exam questions.");
+      updateActivation();
+    });
+    schemeViewBtn?.addEventListener("click", () => {
+      const text = String(schemeOutputEl?.value || "").trim();
+      if (!text) {
+        alert("Generate marking scheme first.");
+        return;
+      }
+      const popup = window.open("", "_blank");
+      if (!popup) return;
+      popup.document.write(`<pre>${escapeHtml(text)}</pre>`);
+      popup.document.close();
+    });
+    schemeSaveBtn?.addEventListener("click", async () => {
+      const text = String(schemeOutputEl?.value || "").trim();
+      if (!generatedExamId || !text) {
+        alert("Generate marking scheme first.");
+        return;
+      }
+      try {
+        const examText = String(outputEl?.value || "").split("==== TEACHER MARKING SCHEME START ====")[0].trimEnd();
+        const merged = [
+          examText,
+          "",
+          "==== TEACHER MARKING SCHEME START ====",
+          text,
+          "==== TEACHER MARKING SCHEME END ===="
+        ].join("\n");
+        await request(`/api/academic/exams/${generatedExamId}`, {
+          method: "PUT",
+          body: JSON.stringify({ generated_exam_text: merged })
+        });
+        latestMarkingSchemeText = text;
+        examPanelState.markingScheme = text;
+        setSchemeStatus(`Marking scheme saved with exam #${generatedExamId}.`);
+      } catch (error) {
+        alert(error.message);
+      }
+    });
+    schemeDownloadBtn?.addEventListener("click", () => {
+      const text = String(schemeOutputEl?.value || "").trim();
+      if (!text) {
+        alert("Generate marking scheme first.");
+        return;
+      }
+      downloadTextFile("teacher-marking-scheme.txt", text);
+      downloadWordDocument("teacher-marking-scheme.doc", text);
+    });
+    schemePrintBtn?.addEventListener("click", () => {
+      const text = String(schemeOutputEl?.value || "").trim();
+      if (!text) {
+        alert("Generate marking scheme first.");
+        return;
+      }
+      const popup = window.open("", "_blank");
+      if (!popup) return;
+      popup.document.write(`<pre>${escapeHtml(text)}</pre>`);
+      popup.document.close();
+      popup.print();
     });
     document.getElementById("examV2GenViewBtn")?.addEventListener("click", async () => {
       try {
@@ -7385,6 +7638,12 @@ async function renderCbcCurriculumEditor(options = {}) {
         sampleUploadInput.value = "";
       }
     });
+    if (schemeOutputEl && latestMarkingSchemeText) {
+      schemeOutputEl.value = latestMarkingSchemeText;
+      setSchemeStatus("Loaded last generated marking scheme. Review and edit as needed.");
+    } else {
+      setSchemeStatus("Marking scheme will activate after Process.");
+    }
     renderSerialRows([]);
     refreshStructureDetailChoices();
     refreshSampleDetailChoices();
