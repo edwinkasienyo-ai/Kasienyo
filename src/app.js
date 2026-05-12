@@ -1236,6 +1236,8 @@ const MODULE_KEYS = {
   REGISTRATION: "register-center",
   ACCESS_CONTROL: "access-control",
   SECURITY_AUDIT: "security-audit",
+  SYSTEM_OPS_CENTER: "system-ops-center",
+  SYSTEM_INCIDENT_RESPONSE: "system-incident-response",
   INSTITUTIONS_USERS_REGISTRY: "institutions-users-registry",
   RECYCLE_BIN: "recycle-bin",
   CBC_CURRICULUM_EDITOR: "cbc-curriculum-editor",
@@ -7434,6 +7436,364 @@ app.delete(
   })
 );
 
+async function buildSystemOpsOverview({ actorUser, requestedInstitutionId = null }) {
+  const institutionScope = canManageAcrossInstitutions(actorUser)
+    ? (Number(requestedInstitutionId || 0) || null)
+    : Number(actorUser.institution_id || 0) || null;
+  const whereClause = institutionScope ? "WHERE institution_id = ?" : "";
+  const scopeParams = institutionScope ? [institutionScope] : [];
+  const countRows = async (tableName) => {
+    const columns = await getTableColumns(tableName);
+    if (!columns.length) return null;
+    const rows = await query(`SELECT COUNT(*) AS total FROM ${tableName} ${whereClause}`, scopeParams);
+    return Number(rows[0]?.total || 0);
+  };
+  const moduleChecks = [];
+  const pushModule = (moduleKey, moduleLabel, totalRows) => {
+    const numeric = Number(totalRows);
+    const isMissing = totalRows === null || !Number.isFinite(numeric);
+    moduleChecks.push({
+      module_key: moduleKey,
+      module_label: moduleLabel,
+      total_rows: isMissing ? null : numeric,
+      status: isMissing ? "MISSING_TABLE" : (numeric > 0 ? "HEALTHY" : "EMPTY"),
+      summary: isMissing
+        ? "Underlying table is missing."
+        : numeric > 0
+          ? "Module data available."
+          : "No rows found; module is enabled but currently empty."
+    });
+  };
+  pushModule("admission", "Admission Learners", await countRows("learners"));
+  pushModule("management-teacher-resources", "Teacher Resources", await countRows("teacher_resources"));
+  pushModule("attendance", "Attendance", await countRows("attendance_records"));
+  pushModule("academic-exams", "Academic Exams", await countRows("academic_exams"));
+  pushModule("academic-marks", "Academic Marks", await countRows("academic_marks"));
+  pushModule("finance-fee-structure", "Fee Structures", await countRows("finance_fee_structures"));
+  pushModule("finance-fee-payments", "Fee Payments", await countRows("finance_fee_payments"));
+  pushModule("finance-payroll", "Payroll", await countRows("finance_payroll_records"));
+  pushModule("finance-salary-advance", "Salary Advances", await countRows("finance_salary_advances"));
+  pushModule("finance-procurement", "Procurement", await countRows("finance_procurement_records"));
+  pushModule("communication-messages", "Communication Queue", await countRows("communication_messages"));
+  pushModule("learner-materials", "Learner Materials", await countRows("learner_resources"));
+  pushModule("welfare-contributions", "Welfare Contributions", await countRows("welfare_contributions"));
+  pushModule("welfare-loans", "Welfare Loans", await countRows("welfare_loans"));
+  pushModule("laws", "Laws / Policies", await countRows("laws_regulations_policies"));
+  const [failedLoginsRow] = await query(
+    `SELECT COUNT(*) AS total
+     FROM activity_logs
+     ${whereClause ? `${whereClause} AND` : "WHERE"} action IN ('LOGIN_FAILED', 'ACCOUNT_LOCKED')
+       AND created_at >= DATE_SUB(NOW(), INTERVAL 1 DAY)`,
+    scopeParams
+  );
+  const [otpFailureRow] = await query(
+    `SELECT COUNT(*) AS total
+     FROM activity_logs
+     ${whereClause ? `${whereClause} AND` : "WHERE"} action IN ('OTP_VERIFY_FAILED', 'OTP_EXHAUSTED')
+       AND created_at >= DATE_SUB(NOW(), INTERVAL 1 DAY)`,
+    scopeParams
+  );
+  const [queuedMessageRow] = await query(
+    `SELECT COUNT(*) AS total
+     FROM communication_messages
+     ${whereClause ? `${whereClause} AND` : "WHERE"} status = 'Queued'`,
+    scopeParams
+  ).catch(() => [{ total: 0 }]);
+  const [incidentOpenRow] = await query(
+    `SELECT COUNT(*) AS total
+     FROM system_security_incidents
+     ${whereClause ? `${whereClause} AND` : "WHERE"} status IN ('OPEN', 'IN_PROGRESS')`,
+    scopeParams
+  ).catch(() => [{ total: 0 }]);
+  const recommendations = [];
+  const modulesMissingData = moduleChecks.filter((item) => item.status === "EMPTY").map((item) => item.module_label);
+  if (modulesMissingData.length) {
+    recommendations.push(`Module data currently empty: ${modulesMissingData.slice(0, 8).join(", ")}.`);
+  }
+  if (Number(failedLoginsRow?.total || 0) > 40) {
+    recommendations.push("High failed login volume detected in the last 24h. Review account lock policies and IP patterns.");
+  }
+  if (Number(otpFailureRow?.total || 0) > 30) {
+    recommendations.push("High OTP failure volume detected in the last 24h. Investigate channel delivery reliability and brute force attempts.");
+  }
+  if (!emailChannelReady()) {
+    recommendations.push("Email channel is not ready. Configure SENDGRID credentials.");
+  }
+  if (!smsChannelReady()) {
+    recommendations.push("SMS channel is not ready. Configure SMS provider credentials.");
+  }
+  if (!configuredJwtSecret) {
+    recommendations.push("JWT secret not configured for production hardening.");
+  }
+  return {
+    institution_scope: institutionScope,
+    metrics: {
+      failed_login_events_24h: Number(failedLoginsRow?.total || 0),
+      otp_fail_events_24h: Number(otpFailureRow?.total || 0),
+      queued_messages: Number(queuedMessageRow?.total || 0),
+      open_security_incidents: Number(incidentOpenRow?.total || 0)
+    },
+    security_posture: {
+      jwt_secret_configured: Boolean(configuredJwtSecret),
+      otp_email_ready: emailChannelReady(),
+      otp_sms_ready: smsChannelReady(),
+      csp_enabled: String(process.env.ENABLE_CSP || "false").toLowerCase() === "true",
+      force_https: String(process.env.FORCE_HTTPS || "true").toLowerCase() !== "false"
+    },
+    module_health: moduleChecks,
+    recommendations
+  };
+}
+
+app.get(
+  "/api/system/ops/overview",
+  auth,
+  enforceModuleAccess(MODULE_KEYS.SYSTEM_OPS_CENTER),
+  enforceRole([
+    ROLES.SUPER_SYSTEM_DEVELOPER,
+    ROLES.SYSTEM_DEVELOPER,
+    ROLES.SYSTEM_ADMINISTRATOR,
+    ROLES.ADMIN,
+    ROLES.HEAD_OF_INSTITUTION
+  ]),
+  asyncHandler(async (req, res) => {
+    const overview = await buildSystemOpsOverview({
+      actorUser: req.user,
+      requestedInstitutionId: req.query?.institution_id
+    });
+    const limit = parseBoundedInt(req.query?.snapshot_limit, { fallback: 20, min: 1, max: 100 });
+    const params = [];
+    let where = "WHERE 1=1";
+    if (overview.institution_scope) {
+      where += " AND institution_id = ?";
+      params.push(overview.institution_scope);
+    }
+    const snapshots = await query(
+      `SELECT id, institution_id, module_key, module_label, status, total_rows, metric_payload_json, created_at
+       FROM system_module_health_snapshots
+       ${where}
+       ORDER BY id DESC
+       LIMIT ${limit}`,
+      params
+    ).catch(() => []);
+    res.json({ ...overview, recent_snapshots: snapshots.map((row) => ({ ...row, metric_payload_json: parseStoredJson(row.metric_payload_json) || null })) });
+  })
+);
+
+app.post(
+  "/api/system/ops/snapshots",
+  auth,
+  enforceModuleAccess(MODULE_KEYS.SYSTEM_OPS_CENTER),
+  enforceRole([
+    ROLES.SUPER_SYSTEM_DEVELOPER,
+    ROLES.SYSTEM_DEVELOPER,
+    ROLES.SYSTEM_ADMINISTRATOR,
+    ROLES.ADMIN,
+    ROLES.HEAD_OF_INSTITUTION
+  ]),
+  enforcePermission(PERMISSIONS.CREATE),
+  asyncHandler(async (req, res) => {
+    const overview = await buildSystemOpsOverview({
+      actorUser: req.user,
+      requestedInstitutionId: req.body?.institution_id
+    });
+    let created = 0;
+    for (const moduleRow of overview.module_health) {
+      // eslint-disable-next-line no-await-in-loop
+      await query(
+        `INSERT INTO system_module_health_snapshots
+          (institution_id, module_key, module_label, status, total_rows, metric_payload_json, created_by_user_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        [
+          overview.institution_scope || req.user.institution_id,
+          moduleRow.module_key,
+          moduleRow.module_label,
+          moduleRow.status,
+          moduleRow.total_rows,
+          JSON.stringify({ summary: moduleRow.summary, metrics: overview.metrics, posture: overview.security_posture }),
+          String(req.user.id || "")
+        ]
+      );
+      created += 1;
+    }
+    await auditLog(req.user, "CREATE_SYSTEM_MODULE_HEALTH_SNAPSHOT", "system_module_health_snapshots", null, {
+      created_rows: created,
+      institution_scope: overview.institution_scope || req.user.institution_id
+    });
+    res.status(201).json({ message: "System module health snapshots created.", created_rows: created });
+  })
+);
+
+app.get(
+  "/api/system/security/incidents",
+  auth,
+  enforceModuleAccess(MODULE_KEYS.SYSTEM_INCIDENT_RESPONSE),
+  enforceRole([
+    ROLES.SUPER_SYSTEM_DEVELOPER,
+    ROLES.SYSTEM_DEVELOPER,
+    ROLES.SYSTEM_ADMINISTRATOR,
+    ROLES.ADMIN,
+    ROLES.HEAD_OF_INSTITUTION
+  ]),
+  enforcePermission(PERMISSIONS.VIEW),
+  asyncHandler(async (req, res) => {
+    const institutionScope = canManageAcrossInstitutions(req.user)
+      ? (Number(req.query?.institution_id || 0) || null)
+      : Number(req.user.institution_id || 0) || null;
+    const statusFilter = cleanValue(req.query?.status || "").toUpperCase();
+    const severityFilter = cleanValue(req.query?.severity || "").toUpperCase();
+    const limit = parseBoundedInt(req.query?.limit, { fallback: 100, min: 1, max: 1000 });
+    const whereParts = ["1=1"];
+    const params = [];
+    if (institutionScope) {
+      whereParts.push("institution_id = ?");
+      params.push(institutionScope);
+    }
+    if (statusFilter) {
+      whereParts.push("status = ?");
+      params.push(statusFilter);
+    }
+    if (severityFilter) {
+      whereParts.push("severity = ?");
+      params.push(severityFilter);
+    }
+    const rows = await query(
+      `SELECT id, institution_id, incident_code, incident_type, severity, status, title, description, affected_module,
+              source_channel, details_json, response_actions, assigned_to_user_id, resolution_notes, detected_at, resolved_at, created_at, updated_at
+       FROM system_security_incidents
+       WHERE ${whereParts.join(" AND ")}
+       ORDER BY detected_at DESC, id DESC
+       LIMIT ${limit}`,
+      params
+    );
+    res.json(rows.map((row) => ({ ...row, details_json: parseStoredJson(row.details_json) || null })));
+  })
+);
+
+app.post(
+  "/api/system/security/incidents",
+  auth,
+  enforceModuleAccess(MODULE_KEYS.SYSTEM_INCIDENT_RESPONSE),
+  enforceRole([
+    ROLES.SUPER_SYSTEM_DEVELOPER,
+    ROLES.SYSTEM_DEVELOPER,
+    ROLES.SYSTEM_ADMINISTRATOR,
+    ROLES.ADMIN,
+    ROLES.HEAD_OF_INSTITUTION
+  ]),
+  enforcePermission(PERMISSIONS.CREATE),
+  asyncHandler(async (req, res) => {
+    const incidentType = cleanValue(req.body?.incident_type || "GENERAL");
+    const severity = cleanValue(req.body?.severity || "MEDIUM").toUpperCase();
+    const title = cleanValue(req.body?.title || "");
+    const description = cleanValue(req.body?.description || "");
+    if (!title || !description) {
+      return res.status(400).json({ error: "title and description are required." });
+    }
+    const institutionId = canManageAcrossInstitutions(req.user)
+      ? (Number(req.body?.institution_id || 0) || Number(req.user.institution_id || 0))
+      : Number(req.user.institution_id || 0);
+    const incidentCode = `INC-${dayjs().format("YYYYMMDD")}-${String(Math.floor(Math.random() * 100000)).padStart(5, "0")}`;
+    const result = await query(
+      `INSERT INTO system_security_incidents
+        (institution_id, incident_code, incident_type, severity, status, title, description, affected_module, source_channel,
+         details_json, response_actions, assigned_to_user_id, resolution_notes, detected_at, created_by_user_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?)`,
+      [
+        institutionId,
+        incidentCode,
+        incidentType,
+        severity || "MEDIUM",
+        "OPEN",
+        title,
+        description,
+        cleanOptionalValue(req.body?.affected_module),
+        cleanOptionalValue(req.body?.source_channel),
+        req.body?.details_json === undefined ? null : JSON.stringify(req.body.details_json),
+        cleanOptionalValue(req.body?.response_actions),
+        cleanOptionalValue(req.body?.assigned_to_user_id),
+        cleanOptionalValue(req.body?.resolution_notes),
+        String(req.user.id || "")
+      ]
+    );
+    await auditLog(req.user, "CREATE_SECURITY_INCIDENT", "system_security_incidents", result.insertId, {
+      incident_code: incidentCode,
+      incident_type: incidentType,
+      severity
+    });
+    res.status(201).json({ id: result.insertId, incident_code: incidentCode, message: "Security incident created." });
+  })
+);
+
+app.patch(
+  "/api/system/security/incidents/:id(\\d+)",
+  auth,
+  enforceModuleAccess(MODULE_KEYS.SYSTEM_INCIDENT_RESPONSE),
+  enforceRole([
+    ROLES.SUPER_SYSTEM_DEVELOPER,
+    ROLES.SYSTEM_DEVELOPER,
+    ROLES.SYSTEM_ADMINISTRATOR,
+    ROLES.ADMIN,
+    ROLES.HEAD_OF_INSTITUTION
+  ]),
+  enforcePermission(PERMISSIONS.UPDATE),
+  asyncHandler(async (req, res) => {
+    const incidentId = Number(req.params.id || 0);
+    if (!incidentId) {
+      return res.status(400).json({ error: "Valid incident id is required." });
+    }
+    const institutionScope = canManageAcrossInstitutions(req.user)
+      ? (Number(req.body?.institution_id || 0) || null)
+      : Number(req.user.institution_id || 0);
+    const updates = [];
+    const params = [];
+    const fields = [
+      "incident_type",
+      "severity",
+      "status",
+      "title",
+      "description",
+      "affected_module",
+      "source_channel",
+      "response_actions",
+      "assigned_to_user_id",
+      "resolution_notes"
+    ];
+    fields.forEach((field) => {
+      if (!Object.prototype.hasOwnProperty.call(req.body || {}, field)) return;
+      updates.push(`${field} = ?`);
+      if (field === "severity" || field === "status") {
+        params.push(cleanOptionalValue(req.body?.[field]) ? cleanValue(req.body[field]).toUpperCase() : null);
+      } else {
+        params.push(cleanOptionalValue(req.body?.[field]));
+      }
+    });
+    if (Object.prototype.hasOwnProperty.call(req.body || {}, "details_json")) {
+      updates.push("details_json = ?");
+      params.push(req.body?.details_json === undefined ? null : JSON.stringify(req.body.details_json));
+    }
+    if (Object.prototype.hasOwnProperty.call(req.body || {}, "status")) {
+      const normalized = cleanValue(req.body?.status).toUpperCase();
+      if (normalized === "RESOLVED") {
+        updates.push("resolved_at = COALESCE(resolved_at, NOW())");
+      }
+    }
+    if (!updates.length) {
+      return res.status(400).json({ error: "No incident fields provided for update." });
+    }
+    const where = institutionScope ? " AND institution_id = ?" : "";
+    const whereParams = institutionScope ? [institutionScope] : [];
+    await query(
+      `UPDATE system_security_incidents
+       SET ${updates.join(", ")}, updated_at = NOW()
+       WHERE id = ?${where}`,
+      [...params, incidentId, ...whereParams]
+    );
+    await auditLog(req.user, "UPDATE_SECURITY_INCIDENT", "system_security_incidents", incidentId, pickFields(req.body || {}, [...fields, "details_json"]));
+    res.json({ message: "Security incident updated." });
+  })
+);
+
 app.get(
   "/api/cbc/curriculum",
   auth,
@@ -11440,6 +11800,97 @@ app.get(
         mean_marks: Number(meanRows[0]?.mean_marks || 0).toFixed(2)
       },
       by_learning_area: byLearningArea
+    });
+  })
+);
+
+app.post(
+  "/api/examinations/ai-copilot/recommendations",
+  auth,
+  enforceModuleAccess(MODULE_KEYS.CBC_CURRICULUM_EDITOR),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER]),
+  enforcePermission(PERMISSIONS.VIEW),
+  asyncHandler(async (req, res) => {
+    const institutionId = Number(req.user.institution_id);
+    const grade = cleanOptionalValue(req.body?.grade);
+    const formName = cleanOptionalValue(req.body?.form_name);
+    const learningArea = cleanOptionalValue(req.body?.learning_area);
+    const scopedLevel = cleanValue(grade || formName || "");
+    const [curriculumRows, examRows, marksRows, lowBandRows] = await Promise.all([
+      query(
+        `SELECT COUNT(*) AS total
+         FROM cbc_curriculum_entries
+         WHERE institution_id = ?
+           AND (? = '' OR grade = ?)
+           AND (? = '' OR form_name = ?)
+           AND (? = '' OR learning_area = ?)`,
+        [institutionId, cleanValue(grade), cleanValue(grade), cleanValue(formName), cleanValue(formName), cleanValue(learningArea), cleanValue(learningArea)]
+      ),
+      query(
+        `SELECT COUNT(*) AS total
+         FROM academic_exams
+         WHERE institution_id = ?
+           AND (? = '' OR grade = ?)
+           AND (? = '' OR subject = ?)`,
+        [institutionId, scopedLevel, scopedLevel, cleanValue(learningArea), cleanValue(learningArea)]
+      ),
+      query(
+        `SELECT COUNT(*) AS total, ROUND(AVG(percentage), 2) AS avg_percentage
+         FROM academic_marks
+         WHERE institution_id = ?
+           AND (? = '' OR grade = ?)
+           AND (? = '' OR subject = ?)`,
+        [institutionId, scopedLevel, scopedLevel, cleanValue(learningArea), cleanValue(learningArea)]
+      ),
+      query(
+        `SELECT subject, COUNT(*) AS total
+         FROM academic_marks
+         WHERE institution_id = ?
+           AND cbc_grade_band IN ('BE', 'ABSENT')
+           AND (? = '' OR grade = ?)
+         GROUP BY subject
+         ORDER BY total DESC
+         LIMIT 8`,
+        [institutionId, scopedLevel, scopedLevel]
+      )
+    ]);
+    const curriculumCount = Number(curriculumRows[0]?.total || 0);
+    const generatedExamCount = Number(examRows[0]?.total || 0);
+    const marksCount = Number(marksRows[0]?.total || 0);
+    const avgPct = Number(marksRows[0]?.avg_percentage || 0);
+    const actions = [];
+    if (curriculumCount < 20) {
+      actions.push("Curriculum coverage is low for selected scope. Import strands/sub-strands first.");
+    }
+    if (generatedExamCount === 0) {
+      actions.push("No generated exams found. Use Exam Generation to create at least one structured paper.");
+    }
+    if (marksCount === 0) {
+      actions.push("No marks records found. Use Exam Entry to unlock scripts and progression analytics.");
+    }
+    if (marksCount > 0 && avgPct < 45) {
+      actions.push("Average performance is below 45%. Prioritize remediation plans and targeted revision papers.");
+    }
+    if (Array.isArray(lowBandRows) && lowBandRows.length) {
+      actions.push(`Focus intervention learning areas: ${lowBandRows.map((row) => cleanValue(row.subject)).filter(Boolean).join(", ")}.`);
+    }
+    if (!actions.length) {
+      actions.push("Data quality and performance posture look stable. Proceed with archive + compliance reporting cycle.");
+    }
+    res.json({
+      scope: {
+        grade: grade || null,
+        form_name: formName || null,
+        learning_area: learningArea || null
+      },
+      metrics: {
+        curriculum_rows: curriculumCount,
+        generated_exams: generatedExamCount,
+        marks_rows: marksCount,
+        avg_percentage: avgPct
+      },
+      ai_actions: actions,
+      intervention_subjects: lowBandRows
     });
   })
 );

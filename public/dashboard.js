@@ -12,7 +12,7 @@ let portalContext = null;
 let searchRowDrafts = {};
 let dashboardAutoRefreshHandle = null;
 let currentSidebarSubmoduleId = null;
-const CLIENT_UI_BUNDLE_ID = "dash-bundle-main-v72-material-scope-security-audit";
+const CLIENT_UI_BUNDLE_ID = "dash-bundle-main-v73-phase2-hardening-redesign";
 const examPanelState = {
   generatedExam: null,
   serials: [],
@@ -90,6 +90,8 @@ const MODULE_KEY_BY_ID = {
   "system-register": "register-center",
   "system-access-control": "access-control",
   "system-audit": "security-audit",
+  "system-ops-center": "system-ops-center",
+  "system-incident-response": "system-incident-response",
   "system-registry": "institutions-users-registry",
   "system-institution-edit": "institutions-users-registry",
   "system-institution-uploads": "institutions-users-registry",
@@ -128,6 +130,8 @@ const MODULE_DESCRIPTIONS = {
   "system-register": "Institution Registration and role-based user registration with strict sub-module isolation.",
   "system-access-control": "Assign module rights and review role-based access permissions.",
   "system-audit": "Review security and login audit trails for accountability.",
+  "system-ops-center": "Operations center for module health, queue pressure, and system posture diagnostics.",
+  "system-incident-response": "Incident response workspace for security events, escalation, and closure tracking.",
   "system-registry": "Browse institutions and user registry details in one place.",
   "system-institution-edit":
     "Institution Upgrade: edit/save/delete institution profile and institution user details (SSD only).",
@@ -166,6 +170,11 @@ const SIDEBAR_SUBMODULES = {
       targetModule: "system-register",
       options: { registrationFocus: "user" }
     }
+  ],
+  "system-audit": [
+    { id: "system-security-audit-main", label: "Security Logs", targetModule: "system-audit" },
+    { id: "system-ops-center-main", label: "Ops Center", targetModule: "system-ops-center" },
+    { id: "system-incident-response-main", label: "Incident Response", targetModule: "system-incident-response" }
   ],
   admission: [
     {
@@ -246,6 +255,7 @@ const SIDEBAR_SUBMODULES = {
     },
     { id: "exam-lifecycle", label: "Lifecycle", targetModule: "system-cbc-editor", options: { examTab: "lifecycle" } },
     { id: "exam-analytics", label: "Analytics", targetModule: "system-cbc-editor", options: { examTab: "analytics" } },
+    { id: "exam-ai-copilot", label: "AI Copilot", targetModule: "system-cbc-editor", options: { examTab: "ai-copilot" } },
     { id: "exam-templates", label: "Templates", targetModule: "system-cbc-editor", options: { examTab: "templates" } },
     { id: "exam-archives", label: "Archives", targetModule: "system-cbc-editor", options: { examTab: "archives" } },
     { id: "exam-settings", label: "Settings", targetModule: "system-cbc-editor", options: { examTab: "settings" } }
@@ -3169,6 +3179,212 @@ async function renderRecycleBin() {
   }
 }
 
+async function renderSystemOpsCenter() {
+  setActiveSidebarButton("system-ops-center");
+  document.getElementById("moduleTitle").textContent = "System Ops Center";
+  if (!canOpenSecurityAuditModule()) {
+    alert("Only System Developer / Admin scope can open System Ops Center.");
+    return loadDashboard();
+  }
+  try {
+    const payload = await request("/api/system/ops/overview?snapshot_limit=60");
+    const moduleRows = Array.isArray(payload?.module_health) ? payload.module_health : [];
+    const snapshots = Array.isArray(payload?.recent_snapshots) ? payload.recent_snapshots : [];
+    const metrics = payload?.metrics || {};
+    const posture = payload?.security_posture || {};
+    const recommendations = Array.isArray(payload?.recommendations) ? payload.recommendations : [];
+    document.getElementById("cards").innerHTML = `
+      <div class="card stats-card metric-emphasis"><h4>Healthy Modules</h4><p>${formatNumber(moduleRows.filter((row) => row.status === "HEALTHY").length)}</p></div>
+      <div class="card stats-card"><h4>Empty Modules</h4><p>${formatNumber(moduleRows.filter((row) => row.status === "EMPTY").length)}</p></div>
+      <div class="card stats-card"><h4>Failed Login 24h</h4><p>${formatNumber(metrics.failed_login_events_24h || 0)}</p></div>
+      <div class="card stats-card"><h4>OTP Failures 24h</h4><p>${formatNumber(metrics.otp_fail_events_24h || 0)}</p></div>
+      <div class="card stats-card"><h4>Queued Messages</h4><p>${formatNumber(metrics.queued_messages || 0)}</p></div>
+      <div class="card stats-card"><h4>Open Incidents</h4><p>${formatNumber(metrics.open_security_incidents || 0)}</p></div>
+    `;
+    document.getElementById("formArea").innerHTML = `
+      <div class="module-header-card">
+        <h3>Operations & Hardening Center</h3>
+        <p>Real-time health posture for critical modules, communication queues, and security readiness across your institution scope.</p>
+      </div>
+      <div class="actions-row">
+        <button id="opsCenterRefreshBtn" class="ax-btn ax-btn--refresh ax-btn--sm">Refresh</button>
+        <button id="opsCenterSnapshotBtn" class="ax-btn ax-btn--save ax-btn--sm">Capture Snapshot</button>
+        <button id="opsCenterDownloadBtn" class="ax-btn ax-btn--download ax-btn--sm">Download</button>
+        <button id="opsCenterPrintBtn" class="ax-btn ax-btn--print ax-btn--sm">Print</button>
+      </div>
+      <div class="module-header-card">
+        <h4>Security Posture</h4>
+        <p class="small-note">JWT: ${posture.jwt_secret_configured ? "Configured" : "Missing"} | SMS: ${posture.otp_sms_ready ? "Ready" : "Not ready"} | Email: ${posture.otp_email_ready ? "Ready" : "Not ready"} | CSP: ${posture.csp_enabled ? "Enabled" : "Disabled"} | HTTPS: ${posture.force_https ? "Enforced" : "Relaxed"}</p>
+        <p class="small-note">${recommendations.length ? recommendations.map((item) => `- ${escapeHtml(item)}`).join("<br/>") : "No blocking hardening recommendation at this time."}</p>
+      </div>
+      <h4>Module Health Matrix</h4>
+      <div id="opsCenterModuleTable"></div>
+      <h4>Recent Health Snapshots</h4>
+      <div id="opsCenterSnapshotTable"></div>
+    `;
+    const moduleTableNode = document.getElementById("opsCenterModuleTable");
+    if (moduleTableNode) {
+      moduleTableNode.innerHTML = buildDashboardTable(
+        ["Module", "Rows", "Status", "Summary"],
+        moduleRows.map((row) => [row.module_label || row.module_key || "-", row.total_rows ?? "-", row.status || "-", row.summary || "-"])
+      );
+    }
+    const snapshotTableNode = document.getElementById("opsCenterSnapshotTable");
+    if (snapshotTableNode) {
+      snapshotTableNode.innerHTML = buildDashboardTable(
+        ["Snapshot ID", "Module", "Rows", "Status", "Captured"],
+        snapshots.slice(0, 120).map((row) => [row.id || "-", row.module_label || row.module_key || "-", row.total_rows ?? "-", row.status || "-", formatDateTime(row.created_at)])
+      );
+    }
+    document.getElementById("opsCenterRefreshBtn")?.addEventListener("click", renderSystemOpsCenter);
+    document.getElementById("opsCenterSnapshotBtn")?.addEventListener("click", async () => {
+      try {
+        const result = await request("/api/system/ops/snapshots", { method: "POST", body: JSON.stringify({}) });
+        alert(result?.message || "Snapshot captured.");
+        await renderSystemOpsCenter();
+      } catch (error) {
+        alert(error.message);
+      }
+    });
+    document.getElementById("opsCenterDownloadBtn")?.addEventListener("click", () => {
+      const csv = rowsToCsv(moduleRows.map((row) => ({
+        module_key: row.module_key || "",
+        module_label: row.module_label || "",
+        total_rows: row.total_rows ?? "",
+        status: row.status || "",
+        summary: row.summary || ""
+      })));
+      downloadTextFile("system-ops-center-health.csv", csv, "text/csv;charset=utf-8");
+    });
+    document.getElementById("opsCenterPrintBtn")?.addEventListener("click", () => window.print());
+    applyCompactIconButtons(document.getElementById("formArea"));
+    resetDataTable("System Ops Center loaded.");
+  } catch (error) {
+    alert(error.message);
+  }
+}
+
+async function renderSystemIncidentResponse() {
+  setActiveSidebarButton("system-incident-response");
+  document.getElementById("moduleTitle").textContent = "System Incident Response";
+  if (!canOpenSecurityAuditModule()) {
+    alert("Only System Developer / Admin scope can open Incident Response.");
+    return loadDashboard();
+  }
+  try {
+    const incidents = await request("/api/system/security/incidents?limit=220");
+    const rows = Array.isArray(incidents) ? incidents : [];
+    document.getElementById("cards").innerHTML = `
+      <div class="card stats-card metric-emphasis"><h4>Open</h4><p>${formatNumber(rows.filter((row) => String(row.status || "").toUpperCase() === "OPEN").length)}</p></div>
+      <div class="card stats-card"><h4>In Progress</h4><p>${formatNumber(rows.filter((row) => String(row.status || "").toUpperCase() === "IN_PROGRESS").length)}</p></div>
+      <div class="card stats-card"><h4>Resolved</h4><p>${formatNumber(rows.filter((row) => String(row.status || "").toUpperCase() === "RESOLVED").length)}</p></div>
+      <div class="card stats-card"><h4>Total Incidents</h4><p>${formatNumber(rows.length)}</p></div>
+    `;
+    document.getElementById("formArea").innerHTML = `
+      <div class="module-header-card">
+        <h3>Incident Response Desk</h3>
+        <p>Create incidents, escalate or resolve them, and keep auditable response notes per institution scope.</p>
+      </div>
+      <div class="form-grid">
+        <label>Incident Type</label>
+        <input id="incidentTypeInput" placeholder="e.g. AUTH_BRUTE_FORCE" />
+        <label>Severity</label>
+        <select id="incidentSeverityInput"><option value="LOW">LOW</option><option value="MEDIUM" selected>MEDIUM</option><option value="HIGH">HIGH</option><option value="CRITICAL">CRITICAL</option></select>
+        <label>Affected Module</label>
+        <input id="incidentModuleInput" placeholder="e.g. communication-messages" />
+        <label>Title</label>
+        <input id="incidentTitleInput" placeholder="Short title" />
+        <label>Description</label>
+        <textarea id="incidentDescriptionInput" rows="4" placeholder="Incident details"></textarea>
+      </div>
+      <div class="actions-row">
+        <button id="incidentCreateBtn" class="ax-btn ax-btn--save ax-btn--sm">Create</button>
+        <button id="incidentResolveBtn" class="ax-btn ax-btn--process ax-btn--sm">Resolve by ID</button>
+        <button id="incidentRefreshBtn" class="ax-btn ax-btn--refresh ax-btn--sm">Refresh</button>
+        <button id="incidentDownloadBtn" class="ax-btn ax-btn--download ax-btn--sm">Download</button>
+        <button id="incidentPrintBtn" class="ax-btn ax-btn--print ax-btn--sm">Print</button>
+      </div>
+      <div id="incidentResponseTable"></div>
+    `;
+    const tableNode = document.getElementById("incidentResponseTable");
+    if (tableNode) {
+      tableNode.innerHTML = buildDashboardTable(
+        ["ID", "Code", "Type", "Severity", "Status", "Module", "Title", "Detected", "Resolved"],
+        rows.map((row) => [
+          row.id || "-",
+          row.incident_code || "-",
+          row.incident_type || "-",
+          row.severity || "-",
+          row.status || "-",
+          row.affected_module || "-",
+          row.title || "-",
+          formatDateTime(row.detected_at),
+          formatDateTime(row.resolved_at)
+        ])
+      );
+    }
+    document.getElementById("incidentCreateBtn")?.addEventListener("click", async () => {
+      const payload = {
+        incident_type: String(document.getElementById("incidentTypeInput")?.value || "").trim() || "GENERAL",
+        severity: String(document.getElementById("incidentSeverityInput")?.value || "MEDIUM").trim(),
+        affected_module: String(document.getElementById("incidentModuleInput")?.value || "").trim() || null,
+        title: String(document.getElementById("incidentTitleInput")?.value || "").trim(),
+        description: String(document.getElementById("incidentDescriptionInput")?.value || "").trim()
+      };
+      if (!payload.title || !payload.description) {
+        alert("Incident title and description are required.");
+        return;
+      }
+      try {
+        const result = await request("/api/system/security/incidents", {
+          method: "POST",
+          body: JSON.stringify(payload)
+        });
+        alert(result?.message || "Incident created.");
+        await renderSystemIncidentResponse();
+      } catch (error) {
+        alert(error.message);
+      }
+    });
+    document.getElementById("incidentResolveBtn")?.addEventListener("click", async () => {
+      const incidentId = Number(prompt("Enter incident ID to resolve:", "") || 0);
+      if (!incidentId) return;
+      const notes = prompt("Resolution notes:", "") || "";
+      try {
+        await request(`/api/system/security/incidents/${incidentId}`, {
+          method: "PATCH",
+          body: JSON.stringify({ status: "RESOLVED", resolution_notes: notes })
+        });
+        alert("Incident resolved.");
+        await renderSystemIncidentResponse();
+      } catch (error) {
+        alert(error.message);
+      }
+    });
+    document.getElementById("incidentRefreshBtn")?.addEventListener("click", renderSystemIncidentResponse);
+    document.getElementById("incidentDownloadBtn")?.addEventListener("click", () => {
+      const csv = rowsToCsv(rows.map((row) => ({
+        id: row.id || "",
+        incident_code: row.incident_code || "",
+        incident_type: row.incident_type || "",
+        severity: row.severity || "",
+        status: row.status || "",
+        affected_module: row.affected_module || "",
+        title: row.title || "",
+        description: row.description || "",
+        detected_at: row.detected_at || "",
+        resolved_at: row.resolved_at || ""
+      })));
+      downloadTextFile("system-security-incidents.csv", csv, "text/csv;charset=utf-8");
+    });
+    document.getElementById("incidentPrintBtn")?.addEventListener("click", () => window.print());
+    applyCompactIconButtons(document.getElementById("formArea"));
+    resetDataTable("Incident response records loaded.");
+  } catch (error) {
+    alert(error.message);
+  }
+}
+
 function buildExamGradeFormSelectOptions() {
   const gradeOptions = Array.isArray(meta?.gradeOptions) ? meta.gradeOptions : [];
   const formOptions = Array.isArray(meta?.formOptions) ? meta.formOptions : ["Form 3", "Form 4"];
@@ -4835,7 +5051,9 @@ function normalizeExamTabKey(tab = "") {
     "assessment-tracker": "assessment-tracking",
     "portal": "portal-insights",
     "compliance-reporting": "compliance",
-    "academic-lifecycle": "lifecycle"
+    "academic-lifecycle": "lifecycle",
+    "copilot": "ai-copilot",
+    "ai-assistant": "ai-copilot"
   };
   return aliases[value] || value || "curriculum";
 }
@@ -4991,6 +5209,96 @@ async function wireExamAnalyticsPanel() {
   });
   document.getElementById("examAnalyticsPrintBtn")?.addEventListener("click", () => window.print());
   await load();
+}
+
+function renderExamAiCopilotPanel({ gradeOptions = [], formOptions = [], learningAreas = [] } = {}) {
+  return `
+    <div class="module-header-card">
+      <h4>AI Copilot - Examination Hardening Assistant</h4>
+      <p>Generate automated recommendations using curriculum depth, generated exams, marks flow, and intervention signals.</p>
+    </div>
+    <div class="form-grid">
+      <label>Grade (optional)</label>
+      <select id="examAiCopilotGrade"><option value="">All grades</option>${gradeOptions.map((item) => `<option value="${escapeHtml(item)}">${escapeHtml(item)}</option>`).join("")}</select>
+      <label>Form (optional)</label>
+      <select id="examAiCopilotForm"><option value="">All forms</option>${formOptions.map((item) => `<option value="${escapeHtml(item)}">${escapeHtml(item)}</option>`).join("")}</select>
+      <label>Learning Area (optional)</label>
+      <select id="examAiCopilotLearningArea"><option value="">All learning areas</option>${learningAreas.map((item) => `<option value="${escapeHtml(item)}">${escapeHtml(item)}</option>`).join("")}</select>
+    </div>
+    <div class="actions-row exam-icon-group">
+      <button class="ax-btn ax-btn--generate ax-btn--sm" id="examAiCopilotRunBtn" title="Run AI recommendations">AI Generate</button>
+      <button class="ax-btn ax-btn--download ax-btn--sm" id="examAiCopilotDownloadBtn" title="Download AI report">Download</button>
+      <button class="ax-btn ax-btn--print ax-btn--sm" id="examAiCopilotPrintBtn" title="Print AI report">Print</button>
+    </div>
+    <div id="examAiCopilotMetrics" class="exam-analytics-grid"></div>
+    <div id="examAiCopilotActions" class="module-header-card"><p class="small-note">Run AI analysis to get recommendations.</p></div>
+    <div class="dashboard-table-wrap">
+      <table class="dashboard-table">
+        <thead><tr><th>Subject</th><th>Low Band Cases</th></tr></thead>
+        <tbody id="examAiCopilotSubjects"><tr><td colspan="2">No subject interventions yet.</td></tr></tbody>
+      </table>
+    </div>
+  `;
+}
+
+async function wireExamAiCopilotPanel() {
+  const metricsEl = document.getElementById("examAiCopilotMetrics");
+  const actionsEl = document.getElementById("examAiCopilotActions");
+  const subjectsEl = document.getElementById("examAiCopilotSubjects");
+  const gradeEl = document.getElementById("examAiCopilotGrade");
+  const formEl = document.getElementById("examAiCopilotForm");
+  const areaEl = document.getElementById("examAiCopilotLearningArea");
+  let lastPayload = null;
+  const renderPayload = (payload = null) => {
+    const metrics = payload?.metrics || {};
+    const actions = Array.isArray(payload?.ai_actions) ? payload.ai_actions : [];
+    const subjects = Array.isArray(payload?.intervention_subjects) ? payload.intervention_subjects : [];
+    if (metricsEl) {
+      metricsEl.innerHTML = `
+        <article class="exam-analytics-card"><h5>Curriculum Rows</h5><p>${formatNumber(metrics.curriculum_rows || 0)}</p></article>
+        <article class="exam-analytics-card"><h5>Generated Exams</h5><p>${formatNumber(metrics.generated_exams || 0)}</p></article>
+        <article class="exam-analytics-card"><h5>Marks Rows</h5><p>${formatNumber(metrics.marks_rows || 0)}</p></article>
+        <article class="exam-analytics-card"><h5>Average %</h5><p>${escapeHtml(String(metrics.avg_percentage ?? 0))}</p></article>
+      `;
+    }
+    if (actionsEl) {
+      actionsEl.innerHTML = `
+        <h4>AI Recommendations</h4>
+        <p class="small-note">${actions.length ? actions.map((item) => `- ${escapeHtml(item)}`).join("<br/>") : "No recommendation generated."}</p>
+      `;
+    }
+    if (subjectsEl) {
+      subjectsEl.innerHTML = subjects.length
+        ? subjects.map((row) => `<tr><td>${escapeHtml(row.subject || "-")}</td><td>${escapeHtml(String(row.total || 0))}</td></tr>`).join("")
+        : `<tr><td colspan="2">No low-band intervention subjects detected.</td></tr>`;
+    }
+  };
+  const run = async () => {
+    try {
+      const payload = await request("/api/examinations/ai-copilot/recommendations", {
+        method: "POST",
+        body: JSON.stringify({
+          grade: String(gradeEl?.value || "").trim() || null,
+          form_name: String(formEl?.value || "").trim() || null,
+          learning_area: String(areaEl?.value || "").trim() || null
+        })
+      });
+      lastPayload = payload;
+      renderPayload(payload);
+    } catch (error) {
+      alert(error.message);
+    }
+  };
+  document.getElementById("examAiCopilotRunBtn")?.addEventListener("click", run);
+  document.getElementById("examAiCopilotDownloadBtn")?.addEventListener("click", () => {
+    if (!lastPayload) {
+      alert("Generate AI recommendations first.");
+      return;
+    }
+    downloadTextFile("exam-ai-copilot-report.json", JSON.stringify(lastPayload, null, 2), "application/json;charset=utf-8");
+  });
+  document.getElementById("examAiCopilotPrintBtn")?.addEventListener("click", () => window.print());
+  await run();
 }
 
 function renderExamTemplateManagerPanel() {
@@ -5565,6 +5873,7 @@ async function renderCbcCurriculumEditor(options = {}) {
     { id: "compliance", label: "Compliance" },
     { id: "lifecycle", label: "Lifecycle" },
     { id: "analytics", label: "Analytics" },
+    { id: "ai-copilot", label: "AI Copilot" },
     { id: "templates", label: "Templates" },
     { id: "archives", label: "Archives" },
     { id: "settings", label: "Settings" }
@@ -7307,6 +7616,10 @@ async function renderCbcCurriculumEditor(options = {}) {
     else if (tab === "analytics") {
       panel.innerHTML = renderExamAnalyticsPanel();
       await wireExamAnalyticsPanel();
+      stylePanel();
+    } else if (tab === "ai-copilot") {
+      panel.innerHTML = renderExamAiCopilotPanel({ gradeOptions, formOptions, learningAreas });
+      await wireExamAiCopilotPanel();
       stylePanel();
     } else if (tab === "templates") {
       panel.innerHTML = renderExamTemplateManagerPanel();
@@ -11684,6 +11997,8 @@ async function openModule(targetModule, options = {}) {
   if (targetModule === "system-register") return renderSystemRegistration(options);
   if (targetModule === "system-access-control") return renderModuleRights();
   if (targetModule === "system-audit") return renderSecurityAudit();
+  if (targetModule === "system-ops-center") return renderSystemOpsCenter();
+  if (targetModule === "system-incident-response") return renderSystemIncidentResponse();
   if (targetModule === "system-registry") return renderInstitutionsRegistry();
   if (targetModule === "system-institution-edit") return renderInstitutionEditModule();
   if (targetModule === "system-institution-uploads") return renderInstitutionUploadsModule();

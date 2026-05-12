@@ -214,6 +214,45 @@ CREATE TABLE IF NOT EXISTS exam_module_settings (
   CONSTRAINT fk_exam_module_settings_institution FOREIGN KEY (institution_id) REFERENCES institutions(id)
 );
 
+CREATE TABLE IF NOT EXISTS system_security_incidents (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  institution_id BIGINT NOT NULL,
+  incident_code VARCHAR(60) NOT NULL,
+  incident_type VARCHAR(120) NOT NULL DEFAULT 'GENERAL',
+  severity VARCHAR(30) NOT NULL DEFAULT 'MEDIUM',
+  status VARCHAR(30) NOT NULL DEFAULT 'OPEN',
+  title VARCHAR(255) NOT NULL,
+  description TEXT NOT NULL,
+  affected_module VARCHAR(120) NULL,
+  source_channel VARCHAR(80) NULL,
+  details_json JSON NULL,
+  response_actions TEXT NULL,
+  assigned_to_user_id VARCHAR(100) NULL,
+  resolution_notes TEXT NULL,
+  detected_at DATETIME NOT NULL,
+  resolved_at DATETIME NULL,
+  created_by_user_id VARCHAR(100) NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY uq_security_incident_code (incident_code),
+  INDEX idx_security_incident_scope (institution_id, status, severity, detected_at),
+  CONSTRAINT fk_security_incident_institution FOREIGN KEY (institution_id) REFERENCES institutions(id)
+);
+
+CREATE TABLE IF NOT EXISTS system_module_health_snapshots (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  institution_id BIGINT NOT NULL,
+  module_key VARCHAR(120) NOT NULL,
+  module_label VARCHAR(180) NULL,
+  status VARCHAR(40) NOT NULL,
+  total_rows BIGINT NULL,
+  metric_payload_json JSON NULL,
+  created_by_user_id VARCHAR(100) NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  INDEX idx_module_health_snapshot_scope (institution_id, module_key, created_at),
+  CONSTRAINT fk_module_health_snapshot_institution FOREIGN KEY (institution_id) REFERENCES institutions(id)
+);
+
 CREATE TABLE IF NOT EXISTS otp_sessions (
   id BIGINT PRIMARY KEY AUTO_INCREMENT,
   session_id VARCHAR(80) NOT NULL UNIQUE,
