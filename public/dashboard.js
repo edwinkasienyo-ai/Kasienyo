@@ -6423,11 +6423,22 @@ async function renderCbcCurriculumEditor(options = {}) {
             <button class="ax-btn ax-btn--process ax-btn--sm" id="examV2GenProcessBtn" title="Process output" disabled>Process</button>
             <button class="ax-btn ax-btn--download ax-btn--sm" id="examV2GenRunDeliveryBtn" title="Run output mode" disabled>Output</button>
             <button class="ax-btn ax-btn--view ax-btn--sm" id="examV2GenViewBtn" title="View recent exams">View</button>
+            <button class="ax-btn ax-btn--download ax-btn--sm" id="examV2GenSampleBtn" title="Download sample paper">Sample</button>
             <button class="ax-btn ax-btn--download ax-btn--sm" id="examV2GenTemplateDownloadBtn" title="Download structure template" disabled>Tpl Download</button>
             <label for="examV2GenTemplateUploadFile" class="ax-btn ax-btn--upload ax-btn--sm exam-stack-top">Tpl Upload</label>
             <input id="examV2GenTemplateUploadFile" type="file" accept=".txt,.md,.csv,.doc,.docx" hidden />
           </div>
           <textarea id="examV2GenOutput" rows="16" class="template-spacious" placeholder="Generated exam text appears here..." readonly></textarea>
+          <div class="module-header-card">
+            <h4>Serial Number Generation Center</h4>
+            <p class="small-note">Serials are generated per institution, grade/form, learning area, stream and learner after Process.</p>
+          </div>
+          <div class="dashboard-table-wrap">
+            <table class="dashboard-table">
+              <thead><tr><th>Institution</th><th>Grade/Form</th><th>Learning Area</th><th>Stream</th><th>Learner</th><th>Admission</th><th>Serial</th></tr></thead>
+              <tbody id="examV2GenSerialRows"><tr><td colspan="7">No serials generated yet.</td></tr></tbody>
+            </table>
+          </div>
           <div id="examV2GenStatus" class="small-note">Select examination session to activate workflow.</div>
         </div>
       </div>
@@ -6462,18 +6473,21 @@ async function renderCbcCurriculumEditor(options = {}) {
     const editChoiceEl = document.getElementById("examV2GenEditChoice");
     const deliveryModeEl = document.getElementById("examV2GenDeliveryMode");
     const outputEl = document.getElementById("examV2GenOutput");
+    const serialRowsEl = document.getElementById("examV2GenSerialRows");
     const statusNode = document.getElementById("examV2GenStatus");
     const generateBtn = document.getElementById("examV2GenGenerateBtn");
     const saveEditedBtn = document.getElementById("examV2GenSaveEditedBtn");
     const processBtn = document.getElementById("examV2GenProcessBtn");
     const runDeliveryBtn = document.getElementById("examV2GenRunDeliveryBtn");
     const templateDownloadBtn = document.getElementById("examV2GenTemplateDownloadBtn");
+    const sampleBtn = document.getElementById("examV2GenSampleBtn");
     const templateUploadInput = document.getElementById("examV2GenTemplateUploadFile");
     let curriculumRows = [];
     let mappingRows = [];
     let generatedExamId = null;
     let allocatedSerials = [];
     let processed = false;
+    const institutionCode = String(portalContext?.institution_code || portalContext?.institutionCode || "-");
     const selectedStrandsState = new Set();
     const selectedSubsState = new Set();
     let availableStrands = [];
@@ -6481,6 +6495,56 @@ async function renderCbcCurriculumEditor(options = {}) {
 
     const setGenStatus = (message) => {
       if (statusNode) statusNode.textContent = message || "";
+    };
+    const buildSamplePaperText = () => {
+      const structure = String(structureEl?.value || "unified");
+      const detail = String(structureDetailEl?.value || "");
+      const learningArea = String(areaEl?.value || "Pre-Technical Studies");
+      const level = String(levelEl?.value || "Grade 7");
+      const lines = [
+        `SCHOOL BASED ASSESSMENT`,
+        `${learningArea.toUpperCase()}`,
+        `${level.toUpperCase()} SAMPLE PAPER`,
+        "",
+        `SECTION A (Objective)`,
+        `1. What is ${learningArea.toLowerCase()}?`,
+        `2. What is fire?`,
+        `3. What is computer?`,
+        `4. Which tool is used for measuring angles?`,
+        `5. Which of the following is an input device?`,
+        ""
+      ];
+      if (structure === "structured") {
+        lines.push("SECTION B (Short Answer)", "6. Explain one safety rule in a workshop.", "7. Define budget.", "8. State two characteristics of money.");
+        if (detail === "A_B_C") {
+          lines.push("", "SECTION C (Extended Response)", "9. Discuss record keeping in business and suggest solutions to two challenges.");
+        }
+      } else if (structure === "multi-section") {
+        lines.push("PAPER 2", "6. Explain the importance of marketing in business success.", "7. State three characteristics of a successful entrepreneur.");
+        if (detail === "PAPER_1_2_3") {
+          lines.push("", "PAPER 3", "8. Applied task: Design a simple production workflow and show quality checkpoints.");
+        }
+      } else {
+        lines.push("SECTION B (Short Answer)", "6. Explain one cause of fire and one prevention method.", "7. State two examples of output devices.");
+      }
+      lines.push("", "Use this sample as editable template.");
+      return lines.join("\n");
+    };
+    const renderSerialRows = (rows = []) => {
+      if (!serialRowsEl) return;
+      serialRowsEl.innerHTML = rows.length
+        ? rows.map((row) => `
+          <tr>
+            <td>${escapeHtml(row.institution_code || institutionCode || "-")}</td>
+            <td>${escapeHtml(row.grade || "-")}</td>
+            <td>${escapeHtml(row.learning_area || "-")}</td>
+            <td>${escapeHtml(row.stream || "-")}</td>
+            <td>${escapeHtml(row.learner_name || "-")}</td>
+            <td>${escapeHtml(row.admission_number || "-")}</td>
+            <td>${escapeHtml(row.serial || "-")}</td>
+          </tr>
+        `).join("")
+        : `<tr><td colspan="7">No serials generated yet.</td></tr>`;
     };
     const setEnabled = (node, state) => {
       if (!node) return;
@@ -6875,6 +6939,8 @@ async function renderCbcCurriculumEditor(options = {}) {
         });
         generatedExamId = Number(generated?.id || 0) || null;
         processed = false;
+        allocatedSerials = [];
+        renderSerialRows([]);
         if (outputEl) outputEl.value = String(generated?.examText || "").trim();
         setGenStatus(`Generated exam #${generatedExamId || "-"} using ${selectedStrandsList.length} strand(s) and ${selectedSubsList.length} sub-strand(s).`);
         updateActivation();
@@ -6919,7 +6985,12 @@ async function renderCbcCurriculumEditor(options = {}) {
             mode: String(outputModeEl?.value || "per_learner")
           })
         });
-        allocatedSerials = Array.isArray(serialResponse?.serials) ? serialResponse.serials : [];
+        allocatedSerials = (Array.isArray(serialResponse?.serials) ? serialResponse.serials : []).map((row) => ({
+          ...row,
+          institution_code: row.institution_code || institutionCode || "-",
+          learning_area: String(areaEl?.value || "")
+        }));
+        renderSerialRows(allocatedSerials);
         processed = true;
         setGenStatus(`Processed output mode ${String(outputModeEl?.value || "")}. Generated ${allocatedSerials.length} serial records.`);
         updateActivation();
@@ -6965,6 +7036,10 @@ async function renderCbcCurriculumEditor(options = {}) {
         alert(error.message);
       }
     });
+    sampleBtn?.addEventListener("click", () => {
+      const sampleText = buildSamplePaperText();
+      downloadTextFile("exam-sample-paper-template.txt", sampleText);
+    });
     templateDownloadBtn?.addEventListener("click", async () => {
       try {
         const key = templateKeyForCurrentStructure();
@@ -6975,16 +7050,7 @@ async function renderCbcCurriculumEditor(options = {}) {
           downloadTextFile(`${key}.txt`, selected.content);
           return;
         }
-        const fallback = [
-          `Template Key: ${key}`,
-          `Structure: ${String(structureEl?.value || "unified")}`,
-          `Structure Detail: ${String(structureDetailEl?.value || "default")}`,
-          "",
-          "Section Instructions",
-          "- Keep total marks within 100.",
-          "- Align questions to selected strands/sub-strands only.",
-          "- Include question marks clearly."
-        ].join("\n");
+        const fallback = [buildSamplePaperText(), "", `Template Key: ${key}`].join("\n");
         downloadTextFile(`${key}.txt`, fallback);
       } catch (error) {
         alert(error.message);
@@ -7026,6 +7092,7 @@ async function renderCbcCurriculumEditor(options = {}) {
         templateUploadInput.value = "";
       }
     });
+    renderSerialRows([]);
     refreshStructureDetailChoices();
     updateActivation();
   };

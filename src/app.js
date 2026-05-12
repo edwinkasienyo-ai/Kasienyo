@@ -10960,30 +10960,78 @@ function buildAdvancedExamText({
     ""
   ];
 
-  const sectionTemplates = {
-    unified: [
-      "UNIFIED PAPER",
-      "1) Explain key concepts from selected strand/sub-strand and prior covered strands.",
-      "2) Apply the concept in a school/community context.",
-      "3) Distinguish related terms and provide practical examples.",
-      "4) Problem-solving / short practical item based on curriculum outcomes.",
-      "5) Extended response aligned to CBC competencies."
-    ],
-    structured: [
+  const cleanTopic = (value = "") =>
+    cleanValue(value)
+      .replace(/^\d+(\.\d+)?\s*/g, "")
+      .replace(/\s+/g, " ")
+      .trim();
+  const topicPool = Array.from(
+    new Set(
+      [
+        ...(Array.isArray(selectedSubStrands) ? selectedSubStrands : []),
+        ...(Array.isArray(selectedStrands) ? selectedStrands : []),
+        ...(Array.isArray(referenceRows) ? referenceRows.map((row) => row?.sub_strand || row?.strand || "") : [])
+      ]
+        .map((item) => cleanTopic(item))
+        .filter(Boolean)
+    )
+  );
+  const isPreTechnicalPaper = cleanValue(learningArea).toLowerCase().includes("pre-technical");
+  const priorityPrompts = isPreTechnicalPaper
+    ? ["pre-technical studies", "fire", "computer"]
+    : [cleanValue(learningArea || "the learning area")];
+  const promptPool = Array.from(new Set([...priorityPrompts, ...topicPool])).slice(0, 12);
+  const promptFor = (index) => promptPool[index] || promptPool[promptPool.length - 1] || "the selected topic";
+  const sectionAQuestions = Array.from({ length: 10 }).map((_, index) => {
+    const topic = promptFor(index);
+    return `${index + 1}. What is ${topic}?\n   A. Correct definition\n   B. Unrelated statement\n   C. Incorrect process\n   D. Opposite meaning`;
+  });
+  const sectionBQuestions = Array.from({ length: 5 }).map((_, index) => {
+    const topic = promptFor(index + 2);
+    return `${index + 11}. Explain ${topic} and give one practical example in school/community context.`;
+  });
+  const sectionCQuestions = Array.from({ length: 3 }).map((_, index) => {
+    const topic = promptFor(index + 5);
+    return `${index + 16}. Apply ${topic} in a real-life task and outline safety/quality steps.`;
+  });
+  let body = [];
+  if (String(structure || "unified") === "structured") {
+    body = [
       "STRUCTURED PAPER",
-      "SECTION A: Short objective questions (coverage constrained to selected scope).",
-      "SECTION B: Structured response questions requiring explanation and application.",
-      "SECTION C: Competency/performance item linked to learning outcomes."
-    ],
-    "multi-section": [
+      "",
+      "SECTION A (Objective Questions)",
+      ...sectionAQuestions,
+      "",
+      "SECTION B (Short Answer Questions)",
+      ...sectionBQuestions
+    ];
+    if (cleanValue(structureDetail) === "A_B_C") {
+      body.push("", "SECTION C (Extended Response / Application)", ...sectionCQuestions);
+    }
+  } else if (String(structure || "unified") === "multi-section") {
+    body = [
       "MULTI-SECTION PAPER",
-      "PAPER 1: Foundational recall + comprehension questions.",
-      "PAPER 2: Application and analysis questions.",
-      "PAPER 3: Competency-based project/task questions."
-    ]
-  };
-
-  const body = sectionTemplates[structure] || sectionTemplates.unified;
+      "",
+      "PAPER 1",
+      ...sectionAQuestions.slice(0, 6),
+      "",
+      "PAPER 2",
+      ...sectionBQuestions
+    ];
+    if (cleanValue(structureDetail) === "PAPER_1_2_3") {
+      body.push("", "PAPER 3", ...sectionCQuestions);
+    }
+  } else {
+    body = [
+      "UNIFIED PAPER",
+      "",
+      "SECTION A (Objective Questions)",
+      ...sectionAQuestions,
+      "",
+      "SECTION B (Short Answer Questions)",
+      ...sectionBQuestions
+    ];
+  }
   return [
     ...sharedHeader,
     "AI GENERATED EXAM PAPER",
@@ -11785,6 +11833,14 @@ app.post(
           [institutionId, grade || "", form || "", grade || form || "", stream || "", stream || ""]
         )
       : [{ id: null, full_name: "BULK", admission_number: "BULK", learner_serial_number: null }];
+    const institutionRows = await query(
+      `SELECT institution_code
+       FROM institutions
+       WHERE id = ?
+       LIMIT 1`,
+      [institutionId]
+    ).catch(() => []);
+    const institutionCode = cleanValue(institutionRows[0]?.institution_code || "");
     let serials = [];
     if (mode === "per_learner") {
       serials = learners.map((learner) => ({
@@ -11792,7 +11848,10 @@ app.post(
         learner_serial_number: learner.learner_serial_number || null,
         learner_name: learner.full_name,
         admission_number: learner.admission_number,
+        institution_id: institutionId,
+        institution_code: institutionCode || null,
         grade: learner.grade || grade || form,
+        learning_area: learningArea || null,
         stream: learner.stream || stream || null,
         serial: buildExamSerialSegment({
           grade, form, learningArea, examType, term, year, stream,
@@ -11812,7 +11871,10 @@ app.post(
         learner_serial_number: null,
         learner_name: `STREAM ${streamName}`,
         admission_number: "STREAM",
+        institution_id: institutionId,
+        institution_code: institutionCode || null,
         grade: grade || form,
+        learning_area: learningArea || null,
         stream: streamName,
         serial: buildExamSerialSegment({
           grade, form, learningArea, examType, term, year, stream: streamName,
@@ -11825,7 +11887,10 @@ app.post(
         learner_serial_number: null,
         learner_name: "CLASS",
         admission_number: "CLASS",
+        institution_id: institutionId,
+        institution_code: institutionCode || null,
         grade: grade || form,
+        learning_area: learningArea || null,
         stream: stream || "N/A",
         serial: buildExamSerialSegment({
           grade, form, learningArea, examType, term, year, stream: stream || "N/A",
