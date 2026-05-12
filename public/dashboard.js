@@ -6042,11 +6042,14 @@ async function renderCbcCurriculumEditor(options = {}) {
             <input id="examV2MaterialTitle" placeholder="Material title" />
             <label>Upload File</label>
             <input id="examV2MaterialFile" type="file" />
+            <label>Paste Notes / Exam Text</label>
+            <textarea id="examV2MaterialPaste" rows="6" placeholder="Paste content here when PDF upload is not available..."></textarea>
             <label>Notes Output</label>
             <textarea id="examV2NotesOutput" rows="8" placeholder="Generated notes appear here..."></textarea>
           </div>
           <div class="actions-row exam-icon-group">
             <button class="ax-btn ax-btn--upload ax-btn--sm" id="examV2MaterialUploadBtn" title="Upload material">Upload</button>
+            <button class="ax-btn ax-btn--save ax-btn--sm" id="examV2MaterialPasteSaveBtn" title="Save pasted notes">Save Paste</button>
             <button class="ax-btn ax-btn--generate ax-btn--sm" id="examV2NotesGenerateBtn" title="AI generate notes">AI Generate</button>
             <button class="ax-btn ax-btn--print ax-btn--sm" id="examV2NotesPrintBtn" title="Print notes">Print</button>
             <button class="ax-btn ax-btn--download ax-btn--sm" id="examV2NotesDownloadBtn" title="Download notes">Download</button>
@@ -6310,6 +6313,50 @@ async function renderCbcCurriculumEditor(options = {}) {
         return;
       }
       setStatus(result.message || "Material uploaded.");
+      await renderCurriculumTab();
+    });
+    document.getElementById("examV2MaterialPasteSaveBtn")?.addEventListener("click", async () => {
+      const pastedText = String(document.getElementById("examV2MaterialPaste")?.value || "").trim();
+      if (!pastedText) {
+        alert("Paste notes/exam text first.");
+        return;
+      }
+      const levelPayload = parseLevelChoice(String(matLevelEl?.value || ""));
+      const grade = levelPayload.grade;
+      const form_name = levelPayload.form_name;
+      const learning_area = String(matAreaEl?.value || "");
+      if ((!grade && !form_name) || !learning_area) {
+        alert("Select grade/form and learning area in Learning Materials section before saving pasted text.");
+        return;
+      }
+      const titleValue = String(document.getElementById("examV2MaterialTitle")?.value || "").trim();
+      const fileStem = (titleValue || `${learning_area}-${grade || form_name}-notes`)
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-+|-+$/g, "") || "pasted-notes";
+      const textFile = new File([pastedText], `${fileStem}.txt`, { type: "text/plain;charset=utf-8" });
+      const formData = new FormData();
+      formData.append("file", textFile);
+      formData.append("resource_type", String(document.getElementById("examV2MaterialType")?.value || "notes"));
+      formData.append("title", titleValue || `${learning_area} pasted notes`);
+      formData.append("description", `Exam V2 pasted text: ${learning_area}`);
+      formData.append("grade", grade);
+      formData.append("form_name", form_name);
+      formData.append("learning_area", learning_area);
+      formData.append("strand", String(matStrandEl?.value || "").trim());
+      formData.append("sub_strand", String(matSubEl?.value || "").trim());
+      formData.append("term", "Term One");
+      const response = await fetch("/api/cbc/curriculum/materials/upload", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+        body: formData
+      });
+      const result = await response.json();
+      if (!response.ok) {
+        alert(result.error || "Saving pasted notes failed.");
+        return;
+      }
+      setStatus(result.message || "Pasted notes saved.");
       await renderCurriculumTab();
     });
 
