@@ -3916,6 +3916,82 @@ td .ax-btn::before,
   color: #0c3f70;
 }
 
+/* Examination workspace nav (dropdown + chips; avoids giant icon-only tab bars) */
+.exam-top-nav.exam-nav-shell {
+  margin: 8px 0 12px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  overflow: visible;
+  display: block;
+}
+.exam-nav-rework {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid #d7e3f2;
+  border-radius: 10px;
+  background: #f7fbff;
+}
+.exam-nav-rework-primary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.exam-nav-rework-label {
+  font-size: 11px;
+  font-weight: 700;
+  color: #0c3f70;
+  margin: 0;
+  white-space: nowrap;
+}
+.exam-tab-quick-select {
+  flex: 1 1 220px;
+  min-width: min(100%, 260px);
+  max-width: 100%;
+  font-size: 13px;
+  padding: 7px 10px;
+  border-radius: 8px;
+  border: 1px solid #b9cfe6;
+  background: #ffffff;
+  color: #0d3d6d;
+}
+.exam-nav-rework-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+button.exam-nav-chip {
+  font-size: 11px;
+  padding: 5px 11px;
+  border-radius: 999px;
+  border: 1px solid #c5d8ef;
+  background: #ffffff;
+  color: #0c3f70;
+  cursor: pointer;
+  font-weight: 600;
+  line-height: 1.2;
+}
+button.exam-nav-chip:hover {
+  border-color: #6cb7ff;
+  background: #eef6ff;
+}
+button.exam-nav-chip.is-active,
+button.exam-nav-chip[aria-current="page"] {
+  background: #d5ecff;
+  border-color: #6cb7ff;
+  color: #05294a;
+}
+.exam-ai-hint {
+  border-left: 3px solid #1f79e8;
+  padding: 4px 0 4px 8px;
+  margin-bottom: 6px;
+  background: linear-gradient(90deg, rgba(31, 121, 232, 0.08), transparent);
+}
+
 .exam-icon-group button {
   transition: transform 0.14s ease, filter 0.14s ease;
 }

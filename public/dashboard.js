@@ -12,7 +12,7 @@ let portalContext = null;
 let searchRowDrafts = {};
 let dashboardAutoRefreshHandle = null;
 let currentSidebarSubmoduleId = null;
-const CLIENT_UI_BUNDLE_ID = "dash-bundle-main-v73-phase2-hardening-redesign";
+const CLIENT_UI_BUNDLE_ID = "dash-bundle-main-v73-exam-nav-unblock";
 const examPanelState = {
   generatedExam: null,
   serials: [],
@@ -339,6 +339,8 @@ function applyCompactIconButtons(scope = document) {
   ]);
   scope.querySelectorAll("button, label.ax-btn").forEach((node) => {
     if (node.closest(".sidebar-scroll")) return;
+    if (node.closest("#examTopNav")) return;
+    if (node.classList.contains("exam-nav-chip")) return;
     if (preserveButtonIds.has(String(node.id || ""))) return;
     const text = String(node.textContent || "").trim();
     if (node.tagName === "BUTTON") {
@@ -410,6 +412,8 @@ function styleExamModuleButtonsAsNamedIcons(scope = document) {
   if (!scope || typeof scope.querySelectorAll !== "function") return;
   scope.querySelectorAll("button.ax-btn, .actions-row > button").forEach((button) => {
     if (!button) return;
+    if (button.closest("#examTopNav")) return;
+    if (button.classList.contains("exam-nav-chip")) return;
     button.classList.add("exam-stack-top", "ax-btn--icon-only");
     button.classList.remove("icon-symbolic");
     const label = String(button.getAttribute("aria-label") || button.getAttribute("title") || button.textContent || "")
@@ -5213,7 +5217,7 @@ function normalizeExamTabKey(tab = "") {
     "copilot": "ai-copilot",
     "ai-assistant": "ai-copilot"
   };
-  return aliases[value] || value || "curriculum";
+  return aliases[value] || value || "exam-generation";
 }
 
 function examTemplatePresetContent(templateKey = "exam-paper") {
@@ -6043,7 +6047,7 @@ async function renderCbcCurriculumEditor(options = {}) {
     return;
   }
 
-  const initialTab = normalizeExamTabKey(options?.examTab || "curriculum");
+  const initialTab = normalizeExamTabKey(options?.examTab || "exam-generation");
   const canonicalGrades = [
     "PP1",
     "PP2",
@@ -6124,9 +6128,9 @@ async function renderCbcCurriculumEditor(options = {}) {
   document.getElementById("formArea").innerHTML = `
     <div class="module-header-card exam-v2-header exam-module-compact-header">
       <h3>Examination Management</h3>
-      <p class="exam-tight-note">CBC-aligned examinations: curriculum, generation, entry, scripts, analytics, templates, archives.</p>
+      <p class="exam-tight-note">Use the <strong>Section</strong> menu or quick links → then the workspace below. Default: <strong>Exam Generation</strong>. CBC + AI use curriculum rows and uploaded materials.</p>
     </div>
-    <nav id="examTopNav" class="exam-top-nav exam-nav-compact" aria-label="Examination submodules"></nav>
+    <nav id="examTopNav" class="exam-top-nav exam-nav-shell" aria-label="Examination submodules"></nav>
     <section id="examMgmtSubmodulePanel" class="dashboard-section exam-module-compact-max"></section>
     <div id="examV2Status" class="small-note"></div>
   `;
@@ -6161,14 +6165,32 @@ async function renderCbcCurriculumEditor(options = {}) {
     }
   };
 
-  const renderNav = (activeTab = "curriculum") => {
+  const renderNav = (activeTab = "exam-generation") => {
     if (!navEl) return;
-    navEl.innerHTML = tabDefs.map((tab) => `
-      <button type="button" class="ax-btn ax-btn--view ax-btn--sm exam-nav-btn${activeTab === tab.id ? " active" : ""}" data-exam-tab="${tab.id}" title="${escapeHtmlAttribute(tab.label)}">
-        ${escapeHtml(tab.label)}
-      </button>
-    `).join("");
-    styleExamModuleButtonsAsNamedIcons(navEl);
+    const active = normalizeExamTabKey(activeTab);
+    const quickTabs = [
+      { id: "curriculum", label: "Curriculum" },
+      { id: "exam-generation", label: "Exam Generation" },
+      { id: "exam-entry", label: "Exam Entry" },
+      { id: "exam-scripts", label: "Exam Scripts" },
+      { id: "ai-copilot", label: "AI Copilot" }
+    ];
+    navEl.innerHTML = `
+      <div class="exam-nav-rework">
+        <div class="exam-nav-rework-primary">
+          <label class="exam-nav-rework-label" for="examTabQuickSelect">Section</label>
+          <select id="examTabQuickSelect" class="exam-tab-quick-select" aria-label="Jump to examination section">
+            ${tabDefs.map((t) => `<option value="${escapeHtmlAttribute(t.id)}"${active === t.id ? " selected" : ""}>${escapeHtml(t.label)}</option>`).join("")}
+          </select>
+        </div>
+        <div class="exam-nav-rework-links" aria-label="Quick links">
+          ${quickTabs.map((c) => {
+            const isOn = active === c.id;
+            return `<button type="button" class="exam-nav-chip${isOn ? " is-active" : ""}" data-keep-button-style="1" data-exam-tab="${escapeHtmlAttribute(c.id)}" title="${escapeHtmlAttribute(c.label)}"${isOn ? " aria-current=\"page\"" : ""}>${escapeHtml(c.label)}</button>`;
+          }).join("")}
+        </div>
+      </div>
+    `;
   };
 
   const renderCurriculumTab = async () => {
@@ -6813,6 +6835,7 @@ async function renderCbcCurriculumEditor(options = {}) {
         <div class="exam-v2-pane">
           <h4>Exam Generation</h4>
           <p class="small-note exam-tight-note">Session → Year → Term → Grade/Form → Stream → Area → strands/sub-strands → structure → output.</p>
+          <p class="exam-ai-hint exam-tight-note" role="note"><strong>AI &amp; CBC:</strong> Questions draw from selected strands, curriculum text, and learning materials. Social Studies / Pre-Technical follow the objective + structured layout rules.</p>
           <div class="form-grid form-grid--exam-tight">
             <label>Examination Session</label>
             <select id="examV2GenSession"><option value="">Select session</option>${examSessions.map((v) => `<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`).join("")}</select>
@@ -9737,12 +9760,9 @@ async function renderCbcCurriculumEditor(options = {}) {
     await load();
   };
 
-  const activateTab = async (targetTab = "curriculum") => {
-    const tab = normalizeExamTabKey(targetTab || "curriculum");
+  const activateTab = async (targetTab = "exam-generation") => {
+    const tab = normalizeExamTabKey(targetTab || "exam-generation");
     renderNav(tab);
-    navEl?.querySelectorAll("[data-exam-tab]").forEach((btn) => {
-      btn.addEventListener("click", () => activateTab(String(btn.getAttribute("data-exam-tab") || "curriculum")));
-    });
     setStatus(`Loading ${tabDefs.find((item) => item.id === tab)?.label || "module"}...`);
     if (tab === "curriculum") await renderCurriculumTab();
     else if (tab === "exam-generation") await renderExamGenerationTab();
@@ -9780,6 +9800,21 @@ async function renderCbcCurriculumEditor(options = {}) {
     }
     setStatus(`${tabDefs.find((item) => item.id === tab)?.label || "Module"} ready.`);
   };
+
+  if (navEl && navEl.dataset.examNavDelegation !== "1") {
+    navEl.dataset.examNavDelegation = "1";
+    navEl.addEventListener("change", (e) => {
+      if (e.target?.id !== "examTabQuickSelect") return;
+      const v = String(e.target.value || "").trim();
+      if (v) activateTab(v);
+    });
+    navEl.addEventListener("click", (e) => {
+      const chip = e.target.closest?.(".exam-nav-chip");
+      if (!chip) return;
+      const id = chip.getAttribute("data-exam-tab");
+      if (id) activateTab(id);
+    });
+  }
 
   await activateTab(initialTab);
 }
