@@ -1380,6 +1380,29 @@ CREATE TABLE IF NOT EXISTS system_developer_institution_assignments (
   CONSTRAINT fk_system_dev_assign_user FOREIGN KEY (developer_user_id) REFERENCES users(id),
   CONSTRAINT fk_system_dev_assign_institution FOREIGN KEY (institution_id) REFERENCES institutions(id)
 )`);
+
+  const academicExamsTableRows = await query(
+    `SELECT COUNT(*) total
+     FROM INFORMATION_SCHEMA.TABLES
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = 'academic_exams'`
+  );
+  if (Number(academicExamsTableRows[0]?.total || 0)) {
+    const academicExamsTeacherSupplementRows = await query(
+      `SELECT COUNT(*) total
+       FROM INFORMATION_SCHEMA.COLUMNS
+       WHERE TABLE_SCHEMA = DATABASE()
+         AND TABLE_NAME = 'academic_exams'
+         AND COLUMN_NAME = 'teacher_exam_supplement'`
+    );
+    if (!Number(academicExamsTeacherSupplementRows[0]?.total || 0)) {
+      await query(
+        `ALTER TABLE academic_exams ADD COLUMN teacher_exam_supplement LONGTEXT NULL AFTER generated_exam_text`
+      );
+      // eslint-disable-next-line no-console
+      console.warn("[IIMS] Added academic_exams.teacher_exam_supplement for learner/teacher exam split.");
+    }
+  }
 }
 
 async function start() {
