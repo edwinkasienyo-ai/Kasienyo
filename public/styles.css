@@ -4649,3 +4649,9 @@ body {
 .template-spacious {
   min-height: 80px !important;
 }
+
+.exam-gen-serial-hint {
+  border-left: 3px solid #1a5a8a;
+  padding-left: 8px;
+  margin: 4px 0 8px !important;
+}

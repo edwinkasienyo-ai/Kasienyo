@@ -12,7 +12,7 @@ let portalContext = null;
 let searchRowDrafts = {};
 let dashboardAutoRefreshHandle = null;
 let currentSidebarSubmoduleId = null;
-const CLIENT_UI_BUNDLE_ID = "dash-bundle-main-v77-kjse-exam-preview";
+const CLIENT_UI_BUNDLE_ID = "dash-bundle-main-v78-serial-qr-hint";
 const examPanelState = {
   generatedExam: null,
   serials: [],
@@ -6957,7 +6957,7 @@ async function renderCbcCurriculumEditor(options = {}) {
           </details>
           <details class="exam-v2-collapse">
             <summary>Serial Number Generation Center</summary>
-            <p class="small-note">Serials are generated per institution, grade/form, learning area, stream and learner after Process.</p>
+            <p class="small-note exam-gen-serial-hint"><strong>Serial numbers and QR codes appear here only after you click <em>Process</em></strong> (below). Generate alone creates the exam paper text; Process allocates one serial per learner and unlocks the QR buttons.</p>
             <div class="dashboard-table-wrap">
               <table class="dashboard-table">
                 <thead><tr><th>Institution</th><th>Grade/Form</th><th>Learning Area</th><th>Stream</th><th>Learner</th><th>Admission</th><th>Serial</th><th>QR</th></tr></thead>
@@ -8105,7 +8105,9 @@ async function renderCbcCurriculumEditor(options = {}) {
         setSchemeStatus("Marking scheme will activate after Process.");
         examPanelState.generatedExam = { id: generatedExamId, payload };
         examPanelState.serials = [];
-        setGenStatus(`Generated exam #${generatedExamId || "-"} using ${selectedStrandsList.length} strand(s) and ${selectedSubsList.length} sub-strand(s).`);
+        setGenStatus(
+          `Generated exam #${generatedExamId || "-"} using ${selectedStrandsList.length} strand(s) and ${selectedSubsList.length} sub-strand(s). Next: click Process to create learner serials and QR codes (they only appear after Process).`
+        );
         updateActivation();
       } catch (error) {
         alert(error.message);
