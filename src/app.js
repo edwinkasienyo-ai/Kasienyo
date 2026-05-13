@@ -10,6 +10,8 @@ const multer = require("multer");
 const nodemailer = require("nodemailer");
 const twilio = require("twilio");
 const { v4: uuidv4 } = require("uuid");
+const crypto = require("crypto");
+const { generateExamStemsWithOpenAi } = require("./services/examAiService");
 const dayjs = require("dayjs");
 const { query } = require("./config/db");
 const {
@@ -10773,6 +10775,14 @@ moduleConfigs.forEach((config) => {
           data.medical_condition_notes = null;
         }
       }
+      if (config.table === "academic_exams") {
+        const touchesExam =
+          Object.prototype.hasOwnProperty.call(data, "generated_exam_text") ||
+          Object.prototype.hasOwnProperty.call(data, "teacher_exam_supplement");
+        if (touchesExam) {
+          data.serials_processed_at = null;
+        }
+      }
       data = await filterRowByTableColumns(config.table, data);
       const columns = Object.keys(data);
       if (!columns.length) {
@@ -11194,7 +11204,8 @@ function examPaperBuildMcqBlock({
   seedKey,
   kind,
   oneMarkEach = false,
-  indentOptions = "   "
+  indentOptions = "   ",
+  stemOverrides
 }) {
   const refs =
     Array.isArray(referenceRows) && referenceRows.length
@@ -11210,7 +11221,12 @@ function examPaperBuildMcqBlock({
     const snip = snippets.length
       ? examPaperStripStrandNoise(String(snippets[i % snippets.length] || "").replace(/\s+/g, " "), ref).trim()
       : "";
-    const stem = examPaperStemFromRef(ref, snip, learningArea, startNumber + i, rng, kind);
+    const stem =
+      Array.isArray(stemOverrides) &&
+      stemOverrides[i] &&
+      String(stemOverrides[i]).trim().length > 12
+        ? examPaperStripStrandNoise(String(stemOverrides[i]).replace(/\s+/g, " ").trim(), ref).trim()
+        : examPaperStemFromRef(ref, snip, learningArea, startNumber + i, rng, kind);
     const correct = examPaperCorrectFromRef(ref, rng);
     const wrong = examPaperBuildDistractors({ kind, correctText: correct, rng });
     const options = examPaperShuffle(
@@ -11515,11 +11531,15 @@ function buildAdvancedExamText({
   supplementalMaterialNotes,
   materialSnippets,
   socialStudiesSectionBMarks,
-  socialStudiesSectionBQuestions
+  socialStudiesSectionBQuestions,
+  aiStemOverrides
 }) {
   const kind = examPaperSubjectKind(learningArea);
-  const refs = Array.isArray(referenceRows) ? referenceRows : [];
+  const refsRaw = Array.isArray(referenceRows) ? referenceRows : [];
+  const orderRng = examPaperMulberry32(examPaperHash32(`${seedKey}|ref-order`));
+  const refs = refsRaw.length ? examPaperShuffle(refsRaw.slice(), orderRng) : [];
   const snippets = Array.isArray(materialSnippets) ? materialSnippets : [];
+  const stemOv = Array.isArray(aiStemOverrides) ? aiStemOverrides : [];
   if (supplementalMaterialNotes) {
     supplementalMaterialNotes
       .split(/\n+/)
@@ -11580,7 +11600,8 @@ function buildAdvancedExamText({
       seedKey: `${seedKey}|SOC`,
       kind: "social",
       oneMarkEach: true,
-      indentOptions: "         "
+      indentOptions: "         ",
+      stemOverrides: stemOv
     });
     body.push(`SECTION A (${sectionAMarks} MARKS)`, "*Answer all questions in this section.*", "");
     body.push(...mcq.lines);
@@ -11610,7 +11631,8 @@ function buildAdvancedExamText({
       learningArea,
       materialSnippets: snippets,
       seedKey: `${seedKey}|PT`,
-      kind: "pretechnical"
+      kind: "pretechnical",
+      stemOverrides: stemOv
     });
     body.push(`SECTION A (${sectionAMarks} MARKS AMONG ${30} ITEMS)`, "*Answer ALL questions in this section.*", "");
     body.push("(Each item carries equal weight within Section A; total Section A = 20 marks.)", "");
@@ -11647,7 +11669,8 @@ function buildAdvancedExamText({
       learningArea,
       materialSnippets: snippets,
       seedKey: `${seedKey}|ST-A`,
-      kind: "general"
+      kind: "general",
+      stemOverrides: stemOv
     });
     body.push(`${parts[0]} (${aMarks} MARKS) [OBJECTIVE]`, "", ...mcqA.lines);
     mcqKeys.push(...mcqA.keyLines);
@@ -11675,7 +11698,8 @@ function buildAdvancedExamText({
         learningArea,
         materialSnippets: snippets,
         seedKey: `${seedKey}|ST-C`,
-        kind: "general"
+        kind: "general",
+        stemOverrides: stemOv
       });
       body.push(...mcqC.lines);
       mcqKeys.push(...mcqC.keyLines);
@@ -11707,7 +11731,8 @@ function buildAdvancedExamText({
       learningArea,
       materialSnippets: snippets,
       seedKey: `${seedKey}|MS-2`,
-      kind: "general"
+      kind: "general",
+      stemOverrides: stemOv
     });
     body.push("", `PAPER 2 (${p2} MARKS) [OBJECTIVE]`, "", ...mcq2.lines);
     mcqKeys.push(...mcq2.keyLines);
@@ -11738,7 +11763,8 @@ function buildAdvancedExamText({
       learningArea,
       materialSnippets: snippets,
       seedKey: `${seedKey}|UN`,
-      kind: "general"
+      kind: "general",
+      stemOverrides: stemOv
     });
     body.push(`SECTION A (${sectionAObjectiveMarks} MARKS) [OBJECTIVE]`, "", ...mcq.lines);
     mcqKeys.push(...mcq.keyLines);
@@ -12027,7 +12053,22 @@ app.post(
     const institutionName = cleanValue(instRows[0]?.institution_name || "");
     const letterheadHint = cleanOptionalValue(instRows[0]?.letterhead_file_path || "");
     const { hours: resolvedDurH, minutes: resolvedDurM, label: examDurationLabel } = examPaperResolveDurationParts(body);
-    const seedKey = `${req.user.institution_id}|${selectedLearningArea}|${selectedSession}|${selectedYear}|${Date.now()}`;
+    const seedEntropy = `${Date.now()}|${crypto.randomBytes(10).toString("hex")}|${uuidv4()}`;
+    const seedKey = `${req.user.institution_id}|${selectedLearningArea}|${selectedSession}|${selectedYear}|${seedEntropy}`;
+    let aiStemOverrides = [];
+    if (String(process.env.OPENAI_API_KEY || "").trim()) {
+      try {
+        aiStemOverrides = await generateExamStemsWithOpenAi({
+          learningArea: selectedLearningArea,
+          gradeOrForm: selectedGrade || selectedForm || "",
+          referenceRows,
+          maxStems: 42
+        });
+      } catch (aiErr) {
+        // eslint-disable-next-line no-console
+        console.warn("[exam-ai] OpenAI stem pass skipped:", aiErr?.message || aiErr);
+      }
+    }
     const rawSocial = body.social_studies && typeof body.social_studies === "object" ? body.social_studies : {};
     const socialBM = Number(rawSocial.section_b_marks);
     const socialBQ = Number(rawSocial.section_b_questions);
@@ -12053,7 +12094,8 @@ app.post(
       supplementalMaterialNotes,
       materialSnippets,
       socialStudiesSectionBMarks: Number.isFinite(socialBM) && socialBM >= 10 ? socialBM : null,
-      socialStudiesSectionBQuestions: Number.isFinite(socialBQ) && socialBQ >= 3 ? socialBQ : null
+      socialStudiesSectionBQuestions: Number.isFinite(socialBQ) && socialBQ >= 3 ? socialBQ : null,
+      aiStemOverrides
     });
     const learnerExamText = examBundle.learnerText;
     const teacherExamSupplement = examBundle.teacherSupplement || "";
@@ -12098,7 +12140,9 @@ app.post(
       percentage_allocation: percentageText,
       section_allocation: sectionAllocationText,
       used_curriculum_rows: referenceRows.length,
-      used_material_rows: supplementalMaterialNotes ? supplementalMaterialNotes.split("\n").length : 0
+      used_material_rows: supplementalMaterialNotes ? supplementalMaterialNotes.split("\n").length : 0,
+      ai_stems_used: aiStemOverrides.length,
+      ai_stems_source: aiStemOverrides.length ? "openai" : "curriculum_template"
     });
   })
 );
@@ -12622,6 +12666,7 @@ app.post(
   asyncHandler(async (req, res) => {
     const institutionId = Number(req.user.institution_id);
     const body = req.body || {};
+    const examId = Number(body.exam_id || body.academic_exam_id || 0) || 0;
     const grade = cleanValue(body.grade || "");
     const form = cleanValue(body.form_name || "");
     const learningArea = cleanValue(body.learning_area || body.subject || "");
@@ -12635,6 +12680,24 @@ app.post(
       : "per_learner";
     if (!(grade || form) || !learningArea || !examType) {
       return res.status(400).json({ error: "grade/form, learning_area/subject and exam_type are required." });
+    }
+    if (examId > 0) {
+      const examCols = await getExistingColumns("academic_exams", ["serials_processed_at"]);
+      if (examCols.includes("serials_processed_at")) {
+        const examRows = await query(
+          `SELECT id, serials_processed_at FROM academic_exams WHERE id = ? AND institution_id = ? LIMIT 1`,
+          [examId, institutionId]
+        );
+        if (!examRows.length) {
+          return res.status(404).json({ error: "Exam record not found." });
+        }
+        if (examRows[0].serials_processed_at) {
+          return res.status(409).json({
+            error:
+              "This exam has already been processed for serial numbers and QR payloads. Click Generate to create a new exam, then Process once."
+          });
+        }
+      }
     }
     const learnerSerialColumns = await getExistingColumns("learners", ["learner_serial_number"]);
     const hasLearnerSerialColumn = learnerSerialColumns.includes("learner_serial_number");
@@ -12769,6 +12832,15 @@ app.post(
           })
         })
       }];
+    }
+    if (examId > 0) {
+      const examCols = await getExistingColumns("academic_exams", ["serials_processed_at"]);
+      if (examCols.includes("serials_processed_at")) {
+        await query(
+          `UPDATE academic_exams SET serials_processed_at = UTC_TIMESTAMP() WHERE id = ? AND institution_id = ?`,
+          [examId, institutionId]
+        );
+      }
     }
     res.json({ count: serials.length, mode, serials });
   })

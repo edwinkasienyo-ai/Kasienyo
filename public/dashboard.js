@@ -12,7 +12,7 @@ let portalContext = null;
 let searchRowDrafts = {};
 let dashboardAutoRefreshHandle = null;
 let currentSidebarSubmoduleId = null;
-const CLIENT_UI_BUNDLE_ID = "dash-bundle-main-v78-serial-qr-hint";
+const CLIENT_UI_BUNDLE_ID = "dash-bundle-main-v79-exam-ai-process-once";
 const examPanelState = {
   generatedExam: null,
   serials: [],
@@ -4140,6 +4140,7 @@ function wireExamGenerationPanel() {
       const serialAllocation = await request("/api/academic/exams/allocate-serials", {
         method: "POST",
         body: JSON.stringify({
+          exam_id: Number(generated?.id || 0) || 0,
           grade: payload.grade,
           form_name: payload.formName,
           stream: payload.stream,
@@ -6957,7 +6958,7 @@ async function renderCbcCurriculumEditor(options = {}) {
           </details>
           <details class="exam-v2-collapse">
             <summary>Serial Number Generation Center</summary>
-            <p class="small-note exam-gen-serial-hint"><strong>Serial numbers and QR codes appear here only after you click <em>Process</em></strong> (below). Generate alone creates the exam paper text; Process allocates one serial per learner and unlocks the QR buttons.</p>
+            <p class="small-note exam-gen-serial-hint"><strong>Serial numbers and QR codes appear here only after you click <em>Process</em></strong> (below). Each generated exam can be processed once for serials/QR; click <strong>Generate</strong> again for a fresh paper. Generate alone creates the exam text; Process allocates one serial per learner and unlocks the QR buttons.</p>
             <div class="dashboard-table-wrap">
               <table class="dashboard-table">
                 <thead><tr><th>Institution</th><th>Grade/Form</th><th>Learning Area</th><th>Stream</th><th>Learner</th><th>Admission</th><th>Serial</th><th>QR</th></tr></thead>
@@ -7074,7 +7075,8 @@ async function renderCbcCurriculumEditor(options = {}) {
     let mappingRows = [];
     let generatedExamId = null;
     let allocatedSerials = [];
-    let processed = false;
+    let serialsDone = false;
+    let editReady = true;
     const institutionCode = String(portalContext?.institution_code || portalContext?.institutionCode || "-");
     const examGenBrandInstitutionEl = document.getElementById("examGenBrandInstitution");
     const examGenBrandLogo = document.getElementById("examGenBrandLogo");
@@ -7872,16 +7874,16 @@ async function renderCbcCurriculumEditor(options = {}) {
       const editing = String(editChoiceEl?.value || "no") === "yes";
       if (outputEl) outputEl.readOnly = !editing;
       setEnabled(saveEditedBtn, Boolean(generatedExamId) && editing);
-      setEnabled(processBtn, Boolean(generatedExamId) && (!editing || processed));
-      setEnabled(deliveryModeEl, Boolean(generatedExamId) && processed);
-      setEnabled(runDeliveryBtn, Boolean(generatedExamId) && processed && Boolean(String(deliveryModeEl?.value || "").trim()));
+      setEnabled(processBtn, Boolean(generatedExamId) && !serialsDone && (!editing || editReady));
+      setEnabled(deliveryModeEl, Boolean(generatedExamId) && serialsDone);
+      setEnabled(runDeliveryBtn, Boolean(generatedExamId) && serialsDone && Boolean(String(deliveryModeEl?.value || "").trim()));
       const schemeReady = Boolean(String(schemeOutputEl?.value || "").trim());
-      setEnabled(schemeGenerateBtn, Boolean(generatedExamId) && processed && Boolean(String(outputEl?.value || "").trim()));
+      setEnabled(schemeGenerateBtn, Boolean(generatedExamId) && serialsDone && Boolean(String(outputEl?.value || "").trim()));
       setEnabled(schemeViewBtn, Boolean(generatedExamId) && schemeReady);
       setEnabled(schemeSaveBtn, Boolean(generatedExamId) && schemeReady);
       setEnabled(schemeDownloadBtn, schemeReady);
       setEnabled(schemePrintBtn, schemeReady);
-      if (schemeOutputEl) schemeOutputEl.readOnly = !processed;
+      if (schemeOutputEl) schemeOutputEl.readOnly = !serialsDone;
       if (nonUnified && structuredTotal() > 100) {
         setGenStatus("Structured section marks cannot exceed total 100.");
       }
@@ -8040,7 +8042,8 @@ async function renderCbcCurriculumEditor(options = {}) {
     sectionCEl?.addEventListener("input", updateActivation);
     outputModeEl?.addEventListener("change", updateActivation);
     editChoiceEl?.addEventListener("change", () => {
-      processed = String(editChoiceEl?.value || "no") === "no";
+      const editingOn = String(editChoiceEl?.value || "no") === "yes";
+      editReady = !editingOn;
       updateActivation();
     });
     deliveryModeEl?.addEventListener("change", updateActivation);
@@ -8093,7 +8096,8 @@ async function renderCbcCurriculumEditor(options = {}) {
           body: JSON.stringify(payload)
         });
         generatedExamId = Number(generated?.id || 0) || null;
-        processed = false;
+        serialsDone = false;
+        editReady = String(editChoiceEl?.value || "no") !== "yes";
         allocatedSerials = [];
         renderSerialRows([]);
         if (outputEl) outputEl.value = String(generated?.examText || "").trim();
@@ -8126,7 +8130,8 @@ async function renderCbcCurriculumEditor(options = {}) {
             teacher_exam_supplement: examPanelState.teacherExamSupplement || null
           })
         });
-        processed = true;
+        editReady = true;
+        serialsDone = false;
         if (schemeOutputEl) schemeOutputEl.value = "";
         latestMarkingSchemeText = "";
         examPanelState.markingScheme = "";
@@ -8147,6 +8152,7 @@ async function renderCbcCurriculumEditor(options = {}) {
         const serialResponse = await request("/api/academic/exams/allocate-serials", {
           method: "POST",
           body: JSON.stringify({
+            exam_id: generatedExamId,
             grade,
             form_name,
             stream: selectedStream(),
@@ -8195,7 +8201,7 @@ async function renderCbcCurriculumEditor(options = {}) {
         if (schemeOutputEl) schemeOutputEl.value = schemeText;
         setSchemeStatus(`Marking scheme generated and aligned to ${allocatedSerials.length ? `${allocatedSerials.length} processed serial record(s)` : "current exam questions"}.`);
         renderSerialRows(allocatedSerials);
-        processed = true;
+        serialsDone = true;
         setGenStatus(`Processed output mode ${String(outputModeEl?.value || "")}. Generated ${allocatedSerials.length} serial records.`);
         updateActivation();
       } catch (error) {
@@ -8247,7 +8253,7 @@ async function renderCbcCurriculumEditor(options = {}) {
       }
     });
     schemeGenerateBtn?.addEventListener("click", () => {
-      if (!processed) {
+      if (!serialsDone) {
         alert("Process exam first to activate marking scheme generation.");
         return;
       }

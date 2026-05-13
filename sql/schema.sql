@@ -508,6 +508,7 @@ CREATE TABLE IF NOT EXISTS academic_exams (
   notes_file_path VARCHAR(255) NULL,
   generated_exam_text LONGTEXT NULL,
   teacher_exam_supplement LONGTEXT NULL,
+  serials_processed_at DATETIME NULL,
   exam_file_path VARCHAR(255) NULL,
   term VARCHAR(40) NULL,
   year INT NULL,

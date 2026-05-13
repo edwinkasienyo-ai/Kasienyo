@@ -1402,6 +1402,20 @@ CREATE TABLE IF NOT EXISTS system_developer_institution_assignments (
       // eslint-disable-next-line no-console
       console.warn("[IIMS] Added academic_exams.teacher_exam_supplement for learner/teacher exam split.");
     }
+    const academicExamsSerialsProcessedRows = await query(
+      `SELECT COUNT(*) total
+       FROM INFORMATION_SCHEMA.COLUMNS
+       WHERE TABLE_SCHEMA = DATABASE()
+         AND TABLE_NAME = 'academic_exams'
+         AND COLUMN_NAME = 'serials_processed_at'`
+    );
+    if (!Number(academicExamsSerialsProcessedRows[0]?.total || 0)) {
+      await query(
+        `ALTER TABLE academic_exams ADD COLUMN serials_processed_at DATETIME NULL AFTER teacher_exam_supplement`
+      );
+      // eslint-disable-next-line no-console
+      console.warn("[IIMS] Added academic_exams.serials_processed_at for one-time serial/QR processing per exam.");
+    }
   }
 }
 
