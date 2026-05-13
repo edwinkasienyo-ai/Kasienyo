@@ -12,7 +12,7 @@ let portalContext = null;
 let searchRowDrafts = {};
 let dashboardAutoRefreshHandle = null;
 let currentSidebarSubmoduleId = null;
-const CLIENT_UI_BUNDLE_ID = "dash-bundle-main-v73-exam-nav-unblock";
+const CLIENT_UI_BUNDLE_ID = "dash-bundle-main-v73-exam-workspace-no-icon-only";
 const examPanelState = {
   generatedExam: null,
   serials: [],
@@ -349,11 +349,12 @@ function applyCompactIconButtons(scope = document) {
       node.classList.add(variant);
       if (!node.getAttribute("title")) node.setAttribute("title", text || "Action");
       if (!node.getAttribute("aria-label")) node.setAttribute("aria-label", text || "Action");
+      const inExamWorkspace = Boolean(node.closest("#examMgmtSubmodulePanel"));
       const explicitKeep =
         node.getAttribute("data-keep-button-style") === "1" ||
         /search|upload|hero|profile/i.test(String(node.id || "")) ||
         /search|upload|hero|profile/i.test(text);
-      if (!explicitKeep) {
+      if (!explicitKeep && !inExamWorkspace) {
         node.classList.add("ax-btn--icon-only");
       } else {
         node.classList.remove("ax-btn--icon-only");
@@ -375,6 +376,7 @@ function applyCompactIconButtons(scope = document) {
 function attachActionLegends(scope = document) {
   if (!scope || typeof scope.querySelectorAll !== "function") return;
   scope.querySelectorAll(".actions-row").forEach((row) => {
+    if (row.closest("#examMgmtSubmodulePanel")) return;
     if (row.nextElementSibling?.classList?.contains("action-legend-row")) return;
     const buttons = Array.from(row.querySelectorAll("button"));
     if (!buttons.length) return;
@@ -410,6 +412,7 @@ function applyTemplateVisibility(scope = document) {
 
 function styleExamModuleButtonsAsNamedIcons(scope = document) {
   if (!scope || typeof scope.querySelectorAll !== "function") return;
+  if (scope.id === "examMgmtSubmodulePanel") return;
   scope.querySelectorAll("button.ax-btn, .actions-row > button").forEach((button) => {
     if (!button) return;
     if (button.closest("#examTopNav")) return;
@@ -6145,6 +6148,12 @@ async function renderCbcCurriculumEditor(options = {}) {
     applyCompactIconButtons(panel);
     applyTemplateVisibility(panel);
     styleExamModuleButtonsAsNamedIcons(panel);
+    panel?.querySelectorAll("button.ax-btn--icon-only").forEach((btn) => {
+      btn.classList.remove("ax-btn--icon-only", "exam-stack-top");
+    });
+    navEl?.querySelectorAll("button.ax-btn--icon-only").forEach((btn) => {
+      btn.classList.remove("ax-btn--icon-only", "exam-stack-top");
+    });
   };
 
   const fetchStructureSuggestions = async ({ grade, form_name, learning_area }) => {
