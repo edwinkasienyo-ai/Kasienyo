@@ -2790,8 +2790,16 @@ app.post("/api/auth/login", authLoginRateLimit, asyncHandler(async (req, res) =>
     channel: effectiveChannel,
     deliveryPlan
   });
-  const exposeOtpPreview =
-    isSuperSystemDeveloperLogin && (process.env.NODE_ENV !== "production" || parseTruthy(process.env.EXPOSE_OTP_PREVIEW));
+  const sendLog = otpSession.sendResults || [];
+  const okSteps = sendLog.filter((line) => typeof line === "string" && line.endsWith(":ok"));
+  const allDeliveriesFailed = sendLog.length > 0 && okSteps.length === 0;
+  const noMessagingProviders = !emailChannelReady() && !smsChannelReady();
+  const revealOtpToClient =
+    parseTruthy(process.env.IMIS_REVEAL_OTP_IN_LOGIN_RESPONSE) ||
+    parseTruthy(process.env.EXPOSE_OTP_PREVIEW) ||
+    effectiveChannel === "console" ||
+    allDeliveriesFailed ||
+    noMessagingProviders;
   const loggedOtpDetails = await augmentAuthAuditDetailsWithInstitution(
     buildAuthAuditDetails(req, username, {
       password_correct: true,
@@ -2800,7 +2808,7 @@ app.post("/api/auth/login", authLoginRateLimit, asyncHandler(async (req, res) =>
       otp_channel_used: effectiveChannel,
       otp_channels_delivered: otpSession.sendResults || [],
       otp_expires_at: otpSession.expiresAt,
-      otp_code: exposeOtpPreview ? otpSession.code : undefined
+      otp_code: revealOtpToClient ? otpSession.code : undefined
     }),
     account.institution_id
   );
@@ -2816,8 +2824,6 @@ app.post("/api/auth/login", authLoginRateLimit, asyncHandler(async (req, res) =>
     loggedOtpDetails
   );
 
-  const sendLog = otpSession.sendResults || [];
-  const okSteps = sendLog.filter((line) => typeof line === "string" && line.endsWith(":ok"));
   const usedFallbackFromLogin = requestedChannel !== effectiveChannel && effectiveChannel === "console";
   const smsEmailPartial =
     requestedChannel === "sms_email" &&
@@ -2834,6 +2840,9 @@ app.post("/api/auth/login", authLoginRateLimit, asyncHandler(async (req, res) =>
   } else if (usedFallbackFromLogin) {
     messageBody = `OTP delivered via console fallback. Configure SMTP (${process.env.SMTP_HOST ? "ok" : "missing"}) and Twilio (${process.env.TWILIO_ACCOUNT_SID ? "ok" : "missing"}) for instant email/SMS; ensure your profile has both email and mobile.`;
   }
+  if (revealOtpToClient) {
+    messageBody = `${messageBody} Your one-time code also appears on this screen (third path: on-screen fallback) and is copied into the OTP box when possible.`;
+  }
 
   return res.json({
     message: messageBody,
@@ -2843,7 +2852,23 @@ app.post("/api/auth/login", authLoginRateLimit, asyncHandler(async (req, res) =>
     otp_channel_requested: requestedChannel,
     otp_channel_used: effectiveChannel,
     otp_delivery_log: otpSession.sendResults || [],
-    otp_resend_available_after_seconds: OTP_RESEND_COOLDOWN_SECONDS
+    otp_resend_available_after_seconds: OTP_RESEND_COOLDOWN_SECONDS,
+    ...(revealOtpToClient
+      ? {
+          otp_code: otpSession.code,
+          otp_on_screen_fallback: true,
+          otp_fallback_reason:
+            parseTruthy(process.env.IMIS_REVEAL_OTP_IN_LOGIN_RESPONSE)
+              ? "IMIS_REVEAL_OTP_IN_LOGIN_RESPONSE"
+              : noMessagingProviders
+                ? "no_smtp_or_sms"
+                : allDeliveriesFailed
+                  ? "all_channels_failed"
+                  : effectiveChannel === "console"
+                    ? "console_fallback"
+                    : "expose_preview"
+        }
+      : {})
   });
 }));
 

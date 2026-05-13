@@ -12,7 +12,7 @@ let portalContext = null;
 let searchRowDrafts = {};
 let dashboardAutoRefreshHandle = null;
 let currentSidebarSubmoduleId = null;
-const CLIENT_UI_BUNDLE_ID = "dash-bundle-main-v79-exam-ai-process-once";
+const CLIENT_UI_BUNDLE_ID = "dash-bundle-main-v80-hoi-otp-qr";
 const examPanelState = {
   generatedExam: null,
   serials: [],
@@ -8566,7 +8566,7 @@ async function renderCbcCurriculumEditor(options = {}) {
             </div>
             <video id="examV2EntryQrVideo" style="display:none;width:100%;max-width:320px;border:1px solid #d1d5db;border-radius:8px;margin-top:6px;" autoplay playsinline muted></video>
             <canvas id="examV2EntryQrCanvas" style="display:none;"></canvas>
-            <div id="examV2EntryQrStatus" class="small-note">QR uses BarcodeDetector where supported.</div>
+            <div id="examV2EntryQrStatus" class="small-note">QR: uses camera + BarcodeDetector or jsQR. Use HTTPS for camera access. You can always paste the payload above.</div>
           </details>
           <div class="actions-row exam-icon-group exam-actions-tight">
             <button class="ax-btn ax-btn--view ax-btn--sm" id="examV2EntryConfirmBtn" title="Confirm selection">Confirm</button>
@@ -8739,35 +8739,61 @@ async function renderCbcCurriculumEditor(options = {}) {
     };
     const runQrDetectorLoop = async () => {
       if (!qrVideoEl || !qrCanvasEl) return;
-      if (!("BarcodeDetector" in window)) {
-        setQrStatus("QR scanning via camera is unsupported in this browser. Paste payload manually or use code mode.");
+      const useBarcode = typeof window.BarcodeDetector === "function";
+      const useJsQr = typeof window.jsQR === "function";
+      if (!useBarcode && !useJsQr) {
+        setQrStatus(
+          "No built-in QR decoder. Paste the payload above, or use Chrome/Edge over HTTPS and ensure /vendor/jsQR.js loads."
+        );
         return;
       }
-      let detector;
-      try {
-        detector = new window.BarcodeDetector({ formats: ["qr_code"] });
-      } catch (_error) {
-        setQrStatus("This device cannot initialize QR detector. Use manual/code upload mode.");
-        return;
+      let detector = null;
+      if (useBarcode) {
+        try {
+          detector = new window.BarcodeDetector({ formats: ["qr_code"] });
+        } catch (_error) {
+          detector = null;
+        }
       }
+      const ctx = qrCanvasEl.getContext("2d");
       const tick = async () => {
         if (!qrVideoEl || !qrStream) return;
-        try {
-          const barcodes = await detector.detect(qrVideoEl);
-          const match = Array.isArray(barcodes) ? barcodes.find((item) => String(item.rawValue || "").trim()) : null;
-          if (match?.rawValue) {
-            if (payloadInputEl) payloadInputEl.value = String(match.rawValue);
-            await applyUploadedDetails(parseUploadedPayload(match.rawValue));
-            setQrStatus("QR scanned successfully and learner exam details updated (marks unchanged).");
+        if (detector && qrVideoEl.readyState >= 2) {
+          try {
+            const barcodes = await detector.detect(qrVideoEl);
+            const match = Array.isArray(barcodes) ? barcodes.find((item) => String(item.rawValue || "").trim()) : null;
+            if (match?.rawValue) {
+              if (payloadInputEl) payloadInputEl.value = String(match.rawValue);
+              await applyUploadedDetails(parseUploadedPayload(match.rawValue));
+              setQrStatus("QR scanned successfully (camera). Learner exam details updated; marks unchanged.");
+              stopQrScan();
+              return;
+            }
+          } catch (_error) {
+            // keep scanning
+          }
+        }
+        if (useJsQr && qrVideoEl.readyState >= 2 && ctx && qrVideoEl.videoWidth > 0 && qrVideoEl.videoHeight > 0) {
+          const w = qrVideoEl.videoWidth;
+          const h = qrVideoEl.videoHeight;
+          qrCanvasEl.width = w;
+          qrCanvasEl.height = h;
+          ctx.drawImage(qrVideoEl, 0, 0, w, h);
+          const imageData = ctx.getImageData(0, 0, w, h);
+          const code = window.jsQR(imageData.data, w, h, { inversionAttempts: "attemptBoth" });
+          if (code?.data) {
+            if (payloadInputEl) payloadInputEl.value = String(code.data);
+            await applyUploadedDetails(parseUploadedPayload(code.data));
+            setQrStatus("QR scanned successfully (jsQR). Learner exam details updated; marks unchanged.");
             stopQrScan();
             return;
           }
-        } catch (_error) {
-          // keep scanning
         }
-        qrLoopHandle = requestAnimationFrame(tick);
+        qrLoopHandle = requestAnimationFrame(() => tick());
       };
-      qrLoopHandle = requestAnimationFrame(tick);
+      const modeLabel = detector && useJsQr ? "BarcodeDetector + jsQR" : detector ? "BarcodeDetector" : "jsQR";
+      setQrStatus(`Scanning… (${modeLabel}). Hold the QR steady.`);
+      qrLoopHandle = requestAnimationFrame(() => tick());
     };
 
     const loadLearners = async () => {
