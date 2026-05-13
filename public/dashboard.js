@@ -12,11 +12,13 @@ let portalContext = null;
 let searchRowDrafts = {};
 let dashboardAutoRefreshHandle = null;
 let currentSidebarSubmoduleId = null;
-const CLIENT_UI_BUNDLE_ID = "dash-bundle-main-v73-exam-workspace-no-icon-only";
+const CLIENT_UI_BUNDLE_ID = "dash-bundle-main-v74-exam-clock-learner-pages";
 const examPanelState = {
   generatedExam: null,
   serials: [],
   markingScheme: "",
+  mcqAnswerKey: "",
+  teacherExamSupplement: "",
   marksRows: [],
   resultRows: [],
   assessmentReport: null,
@@ -6860,10 +6862,11 @@ async function renderCbcCurriculumEditor(options = {}) {
             <input id="examV2GenStreamManual" placeholder="If missing" disabled />
             <label>Learning Area</label>
             <select id="examV2GenArea" disabled><option value="">Select learning area</option>${learningAreas.map((v) => `<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`).join("")}</select>
-            <label>Exam duration (hours)</label>
-            <select id="examV2GenDurH" disabled>${[0, 1, 2, 3].map((h) => `<option value="${h}"${h === 1 ? " selected" : ""}>${h}</option>`).join("")}</select>
-            <label>Exam duration (minutes)</label>
-            <select id="examV2GenDurM" disabled>${[0, 15, 30, 45].map((m) => `<option value="${m}"${m === 30 ? " selected" : ""}>${m}</option>`).join("")}</select>
+            <label class="exam-duration-clock-label">Time (hours)</label>
+            <select id="examV2GenDurH" aria-label="Exam duration hours" disabled>${Array.from({ length: 9 }, (_, h) => h).map((h) => `<option value="${h}"${h === 1 ? " selected" : ""}>${h}</option>`).join("")}</select>
+            <label class="exam-duration-clock-label">Time (minutes)</label>
+            <select id="examV2GenDurM" aria-label="Exam duration minutes" disabled>${Array.from({ length: 60 }, (_, m) => m).map((m) => `<option value="${m}"${m === 30 ? " selected" : ""}>${String(m).padStart(2, "0")}</option>`).join("")}</select>
+            <p class="small-note exam-tight-note exam-duration-clock-hint" style="grid-column:1/-1;">Choose hours and minutes separately (like setting a clock), for example one hour plus five minutes. The exam header spells this duration in words rather than plain totals.</p>
             <label>Strands</label>
             <div id="examV2GenStrandsPanel" class="exam-strand-panel"></div>
             <div class="actions-row exam-icon-group exam-actions-tight" style="grid-column:1/-1;">
@@ -7123,9 +7126,9 @@ async function renderCbcCurriculumEditor(options = {}) {
         });
       return map;
     };
-    const extractQuestionsFromExam = (examText = "") => {
+    const extractQuestionsFromExam = (examText = "", mcqSupplement = "") => {
       const source = String(examText || "").split("==== GENERATED SERIAL & EXAM METADATA ====")[0] || "";
-      const keyMap = parseImisMcqKeyMap(source);
+      const keyMap = parseImisMcqKeyMap(`${source}\n${String(mcqSupplement || "").trim()}`);
       const lines = source.split(/\r?\n/);
       const questions = [];
       let currentSection = "GENERAL";
@@ -7187,8 +7190,8 @@ async function renderCbcCurriculumEditor(options = {}) {
         reason: `Selected as best-fit answer for "${questionText}" under generated objective options.`
       };
     };
-    const buildMarkingSchemeText = (examText = "") => {
-      const questions = extractQuestionsFromExam(examText);
+    const buildMarkingSchemeText = (examText = "", mcqSupplement = "") => {
+      const questions = extractQuestionsFromExam(examText, mcqSupplement);
       if (!questions.length) return "No questions found in generated exam. Generate/process exam first.";
       const metaHeader = [
         "TEACHER MARKING SCHEME (AUTO GENERATED)",
@@ -7992,7 +7995,8 @@ async function renderCbcCurriculumEditor(options = {}) {
         term: String(termEl?.value || ""),
         academic_year: String(yearEl?.value || ""),
         year: parseAcademicYearStart(String(yearEl?.value || "")),
-        exam_duration_minutes: Number(durHEl?.value || 0) * 60 + Number(durMEl?.value || 0),
+        exam_duration_hours: Number(durHEl?.value || 0),
+        exam_duration_minutes: Number(durMEl?.value || 0),
         structure,
         structure_detail: structure !== "unified" ? String(structureDetailEl?.value || "") : null,
         allocation_mode: String(allocModeEl?.value || "manual"),
@@ -8018,6 +8022,8 @@ async function renderCbcCurriculumEditor(options = {}) {
         if (schemeOutputEl) schemeOutputEl.value = "";
         latestMarkingSchemeText = "";
         examPanelState.markingScheme = "";
+        examPanelState.mcqAnswerKey = String(generated?.mcq_answer_key || "").trim();
+        examPanelState.teacherExamSupplement = String(generated?.teacher_exam_supplement || "").trim();
         setSchemeStatus("Marking scheme will activate after Process.");
         examPanelState.generatedExam = { id: generatedExamId, payload };
         examPanelState.serials = [];
@@ -8035,7 +8041,10 @@ async function renderCbcCurriculumEditor(options = {}) {
       try {
         await request(`/api/academic/exams/${generatedExamId}`, {
           method: "PUT",
-          body: JSON.stringify({ generated_exam_text: String(outputEl?.value || "") })
+          body: JSON.stringify({
+            generated_exam_text: String(outputEl?.value || ""),
+            teacher_exam_supplement: examPanelState.teacherExamSupplement || null
+          })
         });
         processed = true;
         if (schemeOutputEl) schemeOutputEl.value = "";
@@ -8100,7 +8109,7 @@ async function renderCbcCurriculumEditor(options = {}) {
             : `${existing}\n${metaBlock}`;
         }
         examPanelState.serials = allocatedSerials;
-        const schemeText = buildMarkingSchemeText(String(outputEl?.value || ""));
+        const schemeText = buildMarkingSchemeText(String(outputEl?.value || ""), examPanelState.mcqAnswerKey);
         latestMarkingSchemeText = schemeText;
         examPanelState.markingScheme = schemeText;
         if (schemeOutputEl) schemeOutputEl.value = schemeText;
@@ -8116,7 +8125,8 @@ async function renderCbcCurriculumEditor(options = {}) {
     const stripLearnerExamExport = (txt = "") =>
       String(txt || "")
         .replace(/\r\n/g, "\n")
-        .replace(/\nIMIS_MCQ_KEY\n[\s\S]*?\nIMIS_MCQ_KEY_END/, "");
+        .replace(/\nIMIS_MCQ_KEY\n[\s\S]*?\nIMIS_MCQ_KEY_END/, "")
+        .replace(/\n===== TEACHER \/ EXAMINER MATERIAL[\s\S]*$/i, "");
 
     runDeliveryBtn?.addEventListener("click", () => {
       const mode = String(deliveryModeEl?.value || "");
@@ -8140,14 +8150,20 @@ async function renderCbcCurriculumEditor(options = {}) {
           })));
           downloadTextFile("exam-serials.csv", csv, "text/csv;charset=utf-8");
         }
+        const pack = String(examPanelState.teacherExamSupplement || "").trim();
+        if (pack) {
+          downloadTextFile("exam-teacher-mcq-key-and-annex.txt", pack);
+        }
         return;
       }
       if (mode === "print") {
         const popup = window.open("", "_blank");
         if (!popup) return;
-        popup.document.write(`<pre>${escapeHtml(text)}</pre>`);
+        const printText = stripLearnerExamExport(String(text || ""));
+        popup.document.write(`<pre>${escapeHtml(printText)}</pre>`);
         popup.document.close();
         popup.print();
+        return;
       }
     });
     schemeGenerateBtn?.addEventListener("click", () => {
@@ -8160,7 +8176,7 @@ async function renderCbcCurriculumEditor(options = {}) {
         alert("No generated exam found.");
         return;
       }
-      const schemeText = buildMarkingSchemeText(examText);
+      const schemeText = buildMarkingSchemeText(examText, examPanelState.mcqAnswerKey);
       latestMarkingSchemeText = schemeText;
       examPanelState.markingScheme = schemeText;
       if (schemeOutputEl) schemeOutputEl.value = schemeText;
@@ -8195,7 +8211,10 @@ async function renderCbcCurriculumEditor(options = {}) {
         ].join("\n");
         await request(`/api/academic/exams/${generatedExamId}`, {
           method: "PUT",
-          body: JSON.stringify({ generated_exam_text: merged })
+          body: JSON.stringify({
+            generated_exam_text: merged,
+            teacher_exam_supplement: examPanelState.teacherExamSupplement || null
+          })
         });
         latestMarkingSchemeText = text;
         examPanelState.markingScheme = text;

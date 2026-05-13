@@ -10236,6 +10236,7 @@ const moduleConfigs = [
       "sub_strand",
       "notes_file_path",
       "generated_exam_text",
+      "teacher_exam_supplement",
       "exam_file_path",
       "term",
       "year"
@@ -11230,6 +11231,148 @@ function examPaperStructuredSectionLines({ startNumber, totalMarks, questionCoun
   return lines;
 }
 
+const EXAM_CARDINAL_NAMES = [
+  "zero",
+  "one",
+  "two",
+  "three",
+  "four",
+  "five",
+  "six",
+  "seven",
+  "eight",
+  "nine",
+  "ten",
+  "eleven",
+  "twelve",
+  "thirteen",
+  "fourteen",
+  "fifteen",
+  "sixteen",
+  "seventeen",
+  "eighteen",
+  "nineteen"
+];
+
+function examPaperCardinalLt100(value) {
+  const n = Math.floor(Math.abs(Number(value) || 0));
+  if (n < EXAM_CARDINAL_NAMES.length) return EXAM_CARDINAL_NAMES[n];
+  if (n < 100) {
+    const tens = Math.floor(n / 10);
+    const ones = n % 10;
+    const tensWords =
+      tens === 2
+        ? "twenty"
+        : tens === 3
+          ? "thirty"
+          : tens === 4
+            ? "forty"
+            : tens === 5
+              ? "fifty"
+              : tens === 6
+                ? "sixty"
+                : tens === 7
+                  ? "seventy"
+                  : tens === 8
+                    ? "eighty"
+                    : tens === 9
+                      ? "ninety"
+                      : EXAM_CARDINAL_NAMES[n];
+    if (tens < 2 || tens > 9) return EXAM_CARDINAL_NAMES[n] || `${n}`;
+    return ones ? `${tensWords}-${EXAM_CARDINAL_NAMES[ones]}` : tensWords;
+  }
+  return `${Math.min(n, 99)}`;
+}
+
+function examPaperSpelledHourMinuteChunk(count, singular, plural) {
+  const n = Math.floor(Math.max(0, Number(count) || 0));
+  if (!n) return "";
+  const w = examPaperCardinalLt100(n);
+  return `${w} ${n === 1 ? singular : plural}`;
+}
+
+/** Written-out duration for learner papers (avoid numeric-only headers like "65 minutes"). */
+function examPaperSpelledExamDuration(hours, minutes) {
+  const h = Math.floor(Math.max(0, Math.min(8, Number(hours) || 0)));
+  const m = Math.floor(Math.max(0, Math.min(59, Number(minutes) || 0)));
+  const parts = [examPaperSpelledHourMinuteChunk(h, "hour", "hours"), examPaperSpelledHourMinuteChunk(m, "minute", "minutes")].filter(
+    Boolean
+  );
+  if (!parts.length) return "Time allowed will be announced by the invigilator.";
+  const sentence = parts.join(" and ");
+  return sentence.charAt(0).toUpperCase() + sentence.slice(1);
+}
+
+function examPaperResolveDurationParts(body = {}) {
+  const rawH = body.exam_duration_hours;
+  const rawM = body.exam_duration_minutes;
+  const hasH = rawH !== undefined && rawH !== null && String(rawH).trim() !== "";
+  const hasM = rawM !== undefined && rawM !== null && String(rawM).trim() !== "";
+  let h = 0;
+  let m = 0;
+  if (hasH || hasM) {
+    h = hasH ? Math.floor(Math.max(0, Number(rawH) || 0)) : 0;
+    m = hasM ? Math.floor(Math.max(0, Number(rawM) || 0)) : 0;
+    if (!hasH && m > 59) {
+      const tot = m;
+      h = Math.floor(tot / 60);
+      m = tot % 60;
+    }
+  } else {
+    const totalFallback = Number(body.exam_duration_minutes_total);
+    if (Number.isFinite(totalFallback) && totalFallback > 0) {
+      h = Math.floor(totalFallback / 60);
+      m = Math.floor(totalFallback % 60);
+    } else {
+      h = 1;
+      m = 30;
+    }
+  }
+  h = Math.min(8, Math.max(0, h));
+  m = Math.min(59, Math.max(0, m));
+  if (h === 0 && m === 0) {
+    h = 1;
+    m = 30;
+  }
+  const labelOverride = cleanOptionalValue(body.exam_duration_label || body.time_allowed_label);
+  const label = labelOverride || examPaperSpelledExamDuration(h, m);
+  return { hours: h, minutes: m, label };
+}
+
+function examPaperPaginateAfterHeader(headerLines, contentLines, linesPerPage = 52) {
+  const header = Array.isArray(headerLines) ? headerLines : [];
+  const content = Array.isArray(contentLines) ? contentLines : [];
+  const per = Math.min(72, Math.max(26, Number(linesPerPage) || 52));
+  while (content.length && !String(content[content.length - 1] || "").trim()) content.pop();
+  const linesMain = content.length ? content : [""];
+  const pageCount = Math.max(1, Math.ceil(linesMain.length / per));
+  const published = [...header];
+  for (let p = 0; p < pageCount; p += 1) {
+    published.push("", "................................................................................");
+    published.push(`Page ${p + 1} of ${pageCount}`);
+    published.push("................................................................................");
+    published.push("", ...linesMain.slice(p * per, (p + 1) * per));
+  }
+  published.push("", "END", "");
+  return published;
+}
+
+function buildTeacherExamSupplementBlocks({ mcqKeys, templateSampleText }) {
+  const lines = [
+    "",
+    "===== TEACHER / EXAMINER MATERIAL — DO NOT DISTRIBUTE TO LEARNERS =====",
+    ""
+  ];
+  if (mcqKeys && mcqKeys.length) {
+    lines.push("IMIS_MCQ_KEY", ...mcqKeys, "IMIS_MCQ_KEY_END", "");
+  }
+  if (cleanOptionalValue(templateSampleText)) {
+    lines.push("ANNEX (OPTIONAL STRUCTURE TEMPLATE BASIS FOR TEACHERS)", cleanOptionalValue(templateSampleText), "");
+  }
+  lines.push("PRINT / LAYOUT FOOTER GUIDE:", "LEFT — learner details   CENTRE — page markers   RIGHT — subject / level", "");
+  return lines.join("\n");
+}
+
 function buildCbcKenyaHeaderBlock({
   institutionName,
   letterheadHint,
@@ -11254,7 +11397,7 @@ function buildCbcKenyaHeaderBlock({
     cleanValue(title || "THE JUNIOR SECONDARY SCHOOL EXAMINATION / SCHOOL BASED ASSESSMENT"),
     cleanValue(learningArea || "LEARNING AREA").toUpperCase(),
     `LEVEL / CLASS: ${levelLabel || "-"}     STREAM: ${stream || "N/A"}`,
-    `TIME: ${examDurationLabel || "1 hour 30 minutes"}`,
+    `TIME ALLOWED (WRITTEN): ${examDurationLabel || "One hour and thirty minutes"}`,
     `SESSION: ${examSession || "-"}     ACADEMIC YEAR: ${academicYear || "-"}     TERM: ${term || "-"}`,
     `STRUCTURE: ${structureLabel || "unified"}    ALLOCATION: ${sectionAllocationText || "-"}`,
     "",
@@ -11519,19 +11662,15 @@ function buildAdvancedExamText({
     body.push("", `TOTAL TARGET MARKS (UNIFIED MODE): ${unifiedTotal}`);
   }
 
-  const mcqKeyBlock = mcqKeys.length ? ["", "IMIS_MCQ_KEY", ...mcqKeys, "IMIS_MCQ_KEY_END"] : [];
-  const annex = templateSampleText ? ["", "ANNEX (OPTIONAL STRUCTURE TEMPLATE BASIS FOR TEACHERS)", cleanOptionalValue(templateSampleText)] : [];
-
-  return [
-    ...header,
-    "EXAM CONTENT",
-    "",
-    ...body,
-    ...mcqKeyBlock,
-    ...annex,
-    "",
-    "FOOTER (PER PAGE): LEFT — ASSESSMENT   CENTRE — PAGE   RIGHT — SUBJECT / LEVEL"
-  ].join("\n");
+  const learnerContentLines = ["EXAM CONTENT", "", ...body];
+  const learnerLines = examPaperPaginateAfterHeader(header, learnerContentLines);
+  const learnerText = learnerLines.join("\n");
+  const teacherSupplement = buildTeacherExamSupplementBlocks({
+    mcqKeys,
+    templateSampleText
+  });
+  const mcqAnswerKey = mcqKeys.length ? ["IMIS_MCQ_KEY", ...mcqKeys, "IMIS_MCQ_KEY_END"].join("\n") : "";
+  return { learnerText, teacherSupplement, mcqAnswerKey };
 }
 
 app.post(
@@ -11790,19 +11929,9 @@ app.post(
     ).catch(() => []);
     const institutionName = cleanValue(instRows[0]?.institution_name || "");
     const letterheadHint = cleanOptionalValue(instRows[0]?.letterhead_file_path || "");
-    const dm = Number(body.exam_duration_minutes);
-    let examDurationLabel = cleanOptionalValue(body.exam_duration_label);
-    if (!examDurationLabel && Number.isFinite(dm) && dm > 0) {
-      const h = Math.floor(dm / 60);
-      const m = dm % 60;
-      const parts = [];
-      if (h) parts.push(`${h} hour${h === 1 ? "" : "s"}`);
-      if (m) parts.push(`${m} minute${m === 1 ? "" : "s"}`);
-      examDurationLabel = parts.join(" ") || "90 minutes";
-    }
-    if (!examDurationLabel) examDurationLabel = "1 hour 30 minutes";
+    const { hours: resolvedDurH, minutes: resolvedDurM, label: examDurationLabel } = examPaperResolveDurationParts(body);
     const seedKey = `${req.user.institution_id}|${selectedLearningArea}|${selectedSession}|${selectedYear}|${Date.now()}`;
-    const examText = buildAdvancedExamText({
+    const examBundle = buildAdvancedExamText({
       title: cleanOptionalValue(body.title) || `${selectedSession || "Exam"} - ${selectedLearningArea}`,
       institutionName,
       letterheadHint,
@@ -11824,11 +11953,13 @@ app.post(
       supplementalMaterialNotes,
       materialSnippets
     });
+    const learnerExamText = examBundle.learnerText;
+    const teacherExamSupplement = examBundle.teacherSupplement || "";
 
     const result = await query(
       `INSERT INTO academic_exams
-        (institution_id, title, grade, stream, subject, strand, sub_strand, notes_file_path, generated_exam_text, term, year, created_by_user_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        (institution_id, title, grade, stream, subject, strand, sub_strand, notes_file_path, generated_exam_text, teacher_exam_supplement, term, year, created_by_user_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         req.user.institution_id,
         cleanOptionalValue(body.title) || `${selectedSession || "Auto Generated Exam"} - ${selectedLearningArea}`,
@@ -11838,7 +11969,8 @@ app.post(
         primaryStrand || null,
         primarySubStrand || null,
         cleanOptionalValue(body.notes_file_path) || null,
-        examText,
+        learnerExamText,
+        teacherExamSupplement || null,
         selectedTerm || null,
         selectedYear || null,
         req.user.id
@@ -11848,7 +11980,12 @@ app.post(
     await auditLog(req.user, "AUTO_GENERATE_EXAM", "academic_exams", result.insertId);
     res.status(201).json({
       id: result.insertId,
-      examText,
+      examText: learnerExamText,
+      mcq_answer_key: examBundle.mcqAnswerKey || "",
+      teacher_exam_supplement: teacherExamSupplement,
+      exam_duration_hours: resolvedDurH,
+      exam_duration_minutes: resolvedDurM,
+      duration_label_spelled: examDurationLabel,
       notes_required: false,
       structure: selectedStructure,
       structure_detail: selectedStructureDetail || null,
