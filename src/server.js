@@ -923,6 +923,7 @@ async function ensureUserPasswordPolicyColumns() {
   }
 
   const learnerColMigrations = [
+    ["learner_serial_number", "BIGINT NULL"],
     ["learner_condition", "VARCHAR(80) NULL"],
     ["disability_type", "VARCHAR(120) NULL"],
     ["biological_parental_status", "VARCHAR(80) NULL"],
@@ -961,6 +962,60 @@ async function ensureUserPasswordPolicyColumns() {
     if (!Number(checkCol[0]?.total || 0)) {
       await query(`ALTER TABLE learners ADD COLUMN ${colName} ${ddl}`);
     }
+  }
+
+  // Backfill permanent learner serials for legacy rows (first-registered order by id).
+  const learnerSerialNullRows = await query(
+    `SELECT id
+     FROM learners
+     WHERE learner_serial_number IS NULL
+     ORDER BY id ASC`
+  );
+  if (learnerSerialNullRows.length) {
+    for (const row of learnerSerialNullRows) {
+      // eslint-disable-next-line no-await-in-loop
+      await query(
+        `UPDATE learners
+         SET learner_serial_number = ?
+         WHERE id = ? AND learner_serial_number IS NULL`,
+        [Number(row.id), Number(row.id)]
+      );
+    }
+  }
+
+  const learnerSerialDuplicateRows = await query(
+    `SELECT learner_serial_number
+     FROM learners
+     WHERE learner_serial_number IS NOT NULL
+     GROUP BY learner_serial_number
+     HAVING COUNT(*) > 1`
+  );
+  if (learnerSerialDuplicateRows.length) {
+    const allLearnersById = await query(
+      `SELECT id
+       FROM learners
+       ORDER BY id ASC`
+    );
+    for (const row of allLearnersById) {
+      // eslint-disable-next-line no-await-in-loop
+      await query(
+        `UPDATE learners
+         SET learner_serial_number = ?
+         WHERE id = ?`,
+        [Number(row.id), Number(row.id)]
+      );
+    }
+  }
+
+  const learnerSerialIndexRows = await query(
+    `SELECT COUNT(*) total
+     FROM INFORMATION_SCHEMA.STATISTICS
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = 'learners'
+       AND INDEX_NAME = 'unique_learner_serial_number'`
+  );
+  if (!Number(learnerSerialIndexRows[0]?.total || 0)) {
+    await query("ALTER TABLE learners ADD UNIQUE KEY unique_learner_serial_number (learner_serial_number)");
   }
 
   const teacherEmploymentStatusRows = await query(
@@ -1209,6 +1264,109 @@ CREATE TABLE IF NOT EXISTS institutional_registers (
 )`);
 
   await query(`
+CREATE TABLE IF NOT EXISTS institution_documents (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  institution_id BIGINT NOT NULL,
+  module_key VARCHAR(120) NULL,
+  submodule_key VARCHAR(120) NULL,
+  document_type VARCHAR(120) NOT NULL,
+  document_title VARCHAR(255) NOT NULL,
+  notes TEXT NULL,
+  file_path VARCHAR(255) NOT NULL,
+  mime_type VARCHAR(120) NULL,
+  uploaded_by_user_id BIGINT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  INDEX idx_institution_documents_lookup (institution_id, document_type, module_key),
+  CONSTRAINT fk_institution_documents_institution FOREIGN KEY (institution_id) REFERENCES institutions(id)
+)`);
+
+  await query(`
+CREATE TABLE IF NOT EXISTS exam_templates (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  institution_id BIGINT NOT NULL,
+  template_key VARCHAR(120) NOT NULL,
+  template_name VARCHAR(255) NOT NULL,
+  version_tag VARCHAR(60) NULL,
+  content LONGTEXT NOT NULL,
+  is_active TINYINT(1) NOT NULL DEFAULT 1,
+  created_by_user_id VARCHAR(100) NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  INDEX idx_exam_templates_lookup (institution_id, template_key, is_active),
+  CONSTRAINT fk_exam_templates_institution FOREIGN KEY (institution_id) REFERENCES institutions(id)
+)`);
+
+  await query(`
+CREATE TABLE IF NOT EXISTS exam_archives (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  institution_id BIGINT NOT NULL,
+  archive_type VARCHAR(100) NOT NULL,
+  title VARCHAR(255) NOT NULL,
+  reference_id BIGINT NULL,
+  payload_json JSON NULL,
+  status VARCHAR(40) NOT NULL DEFAULT 'ARCHIVED',
+  created_by_user_id VARCHAR(100) NULL,
+  archived_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  INDEX idx_exam_archives_lookup (institution_id, archive_type, status),
+  CONSTRAINT fk_exam_archives_institution FOREIGN KEY (institution_id) REFERENCES institutions(id)
+)`);
+
+  await query(`
+CREATE TABLE IF NOT EXISTS exam_module_settings (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  institution_id BIGINT NOT NULL,
+  settings_json JSON NULL,
+  updated_by_user_id VARCHAR(100) NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY uq_exam_module_settings_inst (institution_id),
+  CONSTRAINT fk_exam_module_settings_institution FOREIGN KEY (institution_id) REFERENCES institutions(id)
+)`);
+
+  await query(`
+CREATE TABLE IF NOT EXISTS system_security_incidents (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  institution_id BIGINT NOT NULL,
+  incident_code VARCHAR(60) NOT NULL,
+  incident_type VARCHAR(120) NOT NULL DEFAULT 'GENERAL',
+  severity VARCHAR(30) NOT NULL DEFAULT 'MEDIUM',
+  status VARCHAR(30) NOT NULL DEFAULT 'OPEN',
+  title VARCHAR(255) NOT NULL,
+  description TEXT NOT NULL,
+  affected_module VARCHAR(120) NULL,
+  source_channel VARCHAR(80) NULL,
+  details_json JSON NULL,
+  response_actions TEXT NULL,
+  assigned_to_user_id VARCHAR(100) NULL,
+  resolution_notes TEXT NULL,
+  detected_at DATETIME NOT NULL,
+  resolved_at DATETIME NULL,
+  created_by_user_id VARCHAR(100) NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY uq_security_incident_code (incident_code),
+  INDEX idx_security_incident_scope (institution_id, status, severity, detected_at),
+  CONSTRAINT fk_security_incident_institution FOREIGN KEY (institution_id) REFERENCES institutions(id)
+)`);
+
+  await query(`
+CREATE TABLE IF NOT EXISTS system_module_health_snapshots (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  institution_id BIGINT NOT NULL,
+  module_key VARCHAR(120) NOT NULL,
+  module_label VARCHAR(180) NULL,
+  status VARCHAR(40) NOT NULL,
+  total_rows BIGINT NULL,
+  metric_payload_json JSON NULL,
+  created_by_user_id VARCHAR(100) NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  INDEX idx_module_health_snapshot_scope (institution_id, module_key, created_at),
+  CONSTRAINT fk_module_health_snapshot_institution FOREIGN KEY (institution_id) REFERENCES institutions(id)
+)`);
+
+  await query(`
 CREATE TABLE IF NOT EXISTS system_developer_institution_assignments (
   id BIGINT PRIMARY KEY AUTO_INCREMENT,
   developer_user_id BIGINT NOT NULL,
@@ -1222,6 +1380,43 @@ CREATE TABLE IF NOT EXISTS system_developer_institution_assignments (
   CONSTRAINT fk_system_dev_assign_user FOREIGN KEY (developer_user_id) REFERENCES users(id),
   CONSTRAINT fk_system_dev_assign_institution FOREIGN KEY (institution_id) REFERENCES institutions(id)
 )`);
+
+  const academicExamsTableRows = await query(
+    `SELECT COUNT(*) total
+     FROM INFORMATION_SCHEMA.TABLES
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = 'academic_exams'`
+  );
+  if (Number(academicExamsTableRows[0]?.total || 0)) {
+    const academicExamsTeacherSupplementRows = await query(
+      `SELECT COUNT(*) total
+       FROM INFORMATION_SCHEMA.COLUMNS
+       WHERE TABLE_SCHEMA = DATABASE()
+         AND TABLE_NAME = 'academic_exams'
+         AND COLUMN_NAME = 'teacher_exam_supplement'`
+    );
+    if (!Number(academicExamsTeacherSupplementRows[0]?.total || 0)) {
+      await query(
+        `ALTER TABLE academic_exams ADD COLUMN teacher_exam_supplement LONGTEXT NULL AFTER generated_exam_text`
+      );
+      // eslint-disable-next-line no-console
+      console.warn("[IIMS] Added academic_exams.teacher_exam_supplement for learner/teacher exam split.");
+    }
+    const academicExamsSerialsProcessedRows = await query(
+      `SELECT COUNT(*) total
+       FROM INFORMATION_SCHEMA.COLUMNS
+       WHERE TABLE_SCHEMA = DATABASE()
+         AND TABLE_NAME = 'academic_exams'
+         AND COLUMN_NAME = 'serials_processed_at'`
+    );
+    if (!Number(academicExamsSerialsProcessedRows[0]?.total || 0)) {
+      await query(
+        `ALTER TABLE academic_exams ADD COLUMN serials_processed_at DATETIME NULL AFTER teacher_exam_supplement`
+      );
+      // eslint-disable-next-line no-console
+      console.warn("[IIMS] Added academic_exams.serials_processed_at for one-time serial/QR processing per exam.");
+    }
+  }
 }
 
 async function start() {

@@ -30,10 +30,18 @@ async function request(path, options = {}) {
     data = null;
   }
   if (!response.ok) {
-    const message =
+    let message =
       (data && typeof data === "object" && data.error) ||
       (rawText && rawText.length < 400 ? rawText.trim() : "") ||
       `Request failed (${response.status})`;
+    if (
+      data &&
+      typeof data === "object" &&
+      data.details &&
+      !String(message).includes(String(data.details))
+    ) {
+      message += `: ${data.details}`;
+    }
     throw new Error(message);
   }
   return data;
