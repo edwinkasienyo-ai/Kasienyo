@@ -25,7 +25,7 @@
     <link rel="icon" type="image/jpeg" href="/uploads/index-hero.jpg?v=20260411" />
     <link rel="apple-touch-icon" href="/uploads/index-hero.jpg?v=20260411" />
     <link rel="manifest" href="/site.webmanifest" />
-    <link rel="stylesheet" href="/styles.css?v=54" />
+    <link rel="stylesheet" href="/styles.css?v=71" />
   </head>
   <body class="dashboard-page">
     <div class="app-shell">
@@ -45,7 +45,11 @@
           <button data-module="system-register">Register (Institution/User)</button>
           <button data-module="system-access-control">Access Control (Module Rights)</button>
           <button data-module="system-audit">Security & Logging Audit</button>
+          <button data-module="system-ops-center">System Ops Center</button>
+          <button data-module="system-incident-response">Incident Response Center</button>
           <button data-module="system-registry">Institutions & Users Registry</button>
+          <button data-module="system-institution-edit">Institution Upgrade</button>
+          <button data-module="system-institution-uploads">Institution Uploads</button>
           <button data-module="system-recycle-bin">Recycle Bin</button>
           <div class="nav-group-label">Management & Academics</div>
           <button data-module="admission">Admission</button>
@@ -74,7 +78,6 @@
           <button data-module="laws">Laws/Regulations/Policies</button>
           <button data-module="institutional-registers">Registers &amp; Records</button>
         </div>
-        <button id="logoutButton" class="danger">Logout</button>
       </aside>
 
       <main class="main-content">
@@ -93,6 +96,7 @@
               <p id="passwordExpiryNotice" class="small-note"></p>
             </div>
             <div class="topbar-right">
+              <button id="logoutButton" class="danger topbar-logout-btn">Logout</button>
               <input id="globalSearch" placeholder="Global search by learner/teacher/parent..." />
               <button id="searchButton">Search</button>
               <button id="updateHeroImageButton">Update Login Hero Image</button>
@@ -115,9 +119,20 @@
             <tbody id="tableBody"></tbody>
           </table>
         </section>
+        <aside id="dashboardAiAssistant" class="dashboard-ai-assistant" data-collapsed="1" aria-label="Dashboard AI assistant">
+          <div class="assistant-header">
+            <h4>AI Assistant</h4>
+            <button id="assistantToggleButton" type="button" class="ax-btn ax-btn--view ax-btn--sm">Toggle</button>
+          </div>
+          <div id="assistantMessages" class="assistant-messages"></div>
+          <div class="assistant-input-row">
+            <input id="assistantInput" placeholder="Ask where to find a module or feature..." />
+            <button id="assistantSendButton" type="button" class="ax-btn ax-btn--generate ax-btn--sm">Send</button>
+          </div>
+        </aside>
       </main>
     </div>
 
-    <script src="/dashboard.js?v=54"></script>
+    <script src="/dashboard.js?v=71"></script>
   </body>
 </html>
