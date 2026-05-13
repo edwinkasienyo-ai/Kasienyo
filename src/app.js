@@ -10991,18 +10991,251 @@ function rowWithinExamCoverage({ row, selectedStrands = [], selectedSubStrands =
   return true;
 }
 
+function examPaperHash32(str) {
+  let h = 2166136261 >>> 0;
+  const s = String(str || "");
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 16777619) >>> 0;
+  }
+  return h >>> 0;
+}
+
+function examPaperMulberry32(a) {
+  return function exMul() {
+    let t = (a += 0x6d2b79f5);
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function examPaperShuffle(items, rng) {
+  const arr = Array.isArray(items) ? items.slice() : [];
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(rng() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+  return arr;
+}
+
+function examPaperSplitSentences(text) {
+  return String(text || "")
+    .split(/(?<=[.!?])\s+/)
+    .map((s) => s.trim())
+    .filter((s) => s.length > 18);
+}
+
+function examPaperSubjectKind(learningArea = "") {
+  const s = cleanValue(learningArea).toLowerCase();
+  if (s.includes("pre-technical")) return "pretechnical";
+  if (s.includes("social studies")) return "social";
+  return "general";
+}
+
+function examPaperDistractorBank(kind) {
+  if (kind === "social") {
+    return [
+      "It narrows the idea to unrelated entertainment examples only.",
+      "It ignores how environment and human activities influence each other.",
+      "It assumes every community had identical historical experiences.",
+      "It claims geography is only about naming places without processes.",
+      "It suggests resources have no link to settlement or livelihoods."
+    ];
+  }
+  if (kind === "pretechnical") {
+    return [
+      "It confuses workshop measurement with decorating finished work only.",
+      "It suggests tools may be used without standard safety procedures.",
+      "It mixes up marking-out tools with driving/fastening tools.",
+      "It assumes material choice can ignore strength and task demands.",
+      "It implies maintenance is unnecessary if the tool looks clean."
+    ];
+  }
+  return [
+    "It misstates a key relationship required by the CBC learning outcome.",
+    "It selects an idea that contradicts basic definitions in the learning area.",
+    "It applies a concept from an unrelated context.",
+    "It overgeneralises one example to all cases."
+  ];
+}
+
+function examPaperBuildDistractors({ kind, correctText, rng }) {
+  const c = String(correctText || "").toLowerCase();
+  const bank = examPaperShuffle(examPaperDistractorBank(kind), rng);
+  const out = [];
+  for (const line of bank) {
+    if (!line) continue;
+    if (line.toLowerCase() === c) continue;
+    if (out.includes(line)) continue;
+    out.push(line);
+    if (out.length >= 3) break;
+  }
+  while (out.length < 3) {
+    out.push(`It incorrectly states a core fact about the topic (${out.length + 1}).`);
+  }
+  return out.slice(0, 3);
+}
+
+function examPaperCorrectFromRef(ref, rng) {
+  const pool = examPaperSplitSentences(
+    `${cleanOptionalValue(ref?.notes)} ${cleanOptionalValue(ref?.specific_learning_outcomes)}`
+  );
+  if (pool.length) {
+    return pool[Math.floor(rng() * pool.length)].slice(0, 150);
+  }
+  return "It demonstrates accurate knowledge, correct reasoning, and CBC-aligned application for this topic.".slice(0, 150);
+}
+
+function examPaperStemFromRef(ref, snippet, learningArea, qn, rng, kind) {
+  const merged = `${cleanOptionalValue(ref?.notes)} ${cleanOptionalValue(ref?.specific_learning_outcomes)} ${cleanOptionalValue(ref?.learning_experiences)}`;
+  const pool = examPaperSplitSentences(merged);
+  if (pool.length && rng() > 0.22) {
+    const pick = pool[Math.floor(rng() * pool.length)].slice(0, 220);
+    return `Read the statement below and choose the most accurate option.\n“${pick}”`;
+  }
+  if (snippet && rng() > 0.35) {
+    const s = String(snippet).replace(/\s+/g, " ").trim().slice(0, 220);
+    return `Using ideas from your class notes on ${cleanValue(learningArea)}, which conclusion fits best?\nContext: ${s}`;
+  }
+  const topic = cleanValue(ref?.sub_strand || ref?.strand || learningArea);
+  if (kind === "social") {
+    return `Which option best reflects the CBC expectation for “${topic}” within Social Studies?`;
+  }
+  if (kind === "pretechnical") {
+    return `In a workshop context related to “${topic}”, which statement is most appropriate?`;
+  }
+  return `Which statement about “${topic}” is most accurate for this learning area?`;
+}
+
+function examPaperBuildMcqBlock({ count, startNumber, referenceRows, learningArea, materialSnippets, seedKey, kind }) {
+  const refs =
+    Array.isArray(referenceRows) && referenceRows.length
+      ? referenceRows
+      : [{ strand: learningArea, sub_strand: "", notes: "", specific_learning_outcomes: "" }];
+  const snippets = Array.isArray(materialSnippets) ? materialSnippets.filter(Boolean) : [];
+  const seed = examPaperHash32(`${seedKey}|mcq|${cleanValue(learningArea)}|${count}|${startNumber}`);
+  const rng = examPaperMulberry32(seed);
+  const lines = [];
+  const keyLines = [];
+  for (let i = 0; i < count; i++) {
+    const ref = refs[i % refs.length];
+    const snip = snippets.length ? snippets[i % snippets.length] : "";
+    const stem = examPaperStemFromRef(ref, snip, learningArea, startNumber + i, rng, kind);
+    const correct = examPaperCorrectFromRef(ref, rng);
+    const wrong = examPaperBuildDistractors({ kind, correctText: correct, rng });
+    const options = examPaperShuffle(
+      [{ txt: correct, ok: true }, ...wrong.map((txt) => ({ txt, ok: false }))],
+      rng
+    );
+    const letters = ["A", "B", "C", "D"];
+    const labeled = options.slice(0, 4).map((o, idx) => ({ ...o, L: letters[idx] }));
+    const answer = labeled.find((x) => x.ok)?.L || "A";
+    keyLines.push(`${startNumber + i}:${answer}`);
+    lines.push(`${startNumber + i}. ${stem}`);
+    labeled.forEach((o) => {
+      lines.push(`   ${o.L}. ${o.txt}`);
+    });
+    lines.push("");
+  }
+  return { lines, keyLines };
+}
+
+function examPaperDistributeMarks(total, parts, rng) {
+  const n = Math.max(1, Number(parts) || 1);
+  const t = Math.max(Number(total) || 0, 1);
+  const base = Math.floor(t / n);
+  let rem = t - base * n;
+  const marks = Array(n).fill(base);
+  let i = 0;
+  while (rem > 0) {
+    marks[i % n] += 1;
+    rem -= 1;
+    i += 1;
+  }
+  return examPaperShuffle(marks.map((m) => Math.max(1, m)), rng);
+}
+
+function examPaperStructuredSectionLines({ startNumber, totalMarks, questionCount, referenceRows, learningArea, seedKey }) {
+  const refs =
+    Array.isArray(referenceRows) && referenceRows.length
+      ? referenceRows
+      : [{ strand: learningArea, sub_strand: learningArea }];
+  const rng = examPaperMulberry32(examPaperHash32(`${seedKey}|struct|${totalMarks}|${questionCount}`));
+  const marksEach = examPaperDistributeMarks(totalMarks, questionCount, rng);
+  const verbs = ["Explain", "Outline", "Describe", "Analyze", "Evaluate", "Justify"];
+  const lines = ["*Answer ALL questions in this section.*", ""];
+  for (let i = 0; i < questionCount; i++) {
+    const ref = refs[i % refs.length];
+    const topic = cleanValue(ref?.sub_strand || ref?.strand || learningArea);
+    const v = verbs[Math.floor(rng() * verbs.length)];
+    const m = marksEach[i] || 5;
+    lines.push(`${startNumber + i}. ${v} how “${topic}” applies in a school or community situation. (${m} marks)`);
+    lines.push("_______________________________________________________________________________________");
+    lines.push("");
+  }
+  return lines;
+}
+
+function buildCbcKenyaHeaderBlock({
+  institutionName,
+  letterheadHint,
+  title,
+  learningArea,
+  levelLabel,
+  stream,
+  academicYear,
+  term,
+  examSession,
+  examDurationLabel,
+  structureLabel,
+  sectionAllocationText
+}) {
+  return [
+    "================================================================================",
+    `SCHOOL / INSTITUTION: ${institutionName || "_____________________________"}`,
+    letterheadHint
+      ? `LETTERHEAD LOGO: See institution logo on the left when printing official papers (${letterheadHint}).`
+      : "LETTERHEAD LOGO: Upload `letterhead_file_path` in institution settings for automatic branding.",
+    "",
+    cleanValue(title || "THE JUNIOR SECONDARY SCHOOL EXAMINATION / SCHOOL BASED ASSESSMENT"),
+    cleanValue(learningArea || "LEARNING AREA").toUpperCase(),
+    `LEVEL / CLASS: ${levelLabel || "-"}     STREAM: ${stream || "N/A"}`,
+    `TIME: ${examDurationLabel || "1 hour 30 minutes"}`,
+    `SESSION: ${examSession || "-"}     ACADEMIC YEAR: ${academicYear || "-"}     TERM: ${term || "-"}`,
+    `STRUCTURE: ${structureLabel || "unified"}    ALLOCATION: ${sectionAllocationText || "-"}`,
+    "",
+    "+----------------------------------+-----------------------------------+",
+    "| LEARNER DETAILS                  | FOR OFFICIAL USE ONLY             |",
+    "| NAME: __________________________ | SECTION A MARKS: ______________   |",
+    "| Assessment / UPI No: ___________ | SECTION B MARKS: ______________   |",
+    "| DATE: _________________________ | TOTAL: __________________________ |",
+    "| LEARNER SIGNATURE: _____________ | PERCENTAGE: ___________________   |",
+    "|                                  | EXAMINER NAME: ________________   |",
+    "|                                  | EXAMINER SIGNATURE: _____________   |",
+    "+----------------------------------+-----------------------------------+",
+    "",
+    "CANDIDATE INSTRUCTIONS",
+    "1) Read all instructions before attempting the paper.",
+    "2) For multiple-choice items, choose only one best answer (A, B, C, or D).",
+    "3) For structured items, write clearly and show working where required.",
+    "4) Mobile phones and unauthorised materials are not allowed.",
+    ""
+  ];
+}
+
 function buildAdvancedExamText({
   title,
+  institutionName,
+  letterheadHint,
   learningArea,
   levelLabel,
   stream,
   term,
   academicYear,
   examSession,
-  strand,
-  subStrand,
-  selectedStrands,
-  selectedSubStrands,
+  examDurationLabel,
+  seedKey,
   structure,
   structureDetail,
   percentageText,
@@ -11010,167 +11243,241 @@ function buildAdvancedExamText({
   outputMode,
   templateSampleText,
   referenceRows,
-  generatedNotes,
-  supplementalMaterialNotes
+  supplementalMaterialNotes,
+  materialSnippets
 }) {
-  const references = (Array.isArray(referenceRows) ? referenceRows : []).slice(0, 24).map((row, index) => {
-    const outcomes = cleanOptionalValue(row?.specific_learning_outcomes || "");
-    const experiences = cleanOptionalValue(row?.learning_experiences || "");
-    const notes = cleanOptionalValue(row?.notes || "");
-    const parts = [
-      `${index + 1}. ${cleanValue(row?.strand) || "-"} -> ${cleanValue(row?.sub_strand) || "-"}`,
-      outcomes ? `   Outcomes: ${outcomes}` : "",
-      experiences ? `   Experiences: ${experiences}` : "",
-      notes ? `   Curriculum Notes: ${notes}` : ""
-    ].filter(Boolean);
-    return parts.join("\n");
+  const kind = examPaperSubjectKind(learningArea);
+  const refs = Array.isArray(referenceRows) ? referenceRows : [];
+  const snippets = Array.isArray(materialSnippets) ? materialSnippets : [];
+  if (supplementalMaterialNotes) {
+    supplementalMaterialNotes
+      .split(/\n+/)
+      .map((line) => line.trim())
+      .filter((line) => line.length > 40)
+      .slice(0, 6)
+      .forEach((line) => snippets.push(line));
+  }
+  const structureLabel = `${structure || "unified"}${structureDetail ? ` (${structureDetail})` : ""}`;
+  const header = buildCbcKenyaHeaderBlock({
+    institutionName,
+    letterheadHint,
+    title,
+    learningArea,
+    levelLabel,
+    stream,
+    academicYear,
+    term,
+    examSession,
+    examDurationLabel,
+    structureLabel,
+    sectionAllocationText
   });
+  const unifiedTotal = Math.min(100, Math.max(10, Number(percentageText) || 100));
+  const body = [];
+  const mcqKeys = [];
+  let qCursor = 1;
 
-  const strandCoverageText = Array.isArray(selectedStrands) && selectedStrands.length
-    ? selectedStrands.join(" | ")
-    : (strand || "-");
-  const subStrandCoverageText = Array.isArray(selectedSubStrands) && selectedSubStrands.length
-    ? selectedSubStrands.join(" | ")
-    : (subStrand || "-");
-  const sharedHeader = [
-    "INSTITUTION LETTERHEAD: [AUTO-INJECTED FROM INSTITUTION SETTINGS]",
-    `EXAM TITLE: ${title || `${examSession} ${learningArea}`}`.trim(),
-    `LEARNING AREA: ${learningArea || "-"}`,
-    `LEVEL: ${levelLabel || "-"}`,
-    `STREAM: ${stream || "-"}`,
-    `ACADEMIC YEAR: ${academicYear || "-"}`,
-    `TERM: ${term || "-"}`,
-    `EXAM SESSION: ${examSession || "-"}`,
-    `EXAM TYPE: ${examSession || "-"}`,
-    `COVERAGE STRANDS: ${strandCoverageText}`,
-    `COVERAGE SUB-STRANDS: ${subStrandCoverageText}`,
-    `STRUCTURE: ${structure || "unified"} ${structureDetail ? `(${structureDetail})` : ""}`.trim(),
-    `PERCENTAGE ALLOCATION: ${percentageText || "-"}`,
-    `SECTION ALLOCATION: ${sectionAllocationText || "-"}`,
-    `OUTPUT MODE: ${outputMode || "-"}`,
-    "CANDIDATE IDENTIFIER: Assessment No / UPI / Admission No",
-    "QR CODE: [AUTO-GENERATED AT PRINT/DOWNLOAD]",
-    "DISTINCT SERIAL: [AUTO-GENERATED PER LEARNER/GRADE/STREAM]",
-    ""
-  ];
-
-  const cleanTopic = (value = "") =>
-    cleanValue(value)
-      .replace(/^\d+(\.\d+)?\s*/g, "")
-      .replace(/\s+/g, " ")
-      .trim();
-  const topicPool = Array.from(
-    new Set(
-      [
-        ...(Array.isArray(selectedSubStrands) ? selectedSubStrands : []),
-        ...(Array.isArray(selectedStrands) ? selectedStrands : []),
-        ...(Array.isArray(referenceRows) ? referenceRows.map((row) => row?.sub_strand || row?.strand || "") : [])
-      ]
-        .map((item) => cleanTopic(item))
-        .filter(Boolean)
-    )
-  );
-  const isPreTechnicalPaper = cleanValue(learningArea).toLowerCase().includes("pre-technical");
-  const priorityPrompts = isPreTechnicalPaper
-    ? ["pre-technical studies", "fire", "computer"]
-    : [cleanValue(learningArea || "the learning area")];
-  const isSocialStudiesPaper = cleanValue(learningArea).toLowerCase().includes("social studies");
-  const promptPool = Array.from(new Set([...priorityPrompts, ...topicPool])).slice(0, 24);
-  const promptFor = (index) => {
-    if (!promptPool.length) return "the selected topic";
-    return promptPool[index % promptPool.length];
-  };
-  const buildObjectiveQuestions = ({ count, startNumber = 1 }) =>
-    Array.from({ length: count }).map((_, index) => {
-      const topic = promptFor(index);
-      return `${startNumber + index}. What is ${topic}?\n   A. Correct definition\n   B. Unrelated statement\n   C. Incorrect process\n   D. Opposite meaning`;
+  if (kind === "social") {
+    const sectionAMarks = 20;
+    const sectionBMarks = Math.max(unifiedTotal - sectionAMarks, 20);
+    const mcq = examPaperBuildMcqBlock({
+      count: 20,
+      startNumber: qCursor,
+      referenceRows: refs,
+      learningArea,
+      materialSnippets: snippets,
+      seedKey: `${seedKey}|SOC`,
+      kind: "social"
     });
-  const sectionAQuestions = buildObjectiveQuestions({ count: 10, startNumber: 1 });
-  const sectionBQuestions = Array.from({ length: 5 }).map((_, index) => {
-    const topic = promptFor(index + 2);
-    return `${index + 1}. Explain ${topic} and give one practical example in school/community context.`;
-  });
-  const sectionCQuestions = Array.from({ length: 3 }).map((_, index) => {
-    const topic = promptFor(index + 5);
-    return `${index + 1}. Apply ${topic} in a real-life task and outline safety/quality steps.`;
-  });
-  let body = [];
-  if (isSocialStudiesPaper) {
-    const sectionA20 = buildObjectiveQuestions({ count: 20, startNumber: 1 });
-    body = [
-      "SOCIAL STUDIES PAPER",
-      "TOTAL MARKS: 20",
-      "",
-      "SECTION A (20 Marks) - Objective Questions",
-      ...sectionA20
-    ];
-  } else if (isPreTechnicalPaper) {
-    const sectionA30 = buildObjectiveQuestions({ count: 30, startNumber: 1 });
-    const sectionB60 = Array.from({ length: 12 }).map((_, index) => {
-      const topic = promptFor(index + 6);
-      return `${index + 31}. Explain ${topic} and apply it in practical school/community context. (5 marks)`;
+    body.push(`SECTION A (${sectionAMarks} MARKS)`, "*Answer ALL questions in this section.*", "");
+    body.push(...mcq.lines);
+    mcqKeys.push(...mcq.keyLines);
+    qCursor += 20;
+    const bCount = Math.min(12, Math.max(4, Math.round(sectionBMarks / 8)));
+    body.push(`SECTION B (${sectionBMarks} MARKS)`, "");
+    body.push(
+      ...examPaperStructuredSectionLines({
+        startNumber: qCursor,
+        totalMarks: sectionBMarks,
+        questionCount: bCount,
+        referenceRows: refs,
+        learningArea,
+        seedKey: `${seedKey}|SOC-B`
+      })
+    );
+    qCursor += bCount;
+  } else if (kind === "pretechnical") {
+    const totalPaper = 80;
+    const sectionAMarks = 20;
+    const sectionBMarks = 60;
+    const mcq = examPaperBuildMcqBlock({
+      count: 30,
+      startNumber: qCursor,
+      referenceRows: refs,
+      learningArea,
+      materialSnippets: snippets,
+      seedKey: `${seedKey}|PT`,
+      kind: "pretechnical"
     });
-    body = [
-      "PRE-TECHNICAL STUDIES PAPER",
-      "TOTAL MARKS: 80",
-      "",
-      "SECTION A (30 Marks) - Objective Questions",
-      ...sectionA30,
-      "",
-      "SECTION B (60 Marks) - Structured / Practical Questions",
-      ...sectionB60,
-      "",
-      "MARKING STRUCTURE SUMMARY: SECTION A = 30, SECTION B = 60, TOTAL = 80"
-    ];
+    body.push(`SECTION A (${sectionAMarks} MARKS AMONG ${30} ITEMS)`, "*Answer ALL questions in this section.*", "");
+    body.push("(Each item carries equal weight within Section A; total Section A = 20 marks.)", "");
+    body.push(...mcq.lines);
+    mcqKeys.push(...mcq.keyLines);
+    qCursor += 30;
+    const bCount = 12;
+    body.push(`SECTION B (${sectionBMarks} MARKS)`, "");
+    body.push(
+      ...examPaperStructuredSectionLines({
+        startNumber: qCursor,
+        totalMarks: sectionBMarks,
+        questionCount: bCount,
+        referenceRows: refs,
+        learningArea,
+        seedKey: `${seedKey}|PT-B`
+      })
+    );
+    qCursor += bCount;
+    body.push(`TOTAL MARKS FOR THIS PAPER: ${totalPaper}`);
   } else if (String(structure || "unified") === "structured") {
-    body = [
-      "STRUCTURED PAPER",
-      "",
-      "SECTION A (Structured / Short Response Questions)",
-      ...sectionBQuestions,
-      "",
-      "SECTION B (Objective Questions)",
-      ...sectionAQuestions
-    ];
-    if (cleanValue(structureDetail) === "A_B_C") {
-      body.push("", "SECTION C (Objective / Application Questions)", ...sectionCQuestions);
+    const detail = cleanValue(structureDetail);
+    const parts =
+      detail === "A_B_C" ? ["SECTION A", "SECTION B", "SECTION C"] : ["SECTION A", "SECTION B"];
+    const numbers = String(sectionAllocationText || "").match(/\d+/g);
+    const aMarks = numbers && numbers[0] ? Number(numbers[0]) : 40;
+    const bMarks = numbers && numbers[1] ? Number(numbers[1]) : 35;
+    const cMarks = numbers && numbers[2] ? Number(numbers[2]) : 25;
+    const mcqCountA = Math.min(20, Math.max(8, Math.round(aMarks / 2)));
+    const mcqA = examPaperBuildMcqBlock({
+      count: mcqCountA,
+      startNumber: qCursor,
+      referenceRows: refs,
+      learningArea,
+      materialSnippets: snippets,
+      seedKey: `${seedKey}|ST-A`,
+      kind: "general"
+    });
+    body.push(`${parts[0]} (${aMarks} MARKS) [OBJECTIVE]`, "", ...mcqA.lines);
+    mcqKeys.push(...mcqA.keyLines);
+    qCursor += mcqA.keyLines.length;
+    const bQ = Math.min(10, Math.max(3, Math.round(bMarks / 10)));
+    body.push("", `${parts[1]} (${bMarks} MARKS) [STRUCTURED]`, "");
+    body.push(
+      ...examPaperStructuredSectionLines({
+        startNumber: qCursor,
+        totalMarks: bMarks,
+        questionCount: bQ,
+        referenceRows: refs,
+        learningArea,
+        seedKey: `${seedKey}|ST-B`
+      })
+    );
+    qCursor += bQ;
+    if (parts[2]) {
+      const mcqCountC = Math.min(15, Math.max(6, Math.round(cMarks / 2)));
+      body.push("", `${parts[2]} (${cMarks} MARKS) [APPLICATION]`, "");
+      const mcqC = examPaperBuildMcqBlock({
+        count: mcqCountC,
+        startNumber: qCursor,
+        referenceRows: refs,
+        learningArea,
+        materialSnippets: snippets,
+        seedKey: `${seedKey}|ST-C`,
+        kind: "general"
+      });
+      body.push(...mcqC.lines);
+      mcqKeys.push(...mcqC.keyLines);
+      qCursor += mcqC.keyLines.length;
     }
   } else if (String(structure || "unified") === "multi-section") {
-    body = [
-      "MULTI-SECTION PAPER",
-      "",
-      "PAPER 1 (Structured / Short Response)",
-      ...sectionBQuestions,
-      "",
-      "PAPER 2 (Objective Questions)",
-      ...sectionAQuestions.slice(0, 8)
-    ];
-    if (cleanValue(structureDetail) === "PAPER_1_2_3") {
-      body.push("", "PAPER 3 (Objective / Application)", ...sectionCQuestions);
+    const detail = cleanValue(structureDetail);
+    const numbers = String(sectionAllocationText || "").match(/\d+/g);
+    const p1 = numbers && numbers[0] ? Number(numbers[0]) : 40;
+    const p2 = numbers && numbers[1] ? Number(numbers[1]) : 35;
+    const p3 = detail === "PAPER_1_2_3" && numbers && numbers[2] ? Number(numbers[2]) : 0;
+    const p1q = Math.min(8, Math.max(3, Math.round(p1 / 12)));
+    body.push(`PAPER 1 (${p1} MARKS) [STRUCTURED]`, "");
+    body.push(
+      ...examPaperStructuredSectionLines({
+        startNumber: qCursor,
+        totalMarks: p1,
+        questionCount: p1q,
+        referenceRows: refs,
+        learningArea,
+        seedKey: `${seedKey}|MS-1`
+      })
+    );
+    qCursor += p1q;
+    const mcq2 = examPaperBuildMcqBlock({
+      count: Math.min(20, Math.max(8, Math.round(p2 / 2))),
+      startNumber: qCursor,
+      referenceRows: refs,
+      learningArea,
+      materialSnippets: snippets,
+      seedKey: `${seedKey}|MS-2`,
+      kind: "general"
+    });
+    body.push("", `PAPER 2 (${p2} MARKS) [OBJECTIVE]`, "", ...mcq2.lines);
+    mcqKeys.push(...mcq2.keyLines);
+    qCursor += mcq2.keyLines.length;
+    if (detail === "PAPER_1_2_3" && p3 > 0) {
+      const p3q = Math.min(10, Math.max(2, Math.round(p3 / 10)));
+      body.push("", `PAPER 3 (${p3} MARKS) [STRUCTURED]`, "");
+      body.push(
+        ...examPaperStructuredSectionLines({
+          startNumber: qCursor,
+          totalMarks: p3,
+          questionCount: p3q,
+          referenceRows: refs,
+          learningArea,
+          seedKey: `${seedKey}|MS-3`
+        })
+      );
+      qCursor += p3q;
     }
   } else {
-    body = [
-      "UNIFIED PAPER",
-      "",
-      "SECTION A (Structured / Short Response Questions)",
-      ...sectionBQuestions,
-      "",
-      "SECTION B (Objective Questions)",
-      ...sectionAQuestions
-    ];
+    const sectionAObjectiveMarks = Math.min(40, Math.max(10, Math.round(unifiedTotal * 0.35)));
+    const sectionBMarks = Math.max(5, unifiedTotal - sectionAObjectiveMarks);
+    const mcqCount = Math.min(25, Math.max(10, sectionAObjectiveMarks));
+    const mcq = examPaperBuildMcqBlock({
+      count: mcqCount,
+      startNumber: qCursor,
+      referenceRows: refs,
+      learningArea,
+      materialSnippets: snippets,
+      seedKey: `${seedKey}|UN`,
+      kind: "general"
+    });
+    body.push(`SECTION A (${sectionAObjectiveMarks} MARKS) [OBJECTIVE]`, "", ...mcq.lines);
+    mcqKeys.push(...mcq.keyLines);
+    qCursor += mcq.keyLines.length;
+    const bQ = Math.min(10, Math.max(3, Math.round(sectionBMarks / 10)));
+    body.push("", `SECTION B (${sectionBMarks} MARKS) [STRUCTURED]`, "");
+    body.push(
+      ...examPaperStructuredSectionLines({
+        startNumber: qCursor,
+        totalMarks: sectionBMarks,
+        questionCount: bQ,
+        referenceRows: refs,
+        learningArea,
+        seedKey: `${seedKey}|UN-B`
+      })
+    );
+    qCursor += bQ;
+    body.push("", `TOTAL TARGET MARKS (UNIFIED MODE): ${unifiedTotal}`);
   }
+
+  const mcqKeyBlock = mcqKeys.length ? ["", "IMIS_MCQ_KEY", ...mcqKeys, "IMIS_MCQ_KEY_END"] : [];
+  const annex = templateSampleText ? ["", "ANNEX (OPTIONAL STRUCTURE TEMPLATE BASIS FOR TEACHERS)", cleanOptionalValue(templateSampleText)] : [];
+
   return [
-    ...sharedHeader,
-    "AI GENERATED EXAM PAPER",
+    ...header,
+    "EXAM CONTENT",
+    "",
     ...body,
-    templateSampleText ? "\nSTRUCTURE TEMPLATE SAMPLE BASIS:\n" + templateSampleText : "",
+    ...mcqKeyBlock,
+    ...annex,
     "",
-    "AI NOTES BASIS (NO UPLOADED NOTES REQUIRED):",
-    generatedNotes || "Notes generated directly from strands/sub-strands and curriculum mappings.",
-    supplementalMaterialNotes ? `\nSUPPLEMENTAL MATERIAL INSIGHTS:\n${supplementalMaterialNotes}` : "",
-    "",
-    "CURRICULUM REFERENCE CONTEXT:",
-    references.length ? references.join("\n") : "No mapped curriculum rows found; AI fallback used from selected strand/sub-strand."
+    "FOOTER (PER PAGE): LEFT — ASSESSMENT   CENTRE — PAGE   RIGHT — SUBJECT / LEVEL"
   ].join("\n");
 }
 
@@ -11351,6 +11658,12 @@ app.post(
           learning_experiences: ""
         }));
     }
+    if (!referenceRows.length) {
+      return res.status(400).json({
+        error:
+          "No curriculum coverage for the chosen level, learning area, strands and sub-strands. Add curriculum rows or adjust your selection."
+      });
+    }
 
     const materialRows = await query(
       `SELECT resource_type, title, description, strand, sub_strand, grade, stream, term
@@ -11362,28 +11675,27 @@ app.post(
        LIMIT 160`,
       [req.user.institution_id, selectedGrade || selectedForm || "", selectedGrade || selectedForm || "", selectedTerm || "", selectedTerm || ""]
     );
-    const supplementalMaterialNotes = materialRows
-      .filter((row) => {
-        const areaText = `${cleanValue(row.title)} ${cleanValue(row.description)}`.toLowerCase();
-        if (selectedLearningArea && areaText && !areaText.includes(selectedLearningArea.toLowerCase())) return false;
-        if (selectedStrands.length && cleanValue(row.strand) && !selectedStrands.includes(cleanValue(row.strand))) return false;
-        if (selectedSubStrands.length && cleanValue(row.sub_strand) && !selectedSubStrands.includes(cleanValue(row.sub_strand))) return false;
-        return true;
-      })
-      .slice(0, 8)
+    const filteredMaterialRows = materialRows.filter((row) => {
+      const areaText = `${cleanValue(row.title)} ${cleanValue(row.description)}`.toLowerCase();
+      if (selectedLearningArea && areaText && !areaText.includes(selectedLearningArea.toLowerCase())) return false;
+      if (selectedStrands.length && cleanValue(row.strand) && !selectedStrands.includes(cleanValue(row.strand))) return false;
+      if (selectedSubStrands.length && cleanValue(row.sub_strand) && !selectedSubStrands.includes(cleanValue(row.sub_strand))) return false;
+      return true;
+    });
+    const supplementalMaterialNotes = filteredMaterialRows
+      .slice(0, 12)
       .map((row) => [cleanValue(row.resource_type), cleanValue(row.title), cleanOptionalValue(row.description)].filter(Boolean).join(": "))
       .filter(Boolean)
       .join("\n");
+    const materialSnippets = filteredMaterialRows
+      .flatMap((row) => {
+        const line = [cleanValue(row.title), cleanOptionalValue(row.description)].filter(Boolean).join(" — ");
+        return line.length > 40 ? [line.replace(/\s+/g, " ").trim().slice(0, 2200)] : [];
+      })
+      .slice(0, 20);
 
     const primaryStrand = selectedStrands[0] || "";
     const primarySubStrand = selectedSubStrands[0] || "";
-    const generatedNotes = makeNotes({
-      grade: selectedGrade || null,
-      formName: selectedForm || null,
-      learningArea: selectedLearningArea,
-      strand: primaryStrand,
-      subStrand: primarySubStrand || null
-    });
     const toTemplateToken = (value = "") =>
       cleanValue(value || "")
         .toLowerCase()
@@ -11416,18 +11728,39 @@ app.post(
     const templatesByKey = new Map((Array.isArray(templateRows) ? templateRows : []).map((row) => [cleanValue(row.template_key), row.content]));
     const matchedTemplateKey = candidateTemplateKeys.find((key) => templatesByKey.has(key)) || "";
     const templateSampleText = cleanOptionalValue(templatesByKey.get(matchedTemplateKey) || "") || "";
+    const instRows = await query(
+      `SELECT institution_name, letterhead_file_path
+       FROM institutions
+       WHERE id = ?
+       LIMIT 1`,
+      [req.user.institution_id]
+    ).catch(() => []);
+    const institutionName = cleanValue(instRows[0]?.institution_name || "");
+    const letterheadHint = cleanOptionalValue(instRows[0]?.letterhead_file_path || "");
+    const dm = Number(body.exam_duration_minutes);
+    let examDurationLabel = cleanOptionalValue(body.exam_duration_label);
+    if (!examDurationLabel && Number.isFinite(dm) && dm > 0) {
+      const h = Math.floor(dm / 60);
+      const m = dm % 60;
+      const parts = [];
+      if (h) parts.push(`${h} hour${h === 1 ? "" : "s"}`);
+      if (m) parts.push(`${m} minute${m === 1 ? "" : "s"}`);
+      examDurationLabel = parts.join(" ") || "90 minutes";
+    }
+    if (!examDurationLabel) examDurationLabel = "1 hour 30 minutes";
+    const seedKey = `${req.user.institution_id}|${selectedLearningArea}|${selectedSession}|${selectedYear}|${Date.now()}`;
     const examText = buildAdvancedExamText({
       title: cleanOptionalValue(body.title) || `${selectedSession || "Exam"} - ${selectedLearningArea}`,
+      institutionName,
+      letterheadHint,
       learningArea: selectedLearningArea,
       levelLabel: selectedGrade || selectedForm,
       stream: selectedStream,
       term: selectedTerm,
       academicYear: cleanOptionalValue(body.academic_year) || `${selectedYear}/${selectedYear + 1}`,
       examSession: selectedSession || "Exam",
-      strand: primaryStrand,
-      subStrand: primarySubStrand,
-      selectedStrands,
-      selectedSubStrands,
+      examDurationLabel,
+      seedKey,
       structure: selectedStructure,
       structureDetail: cleanOptionalValue(selectedStructureDetail),
       percentageText,
@@ -11435,8 +11768,8 @@ app.post(
       outputMode: selectedOutputMode,
       templateSampleText,
       referenceRows,
-      generatedNotes,
-      supplementalMaterialNotes
+      supplementalMaterialNotes,
+      materialSnippets
     });
 
     const result = await query(
@@ -12145,6 +12478,94 @@ app.post(
       }];
     }
     res.json({ count: serials.length, mode, serials });
+  })
+);
+
+app.post(
+  "/api/academic/exams/resolve-serial",
+  auth,
+  enforceAnyModuleAccess([MODULE_KEYS.ACADEMIC_EXAMS, MODULE_KEYS.CBC_CURRICULUM_EDITOR, MODULE_KEYS.ACADEMIC_MARKS]),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER]),
+  enforcePermission(PERMISSIONS.VIEW),
+  asyncHandler(async (req, res) => {
+    const body = req.body || {};
+    const targetSerial = cleanValue(body.serial || body.serial_number || "");
+    const grade = cleanValue(body.grade || "");
+    const form = cleanValue(body.form_name || "");
+    const learningArea = cleanValue(body.learning_area || body.subject || "");
+    const examType = cleanValue(body.exam_type || "");
+    const term = cleanValue(body.term || "");
+    const year = Number(body.year || 0);
+    const stream = cleanValue(body.stream || "");
+    if (!targetSerial) {
+      return res.status(400).json({ error: "serial is required." });
+    }
+    if (!(grade || form) || !learningArea || !examType || !Number.isFinite(year) || year < 2000) {
+      return res.status(400).json({
+        error: "grade/form_name, learning_area, exam_type and a valid academic year are required to resolve a serial."
+      });
+    }
+    const institutionId = Number(req.user.institution_id);
+    const learnerSerialColumns = await getExistingColumns("learners", ["learner_serial_number"]);
+    const hasLearnerSerialColumn = learnerSerialColumns.includes("learner_serial_number");
+    const learners = await query(
+      `SELECT id, full_name, admission_number, grade, stream${hasLearnerSerialColumn ? ", learner_serial_number" : ""}
+       FROM learners
+       WHERE institution_id = ?
+         AND (grade = ? OR grade = ? OR ? = '')
+         AND (stream = ? OR ? = '')
+       ORDER BY full_name ASC`,
+      [institutionId, grade || "", form || "", grade || form || "", stream || "", stream || ""]
+    );
+    const institutionRows = await query(
+      `SELECT institution_code
+       FROM institutions
+       WHERE id = ?
+       LIMIT 1`,
+      [institutionId]
+    ).catch(() => []);
+    const institutionCode = cleanValue(institutionRows[0]?.institution_code || "");
+    for (const learner of learners) {
+      const computed = buildExamSerialSegment({
+        grade,
+        form,
+        learningArea,
+        examType,
+        term,
+        year,
+        stream: learner.stream || stream || "",
+        learnerSerialNumber: learner.learner_serial_number || learner.id
+      });
+      if (computed === targetSerial) {
+        return res.json({
+          match: true,
+          learner: {
+            id: learner.id,
+            full_name: learner.full_name,
+            admission_number: learner.admission_number,
+            grade: learner.grade,
+            stream: learner.stream
+          },
+          serial: computed,
+          qr_payload: buildExamQrPayload({
+            institutionId,
+            institutionCode,
+            learnerId: learner.id,
+            learnerName: learner.full_name,
+            admissionNumber: learner.admission_number,
+            grade: learner.grade || grade,
+            form,
+            learningArea,
+            examType,
+            term,
+            year,
+            stream: learner.stream || stream,
+            serial: computed
+          })
+        });
+      }
+    }
+    res.status(404).json({ match: false, error: "No learner matched this serial for the provided exam filters." });
   })
 );
 

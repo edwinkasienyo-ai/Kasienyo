@@ -4393,3 +4393,88 @@ body {
   background: linear-gradient(165deg, #ffffff 0%, #f3f9ff 100%);
   box-shadow: 0 8px 16px rgba(14, 61, 104, 0.09);
 }
+
+/* Compact examination module layout */
+.exam-module-compact-header h3 {
+  margin: 0 0 4px;
+  font-size: 16px;
+}
+.exam-module-compact-header p {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.35;
+  color: #48617a;
+}
+.exam-module-compact .exam-v2-pane {
+  padding: 8px 10px;
+  font-size: 12px;
+}
+.exam-module-compact .exam-v2-pane h4 {
+  font-size: 14px;
+  margin: 0 0 4px;
+  color: #0d3d6d;
+}
+.exam-tight-note {
+  margin: 0 0 6px !important;
+  font-size: 11px !important;
+  line-height: 1.35 !important;
+}
+.form-grid--exam-tight {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 4px 8px;
+  align-items: center;
+}
+.form-grid--exam-tight label {
+  font-size: 11px;
+  margin-top: 0;
+}
+.form-grid--exam-tight input,
+.form-grid--exam-tight select,
+.form-grid--exam-tight textarea {
+  font-size: 12px;
+  padding: 4px 6px;
+  min-height: 28px;
+}
+.exam-actions-tight {
+  gap: 4px !important;
+  flex-wrap: wrap !important;
+}
+.exam-strand-panel {
+  max-height: 120px;
+  overflow: auto;
+  border: 1px solid var(--line-200, #d7e3f2);
+  border-radius: 8px;
+  padding: 2px 4px;
+  background: #fafcff;
+}
+.exam-checklist-table th {
+  font-size: 11px;
+  padding: 2px 4px;
+}
+.exam-checklist-table td {
+  font-size: 11px;
+  padding: 2px 4px;
+  vertical-align: top;
+}
+.exam-module-compact-max.dashboard-section {
+  padding: 8px 10px;
+}
+.exam-nav-compact {
+  gap: 4px;
+  flex-wrap: wrap;
+  padding: 6px 4px;
+}
+.exam-nav-compact .exam-nav-btn {
+  padding: 4px 8px !important;
+  font-size: 11px !important;
+  min-height: 0;
+  line-height: 1.2;
+}
+.exam-v2-collapse summary {
+  font-size: 12px;
+  padding: 4px 0;
+}
+.template-spacious {
+  min-height: 80px !important;
+}

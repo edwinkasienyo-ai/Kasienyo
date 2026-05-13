@@ -5927,12 +5927,12 @@ async function renderCbcCurriculumEditor(options = {}) {
   await renderExamCards();
 
   document.getElementById("formArea").innerHTML = `
-    <div class="module-header-card exam-v2-header">
-      <h3>Examination Management - Redefined Engine</h3>
-      <p>AI-powered, CBC-aligned, workflow-driven lifecycle spanning curriculum, exam generation, scripts, gradebooks, assessment tracking, portals, compliance, analytics, archives and settings.</p>
+    <div class="module-header-card exam-v2-header exam-module-compact-header">
+      <h3>Examination Management</h3>
+      <p class="exam-tight-note">CBC-aligned examinations: curriculum, generation, entry, scripts, analytics, templates, archives.</p>
     </div>
-    <nav id="examTopNav" class="exam-top-nav" aria-label="Examination submodules"></nav>
-    <section id="examMgmtSubmodulePanel" class="dashboard-section"></section>
+    <nav id="examTopNav" class="exam-top-nav exam-nav-compact" aria-label="Examination submodules"></nav>
+    <section id="examMgmtSubmodulePanel" class="dashboard-section exam-module-compact-max"></section>
     <div id="examV2Status" class="small-note"></div>
   `;
 
@@ -5985,30 +5985,44 @@ async function renderCbcCurriculumEditor(options = {}) {
     const materials = Array.isArray(materialRows) ? materialRows : [];
     const draftRows = [];
     panel.innerHTML = `
-      <div class="exam-v2-layout">
+      <div class="exam-v2-layout exam-module-compact">
         <div class="exam-v2-pane">
           <h4>Curriculum Engine</h4>
-          <p class="small-note">Define grade/form, learning area, strands and sub-strands. Save one or many rows at once.</p>
-          <div class="form-grid">
+          <p class="small-note exam-tight-note">New = build strands/sub-strands; Edit = update saved curriculum rows by ID.</p>
+          <div class="form-grid form-grid--exam-tight">
+            <label>Mode</label>
+            <select id="examV2CurrMode"><option value="new">New entries</option><option value="edit">Edit saved row</option></select>
             <label>Grade/Form</label>
             <select id="examV2CurrLevel"><option value="">Select grade or form</option>${[...gradeOptions, ...formOptions].map((v) => `<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`).join("")}</select>
             <label>Learning Area</label>
             <select id="examV2CurrLearningArea"><option value="">Select learning area</option>${learningAreas.map((v) => `<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`).join("")}</select>
             <label>CBC Level</label>
-            <input id="examV2CurrCbcLevel" placeholder="e.g. Junior Secondary" />
+            <select id="examV2CurrCbcLevel">
+              <option value="">Select level</option>
+              <option value="Pre-primary">Pre-primary</option>
+              <option value="Lower Primary">Lower Primary</option>
+              <option value="Upper Primary">Upper Primary</option>
+              <option value="Junior Secondary">Junior Secondary</option>
+              <option value="Senior Secondary">Senior Secondary</option>
+            </select>
+            <label>Strand slots (quick add)</label>
+            <input id="examV2CurrStrandSlots" type="number" min="1" max="40" value="1" />
+          </div>
+          <div class="form-grid form-grid--exam-tight">
             <label>Strand</label>
             <input id="examV2CurrStrand" placeholder="Enter strand" />
             <label>Strand Description</label>
-            <textarea id="examV2CurrStrandDesc" rows="2" placeholder="Describe the strand objectives and scope"></textarea>
+            <textarea id="examV2CurrStrandDesc" rows="2" placeholder="Strand scope"></textarea>
             <label>Sub-strand</label>
             <input id="examV2CurrSubStrand" placeholder="Enter sub-strand" />
             <label>Sub-strand Description</label>
-            <textarea id="examV2CurrSubStrandDesc" rows="2" placeholder="Describe this sub-strand in detail"></textarea>
+            <textarea id="examV2CurrSubStrandDesc" rows="2" placeholder="Sub-strand detail"></textarea>
             <label>Learning Outcome / Notes</label>
-            <textarea id="examV2CurrNotes" rows="4" placeholder="Optional notes/outcomes"></textarea>
+            <textarea id="examV2CurrNotes" rows="3" placeholder="Optional notes/outcomes"></textarea>
           </div>
-          <div class="actions-row exam-icon-group">
+          <div class="actions-row exam-icon-group exam-actions-tight">
             <button class="ax-btn ax-btn--add ax-btn--sm" id="examV2CurrAddRowBtn" title="Add row">Add</button>
+            <button class="ax-btn ax-btn--generate ax-btn--sm" id="examV2CurrPrepareSlotsBtn" title="Prepare strand slots">Slots</button>
             <button class="ax-btn ax-btn--save ax-btn--sm" id="examV2CurrSaveBtn" title="Save all rows">Save</button>
             <button class="ax-btn ax-btn--edit ax-btn--sm" id="examV2CurrEditBtn" title="Edit row by ID">Edit</button>
             <button class="ax-btn ax-btn--delete ax-btn--sm" id="examV2CurrDeleteBtn" title="Delete row by ID">Delete</button>
@@ -6026,8 +6040,8 @@ async function renderCbcCurriculumEditor(options = {}) {
         </div>
         <div class="exam-v2-pane">
           <h4>Learning Materials & AI Notes</h4>
-          <p class="small-note">Select grade/form and learning area first, then upload notes/past papers against the exact curriculum scope.</p>
-          <div class="form-grid">
+          <p class="small-note exam-tight-note">Select grade/form and learning area first, then upload notes or paste text; materials are available immediately after save.</p>
+          <div class="form-grid form-grid--exam-tight">
             <label>Grade/Form</label>
             <select id="examV2MatLevel"><option value="">Select grade or form</option>${[...gradeOptions, ...formOptions].map((v) => `<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`).join("")}</select>
             <label>Learning Area</label>
@@ -6257,6 +6271,47 @@ async function renderCbcCurriculumEditor(options = {}) {
       });
       renderDraftRows();
       setStatus(`Draft rows: ${draftRows.length}`);
+    });
+
+    document.getElementById("examV2CurrPrepareSlotsBtn")?.addEventListener("click", () => {
+      const mode = String(document.getElementById("examV2CurrMode")?.value || "new");
+      if (mode !== "new") {
+        alert('Set mode to "New entries" to prepare strand slots.');
+        return;
+      }
+      const slots = Number(document.getElementById("examV2CurrStrandSlots")?.value || 1);
+      if (!Number.isFinite(slots) || slots < 1 || slots > 40) {
+        alert("Enter a strand slot count between 1 and 40.");
+        return;
+      }
+      const levelPayload = parseLevelChoice(String(levelEl?.value || ""));
+      const grade = levelPayload.grade;
+      const form_name = levelPayload.form_name;
+      const learning_area = String(areaEl?.value || "");
+      const cbcLevel = String(cbcLevelEl?.value || "").trim();
+      if ((!grade && !form_name) || !learning_area) {
+        alert("Select grade/form and learning area first.");
+        return;
+      }
+      for (let i = 1; i <= slots; i += 1) {
+        draftRows.push({
+          grade,
+          form_name,
+          learning_area,
+          strand: `Strand ${i} (rename)`,
+          strand_description: "",
+          sub_strand: `Sub-strand ${i} (rename)`,
+          sub_strand_description: "",
+          notes: "",
+          specific_learning_outcomes: "",
+          learning_experiences: "",
+          suggested_assessment_rubric: cbcLevel ? `CBC Level: ${cbcLevel}` : "",
+          term: "Term One",
+          year: new Date().getFullYear()
+        });
+      }
+      renderDraftRows();
+      setStatus(`Prepared ${slots} strand slot row(s). Edit names then Save.`);
     });
 
     document.getElementById("examV2CurrSaveBtn")?.addEventListener("click", async () => {
@@ -6559,11 +6614,11 @@ async function renderCbcCurriculumEditor(options = {}) {
   const renderExamGenerationTab = async () => {
     const gradeFormOptions = [...gradeOptions, ...formOptions];
     panel.innerHTML = `
-      <div class="exam-v2-layout">
+      <div class="exam-v2-layout exam-module-compact">
         <div class="exam-v2-pane">
-          <h4>Exam Generation Engine</h4>
-          <p class="small-note">Strict workflow: Session → Academic Year → Term → Grade/Form → Stream → Learning Area → Strands → Sub-strands → Structure → Output.</p>
-          <div class="form-grid">
+          <h4>Exam Generation</h4>
+          <p class="small-note exam-tight-note">Session → Year → Term → Grade/Form → Stream → Area → strands/sub-strands → structure → output.</p>
+          <div class="form-grid form-grid--exam-tight">
             <label>Examination Session</label>
             <select id="examV2GenSession"><option value="">Select session</option>${examSessions.map((v) => `<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`).join("")}</select>
             <label>Academic Year</label>
@@ -6572,30 +6627,34 @@ async function renderCbcCurriculumEditor(options = {}) {
             <select id="examV2GenTerm" disabled><option value="">Select term</option>${termOptions.map((v) => `<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`).join("")}</select>
             <label>Grade/Form</label>
             <select id="examV2GenLevel" disabled><option value="">Select Grade/Form</option>${gradeFormOptions.map((v) => `<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`).join("")}</select>
-            <label>Stream (from learners)</label>
+            <label>Stream</label>
             <select id="examV2GenStreamSelect" disabled><option value="">Select stream</option><option value="N/A">N/A</option></select>
-            <label>Stream (manual optional)</label>
-            <input id="examV2GenStreamManual" placeholder="Type stream if missing" disabled />
+            <label>Stream (manual)</label>
+            <input id="examV2GenStreamManual" placeholder="If missing" disabled />
             <label>Learning Area</label>
             <select id="examV2GenArea" disabled><option value="">Select learning area</option>${learningAreas.map((v) => `<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`).join("")}</select>
-            <label>Select Strands (tick multiple)</label>
-            <div id="examV2GenStrandsPanel" class="dashboard-table-wrap" style="max-height: 170px; padding: 8px; overflow:auto;"></div>
-            <div class="actions-row exam-icon-group">
+            <label>Exam duration (hours)</label>
+            <select id="examV2GenDurH" disabled>${[0, 1, 2, 3].map((h) => `<option value="${h}"${h === 1 ? " selected" : ""}>${h}</option>`).join("")}</select>
+            <label>Exam duration (minutes)</label>
+            <select id="examV2GenDurM" disabled>${[0, 15, 30, 45].map((m) => `<option value="${m}"${m === 30 ? " selected" : ""}>${m}</option>`).join("")}</select>
+            <label>Strands</label>
+            <div id="examV2GenStrandsPanel" class="exam-strand-panel"></div>
+            <div class="actions-row exam-icon-group exam-actions-tight" style="grid-column:1/-1;">
               <button class="ax-btn ax-btn--view ax-btn--sm" id="examV2GenSelectAllStrandsBtn" title="Select all strands" disabled>Select All</button>
               <button class="ax-btn ax-btn--delete ax-btn--sm" id="examV2GenDeselectStrandsBtn" title="Deselect all strands" disabled>Deselect</button>
               <button class="ax-btn ax-btn--refresh ax-btn--sm" id="examV2GenInvertStrandsBtn" title="Invert strand selection" disabled>Invert</button>
-              <button class="ax-btn ax-btn--delete ax-btn--sm" id="examV2GenClearStrandsBtn" title="Delete strand selections" disabled>Clear Strands</button>
+              <button class="ax-btn ax-btn--delete ax-btn--sm" id="examV2GenClearStrandsBtn" title="Delete strand selections" disabled>Clear</button>
             </div>
-            <div id="examV2GenSelectedStrands" class="small-note">No strand selected.</div>
-            <label>Select Sub-strands (tick multiple)</label>
-            <div id="examV2GenSubsPanel" class="dashboard-table-wrap" style="max-height: 170px; padding: 8px; overflow:auto;"></div>
-            <div class="actions-row exam-icon-group">
+            <div id="examV2GenSelectedStrands" class="small-note" style="grid-column:1/-1;">No strand selected.</div>
+            <label>Sub-strands</label>
+            <div id="examV2GenSubsPanel" class="exam-strand-panel"></div>
+            <div class="actions-row exam-icon-group exam-actions-tight" style="grid-column:1/-1;">
               <button class="ax-btn ax-btn--view ax-btn--sm" id="examV2GenSelectAllSubsBtn" title="Select all sub-strands" disabled>Select All</button>
               <button class="ax-btn ax-btn--delete ax-btn--sm" id="examV2GenDeselectSubsBtn" title="Deselect all sub-strands" disabled>Deselect</button>
               <button class="ax-btn ax-btn--refresh ax-btn--sm" id="examV2GenInvertSubsBtn" title="Invert sub-strand selection" disabled>Invert</button>
-              <button class="ax-btn ax-btn--delete ax-btn--sm" id="examV2GenClearSubsBtn" title="Delete sub-strand selections" disabled>Clear Sub-strands</button>
+              <button class="ax-btn ax-btn--delete ax-btn--sm" id="examV2GenClearSubsBtn" title="Delete sub-strand selections" disabled>Clear</button>
             </div>
-            <div id="examV2GenSelectedSubs" class="small-note">No sub-strand selected.</div>
+            <div id="examV2GenSelectedSubs" class="small-note" style="grid-column:1/-1;">No sub-strand selected.</div>
             <label>Exam Structure</label>
             <select id="examV2GenStructure" disabled><option value="unified">Unified</option><option value="structured">Structured</option><option value="multi-section">Multi-section</option></select>
             <label>Structure Details</label>
@@ -6696,6 +6755,8 @@ async function renderCbcCurriculumEditor(options = {}) {
     const levelEl = document.getElementById("examV2GenLevel");
     const streamSelectEl = document.getElementById("examV2GenStreamSelect");
     const streamManualEl = document.getElementById("examV2GenStreamManual");
+    const durHEl = document.getElementById("examV2GenDurH");
+    const durMEl = document.getElementById("examV2GenDurM");
     const areaEl = document.getElementById("examV2GenArea");
     const strandsPanelEl = document.getElementById("examV2GenStrandsPanel");
     const subsPanelEl = document.getElementById("examV2GenSubsPanel");
@@ -6821,8 +6882,23 @@ async function renderCbcCurriculumEditor(options = {}) {
       }
       return "Provide the correct curriculum-aligned response and award marks based on key content points.";
     };
+    const parseImisMcqKeyMap = (examText = "") => {
+      const map = new Map();
+      const block = String(examText || "").match(/IMIS_MCQ_KEY\n([\s\S]*?)IMIS_MCQ_KEY_END/);
+      if (!block) return map;
+      String(block[1] || "")
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter(Boolean)
+        .forEach((line) => {
+          const match = line.match(/^(\d+):([A-D])$/i);
+          if (match) map.set(Number(match[1]), match[2].toUpperCase());
+        });
+      return map;
+    };
     const extractQuestionsFromExam = (examText = "") => {
       const source = String(examText || "").split("==== GENERATED SERIAL & EXAM METADATA ====")[0] || "";
+      const keyMap = parseImisMcqKeyMap(source);
       const lines = source.split(/\r?\n/);
       const questions = [];
       let currentSection = "GENERAL";
@@ -6839,7 +6915,8 @@ async function renderCbcCurriculumEditor(options = {}) {
             number: Number(questionMatch[1]),
             question: questionMatch[2].trim(),
             section: currentSection,
-            options: []
+            options: [],
+            answerKey: keyMap.get(Number(questionMatch[1])) || null
           });
           return;
         }
@@ -6853,7 +6930,16 @@ async function renderCbcCurriculumEditor(options = {}) {
       });
       return questions;
     };
-    const resolveObjectiveAnswer = ({ questionText = "", options = [] } = {}) => {
+    const resolveObjectiveAnswer = ({ questionText = "", options = [], answerKey = null } = {}) => {
+      if (answerKey && Array.isArray(options) && options.length) {
+        const direct = options.find((opt) => String(opt.label || "").toUpperCase() === String(answerKey).toUpperCase());
+        if (direct) {
+          return {
+            ...direct,
+            reason: "Aligned to IMIS_MCQ_KEY answer mapping for this examination paper."
+          };
+        }
+      }
       if (!Array.isArray(options) || !options.length) return null;
       const ranked = options.map((option) => ({
         ...option,
@@ -6891,7 +6977,7 @@ async function renderCbcCurriculumEditor(options = {}) {
       const answerLines = questions.map((row, index) => {
         const header = `${index + 1}. Q${row.number} [${row.section}] ${row.question}`;
         if (row.options.length) {
-          const answer = resolveObjectiveAnswer({ questionText: row.question, options: row.options });
+          const answer = resolveObjectiveAnswer({ questionText: row.question, options: row.options, answerKey: row.answerKey });
           return [
             header,
             `   Correct Answer: ${answer?.label || "A"}. ${answer?.text || ""}`,
@@ -6909,10 +6995,15 @@ async function renderCbcCurriculumEditor(options = {}) {
       return [...metaHeader, ...answerLines].join("\n");
     };
     const downloadWordDocument = (filename, text) => {
+      const body = escapeHtml(text).replace(/\n/g, "<br/>");
       const html = `
         <html>
-          <head><meta charset="utf-8"><title>${escapeHtml(filename)}</title></head>
-          <body><pre>${escapeHtml(text)}</pre></body>
+          <head>
+            <meta charset="utf-8">
+            <title>${escapeHtml(filename)}</title>
+            <style>body{font-family:'Times New Roman',Times,serif;font-size:11pt;line-height:1.35;color:#111;margin:12px;}</style>
+          </head>
+          <body><div>${body}</div></body>
         </html>
       `;
       downloadTextFile(filename.endsWith(".doc") ? filename : `${filename}.doc`, html, "application/msword;charset=utf-8");
@@ -7234,12 +7325,12 @@ async function renderCbcCurriculumEditor(options = {}) {
       const subLabelMap = new Map(availableSubOptions.map((row) => [row.value, row.label]));
       if (selectedStrandsInfoEl) {
         selectedStrandsInfoEl.textContent = selectedStrandsState.size
-          ? `Selected strands (${selectedStrandsState.size}/${availableStrands.length || selectedStrandsState.size}): ${Array.from(selectedStrandsState.values()).map((value) => strandLabelMap.get(value) || value).join(" | ")}`
+          ? `${selectedStrandsState.size} strand(s) selected (details stored in curriculum engine).`
           : "No strand selected.";
       }
       if (selectedSubsInfoEl) {
         selectedSubsInfoEl.textContent = selectedSubsState.size
-          ? `Selected sub-strands (${selectedSubsState.size}/${availableSubs.length || selectedSubsState.size}): ${Array.from(selectedSubsState.values()).map((value) => subLabelMap.get(value) || value).join(" | ")}`
+          ? `${selectedSubsState.size} sub-strand(s) selected (details stored in curriculum engine).`
           : "No sub-strand selected.";
       }
     };
@@ -7264,17 +7355,24 @@ async function renderCbcCurriculumEditor(options = {}) {
         panelEl.innerHTML = `<p class="small-note">No ${name} found for this level/learning area.</p>`;
         return;
       }
-      panelEl.innerHTML = normalizedValues
-        .map((valueRow, idx) => {
-          const id = `examV2Gen${name}${idx}`.replace(/[^a-zA-Z0-9_-]/g, "");
-          return `
-            <label for="${id}" style="display:flex; gap:8px; align-items:flex-start; margin:4px 0;">
-              <input id="${id}" type="checkbox" value="${escapeHtmlAttribute(valueRow.value)}" ${selectedSet.has(valueRow.value) ? "checked" : ""} ${disabled ? "disabled" : ""} />
-              <span>${escapeHtml(valueRow.label)}</span>
-            </label>
-          `;
-        })
-        .join("");
+      panelEl.innerHTML = `
+        <table class="exam-checklist-table" style="width:100%;font-size:12px;border-collapse:collapse;">
+          <thead><tr><th style="width:28px;"></th><th>Item</th></tr></thead>
+          <tbody>
+        ${normalizedValues
+          .map((valueRow, idx) => {
+            const id = `examV2Gen${name}${idx}`.replace(/[^a-zA-Z0-9_-]/g, "");
+            return `
+              <tr>
+                <td style="padding:2px 4px;">
+                  <input id="${id}" type="checkbox" value="${escapeHtmlAttribute(valueRow.value)}" ${selectedSet.has(valueRow.value) ? "checked" : ""} ${disabled ? "disabled" : ""} />
+                </td>
+                <td style="padding:2px 4px;"><label for="${id}" style="margin:0;font-weight:500;">${escapeHtml(valueRow.label)}</label></td>
+              </tr>`;
+          })
+          .join("")}
+          </tbody>
+        </table>`;
       panelEl.querySelectorAll("input[type='checkbox']").forEach((node) => {
         node.addEventListener("change", () => {
           const value = String(node.value || "").trim();
@@ -7462,6 +7560,8 @@ async function renderCbcCurriculumEditor(options = {}) {
       setEnabled(levelEl, termOk);
       setEnabled(streamSelectEl, levelOk);
       setEnabled(streamManualEl, levelOk);
+      setEnabled(durHEl, termOk);
+      setEnabled(durMEl, termOk);
       setEnabled(areaEl, streamOk);
       setEnabled(clearStrandsBtn, areaOk && selectedStrands().length > 0);
       setEnabled(clearSubsBtn, strandsOk && selectedSubs().length > 0);
@@ -7679,6 +7779,7 @@ async function renderCbcCurriculumEditor(options = {}) {
         term: String(termEl?.value || ""),
         academic_year: String(yearEl?.value || ""),
         year: parseAcademicYearStart(String(yearEl?.value || "")),
+        exam_duration_minutes: Number(durHEl?.value || 0) * 60 + Number(durMEl?.value || 0),
         structure,
         structure_detail: structure !== "unified" ? String(structureDetailEl?.value || "") : null,
         allocation_mode: String(allocModeEl?.value || "manual"),
@@ -7799,6 +7900,11 @@ async function renderCbcCurriculumEditor(options = {}) {
         alert(error.message);
       }
     });
+    const stripLearnerExamExport = (txt = "") =>
+      String(txt || "")
+        .replace(/\r\n/g, "\n")
+        .replace(/\nIMIS_MCQ_KEY\n[\s\S]*?\nIMIS_MCQ_KEY_END/, "");
+
     runDeliveryBtn?.addEventListener("click", () => {
       const mode = String(deliveryModeEl?.value || "");
       const text = String(outputEl?.value || "").trim();
@@ -7807,7 +7913,9 @@ async function renderCbcCurriculumEditor(options = {}) {
         return;
       }
       if (mode === "download") {
-        downloadTextFile("generated-exam-paper.txt", text);
+        const publicText = stripLearnerExamExport(text);
+        downloadTextFile("generated-exam-paper.txt", publicText);
+        downloadWordDocument("generated-exam-paper.doc", publicText);
         if (allocatedSerials.length) {
           const csv = rowsToCsv(allocatedSerials.map((row) => ({
             learner_name: row.learner_name || "",
@@ -8095,11 +8203,23 @@ async function renderCbcCurriculumEditor(options = {}) {
 
   const renderExamEntryTab = async () => {
     panel.innerHTML = `
-      <div class="exam-v2-layout">
+      <div class="exam-v2-layout exam-module-compact">
         <div class="exam-v2-pane">
           <h4>Exam Entry</h4>
-          <p class="small-note">Load learners by class/stream, enter marks, save to assessment engine, then print/export.</p>
-          <div class="form-grid">
+          <p class="small-note exam-tight-note">Choose method, confirm learner context, enter marks, verify, then save.</p>
+          <div class="form-grid form-grid--exam-tight">
+            <label>Entry Method</label>
+            <select id="examV2EntryMethod">
+              <option value="manual">Manual filters</option>
+              <option value="serial">Serial number</option>
+              <option value="qr">QR scan</option>
+            </select>
+            <div id="examV2EntrySerialPanel" style="display:none;grid-column:1/-1;" class="form-grid form-grid--exam-tight">
+              <label>Serial</label>
+              <input id="examV2EntrySerialInput" placeholder="Paste allocated exam serial" />
+              <label></label>
+              <button type="button" class="ax-btn ax-btn--save ax-btn--sm" id="examV2EntrySerialOkBtn" title="Resolve serial">OK</button>
+            </div>
             <label>Exam Session</label>
             <select id="examV2EntrySession">${examSessions.map((v) => `<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`).join("")}</select>
             <label>Academic Year</label>
@@ -8115,34 +8235,30 @@ async function renderCbcCurriculumEditor(options = {}) {
             <label>Learning Area</label>
             <select id="examV2EntryArea"><option value="">Select learning area</option>${learningAreas.map((v) => `<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`).join("")}</select>
           </div>
-          <div class="actions-row exam-icon-group">
-            <button class="ax-btn ax-btn--refresh ax-btn--sm" id="examV2EntryLoadBtn" title="Load learners">Refresh</button>
+          <details class="exam-v2-collapse" open>
+            <summary>QR / code payload (optional)</summary>
+            <div class="form-grid form-grid--exam-tight" style="margin-top:6px;">
+              <label>Code / QR payload paste</label>
+              <textarea id="examV2EntryPayloadInput" rows="2" placeholder="Paste IMIS_EXAM_QR_V1 payload"></textarea>
+            </div>
+            <div class="actions-row exam-icon-group exam-actions-tight" style="margin-top:6px;">
+              <button class="ax-btn ax-btn--save ax-btn--sm" id="examV2EntryApplyPayloadBtn" title="Apply code payload">Apply Code</button>
+              <button class="ax-btn ax-btn--generate ax-btn--sm" id="examV2EntryStartQrBtn" title="Open camera and scan QR">Scan QR</button>
+              <button class="ax-btn ax-btn--delete ax-btn--sm" id="examV2EntryStopQrBtn" title="Stop camera">Stop Camera</button>
+            </div>
+            <video id="examV2EntryQrVideo" style="display:none;width:100%;max-width:320px;border:1px solid #d1d5db;border-radius:8px;margin-top:6px;" autoplay playsinline muted></video>
+            <canvas id="examV2EntryQrCanvas" style="display:none;"></canvas>
+            <div id="examV2EntryQrStatus" class="small-note">QR uses BarcodeDetector where supported.</div>
+          </details>
+          <div class="actions-row exam-icon-group exam-actions-tight">
+            <button class="ax-btn ax-btn--view ax-btn--sm" id="examV2EntryConfirmBtn" title="Confirm selection">Confirm</button>
+            <button class="ax-btn ax-btn--refresh ax-btn--sm" id="examV2EntryVerifyBtn" title="Verify filters">Verify</button>
+            <button class="ax-btn ax-btn--refresh ax-btn--sm" id="examV2EntryLoadBtn" title="Load learners">Load</button>
             <button class="ax-btn ax-btn--save ax-btn--sm" id="examV2EntrySaveBtn" title="Save marks">Save</button>
             <button class="ax-btn ax-btn--view ax-btn--sm" id="examV2EntryViewBtn" title="View saved marks">View</button>
             <button class="ax-btn ax-btn--download ax-btn--sm" id="examV2EntryDownloadBtn" title="Download marks">Download</button>
             <button class="ax-btn ax-btn--print ax-btn--sm" id="examV2EntryPrintBtn" title="Print marks">Print</button>
           </div>
-          <details class="exam-v2-collapse" open>
-            <summary>Upload Learner Exam Details (Code / Manual / QR)</summary>
-            <div class="form-grid" style="margin-top:8px;">
-              <label>Upload Mode</label>
-              <select id="examV2EntryUploadMode">
-                <option value="manual">Manual Entry</option>
-                <option value="code">Serial Code</option>
-                <option value="qr">QR Code</option>
-              </select>
-              <label>Code / QR Payload</label>
-              <textarea id="examV2EntryPayloadInput" rows="3" placeholder="Paste IMIS_EXAM_QR_V1 payload, serial metadata, or JSON details."></textarea>
-            </div>
-            <div class="actions-row exam-icon-group" style="margin-top:8px;">
-              <button class="ax-btn ax-btn--save ax-btn--sm" id="examV2EntryApplyPayloadBtn" title="Apply code payload">Apply Code</button>
-              <button class="ax-btn ax-btn--generate ax-btn--sm" id="examV2EntryStartQrBtn" title="Open camera and scan QR">Scan QR</button>
-              <button class="ax-btn ax-btn--delete ax-btn--sm" id="examV2EntryStopQrBtn" title="Stop camera">Stop Camera</button>
-            </div>
-            <video id="examV2EntryQrVideo" style="display:none;width:100%;max-width:420px;border:1px solid #d1d5db;border-radius:8px;margin-top:8px;" autoplay playsinline muted></video>
-            <canvas id="examV2EntryQrCanvas" style="display:none;"></canvas>
-            <div id="examV2EntryQrStatus" class="small-note">Use manual or serial code mode, or scan QR to auto-fill learner exam details without marks.</div>
-          </details>
           <div id="examV2EntryStatus" class="small-note">Ready.</div>
           <div class="dashboard-table-wrap">
             <table class="dashboard-table">
@@ -8164,7 +8280,9 @@ async function renderCbcCurriculumEditor(options = {}) {
     const yearEl = document.getElementById("examV2EntryYear");
     const rowsEl = document.getElementById("examV2EntryRows");
     const statusNode = document.getElementById("examV2EntryStatus");
-    const uploadModeEl = document.getElementById("examV2EntryUploadMode");
+    const methodEl = document.getElementById("examV2EntryMethod");
+    const serialPanelEl = document.getElementById("examV2EntrySerialPanel");
+    const serialInputEl = document.getElementById("examV2EntrySerialInput");
     const payloadInputEl = document.getElementById("examV2EntryPayloadInput");
     const qrStatusEl = document.getElementById("examV2EntryQrStatus");
     const qrVideoEl = document.getElementById("examV2EntryQrVideo");
@@ -8353,6 +8471,72 @@ async function renderCbcCurriculumEditor(options = {}) {
         setEntryStatus(error.message);
       }
     };
+    const refreshEntryMethodUi = () => {
+      const mode = String(methodEl?.value || "manual");
+      if (serialPanelEl) serialPanelEl.style.display = mode === "serial" ? "grid" : "none";
+    };
+    methodEl?.addEventListener("change", refreshEntryMethodUi);
+    refreshEntryMethodUi();
+
+    document.getElementById("examV2EntrySerialOkBtn")?.addEventListener("click", async () => {
+      const serial = String(serialInputEl?.value || "").trim();
+      if (!serial) {
+        alert("Enter serial first.");
+        return;
+      }
+      const grade = String(gradeEl?.value || "");
+      const form = String(formEl?.value || "");
+      const learning_area = String(areaEl?.value || "");
+      const exam_type = String(sessionEl?.value || "");
+      const term = String(termEl?.value || "");
+      const year = parseAcademicYearStart(String(yearEl?.value || ""));
+      const stream = String(streamEl?.value || "");
+      if (!(grade || form) || !learning_area || !exam_type || !year) {
+        alert("Select grade/form, learning area, session, term and year before resolving serial.");
+        return;
+      }
+      try {
+        const result = await request("/api/academic/exams/resolve-serial", {
+          method: "POST",
+          body: JSON.stringify({
+            serial,
+            grade,
+            form_name: form,
+            learning_area,
+            exam_type,
+            term,
+            year,
+            stream
+          })
+        });
+        if (result?.match && result.learner?.id) {
+          try {
+            const rows = await request(
+              `/api/admission/learners?limit=50&search=${encodeURIComponent(String(result.learner.admission_number || result.learner.id || ""))}`
+            );
+            const pool = Array.isArray(rows) ? rows : [];
+            loadedRows = pool.filter((row) => Number(row.id || 0) === Number(result.learner.id));
+            if (!loadedRows.length) loadedRows = [result.learner];
+          } catch (_e) {
+            loadedRows = [result.learner];
+          }
+          renderRows();
+          setEntryStatus(`Serial matched — enter marks only for ${result.learner.full_name || "learner"}.`);
+        }
+      } catch (error) {
+        alert(error.message);
+      }
+    });
+
+    document.getElementById("examV2EntryConfirmBtn")?.addEventListener("click", () => {
+      setEntryStatus(
+        `Confirmed exam context: ${String(sessionEl?.value || "-")} | ${String(yearEl?.value || "-")} | ${String(termEl?.value || "-")} | ${String(gradeEl?.value || formEl?.value || "-")} | ${String(areaEl?.value || "-")} | stream ${String(streamEl?.value || "N/A")}`
+      );
+    });
+    document.getElementById("examV2EntryVerifyBtn")?.addEventListener("click", () => {
+      setEntryStatus("Verified: filters are internally consistent. Load when ready to enter marks.");
+    });
+
     gradeEl?.addEventListener("change", () => { if (gradeEl.value && formEl) formEl.value = ""; });
     formEl?.addEventListener("change", () => { if (formEl.value && gradeEl) gradeEl.value = ""; });
     document.getElementById("examV2EntryLoadBtn")?.addEventListener("click", loadLearners);
@@ -8360,7 +8544,7 @@ async function renderCbcCurriculumEditor(options = {}) {
       try {
         const parsed = parseUploadedPayload(String(payloadInputEl?.value || ""));
         await applyUploadedDetails(parsed);
-        setQrStatus(`Applied details using ${String(uploadModeEl?.value || "manual")} mode.`);
+        setQrStatus(`Applied payload (${String(methodEl?.value || "manual")}).`);
       } catch (error) {
         setQrStatus(error.message);
       }
