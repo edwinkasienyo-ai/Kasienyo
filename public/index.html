@@ -153,11 +153,15 @@
             <input id="password" type="password" placeholder="Enter password" disabled />
             <label>OTP channel</label>
             <select id="otpChannel" disabled>
-              <option value="sms_email" selected>SMS &amp; Email</option>
+              <option value="sms_email" selected>SMS, Email, or on-screen fallback</option>
               <option value="sms">SMS only</option>
               <option value="email">Email only</option>
               <option value="console" data-sysdev-only="1">Console (System Developer)</option>
             </select>
+            <p class="small-note" style="margin-top:4px;">
+              Third path: if SMTP/SMS is not configured on the server, the OTP appears on this page after Send OTP and in the
+              <strong>Node.js console</strong> for the operator.
+            </p>
             <button id="loginButton" class="auth-primary-btn" type="button" disabled>Send OTP</button>
 
             <p class="step-label">STEP 2 — OTP CODE VERIFICATION</p>
@@ -258,6 +262,6 @@
       </div>
     </div>
 
-    <script src="/main.js?v=51"></script>
+    <script src="/main.js?v=52"></script>
   </body>
 </html>

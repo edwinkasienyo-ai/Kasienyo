@@ -36,7 +36,11 @@ function auth(req, res, next) {
     const payload = jwt.verify(token, jwtSecret);
     req.user = payload;
 
-    if (!payload?.id || payload?.role === ROLES.SYSTEM_DEVELOPER) {
+    if (
+      !payload?.id ||
+      payload?.role === ROLES.SYSTEM_DEVELOPER ||
+      payload?.role === ROLES.SUPER_SYSTEM_DEVELOPER
+    ) {
       return next();
     }
 

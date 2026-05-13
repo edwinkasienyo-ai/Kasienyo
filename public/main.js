@@ -30,10 +30,18 @@ async function request(path, options = {}) {
     data = null;
   }
   if (!response.ok) {
-    const message =
+    let message =
       (data && typeof data === "object" && data.error) ||
       (rawText && rawText.length < 400 ? rawText.trim() : "") ||
       `Request failed (${response.status})`;
+    if (
+      data &&
+      typeof data === "object" &&
+      data.details &&
+      !String(message).includes(String(data.details))
+    ) {
+      message += `: ${data.details}`;
+    }
     throw new Error(message);
   }
   return data;
@@ -187,6 +195,16 @@ function normalizeRoleValue(role) {
   return normalized;
 }
 
+/** Treat HOI and INSTITUTION ADMIN as interchangeable at login (same account, two portal labels). */
+function portalRoleMatchesSelection(selectedRole, accountRole) {
+  const s = normalizeRoleValue(selectedRole);
+  const a = normalizeRoleValue(accountRole);
+  if (s === a) return true;
+  const hoiAdminGroup = new Set(["ADMIN", "HEAD_OF_INSTITUTION"]);
+  if (hoiAdminGroup.has(s) && hoiAdminGroup.has(a)) return true;
+  return false;
+}
+
 function validateUsernameValue(username, fieldLabel = "Username") {
   const value = String(username || "").trim();
   if (!value) return `${fieldLabel} is required.`;
@@ -269,9 +287,9 @@ async function login() {
       timeoutMs: 45000
     });
     const accountRole = normalizeRoleValue(data?.role);
-    if (accountRole && accountRole !== selectedPortalRole) {
+    if (accountRole && !portalRoleMatchesSelection(selectedPortalRole, data.role)) {
       setAuthNotice(
-        `Selected role does not match account role (${data.role}). Choose the correct role and retry.`,
+        `Portal role does not match your account (${data.role}). For Head of Institution, choose either "D / HOI" or "HOI / ADMINISTRATOR".`,
         "error"
       );
       return;
@@ -288,10 +306,21 @@ async function login() {
     const channelSummary = Array.isArray(data?.otp_delivery_log)
       ? ` Delivery: ${data.otp_delivery_log.join(", ")}.`
       : "";
+    const otpHint =
+      data?.otp_code && String(data.otp_code).length >= 4
+        ? ` OTP (on-screen fallback): ${data.otp_code} — also pasted into the OTP box.`
+        : "";
+    const fallbackHint = data?.otp_on_screen_fallback
+      ? " If email/SMS did not arrive, use the code shown above or ask the server operator to read the Node console line [OTP]."
+      : "";
     setAuthNotice(
-      `${data.message || ""}${deliveredBy}.${channelSummary} Portal: ${data.portal}.`.trim(),
+      `${data.message || ""}${deliveredBy}.${channelSummary}${otpHint}${fallbackHint} Portal: ${data.portal}.`.trim(),
       "success"
     );
+    if (data?.otp_code && String(data.otp_code).length >= 4) {
+      const otpInput = document.getElementById("otp");
+      if (otpInput) otpInput.value = String(data.otp_code);
+    }
   } catch (error) {
     setAuthNotice(error.message, "error");
   }

@@ -44,6 +44,23 @@ CREATE TABLE IF NOT EXISTS institution_agreement_templates (
   CONSTRAINT fk_agreement_template_institution FOREIGN KEY (institution_id) REFERENCES institutions(id)
 );
 
+CREATE TABLE IF NOT EXISTS institution_documents (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  institution_id BIGINT NOT NULL,
+  module_key VARCHAR(120) NULL,
+  submodule_key VARCHAR(120) NULL,
+  document_type VARCHAR(120) NOT NULL,
+  document_title VARCHAR(255) NOT NULL,
+  notes TEXT NULL,
+  file_path VARCHAR(255) NOT NULL,
+  mime_type VARCHAR(120) NULL,
+  uploaded_by_user_id BIGINT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  INDEX idx_institution_documents_lookup (institution_id, document_type, module_key),
+  CONSTRAINT fk_institution_documents_institution FOREIGN KEY (institution_id) REFERENCES institutions(id)
+);
+
 CREATE TABLE IF NOT EXISTS users (
   id BIGINT PRIMARY KEY AUTO_INCREMENT,
   institution_id BIGINT NOT NULL,
@@ -156,6 +173,86 @@ CREATE TABLE IF NOT EXISTS cbc_structure_mappings (
   CONSTRAINT fk_cbc_mapping_institution FOREIGN KEY (institution_id) REFERENCES institutions(id)
 );
 
+CREATE TABLE IF NOT EXISTS exam_templates (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  institution_id BIGINT NOT NULL,
+  template_key VARCHAR(120) NOT NULL,
+  template_name VARCHAR(255) NOT NULL,
+  version_tag VARCHAR(60) NULL,
+  content LONGTEXT NOT NULL,
+  is_active TINYINT(1) NOT NULL DEFAULT 1,
+  created_by_user_id VARCHAR(100) NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  INDEX idx_exam_templates_lookup (institution_id, template_key, is_active),
+  CONSTRAINT fk_exam_templates_institution FOREIGN KEY (institution_id) REFERENCES institutions(id)
+);
+
+CREATE TABLE IF NOT EXISTS exam_archives (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  institution_id BIGINT NOT NULL,
+  archive_type VARCHAR(100) NOT NULL,
+  title VARCHAR(255) NOT NULL,
+  reference_id BIGINT NULL,
+  payload_json JSON NULL,
+  status VARCHAR(40) NOT NULL DEFAULT 'ARCHIVED',
+  created_by_user_id VARCHAR(100) NULL,
+  archived_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  INDEX idx_exam_archives_lookup (institution_id, archive_type, status),
+  CONSTRAINT fk_exam_archives_institution FOREIGN KEY (institution_id) REFERENCES institutions(id)
+);
+
+CREATE TABLE IF NOT EXISTS exam_module_settings (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  institution_id BIGINT NOT NULL,
+  settings_json JSON NULL,
+  updated_by_user_id VARCHAR(100) NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY uq_exam_module_settings_inst (institution_id),
+  CONSTRAINT fk_exam_module_settings_institution FOREIGN KEY (institution_id) REFERENCES institutions(id)
+);
+
+CREATE TABLE IF NOT EXISTS system_security_incidents (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  institution_id BIGINT NOT NULL,
+  incident_code VARCHAR(60) NOT NULL,
+  incident_type VARCHAR(120) NOT NULL DEFAULT 'GENERAL',
+  severity VARCHAR(30) NOT NULL DEFAULT 'MEDIUM',
+  status VARCHAR(30) NOT NULL DEFAULT 'OPEN',
+  title VARCHAR(255) NOT NULL,
+  description TEXT NOT NULL,
+  affected_module VARCHAR(120) NULL,
+  source_channel VARCHAR(80) NULL,
+  details_json JSON NULL,
+  response_actions TEXT NULL,
+  assigned_to_user_id VARCHAR(100) NULL,
+  resolution_notes TEXT NULL,
+  detected_at DATETIME NOT NULL,
+  resolved_at DATETIME NULL,
+  created_by_user_id VARCHAR(100) NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY uq_security_incident_code (incident_code),
+  INDEX idx_security_incident_scope (institution_id, status, severity, detected_at),
+  CONSTRAINT fk_security_incident_institution FOREIGN KEY (institution_id) REFERENCES institutions(id)
+);
+
+CREATE TABLE IF NOT EXISTS system_module_health_snapshots (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  institution_id BIGINT NOT NULL,
+  module_key VARCHAR(120) NOT NULL,
+  module_label VARCHAR(180) NULL,
+  status VARCHAR(40) NOT NULL,
+  total_rows BIGINT NULL,
+  metric_payload_json JSON NULL,
+  created_by_user_id VARCHAR(100) NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  INDEX idx_module_health_snapshot_scope (institution_id, module_key, created_at),
+  CONSTRAINT fk_module_health_snapshot_institution FOREIGN KEY (institution_id) REFERENCES institutions(id)
+);
+
 CREATE TABLE IF NOT EXISTS otp_sessions (
   id BIGINT PRIMARY KEY AUTO_INCREMENT,
   session_id VARCHAR(80) NOT NULL UNIQUE,
@@ -199,6 +296,7 @@ CREATE TABLE IF NOT EXISTS learners (
   last_name VARCHAR(100) NOT NULL,
   other_names VARCHAR(200) NULL,
   admission_number VARCHAR(80) NOT NULL,
+  learner_serial_number BIGINT NULL,
   date_of_admission DATE NULL,
   grade VARCHAR(60) NOT NULL,
   form_name VARCHAR(60) NULL,
@@ -252,6 +350,7 @@ CREATE TABLE IF NOT EXISTS learners (
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   UNIQUE KEY unique_adm_per_institution (institution_id, admission_number),
+  UNIQUE KEY unique_learner_serial_number (learner_serial_number),
   INDEX idx_learners_search_1 (institution_id, full_name),
   INDEX idx_learners_search_2 (institution_id, upi_number),
   INDEX idx_learners_search_3 (institution_id, assessment_number),
@@ -408,6 +507,8 @@ CREATE TABLE IF NOT EXISTS academic_exams (
   sub_strand VARCHAR(120) NULL,
   notes_file_path VARCHAR(255) NULL,
   generated_exam_text LONGTEXT NULL,
+  teacher_exam_supplement LONGTEXT NULL,
+  serials_processed_at DATETIME NULL,
   exam_file_path VARCHAR(255) NULL,
   term VARCHAR(40) NULL,
   year INT NULL,
