@@ -12,7 +12,7 @@ let portalContext = null;
 let searchRowDrafts = {};
 let dashboardAutoRefreshHandle = null;
 let currentSidebarSubmoduleId = null;
-const CLIENT_UI_BUNDLE_ID = "dash-bundle-main-v75-social-studies-sections";
+const CLIENT_UI_BUNDLE_ID = "dash-bundle-main-v77-kjse-exam-preview";
 const examPanelState = {
   generatedExam: null,
   serials: [],
@@ -6866,7 +6866,7 @@ async function renderCbcCurriculumEditor(options = {}) {
             <select id="examV2GenDurH" aria-label="Exam duration hours" disabled>${Array.from({ length: 9 }, (_, h) => h).map((h) => `<option value="${h}"${h === 1 ? " selected" : ""}>${h}</option>`).join("")}</select>
             <label class="exam-duration-clock-label">Time (minutes)</label>
             <select id="examV2GenDurM" aria-label="Exam duration minutes" disabled>${Array.from({ length: 60 }, (_, m) => m).map((m) => `<option value="${m}"${m === 30 ? " selected" : ""}>${String(m).padStart(2, "0")}</option>`).join("")}</select>
-            <p class="small-note exam-tight-note exam-duration-clock-hint" style="grid-column:1/-1;">Choose hours and minutes separately (like setting a clock), for example one hour plus five minutes. The exam header spells this duration in words rather than plain totals.</p>
+            <p class="small-note exam-tight-note exam-duration-clock-hint" style="grid-column:1/-1;">Hours and minutes set the header time, for example <strong>1hr 45 Min</strong> (not written out).</p>
             <label>Strands</label>
             <div id="examV2GenStrandsPanel" class="exam-strand-panel"></div>
             <div class="actions-row exam-icon-group exam-actions-tight" style="grid-column:1/-1;">
@@ -6896,7 +6896,7 @@ async function renderCbcCurriculumEditor(options = {}) {
             <label>Unified Manual %</label>
             <input id="examV2GenManualPercent" type="number" min="10" max="100" step="1" value="100" disabled />
             <div id="examV2GenSocialPanelWrap" class="exam-social-studies-panel" style="display:none; grid-column:1/-1;">
-              <p class="small-note exam-tight-note">Social Studies: Section A is always 20 objective questions (A–D), 1 mark each. Choose Section B marks and how many structured questions to generate.</p>
+              <p class="small-note exam-tight-note">Social Studies: Section A is fixed at 20 × 1 mark. Adjust Section B below.</p>
               <div class="form-grid form-grid--exam-tight" style="margin-top: 0.35rem;">
                 <label for="examV2GenSocialSectionBMarks">Section B — total marks</label>
                 <select id="examV2GenSocialSectionBMarks" disabled>${[20, 30, 40, 50, 60, 70, 75, 80, 85, 90].map((m) => `<option value="${m}"${m === 80 ? " selected" : ""}>${m}</option>`).join("")}</select>
@@ -6928,7 +6928,20 @@ async function renderCbcCurriculumEditor(options = {}) {
             <label for="examV2GenTemplateUploadFile" class="ax-btn ax-btn--upload ax-btn--sm exam-stack-top">Tpl Upload</label>
             <input id="examV2GenTemplateUploadFile" type="file" accept=".txt,.md,.csv,.doc,.docx" hidden />
           </div>
-          <textarea id="examV2GenOutput" rows="16" class="template-spacious" placeholder="Generated exam text appears here..." readonly></textarea>
+            <div id="examGenPreviewCard" class="exam-gen-preview-card">
+              <div class="exam-gen-brand" aria-label="Exam branding">
+                <div class="exam-gen-brand__logo">
+                  <img id="examGenBrandLogo" class="exam-gen-brand__logo-img" alt="Institution logo" hidden />
+                  <span id="examGenBrandLogoPh" class="exam-gen-brand__logo-ph">Logo</span>
+                </div>
+                <div class="exam-gen-brand__meta">
+                  <div class="exam-gen-brand__kjse">THE KENYA JUNIOR SCHOOL EXAMINATION</div>
+                  <div id="examGenBrandInstitution" class="exam-gen-brand__institution"></div>
+                </div>
+              </div>
+              <label class="exam-gen-output-label" for="examV2GenOutput">Generated paper (preview)</label>
+              <textarea id="examV2GenOutput" rows="14" class="exam-gen-preview-output" placeholder="Generated exam text appears here..." readonly></textarea>
+            </div>
           <details class="exam-v2-collapse" open>
             <summary>Teacher Marking Scheme Center</summary>
             <p class="small-note">After processing the exam, generate a fully aligned marking scheme with correct answers, then review/edit/print/download.</p>
@@ -7063,6 +7076,44 @@ async function renderCbcCurriculumEditor(options = {}) {
     let allocatedSerials = [];
     let processed = false;
     const institutionCode = String(portalContext?.institution_code || portalContext?.institutionCode || "-");
+    const examGenBrandInstitutionEl = document.getElementById("examGenBrandInstitution");
+    const examGenBrandLogo = document.getElementById("examGenBrandLogo");
+    const examGenBrandLogoPh = document.getElementById("examGenBrandLogoPh");
+    const syncExamBrandStrip = async () => {
+      const fallbackInst =
+        String(portalContext?.institution_name || "").trim() || (institutionCode !== "-" ? institutionCode : "Institution");
+      try {
+        const me = await request("/api/auth/me");
+        const inst = String(me?.institution_name || "").trim() || fallbackInst;
+        if (examGenBrandInstitutionEl) examGenBrandInstitutionEl.textContent = inst;
+        const rawPath = String(me?.letterhead_file_path || "").trim();
+        if (examGenBrandLogo && examGenBrandLogoPh) {
+          if (rawPath) {
+            const url = rawPath.startsWith("http") ? rawPath : (rawPath.startsWith("/") ? rawPath : `/${rawPath}`);
+            examGenBrandLogo.onerror = () => {
+              examGenBrandLogo.hidden = true;
+              examGenBrandLogoPh.style.display = "inline-flex";
+            };
+            examGenBrandLogo.onload = () => {
+              examGenBrandLogo.hidden = false;
+              examGenBrandLogoPh.style.display = "none";
+            };
+            examGenBrandLogo.src = url;
+          } else {
+            examGenBrandLogo.hidden = true;
+            examGenBrandLogo.removeAttribute("src");
+            examGenBrandLogoPh.style.display = "inline-flex";
+          }
+        }
+      } catch (_) {
+        if (examGenBrandInstitutionEl) examGenBrandInstitutionEl.textContent = fallbackInst;
+        if (examGenBrandLogo && examGenBrandLogoPh) {
+          examGenBrandLogo.hidden = true;
+          examGenBrandLogoPh.style.display = "inline-flex";
+        }
+      }
+    };
+    await syncExamBrandStrip();
     let latestSampleText = "";
     const selectedStrandsState = new Set();
     const selectedSubsState = new Set();

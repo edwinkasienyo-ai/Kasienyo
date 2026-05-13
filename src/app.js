@@ -2961,7 +2961,7 @@ app.get("/api/auth/me", auth, asyncHandler(async (req, res) => {
   const rows = await query(
     `SELECT u.id, u.role, u.institution_id, u.full_name, u.username, u.email, u.phone, u.password_last_changed_at, u.password_expires_at, u.must_change_password,
             u.is_active, u.is_suspended, u.status_reason, u.suspended_reason,
-            i.institution_name, i.institution_code
+            i.institution_name, i.institution_code, i.letterhead_file_path
      FROM users u
      INNER JOIN institutions i ON i.id = u.institution_id
      WHERE u.id = ? AND u.institution_id = ?
@@ -11343,7 +11343,7 @@ function examPaperSpelledHourMinuteChunk(count, singular, plural) {
   return `${w} ${n === 1 ? singular : plural}`;
 }
 
-/** Written-out duration for learner papers (avoid numeric-only headers like "65 minutes"). */
+/** Written-out duration (legacy / optional). */
 function examPaperSpelledExamDuration(hours, minutes) {
   const h = Math.floor(Math.max(0, Math.min(8, Number(hours) || 0)));
   const m = Math.floor(Math.max(0, Math.min(59, Number(minutes) || 0)));
@@ -11353,6 +11353,17 @@ function examPaperSpelledExamDuration(hours, minutes) {
   if (!parts.length) return "Time allowed will be announced by the invigilator.";
   const sentence = parts.join(" and ");
   return sentence.charAt(0).toUpperCase() + sentence.slice(1);
+}
+
+/** Compact duration for headers e.g. 1hr 45 Min */
+function examPaperCompactDurationLabel(hours, minutes) {
+  const h = Math.floor(Math.max(0, Math.min(24, Number(hours) || 0)));
+  const m = Math.floor(Math.max(0, Math.min(59, Number(minutes) || 0)));
+  const parts = [];
+  if (h > 0) parts.push(`${h}hr`);
+  if (m > 0) parts.push(`${m} Min`);
+  if (!parts.length) return "—";
+  return parts.join(" ");
 }
 
 function examPaperResolveDurationParts(body = {}) {
@@ -11387,7 +11398,7 @@ function examPaperResolveDurationParts(body = {}) {
     m = 30;
   }
   const labelOverride = cleanOptionalValue(body.exam_duration_label || body.time_allowed_label);
-  const label = labelOverride || examPaperSpelledExamDuration(h, m);
+  const label = labelOverride || examPaperCompactDurationLabel(h, m);
   return { hours: h, minutes: m, label };
 }
 
@@ -11439,37 +11450,47 @@ function buildCbcKenyaHeaderBlock({
   structureLabel,
   sectionAllocationText
 }) {
-  return [
+  const examTitleLine = cleanValue(title || "SCHOOL BASED ASSESSMENT");
+  const area = cleanValue(learningArea || "");
+  const titleCoversSubject = Boolean(area && examTitleLine.toLowerCase().includes(area.toLowerCase()));
+  const timeCompact = cleanValue(examDurationLabel) || "1hr 30 Min";
+  const lines = [
     "================================================================================",
+    "THE KENYA JUNIOR SCHOOL EXAMINATION",
     `SCHOOL / INSTITUTION: ${institutionName || "_____________________________"}`,
     letterheadHint
-      ? `LETTERHEAD LOGO: See institution logo on the left when printing official papers (${letterheadHint}).`
-      : "LETTERHEAD LOGO: Upload `letterhead_file_path` in institution settings for automatic branding.",
+      ? `BRANDING / LOGO FILE: ${letterheadHint}`
+      : "BRANDING / LOGO: Upload letterhead in Institution settings (used for official papers and dashboard preview).",
     "",
-    cleanValue(title || "THE JUNIOR SECONDARY SCHOOL EXAMINATION / SCHOOL BASED ASSESSMENT"),
-    cleanValue(learningArea || "LEARNING AREA").toUpperCase(),
+    examTitleLine
+  ];
+  if (!titleCoversSubject && area) {
+    lines.push(String(area).toUpperCase());
+  }
+  lines.push(
     `LEVEL / CLASS: ${levelLabel || "-"}     STREAM: ${stream || "N/A"}`,
-    `TIME ALLOWED (WRITTEN): ${examDurationLabel || "One hour and thirty minutes"}`,
+    `TIME: ${timeCompact}`,
     `SESSION: ${examSession || "-"}     ACADEMIC YEAR: ${academicYear || "-"}     TERM: ${term || "-"}`,
     `STRUCTURE: ${structureLabel || "unified"}    ALLOCATION: ${sectionAllocationText || "-"}`,
     "",
-    "+----------------------------------+-----------------------------------+",
-    "| LEARNER DETAILS                  | FOR OFFICIAL USE ONLY             |",
-    "| NAME: __________________________ | SECTION A MARKS: ______________   |",
-    "| Assessment / UPI No: ___________ | SECTION B MARKS: ______________   |",
-    "| DATE: _________________________ | TOTAL: __________________________ |",
-    "| LEARNER SIGNATURE: _____________ | PERCENTAGE: ___________________   |",
-    "|                                  | EXAMINER NAME: ________________   |",
-    "|                                  | EXAMINER SIGNATURE: _____________   |",
-    "+----------------------------------+-----------------------------------+",
+    "+-----------------------------+-----------------------------+",
+    "| LEARNER DETAILS             | FOR OFFICIAL USE ONLY       |",
+    "| NAME: _____________________ | SECTION A MARKS: __________ |",
+    "| Assessment / UPI No: ______ | SECTION B MARKS: __________ |",
+    "| DATE: _____________________ | TOTAL: ____________________ |",
+    "| LEARNER SIGNATURE: _________ | PERCENTAGE: _______________ |",
+    "|                             | EXAMINER NAME: ____________ |",
+    "|                             | EXAMINER SIGNATURE: ________ |",
+    "+-----------------------------+-----------------------------+",
     "",
-    "CANDIDATE INSTRUCTIONS",
-    "1) Read all instructions before attempting the paper.",
-    "2) For multiple-choice items, choose only one best answer (A, B, C, or D).",
-    "3) For structured items, write clearly and show working where required.",
+    "INSTRUCTIONS",
+    "1) Follow all directions on this paper.",
+    "2) Section A: one letter (A–D) per question unless otherwise stated.",
+    "3) Section B: write clearly; show working where needed.",
     "4) Mobile phones and unauthorised materials are not allowed.",
     ""
-  ];
+  );
+  return lines;
 }
 
 function buildAdvancedExamText({
@@ -11525,7 +11546,7 @@ function buildAdvancedExamText({
       bQuestionCount = Math.min(20, Math.round(custQ));
     }
     socialPaperLayout = { sectionAMarksFixed, sectionBMarks, bQuestionCount };
-    resolvedHeaderAllocation = `SECTION A: ${sectionAMarksFixed} marks (20 objective × 1 mark) | SECTION B: ${sectionBMarks} marks (structured) | TOTAL: ${sectionAMarksFixed + sectionBMarks}`;
+    resolvedHeaderAllocation = `A: ${sectionAMarksFixed} | B: ${sectionBMarks} | TOTAL: ${sectionAMarksFixed + sectionBMarks}`;
   }
 
   const header = buildCbcKenyaHeaderBlock({
@@ -11561,17 +11582,11 @@ function buildAdvancedExamText({
       oneMarkEach: true,
       indentOptions: "         "
     });
-    body.push(
-      `SECTION A (${sectionAMarks} MARKS)`,
-      "OBJECTIVE (MULTIPLE CHOICE): Each question has four alternatives A, B, C, and D.",
-      "There are exactly 20 items. Each item carries one (1) mark.",
-      "*Answer ALL questions in this section.*",
-      ""
-    );
+    body.push(`SECTION A (${sectionAMarks} MARKS)`, "*Answer all questions in this section.*", "");
     body.push(...mcq.lines);
     mcqKeys.push(...mcq.keyLines);
     qCursor += 20;
-    body.push(`SECTION B (${sectionBMarks} MARKS)`, "STRUCTURED QUESTIONS", "*Answer ALL questions in this section.*", "");
+    body.push(`SECTION B (${sectionBMarks} MARKS)`, "");
     body.push(
       ...examPaperStructuredSectionLines({
         startNumber: qCursor,
@@ -12072,6 +12087,7 @@ app.post(
       teacher_exam_supplement: teacherExamSupplement,
       exam_duration_hours: resolvedDurH,
       exam_duration_minutes: resolvedDurM,
+      duration_label_compact: examDurationLabel,
       duration_label_spelled: examDurationLabel,
       notes_required: false,
       structure: selectedStructure,

@@ -4473,13 +4473,88 @@ body {
 /* Compact examination module layout */
 .exam-module-compact-header h3 {
   margin: 0 0 4px;
-  font-size: 16px;
+  font-size: 15px;
 }
 .exam-module-compact-header p {
   margin: 0;
-  font-size: 12px;
+  font-size: 11px;
   line-height: 1.35;
   color: #48617a;
+}
+
+/* Exam generation preview (KJSE branding + compact monospace paper) */
+.exam-gen-preview-card {
+  margin-top: 6px;
+  border: 1px solid rgba(15, 56, 96, 0.12);
+  border-radius: 10px;
+  background: linear-gradient(180deg, #fafcfe 0%, #fff 100%);
+  box-shadow: 0 8px 22px rgba(15, 56, 96, 0.07);
+  overflow: hidden;
+}
+.exam-gen-brand {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 6px 10px;
+  background: linear-gradient(90deg, #0f3860 0%, #1a5a8a 100%);
+  color: #fff;
+}
+.exam-gen-brand__logo {
+  flex-shrink: 0;
+  width: 52px;
+  height: 52px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.96);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+.exam-gen-brand__logo-img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+.exam-gen-brand__logo-ph {
+  font-size: 10px;
+  font-weight: 800;
+  color: #0f3860;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.exam-gen-brand__meta {
+  min-width: 0;
+}
+.exam-gen-brand__kjse {
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  line-height: 1.2;
+}
+.exam-gen-brand__institution {
+  font-size: 12px;
+  font-weight: 600;
+  margin-top: 2px;
+  word-break: break-word;
+}
+.exam-gen-output-label {
+  display: block;
+  font-size: 11px;
+  font-weight: 600;
+  color: #3a5068;
+  padding: 4px 10px 0;
+}
+.exam-gen-preview-output {
+  width: 100%;
+  box-sizing: border-box;
+  font-family: ui-monospace, "Cascadia Code", Consolas, "Courier New", monospace;
+  font-size: 11px;
+  line-height: 1.38;
+  padding: 6px 8px 8px;
+  border: none;
+  min-height: 220px;
+  resize: vertical;
+  background: #fff;
 }
 .exam-module-compact .exam-v2-pane {
   padding: 8px 10px;
