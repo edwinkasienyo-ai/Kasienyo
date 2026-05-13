@@ -3652,6 +3652,163 @@ function downloadTextFile(filename, text, mimeType = "text/plain;charset=utf-8")
   URL.revokeObjectURL(url);
 }
 
+function downloadWordDocument(filename, text) {
+  const body = escapeHtml(text).replace(/\n/g, "<br/>");
+  const safeName = String(filename || "document").replace(/[^\w.\-+]+/g, "_");
+  const html = `
+    <html>
+      <head>
+        <meta charset="utf-8">
+        <title>${escapeHtml(safeName)}</title>
+        <style>body{font-family:'Times New Roman',Times,serif;font-size:11pt;line-height:1.35;color:#111;margin:12px;}</style>
+      </head>
+      <body><div>${body}</div></body>
+    </html>
+  `;
+  const out = safeName.toLowerCase().endsWith(".doc") ? safeName : `${safeName}.doc`;
+  downloadTextFile(out, html, "application/msword;charset=utf-8");
+}
+
+function buildLearnerAssessmentReportDocText(report) {
+  if (!report || typeof report !== "object") return "";
+  const learner = report.learner || {};
+  const lines = [
+    "IMIS — LEARNER ASSESSMENT & PROGRESS REPORT",
+    "",
+    `Learner: ${learner.full_name || "-"}`,
+    `Admission: ${learner.admission_number || "-"}`,
+    `Class: ${learner.grade || "-"} ${learner.stream || ""}`,
+    ""
+  ];
+  const marks = Array.isArray(report.marks) ? report.marks : [];
+  if (marks.length) {
+    lines.push("Assessment records:");
+    marks.forEach((row) => {
+      lines.push(
+        `- ${row.year || "-"} | ${row.term || "-"} | ${row.subject || "-"} | Marks: ${row.marks ?? 0} | %: ${row.percentage ?? 0}`
+      );
+    });
+    lines.push("");
+  }
+  const trend = Array.isArray(report.performance_trend) ? report.performance_trend : [];
+  if (trend.length) {
+    lines.push("Performance trend (by term / year):");
+    trend.forEach((p) => {
+      lines.push(
+        `- ${p.year || "-"} ${p.term || "-"} → Average ${p.avg ?? 0}% (${p.count ?? 0} subject entries)`
+      );
+    });
+  }
+  if (!marks.length && !trend.length) {
+    lines.push("No detailed marks or trend rows were returned for this learner.");
+  }
+  return lines.join("\n");
+}
+
+function buildGradebookOverviewDocText(payload) {
+  if (!payload || typeof payload !== "object") return "";
+  const subjects = Array.isArray(payload.by_subject) ? payload.by_subject : [];
+  const learners = Array.isArray(payload.learner_gradebook) ? payload.learner_gradebook : [];
+  const lines = ["IMIS — GRADEBOOK OVERVIEW", "", "Subject summary:", ""];
+  subjects.forEach((row) => {
+    lines.push(
+      `- ${row.subject || "-"} | Entries: ${row.total_entries || 0} | Avg marks: ${row.avg_marks || 0} | Avg %: ${row.avg_percentage || 0}`
+    );
+  });
+  lines.push("", "Learner summaries:", "");
+  learners.slice(0, 200).forEach((row) => {
+    lines.push(
+      `- ${row.learner_name || "-"} | ${row.grade || "-"} | ${row.stream || "-"} | Mean %: ${row.mean_percentage || 0} | Subjects: ${row.subject_count || 0}`
+    );
+  });
+  return lines.join("\n");
+}
+
+function buildRankedScriptsDocText(filters, rankedRows) {
+  const f = filters || {};
+  const lines = [
+    "IMIS — RANKED EXAM RESULTS",
+    "",
+    `Grade / Form: ${f.grade || "-"}`,
+    `Stream: ${f.stream || "N/A"}`,
+    `Term: ${f.term || "-"}`,
+    `Year: ${f.year || "-"}`,
+    "",
+    "Ranked learners:",
+    ""
+  ];
+  (rankedRows || []).forEach((row) => {
+    lines.push(
+      `#${row.position || "-"} ${row.learner_name || "-"} | ${row.grade || "-"} | ${row.stream || "-"} | Avg %: ${row.avg_pct || 0} | Total marks: ${row.total_marks || 0}`
+    );
+  });
+  return lines.join("\n");
+}
+
+function buildLifecycleTimelineDocText(payload) {
+  if (!payload || typeof payload !== "object") return "";
+  const rows = Array.isArray(payload.timeline) ? payload.timeline : [];
+  const rec = Array.isArray(payload.recommendations) ? payload.recommendations : [];
+  const lines = ["IMIS — ACADEMIC LIFECYCLE TIMELINE", ""];
+  if (rec.length) {
+    lines.push("Recommendations:", ...rec.map((item) => `- ${item}`), "");
+  }
+  lines.push("Events:", "");
+  rows.forEach((row) => {
+    lines.push(
+      `- ${row.occurred_at || "-"} | ${row.event_type || "-"} | ${row.entity_type || "-"} #${row.entity_id ?? "-"} | ${row.title || "-"}`
+    );
+  });
+  return lines.join("\n");
+}
+
+function buildExamAnalyticsDocText(payload) {
+  if (!payload || typeof payload !== "object") return "";
+  const c = payload.counters || {};
+  const rows = Array.isArray(payload.by_learning_area) ? payload.by_learning_area : [];
+  const lines = [
+    "IMIS — EXAMINATION ANALYTICS OVERVIEW",
+    "",
+    `Curriculum rows: ${c.curriculum_rows ?? 0}`,
+    `Learning materials: ${c.learning_materials ?? 0}`,
+    `Generated exams: ${c.generated_exams ?? 0}`,
+    `Marks records: ${c.marks_records ?? 0}`,
+    `Learners assessed: ${c.assessed_learners ?? 0}`,
+    `Mean score: ${c.mean_marks ?? 0}`,
+    "",
+    "By learning area:",
+    ""
+  ];
+  rows.forEach((row) => {
+    lines.push(
+      `- ${row.learning_area || "-"} | Entries: ${row.entry_count || 0} | Avg marks: ${row.avg_marks || 0} | Avg %: ${row.avg_percentage || 0}`
+    );
+  });
+  return lines.join("\n");
+}
+
+function buildAiCopilotDocText(payload) {
+  if (!payload || typeof payload !== "object") return "";
+  const m = payload.metrics || {};
+  const actions = Array.isArray(payload.ai_actions) ? payload.ai_actions : [];
+  const subs = Array.isArray(payload.intervention_subjects) ? payload.intervention_subjects : [];
+  const lines = [
+    "IMIS — EXAM AI COPILOT REPORT",
+    "",
+    `Curriculum rows: ${m.curriculum_rows ?? 0}`,
+    `Generated exams: ${m.generated_exams ?? 0}`,
+    `Marks rows: ${m.marks_rows ?? 0}`,
+    `Average %: ${m.avg_percentage ?? 0}`,
+    "",
+    "Recommendations:",
+    ...actions.map((a) => `- ${a}`),
+    "",
+    "Intervention subjects (low band):",
+    ...subs.map((s) => `- ${s.subject || "-"}: ${s.total ?? 0} case(s)`)
+  ];
+  return lines.join("\n");
+}
+
 function csvEscape(value) {
   const raw = String(value ?? "");
   if (!/[",\n]/.test(raw)) return raw;
@@ -5126,25 +5283,30 @@ function examTemplatePresetContent(templateKey = "exam-paper") {
 
 function renderExamAnalyticsPanel() {
   return `
-    <div class="module-header-card">
-      <h4>Examination Analytics Engine</h4>
-      <p>Real-time snapshots for curriculum depth, exam throughput, learner mark flow and CBC performance patterns.</p>
+    <div class="exam-v2-layout exam-module-compact">
+      <div class="exam-v2-pane">
+        <div class="module-header-card exam-module-compact-header">
+          <h4>Examination Analytics Engine</h4>
+          <p class="exam-tight-note">Curriculum depth, exam throughput, marks flow, and performance by learning area.</p>
+        </div>
+        <div class="actions-row exam-icon-group exam-actions-tight">
+          <button class="ax-btn ax-btn--refresh ax-btn--sm" id="examAnalyticsRefreshBtn" title="Refresh analytics">Load</button>
+          <button class="ax-btn ax-btn--download ax-btn--sm" id="examAnalyticsDownloadBtn" title="Download CSV">CSV</button>
+          <button class="ax-btn ax-btn--download ax-btn--sm" id="examAnalyticsWordBtn" title="Download Word">Word</button>
+          <button class="ax-btn ax-btn--print ax-btn--sm" id="examAnalyticsPrintBtn" title="Print analytics">Print</button>
+        </div>
+        <div id="examAnalyticsCards" class="exam-analytics-grid"></div>
+        <div class="dashboard-table-wrap">
+          <table class="dashboard-table">
+            <thead>
+              <tr><th>Learning Area</th><th>Entries</th><th>Avg Marks</th><th>Avg Percentage</th></tr>
+            </thead>
+            <tbody id="examAnalyticsBody"></tbody>
+          </table>
+        </div>
+        <div id="examAnalyticsStatus" class="small-note exam-tight-note">Loading analytics...</div>
+      </div>
     </div>
-    <div class="actions-row exam-icon-group">
-      <button class="ax-btn ax-btn--refresh ax-btn--sm" id="examAnalyticsRefreshBtn" title="Refresh analytics">Refresh</button>
-      <button class="ax-btn ax-btn--download ax-btn--sm" id="examAnalyticsDownloadBtn" title="Download analytics">Download</button>
-      <button class="ax-btn ax-btn--print ax-btn--sm" id="examAnalyticsPrintBtn" title="Print analytics">Print</button>
-    </div>
-    <div id="examAnalyticsCards" class="exam-analytics-grid"></div>
-    <div class="dashboard-table-wrap">
-      <table class="dashboard-table">
-        <thead>
-          <tr><th>Learning Area</th><th>Entries</th><th>Avg Marks</th><th>Avg Percentage</th></tr>
-        </thead>
-        <tbody id="examAnalyticsBody"></tbody>
-      </table>
-    </div>
-    <div id="examAnalyticsStatus" class="small-note">Loading analytics...</div>
   `;
 }
 
@@ -5152,8 +5314,10 @@ async function wireExamAnalyticsPanel() {
   const cardsEl = document.getElementById("examAnalyticsCards");
   const bodyEl = document.getElementById("examAnalyticsBody");
   const statusEl = document.getElementById("examAnalyticsStatus");
+  let lastPayload = null;
 
   const renderAnalytics = (payload = {}) => {
+    lastPayload = payload;
     const counters = payload?.counters || {};
     const byLearningArea = Array.isArray(payload?.by_learning_area) ? payload.by_learning_area : [];
     if (cardsEl) {
@@ -5208,36 +5372,48 @@ async function wireExamAnalyticsPanel() {
     })));
     downloadTextFile("exam-analytics.csv", csv, "text/csv;charset=utf-8");
   });
+  document.getElementById("examAnalyticsWordBtn")?.addEventListener("click", () => {
+    if (!lastPayload) {
+      alert("Load analytics first.");
+      return;
+    }
+    downloadWordDocument("exam-analytics-overview.doc", buildExamAnalyticsDocText(lastPayload));
+  });
   document.getElementById("examAnalyticsPrintBtn")?.addEventListener("click", () => window.print());
   await load();
 }
 
 function renderExamAiCopilotPanel({ gradeOptions = [], formOptions = [], learningAreas = [] } = {}) {
   return `
-    <div class="module-header-card">
-      <h4>AI Copilot - Examination Hardening Assistant</h4>
-      <p>Generate automated recommendations using curriculum depth, generated exams, marks flow, and intervention signals.</p>
-    </div>
-    <div class="form-grid">
-      <label>Grade (optional)</label>
-      <select id="examAiCopilotGrade"><option value="">All grades</option>${gradeOptions.map((item) => `<option value="${escapeHtml(item)}">${escapeHtml(item)}</option>`).join("")}</select>
-      <label>Form (optional)</label>
-      <select id="examAiCopilotForm"><option value="">All forms</option>${formOptions.map((item) => `<option value="${escapeHtml(item)}">${escapeHtml(item)}</option>`).join("")}</select>
-      <label>Learning Area (optional)</label>
-      <select id="examAiCopilotLearningArea"><option value="">All learning areas</option>${learningAreas.map((item) => `<option value="${escapeHtml(item)}">${escapeHtml(item)}</option>`).join("")}</select>
-    </div>
-    <div class="actions-row exam-icon-group">
-      <button class="ax-btn ax-btn--generate ax-btn--sm" id="examAiCopilotRunBtn" title="Run AI recommendations">AI Generate</button>
-      <button class="ax-btn ax-btn--download ax-btn--sm" id="examAiCopilotDownloadBtn" title="Download AI report">Download</button>
-      <button class="ax-btn ax-btn--print ax-btn--sm" id="examAiCopilotPrintBtn" title="Print AI report">Print</button>
-    </div>
-    <div id="examAiCopilotMetrics" class="exam-analytics-grid"></div>
-    <div id="examAiCopilotActions" class="module-header-card"><p class="small-note">Run AI analysis to get recommendations.</p></div>
-    <div class="dashboard-table-wrap">
-      <table class="dashboard-table">
-        <thead><tr><th>Subject</th><th>Low Band Cases</th></tr></thead>
-        <tbody id="examAiCopilotSubjects"><tr><td colspan="2">No subject interventions yet.</td></tr></tbody>
-      </table>
+    <div class="exam-v2-layout exam-module-compact">
+      <div class="exam-v2-pane">
+        <div class="module-header-card exam-module-compact-header">
+          <h4>AI Copilot</h4>
+          <p class="exam-tight-note">Recommendations from curriculum depth, exams, marks, and intervention signals.</p>
+        </div>
+        <div class="form-grid form-grid--exam-tight">
+          <label>Grade (optional)</label>
+          <select id="examAiCopilotGrade"><option value="">All grades</option>${gradeOptions.map((item) => `<option value="${escapeHtml(item)}">${escapeHtml(item)}</option>`).join("")}</select>
+          <label>Form (optional)</label>
+          <select id="examAiCopilotForm"><option value="">All forms</option>${formOptions.map((item) => `<option value="${escapeHtml(item)}">${escapeHtml(item)}</option>`).join("")}</select>
+          <label>Learning Area (optional)</label>
+          <select id="examAiCopilotLearningArea"><option value="">All learning areas</option>${learningAreas.map((item) => `<option value="${escapeHtml(item)}">${escapeHtml(item)}</option>`).join("")}</select>
+        </div>
+        <div class="actions-row exam-icon-group exam-actions-tight">
+          <button class="ax-btn ax-btn--generate ax-btn--sm" id="examAiCopilotRunBtn" title="Run AI recommendations">AI Generate</button>
+          <button class="ax-btn ax-btn--download ax-btn--sm" id="examAiCopilotDownloadBtn" title="Download JSON">JSON</button>
+          <button class="ax-btn ax-btn--download ax-btn--sm" id="examAiCopilotWordBtn" title="Download Word">Word</button>
+          <button class="ax-btn ax-btn--print ax-btn--sm" id="examAiCopilotPrintBtn" title="Print AI report">Print</button>
+        </div>
+        <div id="examAiCopilotMetrics" class="exam-analytics-grid"></div>
+        <div id="examAiCopilotActions" class="module-header-card"><p class="small-note exam-tight-note">Run AI analysis to get recommendations.</p></div>
+        <div class="dashboard-table-wrap">
+          <table class="dashboard-table">
+            <thead><tr><th>Subject</th><th>Low Band Cases</th></tr></thead>
+            <tbody id="examAiCopilotSubjects"><tr><td colspan="2">No subject interventions yet.</td></tr></tbody>
+          </table>
+        </div>
+      </div>
     </div>
   `;
 }
@@ -5298,50 +5474,61 @@ async function wireExamAiCopilotPanel() {
     }
     downloadTextFile("exam-ai-copilot-report.json", JSON.stringify(lastPayload, null, 2), "application/json;charset=utf-8");
   });
+  document.getElementById("examAiCopilotWordBtn")?.addEventListener("click", () => {
+    if (!lastPayload) {
+      alert("Generate AI recommendations first.");
+      return;
+    }
+    downloadWordDocument("exam-ai-copilot-report.doc", buildAiCopilotDocText(lastPayload));
+  });
   document.getElementById("examAiCopilotPrintBtn")?.addEventListener("click", () => window.print());
   await run();
 }
 
 function renderExamTemplateManagerPanel() {
   return `
-    <div class="module-header-card">
-      <h4>Template Orchestration</h4>
-      <p>Create, clone, preview and archive dynamic templates for exams, scripts, assessment and progress workflows.</p>
-    </div>
-    <div class="form-grid">
-      <label>Template Type</label>
-      <select id="examTplType">
-        <option value="exam-paper">Exam Paper</option>
-        <option value="mark-sheet">Mark Sheet</option>
-        <option value="assessment-report">Assessment Report</option>
-        <option value="progress-report">Progress Report</option>
-        <option value="teacher-notes">Teacher Notes</option>
-      </select>
-      <label>Template Name</label>
-      <input id="examTplName" placeholder="e.g. Grade 9 Social Studies Paper 1" />
-      <label>Version Tag</label>
-      <input id="examTplVersionTag" placeholder="e.g. v1.0" />
-      <label>Template Body</label>
-      <textarea id="examTplBody" rows="14" class="template-spacious" placeholder="Template body..."></textarea>
-    </div>
-    <div class="actions-row exam-icon-group">
-      <button class="ax-btn ax-btn--generate ax-btn--sm" id="examTplPresetBtn" title="Generate preset">AI Generate</button>
-      <button class="ax-btn ax-btn--save ax-btn--sm" id="examTplSaveBtn" title="Save template">Save</button>
-      <button class="ax-btn ax-btn--edit ax-btn--sm" id="examTplUpdateBtn" title="Update template">Edit</button>
-      <button class="ax-btn ax-btn--view ax-btn--sm" id="examTplViewBtn" title="Preview template">Preview</button>
-      <button class="ax-btn ax-btn--clone ax-btn--sm" id="examTplCloneBtn" title="Clone template">Clone</button>
-      <button class="ax-btn ax-btn--delete ax-btn--sm" id="examTplDeleteBtn" title="Delete template">Delete</button>
-      <button class="ax-btn ax-btn--download ax-btn--sm" id="examTplDownloadBtn" title="Download template">Download</button>
-      <button class="ax-btn ax-btn--upload ax-btn--sm" id="examTplUploadBtn" title="Upload template">Upload</button>
-      <input id="examTplUploadInput" type="file" accept=".txt,.csv,.doc,.docx,.md" style="display:none;" />
-      <button class="ax-btn ax-btn--refresh ax-btn--sm" id="examTplRefreshBtn" title="Refresh templates">Refresh</button>
-    </div>
-    <div id="examTplStatus" class="small-note">Ready.</div>
-    <div class="dashboard-table-wrap">
-      <table class="dashboard-table">
-        <thead><tr><th>ID</th><th>Type</th><th>Name</th><th>Version</th><th>Updated</th><th>Actions</th></tr></thead>
-        <tbody id="examTplBodyRows"></tbody>
-      </table>
+    <div class="exam-v2-layout exam-module-compact">
+      <div class="exam-v2-pane">
+        <div class="module-header-card exam-module-compact-header">
+          <h4>Template Orchestration</h4>
+          <p class="exam-tight-note">Exam, mark sheet, reports, and notes templates — save per institution.</p>
+        </div>
+        <div class="form-grid form-grid--exam-tight">
+          <label>Template Type</label>
+          <select id="examTplType">
+            <option value="exam-paper">Exam Paper</option>
+            <option value="mark-sheet">Mark Sheet</option>
+            <option value="assessment-report">Assessment Report</option>
+            <option value="progress-report">Progress Report</option>
+            <option value="teacher-notes">Teacher Notes</option>
+          </select>
+          <label>Template Name</label>
+          <input id="examTplName" placeholder="e.g. Grade 9 Social Studies Paper 1" />
+          <label>Version Tag</label>
+          <input id="examTplVersionTag" placeholder="e.g. v1.0" />
+          <label>Template Body</label>
+          <textarea id="examTplBody" rows="10" class="template-spacious" placeholder="Template body..."></textarea>
+        </div>
+        <div class="actions-row exam-icon-group exam-actions-tight">
+          <button class="ax-btn ax-btn--generate ax-btn--sm" id="examTplPresetBtn" title="Generate preset">AI Generate</button>
+          <button class="ax-btn ax-btn--save ax-btn--sm" id="examTplSaveBtn" title="Save template">Save</button>
+          <button class="ax-btn ax-btn--edit ax-btn--sm" id="examTplUpdateBtn" title="Update template">Edit</button>
+          <button class="ax-btn ax-btn--view ax-btn--sm" id="examTplViewBtn" title="Preview template">Preview</button>
+          <button class="ax-btn ax-btn--clone ax-btn--sm" id="examTplCloneBtn" title="Clone template">Clone</button>
+          <button class="ax-btn ax-btn--delete ax-btn--sm" id="examTplDeleteBtn" title="Delete template">Delete</button>
+          <button class="ax-btn ax-btn--download ax-btn--sm" id="examTplDownloadBtn" title="Download template">Download</button>
+          <button class="ax-btn ax-btn--upload ax-btn--sm" id="examTplUploadBtn" title="Upload template">Upload</button>
+          <input id="examTplUploadInput" type="file" accept=".txt,.csv,.doc,.docx,.md" style="display:none;" />
+          <button class="ax-btn ax-btn--refresh ax-btn--sm" id="examTplRefreshBtn" title="Refresh templates">Refresh</button>
+        </div>
+        <div id="examTplStatus" class="small-note exam-tight-note">Ready.</div>
+        <div class="dashboard-table-wrap">
+          <table class="dashboard-table">
+            <thead><tr><th>ID</th><th>Type</th><th>Name</th><th>Version</th><th>Updated</th><th>Actions</th></tr></thead>
+            <tbody id="examTplBodyRows"></tbody>
+          </table>
+        </div>
+      </div>
     </div>
   `;
 }
@@ -5550,45 +5737,49 @@ async function wireExamTemplateManagerPanel() {
 
 function renderExamArchivePanel() {
   return `
-    <div class="module-header-card">
-      <h4>Archives & Lifecycle</h4>
-      <p>Archive generated exams, scripts and reports for retrieval, traceability and institutional compliance.</p>
-    </div>
-    <div class="form-grid">
-      <label>Archive Type</label>
-      <select id="examArchiveType">
-        <option value="exam-paper">Exam Paper</option>
-        <option value="exam-script">Exam Script</option>
-        <option value="assessment-report">Assessment Report</option>
-        <option value="progress-report">Progress Report</option>
-        <option value="template">Template</option>
-      </select>
-      <label>Archive Title</label>
-      <input id="examArchiveTitle" placeholder="Archive title" />
-      <label>Reference ID</label>
-      <input id="examArchiveRefId" type="number" placeholder="Optional source ID" />
-      <label>Payload / Notes</label>
-      <textarea id="examArchivePayload" rows="8" class="template-spacious" placeholder="Archived payload or notes..."></textarea>
-      <label>Status Filter</label>
-      <select id="examArchiveStatusFilter">
-        <option value="">All</option>
-        <option value="ACTIVE">Active</option>
-        <option value="ARCHIVED">Archived</option>
-      </select>
-    </div>
-    <div class="actions-row exam-icon-group">
-      <button class="ax-btn ax-btn--archive ax-btn--sm" id="examArchiveSaveBtn" title="Archive item">Archive</button>
-      <button class="ax-btn ax-btn--view ax-btn--sm" id="examArchiveViewBtn" title="View archive">View</button>
-      <button class="ax-btn ax-btn--approve ax-btn--sm" id="examArchiveRestoreBtn" title="Restore archive">Restore</button>
-      <button class="ax-btn ax-btn--download ax-btn--sm" id="examArchiveDownloadBtn" title="Download archive">Download</button>
-      <button class="ax-btn ax-btn--refresh ax-btn--sm" id="examArchiveRefreshBtn" title="Refresh archive">Refresh</button>
-    </div>
-    <div id="examArchiveStatus" class="small-note">Ready.</div>
-    <div class="dashboard-table-wrap">
-      <table class="dashboard-table">
-        <thead><tr><th>ID</th><th>Type</th><th>Title</th><th>Status</th><th>Archived At</th><th>Actions</th></tr></thead>
-        <tbody id="examArchiveRows"></tbody>
-      </table>
+    <div class="exam-v2-layout exam-module-compact">
+      <div class="exam-v2-pane">
+        <div class="module-header-card exam-module-compact-header">
+          <h4>Archives & Lifecycle</h4>
+          <p class="exam-tight-note">Immutable snapshots for exams, scripts, reports, and templates.</p>
+        </div>
+        <div class="form-grid form-grid--exam-tight">
+          <label>Archive Type</label>
+          <select id="examArchiveType">
+            <option value="exam-paper">Exam Paper</option>
+            <option value="exam-script">Exam Script</option>
+            <option value="assessment-report">Assessment Report</option>
+            <option value="progress-report">Progress Report</option>
+            <option value="template">Template</option>
+          </select>
+          <label>Archive Title</label>
+          <input id="examArchiveTitle" placeholder="Archive title" />
+          <label>Reference ID</label>
+          <input id="examArchiveRefId" type="number" placeholder="Optional source ID" />
+          <label>Payload / Notes</label>
+          <textarea id="examArchivePayload" rows="6" class="template-spacious" placeholder="Archived payload or notes..."></textarea>
+          <label>Status Filter</label>
+          <select id="examArchiveStatusFilter">
+            <option value="">All</option>
+            <option value="ACTIVE">Active</option>
+            <option value="ARCHIVED">Archived</option>
+          </select>
+        </div>
+        <div class="actions-row exam-icon-group exam-actions-tight">
+          <button class="ax-btn ax-btn--archive ax-btn--sm" id="examArchiveSaveBtn" title="Archive item">Archive</button>
+          <button class="ax-btn ax-btn--view ax-btn--sm" id="examArchiveViewBtn" title="View archive">View</button>
+          <button class="ax-btn ax-btn--approve ax-btn--sm" id="examArchiveRestoreBtn" title="Restore archive">Restore</button>
+          <button class="ax-btn ax-btn--download ax-btn--sm" id="examArchiveDownloadBtn" title="Download archive">Download</button>
+          <button class="ax-btn ax-btn--refresh ax-btn--sm" id="examArchiveRefreshBtn" title="Refresh archive">Refresh</button>
+        </div>
+        <div id="examArchiveStatus" class="small-note exam-tight-note">Ready.</div>
+        <div class="dashboard-table-wrap">
+          <table class="dashboard-table">
+            <thead><tr><th>ID</th><th>Type</th><th>Title</th><th>Status</th><th>Archived At</th><th>Actions</th></tr></thead>
+            <tbody id="examArchiveRows"></tbody>
+          </table>
+        </div>
+      </div>
     </div>
   `;
 }
@@ -5746,30 +5937,34 @@ async function wireExamArchivePanel() {
 
 function renderExamSettingsPanel() {
   return `
-    <div class="module-header-card">
-      <h4>Examination Settings</h4>
-      <p>Configure module automation, validation and orchestration defaults for secure enterprise operation.</p>
+    <div class="exam-v2-layout exam-module-compact">
+      <div class="exam-v2-pane">
+        <div class="module-header-card exam-module-compact-header">
+          <h4>Examination Settings</h4>
+          <p class="exam-tight-note">Automation, validation, and sync flags for this institution’s examination engine.</p>
+        </div>
+        <div class="form-grid form-grid--exam-tight">
+          <label>Auto Save Enabled</label>
+          <select id="examSettingsAutoSave"><option value="1">Enabled</option><option value="0">Disabled</option></select>
+          <label>Auto Save Interval (sec)</label>
+          <input id="examSettingsAutoSaveInterval" type="number" min="10" max="900" value="90" />
+          <label>Strict CBC Validation</label>
+          <select id="examSettingsCbcValidation"><option value="1">Enabled</option><option value="0">Disabled</option></select>
+          <label>Background Processing</label>
+          <select id="examSettingsBackground"><option value="1">Enabled</option><option value="0">Disabled</option></select>
+          <label>Real-time Sync (WebSocket Ready)</label>
+          <select id="examSettingsRealtime"><option value="1">Enabled</option><option value="0">Disabled</option></select>
+          <label>Offline Cache</label>
+          <select id="examSettingsCache"><option value="1">Enabled</option><option value="0">Disabled</option></select>
+        </div>
+        <div class="actions-row exam-icon-group exam-actions-tight">
+          <button class="ax-btn ax-btn--save ax-btn--sm" id="examSettingsSaveBtn" title="Save settings">Save</button>
+          <button class="ax-btn ax-btn--refresh ax-btn--sm" id="examSettingsReloadBtn" title="Reload settings">Load</button>
+          <button class="ax-btn ax-btn--view ax-btn--sm" id="examSettingsPreviewBtn" title="Preview settings">Preview</button>
+        </div>
+        <pre id="examSettingsPreview" class="small-note exam-tight-note" style="max-height:220px;overflow:auto;"></pre>
+      </div>
     </div>
-    <div class="form-grid">
-      <label>Auto Save Enabled</label>
-      <select id="examSettingsAutoSave"><option value="1">Enabled</option><option value="0">Disabled</option></select>
-      <label>Auto Save Interval (sec)</label>
-      <input id="examSettingsAutoSaveInterval" type="number" min="10" max="900" value="90" />
-      <label>Strict CBC Validation</label>
-      <select id="examSettingsCbcValidation"><option value="1">Enabled</option><option value="0">Disabled</option></select>
-      <label>Background Processing</label>
-      <select id="examSettingsBackground"><option value="1">Enabled</option><option value="0">Disabled</option></select>
-      <label>Real-time Sync (WebSocket Ready)</label>
-      <select id="examSettingsRealtime"><option value="1">Enabled</option><option value="0">Disabled</option></select>
-      <label>Offline Cache</label>
-      <select id="examSettingsCache"><option value="1">Enabled</option><option value="0">Disabled</option></select>
-    </div>
-    <div class="actions-row exam-icon-group">
-      <button class="ax-btn ax-btn--save ax-btn--sm" id="examSettingsSaveBtn" title="Save settings">Save</button>
-      <button class="ax-btn ax-btn--refresh ax-btn--sm" id="examSettingsReloadBtn" title="Reload settings">Refresh</button>
-      <button class="ax-btn ax-btn--view ax-btn--sm" id="examSettingsPreviewBtn" title="Preview settings">Preview</button>
-    </div>
-    <pre id="examSettingsPreview" class="small-note" style="max-height:260px;overflow:auto;"></pre>
   `;
 }
 
@@ -6993,20 +7188,6 @@ async function renderCbcCurriculumEditor(options = {}) {
         ].join("\n");
       });
       return [...metaHeader, ...answerLines].join("\n");
-    };
-    const downloadWordDocument = (filename, text) => {
-      const body = escapeHtml(text).replace(/\n/g, "<br/>");
-      const html = `
-        <html>
-          <head>
-            <meta charset="utf-8">
-            <title>${escapeHtml(filename)}</title>
-            <style>body{font-family:'Times New Roman',Times,serif;font-size:11pt;line-height:1.35;color:#111;margin:12px;}</style>
-          </head>
-          <body><div>${body}</div></body>
-        </html>
-      `;
-      downloadTextFile(filename.endsWith(".doc") ? filename : `${filename}.doc`, html, "application/msword;charset=utf-8");
     };
     const slugToken = (value = "") =>
       String(value || "")
@@ -8683,11 +8864,11 @@ async function renderCbcCurriculumEditor(options = {}) {
 
   const renderExamScriptsTab = async () => {
     panel.innerHTML = `
-      <div class="exam-v2-layout">
+      <div class="exam-v2-layout exam-module-compact">
         <div class="exam-v2-pane">
           <h4>Exam Scripts</h4>
-          <p class="small-note">Generate ranked scripts by class, stream, term and year from marks records.</p>
-          <div class="form-grid">
+          <p class="small-note exam-tight-note">Ranked results from marks: filter by class, stream, term, year — export CSV or Word.</p>
+          <div class="form-grid form-grid--exam-tight">
             <label>Grade</label>
             <select id="examV2ScriptGrade"><option value="">Select grade</option>${gradeOptions.map((v) => `<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`).join("")}</select>
             <label>Form</label>
@@ -8696,12 +8877,13 @@ async function renderCbcCurriculumEditor(options = {}) {
             <label>Term</label><select id="examV2ScriptTerm">${termOptions.map((v) => `<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`).join("")}</select>
             <label>Year</label><input id="examV2ScriptYear" type="number" value="${new Date().getFullYear()}" />
           </div>
-          <div class="actions-row exam-icon-group">
+          <div class="actions-row exam-icon-group exam-actions-tight">
             <button class="ax-btn ax-btn--generate ax-btn--sm" id="examV2ScriptGenerateBtn" title="Generate scripts">Generate</button>
-            <button class="ax-btn ax-btn--download ax-btn--sm" id="examV2ScriptDownloadBtn" title="Download scripts">Download</button>
+            <button class="ax-btn ax-btn--download ax-btn--sm" id="examV2ScriptDownloadBtn" title="Download CSV">CSV</button>
+            <button class="ax-btn ax-btn--download ax-btn--sm" id="examV2ScriptWordBtn" title="Download Word">Word</button>
             <button class="ax-btn ax-btn--print ax-btn--sm" id="examV2ScriptPrintBtn" title="Print scripts">Print</button>
           </div>
-          <div id="examV2ScriptStatus" class="small-note">No scripts generated yet.</div>
+          <div id="examV2ScriptStatus" class="small-note exam-tight-note">No scripts generated yet.</div>
           <div class="dashboard-table-wrap">
             <table class="dashboard-table">
               <thead><tr><th>Position</th><th>Learner</th><th>Grade</th><th>Stream</th><th>Avg %</th><th>Total</th></tr></thead>
@@ -8721,6 +8903,7 @@ async function renderCbcCurriculumEditor(options = {}) {
     const rowsEl = document.getElementById("examV2ScriptRows");
     const statusNode = document.getElementById("examV2ScriptStatus");
     let rankedRows = [];
+    let lastScriptFilters = { grade: "", stream: "", term: "", year: "" };
     const setScriptStatus = (message) => {
       if (statusNode) statusNode.textContent = message || "";
     };
@@ -8748,6 +8931,7 @@ async function renderCbcCurriculumEditor(options = {}) {
       try {
         const result = await request(`/api/academic/results/ranked?grade=${encodeURIComponent(grade)}&stream=${encodeURIComponent(stream)}&term=${encodeURIComponent(term)}&year=${encodeURIComponent(String(year))}`);
         rankedRows = Array.isArray(result?.ranked) ? result.ranked : [];
+        lastScriptFilters = { grade, stream, term, year: String(year) };
         renderRows();
         setScriptStatus(`Ranked ${rankedRows.length} learner(s).`);
       } catch (error) {
@@ -8761,28 +8945,36 @@ async function renderCbcCurriculumEditor(options = {}) {
       }
       downloadTextFile("exam-scripts-ranked.csv", rowsToCsv(rankedRows), "text/csv;charset=utf-8");
     });
+    document.getElementById("examV2ScriptWordBtn")?.addEventListener("click", () => {
+      if (!rankedRows.length) {
+        alert("Generate scripts first.");
+        return;
+      }
+      downloadWordDocument("exam-scripts-ranked.doc", buildRankedScriptsDocText(lastScriptFilters, rankedRows));
+    });
     document.getElementById("examV2ScriptPrintBtn")?.addEventListener("click", () => window.print());
   };
 
   const renderAssessmentReportsTab = async () => {
     panel.innerHTML = `
-      <div class="exam-v2-layout">
+      <div class="exam-v2-layout exam-module-compact">
         <div class="exam-v2-pane">
           <h4>Assessment Reports</h4>
-          <p class="small-note">Generate learner-level assessment report from exams and CBC-aligned records.</p>
-          <div class="form-grid">
+          <p class="small-note exam-tight-note">Learner-level marks and CBC context — JSON, Word, or print.</p>
+          <div class="form-grid form-grid--exam-tight">
             <label>Search Learner</label>
             <input id="examV2AssessSearch" placeholder="Name, admission number, stream..." />
             <label>Learner</label>
             <select id="examV2AssessLearner"><option value="">Select learner</option></select>
           </div>
-          <div class="actions-row exam-icon-group">
-            <button class="ax-btn ax-btn--refresh ax-btn--sm" id="examV2AssessLoadBtn" title="Load learners">Refresh</button>
+          <div class="actions-row exam-icon-group exam-actions-tight">
+            <button class="ax-btn ax-btn--refresh ax-btn--sm" id="examV2AssessLoadBtn" title="Load learners">Load</button>
             <button class="ax-btn ax-btn--generate ax-btn--sm" id="examV2AssessGenerateBtn" title="Generate report">Generate</button>
-            <button class="ax-btn ax-btn--download ax-btn--sm" id="examV2AssessDownloadBtn" title="Download report">Download</button>
+            <button class="ax-btn ax-btn--download ax-btn--sm" id="examV2AssessDownloadBtn" title="Download JSON">JSON</button>
+            <button class="ax-btn ax-btn--download ax-btn--sm" id="examV2AssessWordBtn" title="Download Word">Word</button>
             <button class="ax-btn ax-btn--print ax-btn--sm" id="examV2AssessPrintBtn" title="Print report">Print</button>
           </div>
-          <div id="examV2AssessOutput" class="small-note">Select learner then generate report.</div>
+          <div id="examV2AssessOutput" class="small-note exam-tight-note">Select learner then generate report.</div>
         </div>
       </div>
     `;
@@ -8830,6 +9022,13 @@ async function renderCbcCurriculumEditor(options = {}) {
       }
       downloadTextFile("assessment-report.json", JSON.stringify(currentReport, null, 2), "application/json;charset=utf-8");
     });
+    document.getElementById("examV2AssessWordBtn")?.addEventListener("click", () => {
+      if (!currentReport) {
+        alert("Generate report first.");
+        return;
+      }
+      downloadWordDocument("learner-assessment-report.doc", buildLearnerAssessmentReportDocText(currentReport));
+    });
     document.getElementById("examV2AssessPrintBtn")?.addEventListener("click", () => {
       if (!currentReport) {
         alert("Generate report first.");
@@ -8846,23 +9045,24 @@ async function renderCbcCurriculumEditor(options = {}) {
 
   const renderProgressReportsTab = async () => {
     panel.innerHTML = `
-      <div class="exam-v2-layout">
+      <div class="exam-v2-layout exam-module-compact">
         <div class="exam-v2-pane">
           <h4>Progress Reports</h4>
-          <p class="small-note">Display learner progression across all exams and academic years since admission.</p>
-          <div class="form-grid">
+          <p class="small-note exam-tight-note">Longitudinal performance from the same learner assessment feed — JSON, Word, or print.</p>
+          <div class="form-grid form-grid--exam-tight">
             <label>Search Learner</label>
             <input id="examV2ProgressSearch" placeholder="Name, admission number..." />
             <label>Learner</label>
             <select id="examV2ProgressLearner"><option value="">Select learner</option></select>
           </div>
-          <div class="actions-row exam-icon-group">
-            <button class="ax-btn ax-btn--refresh ax-btn--sm" id="examV2ProgressLoadBtn" title="Load learners">Refresh</button>
+          <div class="actions-row exam-icon-group exam-actions-tight">
+            <button class="ax-btn ax-btn--refresh ax-btn--sm" id="examV2ProgressLoadBtn" title="Load learners">Load</button>
             <button class="ax-btn ax-btn--generate ax-btn--sm" id="examV2ProgressGenerateBtn" title="Generate progression">Generate</button>
-            <button class="ax-btn ax-btn--download ax-btn--sm" id="examV2ProgressDownloadBtn" title="Download progression">Download</button>
+            <button class="ax-btn ax-btn--download ax-btn--sm" id="examV2ProgressDownloadBtn" title="Download JSON">JSON</button>
+            <button class="ax-btn ax-btn--download ax-btn--sm" id="examV2ProgressWordBtn" title="Download Word">Word</button>
             <button class="ax-btn ax-btn--print ax-btn--sm" id="examV2ProgressPrintBtn" title="Print progression">Print</button>
           </div>
-          <div id="examV2ProgressOutput" class="small-note">Generate learner progression to view timeline.</div>
+          <div id="examV2ProgressOutput" class="small-note exam-tight-note">Generate learner progression to view timeline.</div>
         </div>
       </div>
     `;
@@ -8906,6 +9106,13 @@ async function renderCbcCurriculumEditor(options = {}) {
       }
       downloadTextFile("progress-report.json", JSON.stringify(currentReport, null, 2), "application/json;charset=utf-8");
     });
+    document.getElementById("examV2ProgressWordBtn")?.addEventListener("click", () => {
+      if (!currentReport) {
+        alert("Generate progression first.");
+        return;
+      }
+      downloadWordDocument("learner-progress-report.doc", buildLearnerAssessmentReportDocText(currentReport));
+    });
     document.getElementById("examV2ProgressPrintBtn")?.addEventListener("click", () => {
       if (!currentReport) {
         alert("Generate progression first.");
@@ -8922,11 +9129,11 @@ async function renderCbcCurriculumEditor(options = {}) {
 
   const renderGradebookTab = async () => {
     panel.innerHTML = `
-      <div class="exam-v2-layout">
+      <div class="exam-v2-layout exam-module-compact">
         <div class="exam-v2-pane">
           <h4>Gradebook Intelligence</h4>
-          <p class="small-note">SIS-style gradebook by subject, learner and competency distribution with class filters.</p>
-          <div class="form-grid">
+          <p class="small-note exam-tight-note">SIS-style snapshot by subject and learner with filters — CSV or Word.</p>
+          <div class="form-grid form-grid--exam-tight">
             <label>Grade</label>
             <select id="examV2GradebookGrade"><option value="">All grades</option>${gradeOptions.map((v) => `<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`).join("")}</select>
             <label>Form</label>
@@ -8938,17 +9145,18 @@ async function renderCbcCurriculumEditor(options = {}) {
             <label>Year</label>
             <input id="examV2GradebookYear" type="number" value="${new Date().getFullYear()}" />
           </div>
-          <div class="actions-row exam-icon-group">
-            <button class="ax-btn ax-btn--refresh ax-btn--sm" id="examV2GradebookLoadBtn" title="Refresh gradebook">Refresh</button>
+          <div class="actions-row exam-icon-group exam-actions-tight">
+            <button class="ax-btn ax-btn--refresh ax-btn--sm" id="examV2GradebookLoadBtn" title="Refresh gradebook">Load</button>
             <button class="ax-btn ax-btn--view ax-btn--sm" id="examV2GradebookViewBtn" title="View gradebook">View</button>
-            <button class="ax-btn ax-btn--download ax-btn--sm" id="examV2GradebookDownloadBtn" title="Download gradebook">Download</button>
+            <button class="ax-btn ax-btn--download ax-btn--sm" id="examV2GradebookDownloadBtn" title="Download CSV">CSV</button>
+            <button class="ax-btn ax-btn--download ax-btn--sm" id="examV2GradebookWordBtn" title="Download Word">Word</button>
             <button class="ax-btn ax-btn--print ax-btn--sm" id="examV2GradebookPrintBtn" title="Print gradebook">Print</button>
           </div>
           <div id="examV2GradebookCards" class="exam-analytics-grid"></div>
-          <div id="examV2GradebookStatus" class="small-note">Loading gradebook...</div>
+          <div id="examV2GradebookStatus" class="small-note exam-tight-note">Loading gradebook...</div>
         </div>
       </div>
-      <div class="exam-v2-layout">
+      <div class="exam-v2-layout exam-module-compact">
         <div class="exam-v2-pane">
           <h4>Subject Performance</h4>
           <div class="dashboard-table-wrap">
@@ -9057,17 +9265,27 @@ async function renderCbcCurriculumEditor(options = {}) {
       ]);
       downloadTextFile("exam-gradebook-overview.csv", csv, "text/csv;charset=utf-8");
     });
+    document.getElementById("examV2GradebookWordBtn")?.addEventListener("click", () => {
+      const payload = lastPayload || {};
+      const subjects = Array.isArray(payload?.by_subject) ? payload.by_subject : [];
+      const learners = Array.isArray(payload?.learner_gradebook) ? payload.learner_gradebook : [];
+      if (!subjects.length && !learners.length) {
+        alert("Load gradebook first.");
+        return;
+      }
+      downloadWordDocument("exam-gradebook-overview.doc", buildGradebookOverviewDocText(payload));
+    });
     document.getElementById("examV2GradebookPrintBtn")?.addEventListener("click", () => window.print());
     await load();
   };
 
   const renderAssessmentTrackingTab = async () => {
     panel.innerHTML = `
-      <div class="exam-v2-layout">
+      <div class="exam-v2-layout exam-module-compact">
         <div class="exam-v2-pane">
           <h4>Assessment Tracking Engine</h4>
-          <p class="small-note">Track performance movement, subject competency coverage and intervention watchlist in real time.</p>
-          <div class="form-grid">
+          <p class="small-note exam-tight-note">Subject movement, competency coverage, and intervention watchlist.</p>
+          <div class="form-grid form-grid--exam-tight">
             <label>Grade</label>
             <select id="examV2TrackGrade"><option value="">All grades</option>${gradeOptions.map((v) => `<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`).join("")}</select>
             <label>Form</label>
@@ -9079,17 +9297,17 @@ async function renderCbcCurriculumEditor(options = {}) {
             <label>Year</label>
             <input id="examV2TrackYear" type="number" value="${new Date().getFullYear()}" />
           </div>
-          <div class="actions-row exam-icon-group">
-            <button class="ax-btn ax-btn--refresh ax-btn--sm" id="examV2TrackLoadBtn" title="Refresh tracking">Refresh</button>
+          <div class="actions-row exam-icon-group exam-actions-tight">
+            <button class="ax-btn ax-btn--refresh ax-btn--sm" id="examV2TrackLoadBtn" title="Refresh tracking">Load</button>
             <button class="ax-btn ax-btn--view ax-btn--sm" id="examV2TrackViewBtn" title="View tracking">View</button>
-            <button class="ax-btn ax-btn--download ax-btn--sm" id="examV2TrackDownloadBtn" title="Download tracking">Download</button>
+            <button class="ax-btn ax-btn--download ax-btn--sm" id="examV2TrackDownloadBtn" title="Download CSV">CSV</button>
             <button class="ax-btn ax-btn--print ax-btn--sm" id="examV2TrackPrintBtn" title="Print tracking">Print</button>
           </div>
           <div id="examV2TrackCards" class="exam-analytics-grid"></div>
-          <div id="examV2TrackStatus" class="small-note">Loading assessment tracking...</div>
+          <div id="examV2TrackStatus" class="small-note exam-tight-note">Loading assessment tracking...</div>
         </div>
       </div>
-      <div class="exam-v2-layout">
+      <div class="exam-v2-layout exam-module-compact">
         <div class="exam-v2-pane">
           <h4>Subject Tracking</h4>
           <div class="dashboard-table-wrap">
@@ -9203,20 +9421,20 @@ async function renderCbcCurriculumEditor(options = {}) {
 
   const renderPortalInsightsTab = async () => {
     panel.innerHTML = `
-      <div class="exam-v2-layout">
+      <div class="exam-v2-layout exam-module-compact">
         <div class="exam-v2-pane">
           <h4>Parent & Learner Portal Insights</h4>
-          <p class="small-note">Parent engagement, learner portal readiness, communication outcomes and high performers feed.</p>
-          <div class="actions-row exam-icon-group">
-            <button class="ax-btn ax-btn--refresh ax-btn--sm" id="examV2PortalLoadBtn" title="Refresh insights">Refresh</button>
-            <button class="ax-btn ax-btn--download ax-btn--sm" id="examV2PortalDownloadBtn" title="Download insights">Download</button>
+          <p class="small-note exam-tight-note">Engagement and portal readiness derived from learner and communication data.</p>
+          <div class="actions-row exam-icon-group exam-actions-tight">
+            <button class="ax-btn ax-btn--refresh ax-btn--sm" id="examV2PortalLoadBtn" title="Refresh insights">Load</button>
+            <button class="ax-btn ax-btn--download ax-btn--sm" id="examV2PortalDownloadBtn" title="Download CSV">CSV</button>
             <button class="ax-btn ax-btn--print ax-btn--sm" id="examV2PortalPrintBtn" title="Print insights">Print</button>
           </div>
           <div id="examV2PortalCards" class="exam-analytics-grid"></div>
-          <div id="examV2PortalStatus" class="small-note">Loading portal insights...</div>
+          <div id="examV2PortalStatus" class="small-note exam-tight-note">Loading portal insights...</div>
         </div>
       </div>
-      <div class="exam-v2-layout">
+      <div class="exam-v2-layout exam-module-compact">
         <div class="exam-v2-pane">
           <h4>Parent/Learner Communication Status</h4>
           <div class="dashboard-table-wrap">
@@ -9305,20 +9523,20 @@ async function renderCbcCurriculumEditor(options = {}) {
 
   const renderComplianceTab = async () => {
     panel.innerHTML = `
-      <div class="exam-v2-layout">
+      <div class="exam-v2-layout exam-module-compact">
         <div class="exam-v2-pane">
           <h4>Compliance Reporting Hub</h4>
-          <p class="small-note">Institutional, CBC and learner-record completeness metrics for national/state-style reporting.</p>
-          <div class="actions-row exam-icon-group">
-            <button class="ax-btn ax-btn--refresh ax-btn--sm" id="examV2ComplianceLoadBtn" title="Refresh compliance">Refresh</button>
-            <button class="ax-btn ax-btn--download ax-btn--sm" id="examV2ComplianceDownloadBtn" title="Download compliance">Download</button>
+          <p class="small-note exam-tight-note">Registry completeness and learners without assessment records.</p>
+          <div class="actions-row exam-icon-group exam-actions-tight">
+            <button class="ax-btn ax-btn--refresh ax-btn--sm" id="examV2ComplianceLoadBtn" title="Refresh compliance">Load</button>
+            <button class="ax-btn ax-btn--download ax-btn--sm" id="examV2ComplianceDownloadBtn" title="Download CSV">CSV</button>
             <button class="ax-btn ax-btn--print ax-btn--sm" id="examV2CompliancePrintBtn" title="Print compliance">Print</button>
           </div>
           <div id="examV2ComplianceCards" class="exam-analytics-grid"></div>
-          <div id="examV2ComplianceStatus" class="small-note">Loading compliance indicators...</div>
+          <div id="examV2ComplianceStatus" class="small-note exam-tight-note">Loading compliance indicators...</div>
         </div>
       </div>
-      <div class="exam-v2-layout">
+      <div class="exam-v2-layout exam-module-compact">
         <div class="exam-v2-pane">
           <h4>Learners Missing Assessment Records</h4>
           <div class="dashboard-table-wrap">
@@ -9417,25 +9635,26 @@ async function renderCbcCurriculumEditor(options = {}) {
 
   const renderLifecycleTab = async () => {
     panel.innerHTML = `
-      <div class="exam-v2-layout">
+      <div class="exam-v2-layout exam-module-compact">
         <div class="exam-v2-pane">
           <h4>Academic Lifecycle Tracking</h4>
-          <p class="small-note">Examination lifecycle timeline from curriculum setup to generated exams, marks, archives and template updates.</p>
-          <div class="form-grid">
+          <p class="small-note exam-tight-note">Timeline from curriculum → exams → marks → archives. Export CSV or Word.</p>
+          <div class="form-grid form-grid--exam-tight">
             <label>Learner ID (Optional)</label>
             <input id="examV2LifecycleLearnerId" type="number" placeholder="Filter by learner id" />
           </div>
-          <div class="actions-row exam-icon-group">
-            <button class="ax-btn ax-btn--refresh ax-btn--sm" id="examV2LifecycleLoadBtn" title="Refresh lifecycle">Refresh</button>
-            <button class="ax-btn ax-btn--download ax-btn--sm" id="examV2LifecycleDownloadBtn" title="Download lifecycle">Download</button>
+          <div class="actions-row exam-icon-group exam-actions-tight">
+            <button class="ax-btn ax-btn--refresh ax-btn--sm" id="examV2LifecycleLoadBtn" title="Refresh lifecycle">Load</button>
+            <button class="ax-btn ax-btn--download ax-btn--sm" id="examV2LifecycleDownloadBtn" title="Download CSV">CSV</button>
+            <button class="ax-btn ax-btn--download ax-btn--sm" id="examV2LifecycleWordBtn" title="Download Word">Word</button>
             <button class="ax-btn ax-btn--print ax-btn--sm" id="examV2LifecyclePrintBtn" title="Print lifecycle">Print</button>
           </div>
           <div id="examV2LifecycleCards" class="exam-analytics-grid"></div>
-          <div id="examV2LifecycleRecommendations" class="small-note"></div>
-          <div id="examV2LifecycleStatus" class="small-note">Loading lifecycle timeline...</div>
+          <div id="examV2LifecycleRecommendations" class="small-note exam-tight-note"></div>
+          <div id="examV2LifecycleStatus" class="small-note exam-tight-note">Loading lifecycle timeline...</div>
         </div>
       </div>
-      <div class="exam-v2-layout">
+      <div class="exam-v2-layout exam-module-compact">
         <div class="exam-v2-pane">
           <h4>Timeline Events</h4>
           <div class="dashboard-table-wrap">
@@ -9506,6 +9725,13 @@ async function renderCbcCurriculumEditor(options = {}) {
         return;
       }
       downloadTextFile("exam-lifecycle-timeline.csv", rowsToCsv(rows), "text/csv;charset=utf-8");
+    });
+    document.getElementById("examV2LifecycleWordBtn")?.addEventListener("click", () => {
+      if (!lastPayload) {
+        alert("Load lifecycle timeline first.");
+        return;
+      }
+      downloadWordDocument("exam-lifecycle-timeline.doc", buildLifecycleTimelineDocText(lastPayload));
     });
     document.getElementById("examV2LifecyclePrintBtn")?.addEventListener("click", () => window.print());
     await load();

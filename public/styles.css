@@ -4471,6 +4471,26 @@ body {
   min-height: 0;
   line-height: 1.2;
 }
+.exam-module-compact .exam-analytics-grid {
+  gap: 6px;
+}
+.exam-module-compact .exam-analytics-card {
+  padding: 6px 8px;
+  border-radius: 8px;
+  box-shadow: 0 4px 10px rgba(14, 61, 104, 0.06);
+}
+.exam-module-compact .exam-analytics-card h5 {
+  font-size: 10px;
+  margin: 0 0 2px;
+}
+.exam-module-compact .exam-analytics-card p {
+  font-size: 13px;
+  margin: 0;
+}
+.exam-module-compact .module-header-card {
+  padding: 8px 10px;
+  margin-bottom: 6px;
+}
 .exam-v2-collapse summary {
   font-size: 12px;
   padding: 4px 0;
