@@ -11132,7 +11132,41 @@ function examPaperCorrectFromRef(ref, rng) {
   return "It demonstrates accurate knowledge, correct reasoning, and CBC-aligned application for this topic.".slice(0, 150);
 }
 
+function examPaperStemSocialStudies(ref, snippet, learningArea, rng) {
+  const pool = examPaperStemContentPool(ref);
+  const area = cleanValue(learningArea);
+  const leads = [
+    "Which statement is most accurate?",
+    "Choose the best answer from the alternatives given.",
+    "Which option reflects sound reasoning for this topic?",
+    "Identify the alternative that completes the idea correctly.",
+    "Select the option that best fits the Citizenship / Social Studies context."
+  ];
+  if (pool.length && rng() > 0.12) {
+    const pick = pool[Math.floor(rng() * pool.length)].replace(/\s+/g, " ").trim().slice(0, 210);
+    const head = leads[Math.floor(rng() * leads.length)];
+    return `${head}\nSupporting text: ${pick}`;
+  }
+  if (snippet && rng() > 0.28) {
+    const s = examPaperStripStrandNoise(String(snippet).replace(/\s+/g, " ").trim().slice(0, 210), ref);
+    if (s.length > 40) {
+      return `${leads[Math.floor(rng() * leads.length)]}\nSituation: ${s}`;
+    }
+  }
+  const fillers = [
+    `Which alternative best describes learners' civic responsibility linked to themes in ${area}?`,
+    `Which response shows careful use of geography and environment concepts in ${area}?`,
+    `Identify the statement that respects rights, culture, and participation in society.`,
+    `Choose the conclusion that fits historical or community evidence as taught in ${area}.`,
+    `Which answer shows the safest way to handle a resource or conflict scenario?`
+  ];
+  return fillers[Math.floor(rng() * fillers.length)];
+}
+
 function examPaperStemFromRef(ref, snippet, learningArea, qn, rng, kind) {
+  if (kind === "social") {
+    return examPaperStemSocialStudies(ref, snippet, learningArea, rng);
+  }
   const pool = examPaperStemContentPool(ref);
   const area = cleanValue(learningArea);
   if (pool.length && rng() > 0.22) {
@@ -11145,16 +11179,23 @@ function examPaperStemFromRef(ref, snippet, learningArea, qn, rng, kind) {
       return `Study the scenario and choose the best answer.\nScenario: ${s}`;
     }
   }
-  if (kind === "social") {
-    return `Identify the conclusion that reflects sound Social Studies reasoning.`;
-  }
   if (kind === "pretechnical") {
     return `Choose the option that demonstrates correct understanding for safe workshop practice and materials use.`;
   }
   return `Which statement aligns best with the ideas covered in ${area}?`;
 }
 
-function examPaperBuildMcqBlock({ count, startNumber, referenceRows, learningArea, materialSnippets, seedKey, kind }) {
+function examPaperBuildMcqBlock({
+  count,
+  startNumber,
+  referenceRows,
+  learningArea,
+  materialSnippets,
+  seedKey,
+  kind,
+  oneMarkEach = false,
+  indentOptions = "   "
+}) {
   const refs =
     Array.isArray(referenceRows) && referenceRows.length
       ? referenceRows
@@ -11180,9 +11221,20 @@ function examPaperBuildMcqBlock({ count, startNumber, referenceRows, learningAre
     const labeled = options.slice(0, 4).map((o, idx) => ({ ...o, L: letters[idx] }));
     const answer = labeled.find((x) => x.ok)?.L || "A";
     keyLines.push(`${startNumber + i}:${answer}`);
-    lines.push(`${startNumber + i}. ${stem}`);
+    const markNote = oneMarkEach ? " (1 mark)" : "";
+    if (oneMarkEach) {
+      const stemParts = String(stem || "").split("\n").map((s) => s.trim()).filter(Boolean);
+      const opening = stemParts.length ? stemParts[0] : "Select the most accurate option.";
+      lines.push(`${startNumber + i}.${markNote} ${opening}`.trim());
+      for (let pi = 1; pi < stemParts.length; pi += 1) {
+        lines.push(`         ${stemParts[pi]}`);
+      }
+    } else {
+      lines.push(`${startNumber + i}. ${stem}`);
+    }
+    const optPad = oneMarkEach ? "         " : indentOptions;
     labeled.forEach((o) => {
-      lines.push(`   ${o.L}. ${o.txt}`);
+      lines.push(`${optPad}${o.L}. ${o.txt}`);
     });
     lines.push("");
   }
@@ -11440,7 +11492,9 @@ function buildAdvancedExamText({
   templateSampleText,
   referenceRows,
   supplementalMaterialNotes,
-  materialSnippets
+  materialSnippets,
+  socialStudiesSectionBMarks,
+  socialStudiesSectionBQuestions
 }) {
   const kind = examPaperSubjectKind(learningArea);
   const refs = Array.isArray(referenceRows) ? referenceRows : [];
@@ -11454,6 +11508,26 @@ function buildAdvancedExamText({
       .forEach((line) => snippets.push(line));
   }
   const structureLabel = `${structure || "unified"}${structureDetail ? ` (${structureDetail})` : ""}`;
+  const unifiedTotal = Math.min(100, Math.max(10, Number(percentageText) || 100));
+
+  let resolvedHeaderAllocation = sectionAllocationText;
+  let socialPaperLayout = null;
+  if (kind === "social") {
+    const sectionAMarksFixed = 20;
+    let sectionBMarks = Math.max(unifiedTotal - sectionAMarksFixed, 20);
+    const custB = Number(socialStudiesSectionBMarks);
+    if (Number.isFinite(custB) && custB >= 10) {
+      sectionBMarks = Math.min(100, Math.round(custB));
+    }
+    let bQuestionCount = Math.min(16, Math.max(3, Math.round(sectionBMarks / 8)));
+    const custQ = Number(socialStudiesSectionBQuestions);
+    if (Number.isFinite(custQ) && custQ >= 3) {
+      bQuestionCount = Math.min(20, Math.round(custQ));
+    }
+    socialPaperLayout = { sectionAMarksFixed, sectionBMarks, bQuestionCount };
+    resolvedHeaderAllocation = `SECTION A: ${sectionAMarksFixed} marks (20 objective × 1 mark) | SECTION B: ${sectionBMarks} marks (structured) | TOTAL: ${sectionAMarksFixed + sectionBMarks}`;
+  }
+
   const header = buildCbcKenyaHeaderBlock({
     institutionName,
     letterheadHint,
@@ -11466,16 +11540,16 @@ function buildAdvancedExamText({
     examSession,
     examDurationLabel,
     structureLabel,
-    sectionAllocationText
+    sectionAllocationText: resolvedHeaderAllocation
   });
-  const unifiedTotal = Math.min(100, Math.max(10, Number(percentageText) || 100));
   const body = [];
   const mcqKeys = [];
   let qCursor = 1;
 
   if (kind === "social") {
-    const sectionAMarks = 20;
-    const sectionBMarks = Math.max(unifiedTotal - sectionAMarks, 20);
+    const sectionAMarks = socialPaperLayout.sectionAMarksFixed;
+    const sectionBMarks = socialPaperLayout.sectionBMarks;
+    const bCount = socialPaperLayout.bQuestionCount;
     const mcq = examPaperBuildMcqBlock({
       count: 20,
       startNumber: qCursor,
@@ -11483,14 +11557,21 @@ function buildAdvancedExamText({
       learningArea,
       materialSnippets: snippets,
       seedKey: `${seedKey}|SOC`,
-      kind: "social"
+      kind: "social",
+      oneMarkEach: true,
+      indentOptions: "         "
     });
-    body.push(`SECTION A (${sectionAMarks} MARKS)`, "*Answer ALL questions in this section.*", "");
+    body.push(
+      `SECTION A (${sectionAMarks} MARKS)`,
+      "OBJECTIVE (MULTIPLE CHOICE): Each question has four alternatives A, B, C, and D.",
+      "There are exactly 20 items. Each item carries one (1) mark.",
+      "*Answer ALL questions in this section.*",
+      ""
+    );
     body.push(...mcq.lines);
     mcqKeys.push(...mcq.keyLines);
     qCursor += 20;
-    const bCount = Math.min(12, Math.max(4, Math.round(sectionBMarks / 8)));
-    body.push(`SECTION B (${sectionBMarks} MARKS)`, "");
+    body.push(`SECTION B (${sectionBMarks} MARKS)`, "STRUCTURED QUESTIONS", "*Answer ALL questions in this section.*", "");
     body.push(
       ...examPaperStructuredSectionLines({
         startNumber: qCursor,
@@ -11502,6 +11583,7 @@ function buildAdvancedExamText({
       })
     );
     qCursor += bCount;
+    body.push("", `TOTAL MARKS FOR THIS PAPER: ${sectionAMarks + sectionBMarks}`);
   } else if (kind === "pretechnical") {
     const totalPaper = 80;
     const sectionAMarks = 20;
@@ -11931,6 +12013,9 @@ app.post(
     const letterheadHint = cleanOptionalValue(instRows[0]?.letterhead_file_path || "");
     const { hours: resolvedDurH, minutes: resolvedDurM, label: examDurationLabel } = examPaperResolveDurationParts(body);
     const seedKey = `${req.user.institution_id}|${selectedLearningArea}|${selectedSession}|${selectedYear}|${Date.now()}`;
+    const rawSocial = body.social_studies && typeof body.social_studies === "object" ? body.social_studies : {};
+    const socialBM = Number(rawSocial.section_b_marks);
+    const socialBQ = Number(rawSocial.section_b_questions);
     const examBundle = buildAdvancedExamText({
       title: cleanOptionalValue(body.title) || `${selectedSession || "Exam"} - ${selectedLearningArea}`,
       institutionName,
@@ -11951,7 +12036,9 @@ app.post(
       templateSampleText,
       referenceRows,
       supplementalMaterialNotes,
-      materialSnippets
+      materialSnippets,
+      socialStudiesSectionBMarks: Number.isFinite(socialBM) && socialBM >= 10 ? socialBM : null,
+      socialStudiesSectionBQuestions: Number.isFinite(socialBQ) && socialBQ >= 3 ? socialBQ : null
     });
     const learnerExamText = examBundle.learnerText;
     const teacherExamSupplement = examBundle.teacherSupplement || "";

@@ -12,7 +12,7 @@ let portalContext = null;
 let searchRowDrafts = {};
 let dashboardAutoRefreshHandle = null;
 let currentSidebarSubmoduleId = null;
-const CLIENT_UI_BUNDLE_ID = "dash-bundle-main-v74-exam-clock-learner-pages";
+const CLIENT_UI_BUNDLE_ID = "dash-bundle-main-v75-social-studies-sections";
 const examPanelState = {
   generatedExam: null,
   serials: [],
@@ -6895,6 +6895,15 @@ async function renderCbcCurriculumEditor(options = {}) {
             <select id="examV2GenAutoPercent" disabled><option value="">Select %</option>${[100, 90, 80, 70, 60, 50, 40, 30, 20, 10].map((v) => `<option value="${v}">${v}</option>`).join("")}</select>
             <label>Unified Manual %</label>
             <input id="examV2GenManualPercent" type="number" min="10" max="100" step="1" value="100" disabled />
+            <div id="examV2GenSocialPanelWrap" class="exam-social-studies-panel" style="display:none; grid-column:1/-1;">
+              <p class="small-note exam-tight-note">Social Studies: Section A is always 20 objective questions (A–D), 1 mark each. Choose Section B marks and how many structured questions to generate.</p>
+              <div class="form-grid form-grid--exam-tight" style="margin-top: 0.35rem;">
+                <label for="examV2GenSocialSectionBMarks">Section B — total marks</label>
+                <select id="examV2GenSocialSectionBMarks" disabled>${[20, 30, 40, 50, 60, 70, 75, 80, 85, 90].map((m) => `<option value="${m}"${m === 80 ? " selected" : ""}>${m}</option>`).join("")}</select>
+                <label for="examV2GenSocialSectionBQuestions">Section B — number of questions</label>
+                <select id="examV2GenSocialSectionBQuestions" disabled>${Array.from({ length: 14 }, (_, i) => i + 3).map((n) => `<option value="${n}"${n === 8 ? " selected" : ""}>${n}</option>`).join("")}</select>
+              </div>
+            </div>
             <label id="examV2GenSectionALabel">Section/Paper A %</label>
             <input id="examV2GenSectionA" type="number" min="0" max="100" step="1" value="0" disabled />
             <label id="examV2GenSectionBLabel">Section/Paper B %</label>
@@ -7005,6 +7014,9 @@ async function renderCbcCurriculumEditor(options = {}) {
     const allocModeEl = document.getElementById("examV2GenAllocMode");
     const autoPercentEl = document.getElementById("examV2GenAutoPercent");
     const manualPercentEl = document.getElementById("examV2GenManualPercent");
+    const socialStudiesPanelWrap = document.getElementById("examV2GenSocialPanelWrap");
+    const socialSectionBMarksEl = document.getElementById("examV2GenSocialSectionBMarks");
+    const socialSectionBQuestionsEl = document.getElementById("examV2GenSocialSectionBQuestions");
     const sectionALabelEl = document.getElementById("examV2GenSectionALabel");
     const sectionBLabelEl = document.getElementById("examV2GenSectionBLabel");
     const sectionCLabelEl = document.getElementById("examV2GenSectionCLabel");
@@ -7756,6 +7768,7 @@ async function renderCbcCurriculumEditor(options = {}) {
       const isStructured = String(structureEl?.value || "") === "structured";
       const isMultiSection = String(structureEl?.value || "") === "multi-section";
       const nonUnified = isStructured || isMultiSection;
+      const isSocialStudiesArea = String(areaEl?.value || "").toLowerCase().includes("social studies");
       const detailValue = String(structureDetailEl?.value || "").trim();
       const needsThreeSections = detailValue === "A_B_C" || detailValue === "PAPER_1_2_3";
       const structuredDetailOk = nonUnified ? Boolean(detailValue) : true;
@@ -7799,6 +7812,10 @@ async function renderCbcCurriculumEditor(options = {}) {
       setEnabled(sectionCEl, structureOk && nonUnified && needsThreeSections);
       setEnabled(outputModeEl, structureOk && structuredDetailOk && structuredMarksOk && unifiedPercentOk);
       setEnabled(generateBtn, outputOk);
+      const showSocialPanel = areaOk && !nonUnified && isSocialStudiesArea;
+      if (socialStudiesPanelWrap) socialStudiesPanelWrap.style.display = showSocialPanel ? "block" : "none";
+      setEnabled(socialSectionBMarksEl, showSocialPanel && subsOk && structureOk);
+      setEnabled(socialSectionBQuestionsEl, showSocialPanel && subsOk && structureOk);
       setEnabled(templateDownloadBtn, structureOk);
       setEnabled(editChoiceEl, Boolean(generatedExamId));
       const editing = String(editChoiceEl?.value || "no") === "yes";
@@ -7965,6 +7982,8 @@ async function renderCbcCurriculumEditor(options = {}) {
     allocModeEl?.addEventListener("change", updateActivation);
     autoPercentEl?.addEventListener("change", updateActivation);
     manualPercentEl?.addEventListener("input", updateActivation);
+    socialSectionBMarksEl?.addEventListener("change", updateActivation);
+    socialSectionBQuestionsEl?.addEventListener("change", updateActivation);
     sectionAEl?.addEventListener("input", updateActivation);
     sectionBEl?.addEventListener("input", updateActivation);
     sectionCEl?.addEventListener("input", updateActivation);
@@ -8007,7 +8026,15 @@ async function renderCbcCurriculumEditor(options = {}) {
           A: Number(sectionAEl?.value || 0),
           B: Number(sectionBEl?.value || 0),
           C: Number(sectionCEl?.value || 0)
-        }
+        },
+        ...(String(areaEl?.value || "").toLowerCase().includes("social studies")
+          ? {
+              social_studies: {
+                section_b_marks: Number(socialSectionBMarksEl?.value || 80),
+                section_b_questions: Number(socialSectionBQuestionsEl?.value || 8)
+              }
+            }
+          : {})
       };
       try {
         const generated = await request("/api/academic/exams/auto-generate", {
