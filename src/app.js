@@ -11026,6 +11026,49 @@ function examPaperSplitSentences(text) {
     .filter((s) => s.length > 18);
 }
 
+/** Labels used only for curriculum tagging — must not leak into learner-facing questions */
+function examPaperRefNeedles(ref = {}) {
+  const out = [];
+  [ref?.strand, ref?.sub_strand].forEach((x) => {
+    const v = cleanOptionalValue(x);
+    if (v.length > 2) out.push(v);
+  });
+  return out;
+}
+
+function examPaperSentenceLooksLikeCatalogHeading(s) {
+  const t = String(s || "").trim();
+  if (!t) return true;
+  if (/^strand\s*[:.]?$/i.test(t) || /^sub[-\s]?strand\s*[:.]?$/i.test(t)) return true;
+  if (/^strand\s+description\b/i.test(t) || /^sub[-\s]?strand\s+description\b/i.test(t)) return true;
+  if (/^description\s*[:(]/i.test(t)) return true;
+  if (/^learning\s+outcomes?\b/i.test(t) && t.length < 100) return true;
+  const headNum = /^\s*\d+(?:\.\d+)+\s+/.exec(t);
+  if (headNum && t.length < 95) return true;
+  return false;
+}
+
+function examPaperStripStrandNoise(text, ref = {}) {
+  let t = String(text || "").replace(/\s+/g, " ").trim();
+  if (!t) return "";
+  examPaperRefNeedles(ref).forEach((needle) => {
+    if (needle.length < 3) return;
+    const esc = needle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    t = t.replace(new RegExp(esc, "gi"), " ").replace(/\s{2,}/g, " ").trim();
+  });
+  t = t.replace(/^\s*(?:strand|sub[-\s]?strand)\s*(?:description)?\s*[:.\-]\s*/i, "").trim();
+  t = t.replace(/^\s*\d+(?:\.\d+)+\s+/, "").trim();
+  return t.replace(/^[,;:)»"'“”]+/, "").trim();
+}
+
+/** Stem source: teaching notes / experiences only — avoids pasting sub-strand description lines */
+function examPaperStemContentPool(ref) {
+  const merged = `${cleanOptionalValue(ref?.notes)} ${cleanOptionalValue(ref?.learning_experiences)}`;
+  return examPaperSplitSentences(merged)
+    .map((s) => examPaperStripStrandNoise(s, ref))
+    .filter((s) => s.length > 24 && !examPaperSentenceLooksLikeCatalogHeading(s));
+}
+
 function examPaperSubjectKind(learningArea = "") {
   const s = cleanValue(learningArea).toLowerCase();
   if (s.includes("pre-technical")) return "pretechnical";
@@ -11078,9 +11121,10 @@ function examPaperBuildDistractors({ kind, correctText, rng }) {
 }
 
 function examPaperCorrectFromRef(ref, rng) {
-  const pool = examPaperSplitSentences(
-    `${cleanOptionalValue(ref?.notes)} ${cleanOptionalValue(ref?.specific_learning_outcomes)}`
-  );
+  const merged = `${cleanOptionalValue(ref?.notes)} ${cleanOptionalValue(ref?.specific_learning_outcomes)}`;
+  const pool = examPaperSplitSentences(merged)
+    .map((s) => examPaperStripStrandNoise(s, ref))
+    .filter((s) => s.length > 14 && !examPaperSentenceLooksLikeCatalogHeading(s));
   if (pool.length) {
     return pool[Math.floor(rng() * pool.length)].slice(0, 150);
   }
@@ -11088,24 +11132,25 @@ function examPaperCorrectFromRef(ref, rng) {
 }
 
 function examPaperStemFromRef(ref, snippet, learningArea, qn, rng, kind) {
-  const merged = `${cleanOptionalValue(ref?.notes)} ${cleanOptionalValue(ref?.specific_learning_outcomes)} ${cleanOptionalValue(ref?.learning_experiences)}`;
-  const pool = examPaperSplitSentences(merged);
+  const pool = examPaperStemContentPool(ref);
+  const area = cleanValue(learningArea);
   if (pool.length && rng() > 0.22) {
     const pick = pool[Math.floor(rng() * pool.length)].slice(0, 220);
-    return `Read the statement below and choose the most accurate option.\n“${pick}”`;
+    return `Read the statement below and choose the most accurate option.\n"${pick}"`;
   }
   if (snippet && rng() > 0.35) {
-    const s = String(snippet).replace(/\s+/g, " ").trim().slice(0, 220);
-    return `Using ideas from your class notes on ${cleanValue(learningArea)}, which conclusion fits best?\nContext: ${s}`;
+    const s = examPaperStripStrandNoise(String(snippet).replace(/\s+/g, " ").trim().slice(0, 220), ref);
+    if (s.length > 35) {
+      return `Study the scenario and choose the best answer.\nScenario: ${s}`;
+    }
   }
-  const topic = cleanValue(ref?.sub_strand || ref?.strand || learningArea);
   if (kind === "social") {
-    return `Which option best reflects the CBC expectation for “${topic}” within Social Studies?`;
+    return `Identify the conclusion that reflects sound Social Studies reasoning.`;
   }
   if (kind === "pretechnical") {
-    return `In a workshop context related to “${topic}”, which statement is most appropriate?`;
+    return `Choose the option that demonstrates correct understanding for safe workshop practice and materials use.`;
   }
-  return `Which statement about “${topic}” is most accurate for this learning area?`;
+  return `Which statement aligns best with the ideas covered in ${area}?`;
 }
 
 function examPaperBuildMcqBlock({ count, startNumber, referenceRows, learningArea, materialSnippets, seedKey, kind }) {
@@ -11120,7 +11165,9 @@ function examPaperBuildMcqBlock({ count, startNumber, referenceRows, learningAre
   const keyLines = [];
   for (let i = 0; i < count; i++) {
     const ref = refs[i % refs.length];
-    const snip = snippets.length ? snippets[i % snippets.length] : "";
+    const snip = snippets.length
+      ? examPaperStripStrandNoise(String(snippets[i % snippets.length] || "").replace(/\s+/g, " "), ref).trim()
+      : "";
     const stem = examPaperStemFromRef(ref, snip, learningArea, startNumber + i, rng, kind);
     const correct = examPaperCorrectFromRef(ref, rng);
     const wrong = examPaperBuildDistractors({ kind, correctText: correct, rng });
@@ -11157,20 +11204,26 @@ function examPaperDistributeMarks(total, parts, rng) {
 }
 
 function examPaperStructuredSectionLines({ startNumber, totalMarks, questionCount, referenceRows, learningArea, seedKey }) {
-  const refs =
-    Array.isArray(referenceRows) && referenceRows.length
-      ? referenceRows
-      : [{ strand: learningArea, sub_strand: learningArea }];
+  void referenceRows;
   const rng = examPaperMulberry32(examPaperHash32(`${seedKey}|struct|${totalMarks}|${questionCount}`));
   const marksEach = examPaperDistributeMarks(totalMarks, questionCount, rng);
   const verbs = ["Explain", "Outline", "Describe", "Analyze", "Evaluate", "Justify"];
   const lines = ["*Answer ALL questions in this section.*", ""];
+  const area = cleanValue(learningArea);
+  const promptBank = [
+    (v, n, m) =>
+      `${n}. ${v} how the lesson ideas can be demonstrated in your school or a nearby community. (${m} marks)`,
+    (v, n, m) => `${n}. ${v} one practical hazard that could arise and safe ways to minimise it. (${m} marks)`,
+    (v, n, m) =>
+      `${n}. ${v} how responsible choices support better learning outcomes in everyday activities. (${m} marks)`,
+    (v, n, m) => `${n}. ${v} a short plan learners could follow when solving a realistic problem tied to ${area}. (${m} marks)`
+  ];
   for (let i = 0; i < questionCount; i++) {
-    const ref = refs[i % refs.length];
-    const topic = cleanValue(ref?.sub_strand || ref?.strand || learningArea);
     const v = verbs[Math.floor(rng() * verbs.length)];
     const m = marksEach[i] || 5;
-    lines.push(`${startNumber + i}. ${v} how “${topic}” applies in a school or community situation. (${m} marks)`);
+    const n = startNumber + i;
+    const pick = promptBank[Math.floor(rng() * promptBank.length)](v, n, m);
+    lines.push(pick);
     lines.push("_______________________________________________________________________________________");
     lines.push("");
   }
