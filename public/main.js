@@ -30,10 +30,18 @@ async function request(path, options = {}) {
     data = null;
   }
   if (!response.ok) {
-    const message =
+    let message =
       (data && typeof data === "object" && data.error) ||
       (rawText && rawText.length < 400 ? rawText.trim() : "") ||
       `Request failed (${response.status})`;
+    if (
+      data &&
+      typeof data === "object" &&
+      data.details &&
+      !String(message).includes(String(data.details))
+    ) {
+      message += `: ${data.details}`;
+    }
     throw new Error(message);
   }
   return data;
@@ -187,6 +195,16 @@ function normalizeRoleValue(role) {
   return normalized;
 }
 
+/** Treat HOI and INSTITUTION ADMIN as interchangeable at login (same account, two portal labels). */
+function portalRoleMatchesSelection(selectedRole, accountRole) {
+  const s = normalizeRoleValue(selectedRole);
+  const a = normalizeRoleValue(accountRole);
+  if (s === a) return true;
+  const hoiAdminGroup = new Set(["ADMIN", "HEAD_OF_INSTITUTION"]);
+  if (hoiAdminGroup.has(s) && hoiAdminGroup.has(a)) return true;
+  return false;
+}
+
 function validateUsernameValue(username, fieldLabel = "Username") {
   const value = String(username || "").trim();
   if (!value) return `${fieldLabel} is required.`;
@@ -233,6 +251,10 @@ function updateLoginFieldState() {
   if (verifyButton) {
     verifyButton.disabled = !isRoleSelected;
   }
+  const resendOtpButton = document.getElementById("resendOtpButton");
+  if (resendOtpButton) {
+    resendOtpButton.disabled = !isRoleSelected || !localStorage.getItem("pendingUsername");
+  }
   if (!isRoleSelected) {
     setAuthNotice("Choose portal role to activate username, password, OTP channel, and OTP code fields.", "info");
   }
@@ -269,9 +291,9 @@ async function login() {
       timeoutMs: 45000
     });
     const accountRole = normalizeRoleValue(data?.role);
-    if (accountRole && accountRole !== selectedPortalRole) {
+    if (accountRole && !portalRoleMatchesSelection(selectedPortalRole, data.role)) {
       setAuthNotice(
-        `Selected role does not match account role (${data.role}). Choose the correct role and retry.`,
+        `Portal role does not match your account (${data.role}). For Head of Institution, choose either "D / HOI" or "HOI / ADMINISTRATOR".`,
         "error"
       );
       return;
@@ -286,12 +308,19 @@ async function login() {
     localStorage.setItem("pendingUsername", username);
     const deliveredBy = data?.otp_channel_used ? ` via ${data.otp_channel_used}` : "";
     const channelSummary = Array.isArray(data?.otp_delivery_log)
-      ? ` Delivery: ${data.otp_delivery_log.join(", ")}.`
+      ? ` Delivery trace: ${data.otp_delivery_log.join(", ")}.`
       : "";
+    const secondsLeft = Number(data?.otp_resend_available_after_seconds || 0);
+    const cooldownHint =
+      secondsLeft > 0 ? ` You can tap “Resend OTP” after roughly ${secondsLeft}s if needed.` : "";
     setAuthNotice(
-      `${data.message || ""}${deliveredBy}.${channelSummary} Portal: ${data.portal}.`.trim(),
+      `${data.message || ""}${deliveredBy}.${channelSummary}${cooldownHint} Portal: ${data.portal}.`.trim(),
       "success"
     );
+    const resendBtn = document.getElementById("resendOtpButton");
+    if (resendBtn) {
+      resendBtn.disabled = false;
+    }
   } catch (error) {
     setAuthNotice(error.message, "error");
   }
@@ -314,6 +343,10 @@ async function verifyOtp() {
     localStorage.setItem("token", data.token);
     localStorage.setItem("portal", data.portal);
     localStorage.removeItem("pendingUsername");
+    const resendCtrl = document.getElementById("resendOtpButton");
+    if (resendCtrl) {
+      resendCtrl.disabled = true;
+    }
     window.location.href = "/dashboard.html";
   } catch (error) {
     setAuthNotice(error.message, "error");
@@ -724,6 +757,7 @@ updateLoginFieldState();
 
 document.getElementById("loginButton").addEventListener("click", login);
 document.getElementById("verifyButton").addEventListener("click", verifyOtp);
+document.getElementById("resendOtpButton")?.addEventListener("click", login);
 document.getElementById("forgotUsernameButton")?.addEventListener("click", recoverUsername);
 document.getElementById("forgotPasswordSendOtpButton")?.addEventListener("click", requestForgotPasswordOtp);
 document.getElementById("forgotPasswordButton")?.addEventListener("click", resetPassword);
