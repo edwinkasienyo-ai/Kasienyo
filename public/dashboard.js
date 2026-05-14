@@ -13,7 +13,7 @@ let portalContext = null;
 let searchRowDrafts = {};
 let dashboardAutoRefreshHandle = null;
 let currentSidebarSubmoduleId = null;
-const CLIENT_UI_BUNDLE_ID = "dash-bundle-enterprise-v83-questionbank-ui";
+const CLIENT_UI_BUNDLE_ID = "dash-bundle-enterprise-v84-dashboard-syntax-bulk-learners-admission-fix";
 const examPanelState = {
   generatedExam: null,
   serials: [],
@@ -5241,6 +5241,7 @@ function normalizeExamTabKey(tab = "") {
     "exam-question-bank": "question-bank",
     "questionbank": "question-bank",
     "exam-questionbank": "question-bank"
+  };
   return aliases[value] || value || "exam-generation";
 }
 
@@ -11889,7 +11890,89 @@ function parseSimpleCsvRows(text) {
     .map((line) => line.split(",").map((item) => item.trim().replace(/^"|"$/g, "")));
 }
 
+function csvRowsToObjects(rows) {
+  if (!rows.length) return [];
+  const headers = rows[0].map((h) => String(h || "").trim().toLowerCase());
+  const objs = [];
+  for (let r = 1; r < rows.length; r += 1) {
+    const cols = rows[r] || [];
+    const obj = {};
+    headers.forEach((header, idx) => {
+      if (!header) return;
+      const cell = cols[idx];
+      obj[header] = cell !== undefined && cell !== null ? cell : "";
+    });
+    objs.push(obj);
+  }
+  return objs;
+}
+
 function wireAdmissionExtendedActions() {
+  let learnersBulkCsvTextCache = "";
+
+  document.getElementById("learnersBulkDownloadTemplateBtn")?.addEventListener("click", async () => {
+    try {
+      await downloadWithAuth("/api/templates/admission-bio-data.csv", "admission-bio-data-template.csv");
+      const status = document.getElementById("learnersBulkStatusLine");
+      if (status) status.textContent = "Template downloaded — fill CSV, attach it, then “Upload & import”.";
+    } catch (error) {
+      alert(error.message || "Unable to download template.");
+    }
+  });
+
+  document.getElementById("learnersBulkCsvInput")?.addEventListener("change", async (event) => {
+    const file = event.target.files?.[0];
+    learnersBulkCsvTextCache = "";
+    const status = document.getElementById("learnersBulkStatusLine");
+    if (!file) {
+      if (status) status.textContent = "";
+      return;
+    }
+    try {
+      learnersBulkCsvTextCache = await file.text();
+      if (status) status.textContent = `Loaded "${file.name}" (${learnersBulkCsvTextCache.split(/\r?\n/).filter(Boolean).length} lines) — tap “Upload & import”.`;
+    } catch (error) {
+      if (status) status.textContent = "";
+      alert(error.message || "Unable to read CSV.");
+    }
+  });
+
+  document.getElementById("learnersBulkImportBtn")?.addEventListener("click", async () => {
+    const status = document.getElementById("learnersBulkStatusLine");
+    if (!learnersBulkCsvTextCache) {
+      alert("Choose a CSV file first.");
+      return;
+    }
+    const grid = parseSimpleCsvRows(learnersBulkCsvTextCache);
+    const objects = csvRowsToObjects(grid);
+    if (!objects.length) {
+      alert("No data rows detected under the CSV header.");
+      return;
+    }
+    const ok = window.confirm(`Import up to ${objects.length} learner rows (server limit 500). Continue?`);
+    if (!ok) return;
+    try {
+      const result = await request("/api/admission/learners/bulk-import", {
+        method: "POST",
+        body: JSON.stringify({ rows: objects })
+      });
+      const errs = Array.isArray(result.errors) ? result.errors : [];
+      const preview = errs.length ? errs.slice(0, 8).map((e) => `Row ${Number(e.index) + 2}: ${e.error}`).join("\n") : "";
+      alert(
+        `Created ${result.created || 0} of ${result.attempted || objects.length}.${preview ? "\nIssues:\n" + preview : ""}`
+      );
+      if (status) {
+        status.textContent = `Last import — created ${result.created || 0}, failed ${result.failed || errs.length}.`;
+      }
+      await renderAdmissionRegisterTable();
+      learnersBulkCsvTextCache = "";
+      const inp = document.getElementById("learnersBulkCsvInput");
+      if (inp) inp.value = "";
+    } catch (error) {
+      alert(error.message || "Bulk import failed.");
+    }
+  });
+
   (async () => {
     try {
       const settings = await request("/api/institutions/letterhead");
@@ -12574,6 +12657,17 @@ function renderCrudModule(moduleKey, options = {}) {
         <button id="${xlsId}" type="button" class="ax-btn ax-btn--download ax-btn--sm">Excel</button>
         <button id="${printId}" type="button" class="ax-btn ax-btn--print ax-btn--sm">Print</button>
         <button id="${viewId}" type="button" class="ax-btn ax-btn--refresh ax-btn--sm">Refresh</button>
+      </div>
+      <div class="admission-bulk-learners-panel" style="margin-top:14px;padding-top:14px;border-top:1px dashed rgba(15,56,96,0.2);">
+        <h5 class="admission-bulk-learners-title" style="margin:0 0 6px;">Bulk learners (CSV)</h5>
+        <p class="small-note" style="margin:0 0 8px;">Download the bio-data CSV template (matching server columns). Use <strong>Grade</strong> <em>or</em> <strong>Form</strong> only — and <code>full_name</code> or first/middle/last name parts.</p>
+        <div class="actions-row actions-row--compact">
+          <button type="button" id="learnersBulkDownloadTemplateBtn" class="ax-btn ax-btn--download ax-btn--sm">Download sample CSV</button>
+          <label class="ax-btn ax-btn--view ax-btn--sm" for="learnersBulkCsvInput">Choose CSV file</label>
+          <input id="learnersBulkCsvInput" type="file" accept=".csv,text/csv" hidden />
+          <button type="button" id="learnersBulkImportBtn" class="ax-btn ax-btn--upload ax-btn--sm">Upload &amp; import</button>
+        </div>
+        <p id="learnersBulkStatusLine" class="small-note" style="margin-top:8px;"></p>
       </div>
     </div>
     ${admissionRegisterMarkup.replace('class="admission-register-panel"', `class="admission-register-panel" style="${showRegister ? "" : "display:none;"}"`)}

@@ -5,13 +5,26 @@
     <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate, private" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>IMIS Admission Portal</title>
-    <link rel="stylesheet" href="/styles.css?v=74" />
+    <link rel="stylesheet" href="/styles.css?v=75" />
     <style>
-      .admission-portal-shell {
-        max-width: 880px;
-        margin: 0 auto;
-        padding: 20px;
+      /* Full-page scroll — do not inherit login-page overflow:hidden + fixed height */
+      body.admission-portal-page {
+        min-height: 100vh;
+        min-height: 100dvh;
+        height: auto !important;
+        overflow-x: hidden !important;
+        overflow-y: auto !important;
+        margin: 0;
+        display: block;
+        background: radial-gradient(ellipse 120% 80% at 10% 10%, #1a5482 0%, #0a2440 52%, #071a2e 100%);
       }
+
+      .admission-portal-shell {
+        max-width: min(980px, calc(100vw - 24px));
+        margin: 0 auto;
+        padding: 24px 14px 72px;
+      }
+
       .admission-portal-banner {
         display: flex;
         justify-content: space-between;
@@ -19,13 +32,34 @@
         gap: 10px;
         margin-bottom: 16px;
       }
+
       .admission-portal-banner a {
         text-decoration: none;
       }
+
       .muted {
         opacity: 0.85;
         font-size: 13px;
       }
+
+      body.admission-portal-page .glass-card.auth-card--compact {
+        max-height: none !important;
+        overflow-y: visible !important;
+        overflow-x: hidden;
+      }
+
+      body.admission-portal-page .auth-grid {
+        gap: 10px;
+      }
+
+      #learningAreasPick {
+        width: 100%;
+        min-height: 140px;
+        padding: 8px;
+        border-radius: 8px;
+        border: 1px solid rgba(15, 56, 96, 0.22);
+      }
+
       .workflow-grid {
         display: grid;
         gap: 8px;
@@ -33,12 +67,13 @@
         padding-top: 10px;
         border-top: 1px dashed #d2deec;
       }
+
       .workflow-grid.hidden {
         display: none;
       }
     </style>
   </head>
-  <body class="login-page">
+  <body class="admission-portal-page">
     <main class="admission-portal-shell">
       <div class="admission-portal-banner">
         <div>
@@ -78,6 +113,9 @@
           <label>Preferred stream</label>
           <input id="preferredStream" placeholder="Optional stream" />
 
+          <label>Learning areas / subjects of interest — hold Ctrl (Windows) or ⌘ (Mac) to multi-select after choosing an institution</label>
+          <select id="learningAreasPick" multiple aria-label="Learning areas"></select>
+
           <div class="workflow-grid hidden" id="newLearnerExtras">
             <strong>New learner — parent basics</strong>
             <label>Parent / guardian full name</label>
@@ -116,7 +154,9 @@
 
       <div class="glass-card auth-card auth-card--compact" style="margin-top: 16px;">
         <h3>Track application status</h3>
-        <p class="small-note muted">Use the Reference ID from your confirmation email together with the exact email address you typed when applying.</p>
+        <p class="small-note muted">
+          Use the Reference ID from your confirmation email together with the exact email address you typed when applying.
+        </p>
         <div class="auth-grid">
           <label>Reference ID</label>
           <input id="trackRequestId" inputmode="numeric" placeholder="e.g. 12" />
@@ -134,9 +174,62 @@
     </main>
 
     <script>
+      const FALLBACK_LEARNING_AREAS = [
+        "Mathematics",
+        "English",
+        "Kiswahili",
+        "Science and Technology",
+        "Social Studies",
+        "CRE",
+        "IRE",
+        "Hindu Religious Education",
+        "Agriculture",
+        "Home Science",
+        "Art and Craft",
+        "Music",
+        "Physical Education and Sports",
+        "ICT",
+        "Pre-Technical Studies"
+      ];
+
       const statusEl = document.getElementById("portalStatusLine");
       const institutionPick = document.getElementById("institutionPick");
       const learnerType = document.getElementById("learnerType");
+      const learningAreasPick = document.getElementById("learningAreasPick");
+
+      function fillLearningAreaOptions(areas) {
+        const list = Array.isArray(areas) && areas.length ? areas : FALLBACK_LEARNING_AREAS;
+        learningAreasPick.innerHTML = "";
+        list.forEach((raw) => {
+          const label = String(raw || "").trim();
+          if (!label) return;
+          const opt = document.createElement("option");
+          opt.value = label;
+          opt.textContent = label;
+          learningAreasPick.appendChild(opt);
+        });
+      }
+
+      async function loadLearningAreasForInstitution(institutionId) {
+        if (!institutionId) {
+          learningAreasPick.innerHTML = "";
+          fillLearningAreaOptions(FALLBACK_LEARNING_AREAS);
+          return;
+        }
+        learningAreasPick.innerHTML = `<option value="">Loading…</option>`;
+        try {
+          const res = await fetch(
+            `/api/public/online-admission/learning-areas?institution_id=${encodeURIComponent(institutionId)}`,
+            { credentials: "same-origin" }
+          );
+          if (!res.ok) throw new Error("learning-areas");
+          const body = await res.json();
+          const areas = Array.isArray(body.learning_areas) ? body.learning_areas : [];
+          fillLearningAreaOptions(areas.length ? areas : FALLBACK_LEARNING_AREAS);
+        } catch (_) {
+          fillLearningAreaOptions(FALLBACK_LEARNING_AREAS);
+        }
+      }
 
       async function bootstrapInstitutions() {
         try {
@@ -153,6 +246,7 @@
               )
               .join("");
           statusEl.textContent = `${rows.length} institution(s) available for intake.`;
+          await loadLearningAreasForInstitution(Number(institutionPick.value || 0));
         } catch (error) {
           statusEl.textContent = error.message || "Institution picker failed.";
         }
@@ -165,6 +259,7 @@
       }
 
       learnerType.addEventListener("change", toggleWorkflowPanels);
+      institutionPick.addEventListener("change", () => loadLearningAreasForInstitution(Number(institutionPick.value || 0)));
 
       document.getElementById("submitAdmissionBtn").addEventListener("click", async () => {
         const applicant_email = document.getElementById("applicantEmail").value.trim();
@@ -174,6 +269,10 @@
         const learner_type = learnerType.value;
         const grade_or_form = document.getElementById("gradeOrForm").value.trim();
         const stream = document.getElementById("preferredStream").value.trim();
+
+        const selectedAreas = Array.from(learningAreasPick.selectedOptions || [])
+          .map((o) => o.value.trim())
+          .filter(Boolean);
 
         const payload_json = {};
 
@@ -190,6 +289,10 @@
           payload_json.upi_number = document.getElementById("upiNumber").value.trim();
           payload_json.previous_performance = document.getElementById("priorPerformance").value.trim();
           payload_json.transfer_reason = document.getElementById("transferReason").value.trim();
+        }
+
+        if (selectedAreas.length) {
+          payload_json.learning_areas = selectedAreas;
         }
 
         if (!institution_id) {
@@ -222,6 +325,7 @@
               learner_type,
               grade_or_form,
               stream,
+              learning_areas: selectedAreas,
               payload_json
             })
           });

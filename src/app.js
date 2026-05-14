@@ -3205,6 +3205,13 @@ app.post(
           ? req.body.details
           : {};
 
+    if (Array.isArray(req.body?.learning_areas) && req.body.learning_areas.length) {
+      extras.learning_areas = req.body.learning_areas
+        .map((item) => cleanValue(item || ""))
+        .filter(Boolean)
+        .slice(0, 36);
+    }
+
     if (!institutionId) {
       return res.status(400).json({ error: "institution_id is required." });
     }
@@ -3279,6 +3286,11 @@ app.post(
         `Learner: ${learnerName}`,
         `Parent/Applicant Email: ${applicantEmail || "n/a"}`,
         `Grade/Form: ${gradeOrForm || "n/a"} | Stream: ${stream || "n/a"}`,
+        `Learning areas: ${
+          Array.isArray(extras?.learning_areas) && extras.learning_areas.length
+            ? extras.learning_areas.join("; ")
+            : "n/a"
+        }`,
         "Open Admission → Admission Processing Hub to review.",
         "",
         "(Automated admission notification — do not reply.)"
@@ -3314,6 +3326,11 @@ app.post(
             "REQUEST RECEIVED:",
             institutionLabel,
             learnerName ? `Learner: ${learnerName}` : "",
+            `Learning areas noted: ${
+              Array.isArray(extras?.learning_areas) && extras.learning_areas.length
+                ? extras.learning_areas.join("; ")
+                : "n/a"
+            }`,
             "Please wait for the institution to respond.",
             `Reference ID: ${result.insertId}`,
             "",
@@ -5684,7 +5701,13 @@ app.get(
   "/api/templates/admission-bio-data.csv",
   auth,
   enforceModuleAccess(MODULE_KEYS.ADMISSION),
-  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER]),
+  enforceRole([
+    ROLES.SUPER_SYSTEM_DEVELOPER,
+    ROLES.SYSTEM_DEVELOPER,
+    ROLES.ADMIN,
+    ROLES.HEAD_OF_INSTITUTION,
+    ROLES.TEACHER
+  ]),
   asyncHandler(async (req, res) => {
     const csv = [
       "first_name,middle_name,last_name,other_names,admission_number,date_of_birth,date_of_admission,grade,form_name,stream,gender,parent_full_name,parent_phone,parent_email,learner_condition,disability_type,has_medical_condition,medical_condition_notes,status",
@@ -5693,6 +5716,38 @@ app.get(
     res.setHeader("Content-Type", "text/csv; charset=utf-8");
     res.setHeader("Content-Disposition", "attachment; filename=\"admission-bio-data-template.csv\"");
     res.send(csv);
+  })
+);
+
+app.get(
+  "/api/public/online-admission/learning-areas",
+  publicReadRateLimit,
+  enforcePublicSecurity,
+  asyncHandler(async (req, res) => {
+    const institutionId = Number(req.query?.institution_id || 0);
+    if (!institutionId) {
+      return res.status(400).json({ error: "institution_id is required." });
+    }
+    const instOk = await query(`SELECT id FROM institutions WHERE id = ? AND is_active = 1 LIMIT 1`, [
+      institutionId
+    ]);
+    if (!instOk.length) {
+      return res.status(404).json({ error: "Institution not found or inactive." });
+    }
+    const rows = await query(
+      `SELECT DISTINCT learning_area
+       FROM cbc_curriculum_entries
+       WHERE institution_id = ?
+         AND learning_area IS NOT NULL
+         AND TRIM(learning_area) <> ''
+       ORDER BY learning_area ASC
+       LIMIT 180`,
+      [institutionId]
+    );
+    const learningAreas = (Array.isArray(rows) ? rows : [])
+      .map((row) => cleanValue(row.learning_area))
+      .filter(Boolean);
+    res.json({ learning_areas: learningAreas });
   })
 );
 
@@ -11179,6 +11234,125 @@ moduleConfigs.forEach((config) => {
     })
   );
 });
+
+app.post(
+  "/api/admission/learners/bulk-import",
+  auth,
+  enforceModuleAccess(MODULE_KEYS.ADMISSION),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER]),
+  enforcePermission(PERMISSIONS.CREATE),
+  asyncHandler(async (req, res) => {
+    const admissionCfg = moduleConfigs.find((c) => c.route === "/api/admission/learners");
+    const allowedFields = admissionCfg ? admissionCfg.fields : [];
+    const rowsIn = Array.isArray(req.body?.rows) ? req.body.rows : [];
+    if (!rowsIn.length) {
+      return res.status(400).json({ error: "rows array is required (parsed CSV)." });
+    }
+    if (rowsIn.length > 500) {
+      return res.status(400).json({ error: "Maximum 500 learner rows per upload." });
+    }
+    const learnerSerialColumn = await getExistingColumns("learners", ["learner_serial_number"]);
+    const hasSerialCol = learnerSerialColumn.includes("learner_serial_number");
+    let created = 0;
+    const errors = [];
+
+    // eslint-disable-next-line no-await-in-loop
+    for (let i = 0; i < rowsIn.length; i += 1) {
+      const rawRow = rowsIn[i];
+      if (!rawRow || typeof rawRow !== "object") {
+        errors.push({ index: i, error: "Empty row." });
+        // eslint-disable-next-line no-continue
+        continue;
+      }
+      const payload = { ...rawRow };
+      const fname = cleanValue(payload.full_name || "");
+      if (!fname) {
+        const assembled = [payload.first_name, payload.middle_name, payload.last_name, payload.other_names]
+          .map((part) => cleanValue(part || ""))
+          .filter(Boolean)
+          .join(" ")
+          .trim();
+        if (assembled) {
+          payload.full_name = assembled;
+        }
+      }
+      const dataPrep = pickFields(payload, allowedFields);
+      if (Object.prototype.hasOwnProperty.call(dataPrep, "learner_serial_number")) {
+        delete dataPrep.learner_serial_number;
+      }
+      dataPrep.institution_id = req.user.institution_id;
+      dataPrep.created_by_user_id = req.user.id;
+      if (!cleanValue(dataPrep.full_name || "")) {
+        errors.push({ index: i, error: "full_name is required (or provide first_name / last_name)." });
+        // eslint-disable-next-line no-continue
+        continue;
+      }
+      const gradePart = cleanValue(dataPrep.grade || "");
+      const formPart = cleanValue(dataPrep.form_name || "");
+      if (gradePart && formPart) {
+        errors.push({ index: i, error: "Select either Grade or Form, not both." });
+        // eslint-disable-next-line no-continue
+        continue;
+      }
+      if (!gradePart && !formPart) {
+        errors.push({ index: i, error: "Either Grade or Form must be provided." });
+        // eslint-disable-next-line no-continue
+        continue;
+      }
+      if (formPart) {
+        dataPrep.grade = "";
+      } else {
+        dataPrep.form_name = null;
+      }
+      const lc = cleanValue(dataPrep.learner_condition || "").toLowerCase();
+      if (lc !== "with disability" && lc !== "yes") {
+        dataPrep.disability_type = null;
+      }
+      const mc = cleanValue(dataPrep.has_medical_condition || "").toLowerCase();
+      if (mc !== "yes") {
+        dataPrep.medical_condition_notes = null;
+      }
+      try {
+        const insertRow = await filterRowByTableColumns("learners", dataPrep);
+        const columns = Object.keys(insertRow);
+        if (!columns.length) {
+          errors.push({ index: i, error: "No valid learner fields." });
+          // eslint-disable-next-line no-continue
+          continue;
+        }
+        const placeholders = columns.map(() => "?").join(", ");
+        const sql = `INSERT INTO learners (${columns.join(", ")}) VALUES (${placeholders})`;
+        // eslint-disable-next-line no-await-in-loop
+        const result = await query(sql, Object.values(insertRow));
+        if (hasSerialCol && result.insertId) {
+          // eslint-disable-next-line no-await-in-loop
+          await query(
+            `UPDATE learners
+             SET learner_serial_number = COALESCE(learner_serial_number, ?)
+             WHERE id = ? AND institution_id = ?`,
+            [Number(result.insertId), Number(result.insertId), req.user.institution_id]
+          );
+        }
+        await auditLog(req.user, "BULK_CREATE", "learners", result.insertId, { row_index: i });
+        created += 1;
+      } catch (err) {
+        errors.push({ index: i, error: String(err?.message || err || "Insert failed.") });
+      }
+    }
+    await auditLog(req.user, "BULK_IMPORT_LEARNERS", "learners", null, {
+      attempted: rowsIn.length,
+      created,
+      error_count: errors.length
+    });
+    res.json({
+      message: "Bulk learner import finished.",
+      attempted: rowsIn.length,
+      created,
+      failed: errors.length,
+      errors: errors.slice(0, 40)
+    });
+  })
+);
 
 app.post(
   "/api/management/teacher-resources/auto-generate",
