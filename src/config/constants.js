@@ -341,6 +341,8 @@ const EXPORT_FORMATS = [
   "Other Microsoft Office Format"
 ];
 
+const { MODULE_KEYS } = require("./moduleKeys");
+
 module.exports = {
   ROLES,
   PERMISSIONS,
@@ -364,5 +366,6 @@ module.exports = {
   LEAVE_TYPES,
   TERMS_OF_SERVICE,
   DOCUMENT_CATEGORIES,
-  EXPORT_FORMATS
+  EXPORT_FORMATS,
+  MODULE_KEYS
 };

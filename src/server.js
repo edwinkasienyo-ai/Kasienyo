@@ -157,6 +157,58 @@ async function seedLegacyAdministratorModuleRightsIfRequested() {
   );
 }
 
+/**
+ * Optional pilot shortcut: grant the examination stack alone (dashboard key cbc-curriculum-editor plus
+ * academic-exams/academic-marks) to ACTIVE institution admins without opening every module like IMIS_SEED_EXISTING_ADMIN_MODULE_RIGHTS.
+ */
+async function seedInstitutionExaminationStackIfRequested() {
+  if (!truthyEnv(process.env.IMIS_SEED_INSTITUTION_EXAM_ACCESS, false)) {
+    return;
+  }
+  const bundleKeys = [
+    MODULE_KEYS.CBC_CURRICULUM_EDITOR,
+    MODULE_KEYS.ACADEMIC_EXAMS,
+    MODULE_KEYS.ACADEMIC_MARKS
+  ];
+  const rows = await query(
+    `SELECT id, institution_id, role
+     FROM users
+     WHERE is_active = 1
+       AND institution_id IS NOT NULL AND institution_id <> 0
+       AND role IN (?, ?, ?)`,
+    [ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.SYSTEM_ADMINISTRATOR]
+  );
+  let inserted = 0;
+  for (const row of rows || []) {
+    const userId = Number(row.id || 0);
+    const institutionId = Number(row.institution_id || 0);
+    if (!userId || !institutionId) continue;
+    for (const moduleKey of bundleKeys) {
+      // eslint-disable-next-line no-await-in-loop
+      const exists = await query(
+        `SELECT id FROM user_module_access_overrides
+         WHERE user_id = ? AND module_key = ?
+           AND (permission_key = 'ACCESS' OR permission_key IS NULL OR permission_key = '')
+         LIMIT 1`,
+        [userId, moduleKey]
+      );
+      if (exists.length) continue;
+      // eslint-disable-next-line no-await-in-loop
+      await query(
+        `INSERT INTO user_module_access_overrides
+          (institution_id, user_id, module_key, permission_key, can_access, created_by_user_id)
+         VALUES (?, ?, ?, 'ACCESS', 1, NULL)`,
+        [institutionId, userId, moduleKey]
+      );
+      inserted += 1;
+    }
+  }
+  // eslint-disable-next-line no-console
+  console.log(
+    `[IIMS] IMIS_SEED_INSTITUTION_EXAM_ACCESS: inserted ${inserted} module override row(s) for institution examination stack.`
+  );
+}
+
 async function ensureSystemDeveloperAccount(defaultInstitutionId) {
   const systemDeveloperEmail = process.env.SYSTEM_DEVELOPER_EMAIL || "mwendeguenterpriseltd@gmail.com";
   const systemDeveloperPhone = process.env.SYSTEM_DEVELOPER_PHONE || "+254725757767";
@@ -1498,6 +1550,7 @@ async function start() {
   const defaultInstitutionId = await ensureDefaultInstitutionAndAdmin();
   await ensureSystemDeveloperAccount(defaultInstitutionId);
   await seedLegacyAdministratorModuleRightsIfRequested();
+  await seedInstitutionExaminationStackIfRequested();
 
   let boundPort = PORT;
   let server = null;
