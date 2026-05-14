@@ -4,6 +4,7 @@ if (!token) {
 }
 
 let meta = {};
+let dashboardAuthenticatedRoleHint = "";
 let admissionRegisterRows = [];
 let currentModule = "dashboard";
 let currentEditId = null;
@@ -12,7 +13,7 @@ let portalContext = null;
 let searchRowDrafts = {};
 let dashboardAutoRefreshHandle = null;
 let currentSidebarSubmoduleId = null;
-const CLIENT_UI_BUNDLE_ID = "dash-bundle-main-v80-hoi-otp-qr";
+const CLIENT_UI_BUNDLE_ID = "dash-bundle-enterprise-v81-phase1-security";
 const examPanelState = {
   generatedExam: null,
   serials: [],
@@ -189,6 +190,7 @@ const SIDEBAR_SUBMODULES = {
     { id: "admission-register", label: "Admission Register", targetModule: "admission", options: { admissionFocus: "register" } },
     { id: "admission-form", label: "Admission Form", targetModule: "admission", options: { admissionFocus: "form" } },
     { id: "admission-letter", label: "Admission Letter", targetModule: "admission", options: { admissionFocus: "letter" } },
+    { id: "admission-online-processing", label: "Admission Processing Hub", targetModule: "admission", options: { admissionFocus: "online-processing" } },
     { id: "admission-parent-guardian", label: "Parent/Guardian Register", targetModule: "admission", options: { admissionFocus: "parent-guardian" } }
   ],
   "management-staff-service": [
@@ -211,7 +213,13 @@ const SIDEBAR_SUBMODULES = {
     { id: "attendance-learner-register", label: "Learner Attendance", targetModule: "attendance", options: { attendanceType: "Learner" } }
   ],
   "system-cbc-editor": [
-    { id: "exam-curriculum", label: "Curriculum", targetModule: "system-cbc-editor", options: { examTab: "curriculum" } },
+    {
+      id: "exam-curriculum",
+      label: "Curriculum",
+      targetModule: "system-cbc-editor",
+      options: { examTab: "curriculum" },
+      roles: ["SUPER_SYSTEM_DEVELOPER", "SYSTEM_DEVELOPER"]
+    },
     {
       id: "exam-generation",
       label: "Exam Generation",
@@ -309,6 +317,13 @@ function sidebarSubmoduleParent(submoduleId = "") {
 
 function isSuperSystemDeveloperPortal() {
   return normalizeRoleKey(portalContext?.role || "") === "SUPER_SYSTEM_DEVELOPER";
+}
+
+function shouldShowTechnicalDashboardFingerprint(roleHint = "") {
+  const rk = normalizeRoleKey(
+    roleHint || portalContext?.role || dashboardAuthenticatedRoleHint || meta?.bootstrap_role_hint || ""
+  );
+  return rk === "SYSTEM_DEVELOPER" || rk === "SUPER_SYSTEM_DEVELOPER";
 }
 
 function inferAxButtonVariant(label = "", existingClasses = "") {
@@ -11825,6 +11840,78 @@ function wireAdmissionExtendedActions() {
   });
 }
 
+function wireOnlineAdmissionProcessingHub() {
+  const refreshBtn = document.getElementById("admissionOnlineRefreshBtn");
+  const statusFilter = document.getElementById("admissionOnlineStatusFilter");
+  const tbody = document.getElementById("admissionOnlineRequestsBody");
+  if (!refreshBtn || !tbody) {
+    return;
+  }
+  const loadRows = async () => {
+    try {
+      const status = String(statusFilter?.value || "").trim();
+      const qs = status ? `?status=${encodeURIComponent(status)}` : "";
+      const data = await request(`/api/admission/online-requests${qs}`);
+      const items = Array.isArray(data?.items) ? data.items : [];
+      if (!items.length) {
+        tbody.innerHTML = `<tr><td colspan="9" class="small-note">No records for this filter.</td></tr>`;
+        return;
+      }
+      tbody.innerHTML = items
+        .map((row) => {
+          const rid = Number(row.id || 0);
+          return `
+        <tr>
+          <td>${escapeHtml(String(rid))}</td>
+          <td>${escapeHtml(row.learner_name || "-")}</td>
+          <td>${escapeHtml(row.learner_type || "-")}</td>
+          <td>${escapeHtml(row.grade_or_form || "-")}</td>
+          <td>${escapeHtml(row.stream || "-")}</td>
+          <td>${escapeHtml(row.applicant_email || "-")}</td>
+          <td>${escapeHtml(row.applicant_phone || "-")}</td>
+          <td>${escapeHtml(row.status || "-")}</td>
+          <td>
+            <button type="button" class="ax-btn ax-btn--process ax-btn--sm" data-admission-online-id="${escapeHtmlAttribute(
+              String(rid)
+            )}">Workflow</button>
+          </td>
+        </tr>`;
+        })
+        .join("");
+      tbody.querySelectorAll("[data-admission-online-id]").forEach((button) => {
+        button.addEventListener("click", async () => {
+          const id = Number(button.getAttribute("data-admission-online-id") || 0);
+          if (!id) return;
+          const decision = window.prompt(
+            "Set workflow status:\nAPPROVED | REJECTED | WAITLIST | MORE_INFO | INTERVIEW_REQUESTED",
+            "APPROVED"
+          );
+          if (!decision) return;
+          const reviewComment = window.prompt("Family-facing comment / directions (stored and emailed/SMS'ed if configured):", "") || "";
+          try {
+            await request(`/api/admission/online-requests/${id}`, {
+              method: "PATCH",
+              body: JSON.stringify({ status: decision.trim(), review_comment: reviewComment })
+            });
+            alert("Admission workflow updated.");
+            await loadRows();
+          } catch (error) {
+            alert(error.message || "Unable to update this request.");
+          }
+        });
+      });
+    } catch (error) {
+      tbody.innerHTML = `<tr><td colspan="9" class="small-note error">${escapeHtml(
+        error.message || "Unable to load online admission requests."
+      )}</td></tr>`;
+    }
+  };
+
+  refreshBtn.addEventListener("click", loadRows);
+  statusFilter?.addEventListener("change", loadRows);
+  loadRows();
+}
+
 function wireAdmissionModuleUi(container, config) {
   wireAdmissionGradeFormExclusive(container);
   wireAdmissionDisabilityToggle(container);
@@ -11839,6 +11926,7 @@ function wireAdmissionModuleUi(container, config) {
   renderAdmissionRegisterTable();
   wireAdmissionParentGuardianRegister();
   renderAdmissionParentGuardianTable();
+  wireOnlineAdmissionProcessingHub();
 }
 
 function wireAdmissionParentGuardianRegister() {
@@ -12227,12 +12315,15 @@ function renderCrudModule(moduleKey, options = {}) {
 
   if (moduleKey === "admission") {
     const focusMode = String(options?.admissionFocus || "").toLowerCase();
-    const showBio = !focusMode || focusMode === "bio";
-    const showRegister = !focusMode || focusMode === "register";
-    const showFormLetter = !focusMode || focusMode === "form" || focusMode === "letter";
-    const showParentGuardian = !focusMode || focusMode === "parent-guardian";
-    const showFormAction = !focusMode || focusMode === "form";
-    const showLetterAction = !focusMode || focusMode === "letter";
+    const focusOnline = focusMode === "online-processing";
+    const showBio = !focusOnline && (!focusMode || focusMode === "bio");
+    const showRegister = !focusOnline && (!focusMode || focusMode === "register");
+    const showFormLetter =
+      !focusOnline && (!focusMode || focusMode === "form" || focusMode === "letter");
+    const showParentGuardian = !focusOnline && (!focusMode || focusMode === "parent-guardian");
+    const showFormAction = !focusOnline && (!focusMode || focusMode === "form");
+    const showLetterAction = !focusOnline && (!focusMode || focusMode === "letter");
+    const showOnlineHub = focusOnline;
     container.innerHTML = `
     <div class="section-card-header">
       <h3>${escapeHtml(config.title)}</h3>
@@ -12331,6 +12422,41 @@ function renderCrudModule(moduleKey, options = {}) {
         <button type="button" id="admissionSaveLetterheadBtn" class="ax-btn ax-btn--save ax-btn--sm">Save Letterhead/Template</button>
       </div>
     </section>
+    <section id="admissionOnlineProcessingSection" class="dashboard-section admission-online-hub" style="${showOnlineHub ? "" : "display:none;"}">
+      <h4>Admission Processing Hub</h4>
+      <p class="small-note">Review applications submitted via the anonymous admission portal (<code>/admission-portal.html</code>).</p>
+      <div class="actions-row admission-online-toolbar">
+        <label>Status filter</label>
+        <select id="admissionOnlineStatusFilter">
+          <option value="">All</option>
+          <option value="PENDING" selected>Pending</option>
+          <option value="APPROVED">Approved</option>
+          <option value="REJECTED">Rejected</option>
+          <option value="WAITLIST">Waiting list</option>
+          <option value="MORE_INFO">More information</option>
+          <option value="INTERVIEW_REQUESTED">Interview requested</option>
+        </select>
+        <button type="button" id="admissionOnlineRefreshBtn" class="ax-btn ax-btn--refresh ax-btn--sm">Refresh</button>
+      </div>
+      <div class="dashboard-table-wrap">
+        <table class="dashboard-table" id="admissionOnlineRequestsTable">
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>Learner</th>
+              <th>Type</th>
+              <th>Grade</th>
+              <th>Stream</th>
+              <th>Applicant Email</th>
+              <th>Applicant Phone</th>
+              <th>Status</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="admissionOnlineRequestsBody"></tbody>
+        </table>
+      </div>
+    </section>
   `;
   } else {
   container.innerHTML = `
@@ -12360,14 +12486,20 @@ function renderCrudModule(moduleKey, options = {}) {
       ${moduleKey === "communication-messages" ? `<button id="${btnPrefix}-dispatch" type="button" class="ax-btn ax-btn--process ax-btn--sm">Dispatch Queued</button>` : ""}
       ${moduleKey === "communication-messages" ? `<button id="${btnPrefix}-chat" type="button" class="ax-btn ax-btn--view ax-btn--sm">Open Chat</button>` : ""}
       ${moduleKey === "management-teacher-resources" ? `<button id="${btnPrefix}-resource-generate" type="button" class="ax-btn ax-btn--process ax-btn--sm">Generate from Curriculum</button>` : ""}
-      ${moduleKey === "management-teacher-resources" ? `<button id="${btnPrefix}-resource-template-download" type="button" class="ax-btn ax-btn--download ax-btn--sm" data-template-control="true">Template</button>` : ""}
+      ${moduleKey === "management-teacher-resources" ? `<button id="${btnPrefix}-resource-template-download" type="button" class="ax-btn ax-btn--download ax-btn--sm" data-template-control="true" data-ssd-resource-template-only="true">Template</button>` : ""}
       ${moduleKey === "management-teacher-resources" ? `<button id="${btnPrefix}-lesson-plan-template-download" type="button" class="ax-btn ax-btn--download ax-btn--sm">Lesson Plan</button>` : ""}
       ${moduleKey === "management-teacher-resources" ? `<button id="${btnPrefix}-scheme-template-download" type="button" class="ax-btn ax-btn--download ax-btn--sm">Scheme</button>` : ""}
       ${moduleKey === "management-teacher-resources" ? `<button id="${btnPrefix}-record-template-download" type="button" class="ax-btn ax-btn--download ax-btn--sm">Record</button>` : ""}
-      ${moduleKey === "management-teacher-resources" ? `<button id="${btnPrefix}-resource-template-upload" type="button" class="ax-btn ax-btn--upload ax-btn--sm" data-template-control="true">Upload Template</button>` : ""}
-      ${moduleKey === "management-teacher-resources" ? `<input id="${btnPrefix}-resource-template-file" type="file" accept=".txt,.csv,.doc,.docx,.pdf" style="display:none;" data-template-control="true" />` : ""}
+      ${moduleKey === "management-teacher-resources" ? `<button id="${btnPrefix}-resource-template-upload" type="button" class="ax-btn ax-btn--upload ax-btn--sm" data-template-control="true" data-ssd-resource-template-only="true">Upload Template</button>` : ""}
+      ${moduleKey === "management-teacher-resources" ? `<input id="${btnPrefix}-resource-template-file" type="file" accept=".txt,.csv,.doc,.docx,.pdf" style="display:none;" data-template-control="true" data-ssd-resource-template-only="true" />` : ""}
     </div>
   `;
+  }
+  if (
+    moduleKey === "management-teacher-resources" &&
+    normalizeRoleKey(portalContext?.role || "") !== "SUPER_SYSTEM_DEVELOPER"
+  ) {
+    container.querySelectorAll("[data-ssd-resource-template-only=\"true\"]").forEach((el) => el.remove());
   }
   document.getElementById(saveId).onclick = saveCurrentModule;
   document.getElementById(clearId).onclick = () => clearForm(config);
@@ -12572,6 +12704,8 @@ function renderCrudModule(moduleKey, options = {}) {
       document.getElementById("admissionRegisterPanel")?.scrollIntoView({ behavior: "smooth", block: "center" });
     } else if (focusMode === "parent-guardian") {
       document.getElementById("admissionParentGuardianSection")?.scrollIntoView({ behavior: "smooth", block: "center" });
+    } else if (focusMode === "online-processing") {
+      document.getElementById("admissionOnlineProcessingSection")?.scrollIntoView({ behavior: "smooth", block: "center" });
     } else if (focusMode === "bio") {
       document.getElementById("admissionLearnersRegistrationPanel")?.scrollIntoView({ behavior: "smooth", block: "center" });
     }
@@ -12728,14 +12862,16 @@ async function loadDashboard(options = {}) {
       formatMoney(row.balance)
     ]);
     const alertsMarkup = (data.alerts || [])
-      .map(
-        (alert) => `
-        <div class="dashboard-alert ${escapeHtml(alert.severity || "info")}">
+      .map((alert) => {
+        const severity = escapeHtml(alert.severity || "info");
+        const blinkClass = alert.blink ? " dashboard-alert-blink" : "";
+        return `
+        <div class="dashboard-alert ${severity}${blinkClass}">
           <strong>${escapeHtml(alert.title || "Alert")}</strong>
           <p>${escapeHtml(alert.message || "")}</p>
         </div>
-      `
-      )
+      `;
+      })
       .join("");
     const announcementMarkup = (data.announcements || [])
       .map(
@@ -15058,7 +15194,13 @@ async function safeStep(label, fn) {
 function showInitErrorBanner(message) {
   const fp = document.getElementById("dashUiFingerprint");
   if (fp) {
-    fp.textContent = `${CLIENT_UI_BUNDLE_ID} · INIT WARNING: ${String(message).slice(0, 220)}`;
+    if (shouldShowTechnicalDashboardFingerprint()) {
+      fp.removeAttribute("hidden");
+      fp.textContent = `${CLIENT_UI_BUNDLE_ID} · INIT WARNING: ${String(message).slice(0, 220)}`;
+    } else {
+      fp.textContent = "";
+      fp.setAttribute("hidden", "true");
+    }
   }
   const cardsEl = document.getElementById("cards");
   if (cardsEl && !cardsEl.innerHTML.trim()) {
@@ -15072,6 +15214,7 @@ async function init() {
   portalContext = portalData || null;
   allowedModules = Array.isArray(portalData?.allowed_modules) ? portalData.allowed_modules : [];
   const meData = (await safeStep("/api/auth/me", () => request("/api/auth/me"))) || {};
+  dashboardAuthenticatedRoleHint = String(meData?.role || portalData?.role || "");
 
   await safeStep("applyDashboardIdentity", async () => {
     try {
@@ -15108,7 +15251,14 @@ async function init() {
     } catch (_) { /* ignore */ }
     const fp = document.getElementById("dashUiFingerprint");
     if (fp) {
-      fp.textContent = `${CLIENT_UI_BUNDLE_ID} · API build_stamp: ${stamp} — Ctrl+F5 if this text looks old.`;
+      const roleHints = dashboardAuthenticatedRoleHint || portalContext?.role || "";
+      if (shouldShowTechnicalDashboardFingerprint(roleHints)) {
+        fp.removeAttribute("hidden");
+        fp.textContent = `${CLIENT_UI_BUNDLE_ID} · API build_stamp: ${stamp} — Ctrl+F5 if this text looks old.`;
+      } else {
+        fp.textContent = "";
+        fp.setAttribute("hidden", "true");
+      }
     }
   });
 

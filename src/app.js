@@ -53,6 +53,8 @@ const {
   generateOtpCode,
   buildOtpExpiry,
   sendOtp,
+  sendTransactionalEmail,
+  sendTransactionalSms,
   emailChannelReady,
   smsChannelReady
 } = require("./services/otpService");
@@ -737,6 +739,11 @@ const publicWriteRateLimit = enforceRateLimit({
   maxRequests: Number(process.env.RATE_LIMIT_PUBLIC_WRITE_MAX || 60),
   windowMs: REQUEST_RATE_WINDOW_MS
 });
+const publicReadRateLimit = enforceRateLimit({
+  bucket: "public-read",
+  maxRequests: Number(process.env.RATE_LIMIT_PUBLIC_READ_MAX || 300),
+  windowMs: REQUEST_RATE_WINDOW_MS
+});
 const accountMutationRateLimit = enforceRateLimit({
   bucket: "account-mutation",
   maxRequests: Number(process.env.RATE_LIMIT_ACCOUNT_MUTATION_MAX || 60),
@@ -941,6 +948,23 @@ function roleHiddenFromItem(role, recycleItem) {
   const normalizedRole = normalizeRole(role);
   const hiddenRoles = parseHiddenRoles(recycleItem?.hidden_for_roles_json);
   return hiddenRoles.includes(normalizedRole);
+}
+
+/** Institution roles must not see recycler entries authored by Super/System developers. */
+function shouldRecycleBinEntryExposeDeleterViewer(actorRole, recycleItemRow) {
+  const role = normalizeRole(actorRole);
+  if (isAnySystemDeveloperRole(role)) {
+    return true;
+  }
+  const meta = parseArchivedRecycleMeta(recycleItemRow?.archived_payload_json);
+  const deletedByRole = normalizeRole(meta?.deleted_by_role || "");
+  if (
+    deletedByRole === ROLES.SUPER_SYSTEM_DEVELOPER ||
+    deletedByRole === ROLES.SYSTEM_DEVELOPER
+  ) {
+    return false;
+  }
+  return true;
 }
 
 function verifyThreeStepDeleteConfirm(confirmations = []) {
@@ -1298,11 +1322,9 @@ const MODULE_KEYS = {
 const DEFAULT_MODULE_ACCESS_BY_ROLE = {
   [ROLES.SUPER_SYSTEM_DEVELOPER]: Object.values(MODULE_KEYS),
   [ROLES.SYSTEM_DEVELOPER]: Object.values(MODULE_KEYS),
-  [ROLES.SYSTEM_ADMINISTRATOR]: Object.values(MODULE_KEYS).filter((key) => key !== MODULE_KEYS.SECURITY_AUDIT),
-  [ROLES.ADMIN]: Object.values(MODULE_KEYS).filter((key) => key !== MODULE_KEYS.SECURITY_AUDIT),
-  [ROLES.HEAD_OF_INSTITUTION]: Object.values(MODULE_KEYS).filter(
-    (key) => key !== MODULE_KEYS.SECURITY_AUDIT
-  ),
+  [ROLES.SYSTEM_ADMINISTRATOR]: [],
+  [ROLES.ADMIN]: [],
+  [ROLES.HEAD_OF_INSTITUTION]: [],
   [ROLES.MOD]: [],
   [ROLES.TSC]: [],
   [ROLES.TEACHER]: [],
@@ -2793,13 +2815,16 @@ app.post("/api/auth/login", authLoginRateLimit, asyncHandler(async (req, res) =>
   const sendLog = otpSession.sendResults || [];
   const okSteps = sendLog.filter((line) => typeof line === "string" && line.endsWith(":ok"));
   const allDeliveriesFailed = sendLog.length > 0 && okSteps.length === 0;
-  const noMessagingProviders = !emailChannelReady() && !smsChannelReady();
-  const revealOtpToClient =
-    parseTruthy(process.env.IMIS_REVEAL_OTP_IN_LOGIN_RESPONSE) ||
-    parseTruthy(process.env.EXPOSE_OTP_PREVIEW) ||
-    effectiveChannel === "console" ||
-    allDeliveriesFailed ||
-    noMessagingProviders;
+  const nodeEnvLower = String(process.env.NODE_ENV || "").toLowerCase();
+  const consoleOtpOnFailure =
+    nodeEnvLower !== "production" &&
+    parseTruthy(process.env.IMIS_CONSOLE_OTP_ON_DISPATCH_FAILURE || process.env.IMIS_CONSOLE_OTP_ON_FAILURE);
+  if (consoleOtpOnFailure && allDeliveriesFailed) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[OTP][development console fallback only] OTP for ${cleanValue(username)} after failed dispatch: ${otpSession.code}`
+    );
+  }
   const loggedOtpDetails = await augmentAuthAuditDetailsWithInstitution(
     buildAuthAuditDetails(req, username, {
       password_correct: true,
@@ -2807,8 +2832,7 @@ app.post("/api/auth/login", authLoginRateLimit, asyncHandler(async (req, res) =>
       otp_channel_requested: requestedChannel,
       otp_channel_used: effectiveChannel,
       otp_channels_delivered: otpSession.sendResults || [],
-      otp_expires_at: otpSession.expiresAt,
-      otp_code: revealOtpToClient ? otpSession.code : undefined
+      otp_expires_at: otpSession.expiresAt
     }),
     account.institution_id
   );
@@ -2830,19 +2854,20 @@ app.post("/api/auth/login", authLoginRateLimit, asyncHandler(async (req, res) =>
     okSteps.length > 0 &&
     deliveryPlan?.channels?.length &&
     okSteps.length < deliveryPlan.channels.length;
-  let messageBody = "OTP dispatched immediately. Check SMS and Email.";
+
+  let messageBody = "OTP sent. Check SMS and Email for your code.";
   if (effectiveChannel === "console" || (sendLog.length && !okSteps.length)) {
     messageBody =
-      "OTP queued for console fallback: configure SMTP/Twilio and ensure profile email/mobile; check server logs for the code.";
+      "OTP could not be delivered through SMS or Email. Configure SendGrid/SMTP and Africa's Talking/Twilio, ensure your profile lists email/mobile, then try again.";
   } else if (smsEmailPartial) {
     messageBody =
-      `OTP sent on ${okSteps.length} channel(s); another channel failed or is not configured — see delivery log below.`;
+      `OTP reached ${okSteps.length} channel(s); another destination failed — see otp_delivery_log in the developer tools network response.`;
   } else if (usedFallbackFromLogin) {
-    messageBody = `OTP delivered via console fallback. Configure SMTP (${process.env.SMTP_HOST ? "ok" : "missing"}) and Twilio (${process.env.TWILIO_ACCOUNT_SID ? "ok" : "missing"}) for instant email/SMS; ensure your profile has both email and mobile.`;
+    messageBody =
+      `Login requested ${requestedChannel}; delivery fell back because a provider is missing — verify SMTP/SMS credentials and profile contacts.`;
   }
-  if (revealOtpToClient) {
-    messageBody = `${messageBody} Your one-time code also appears on this screen (third path: on-screen fallback) and is copied into the OTP box when possible.`;
-  }
+
+  const otpExpirySeconds = Math.max(Number(process.env.OTP_EXPIRY_MINUTES || 10), 1) * 60;
 
   return res.json({
     message: messageBody,
@@ -2853,22 +2878,7 @@ app.post("/api/auth/login", authLoginRateLimit, asyncHandler(async (req, res) =>
     otp_channel_used: effectiveChannel,
     otp_delivery_log: otpSession.sendResults || [],
     otp_resend_available_after_seconds: OTP_RESEND_COOLDOWN_SECONDS,
-    ...(revealOtpToClient
-      ? {
-          otp_code: otpSession.code,
-          otp_on_screen_fallback: true,
-          otp_fallback_reason:
-            parseTruthy(process.env.IMIS_REVEAL_OTP_IN_LOGIN_RESPONSE)
-              ? "IMIS_REVEAL_OTP_IN_LOGIN_RESPONSE"
-              : noMessagingProviders
-                ? "no_smtp_or_sms"
-                : allDeliveriesFailed
-                  ? "all_channels_failed"
-                  : effectiveChannel === "console"
-                    ? "console_fallback"
-                    : "expose_preview"
-        }
-      : {})
+    otp_expires_in_seconds: otpExpirySeconds
   });
 }));
 
@@ -3200,6 +3210,179 @@ app.post("/api/public/institutions/:id/agreement/send", publicWriteRateLimit, en
     error: "Sending agreements requires authentication. Sign in and use the registration center."
   });
 }));
+
+app.get(
+  "/api/public/online-admission/institutions-summary",
+  publicReadRateLimit,
+  asyncHandler(async (_, res) => {
+    const rows = await query(
+      `SELECT id, institution_name, institution_code
+       FROM institutions
+       WHERE is_active = 1 AND (is_suspended = 0 OR is_suspended IS NULL)
+       ORDER BY institution_name ASC
+       LIMIT 500`
+    );
+    res.json({
+      institutions: rows.map((row) => ({
+        id: row.id,
+        institution_name: cleanValue(row.institution_name || ""),
+        institution_code: cleanValue(row.institution_code || "")
+      }))
+    });
+  })
+);
+
+app.post(
+  "/api/public/online-admission-requests",
+  publicWriteRateLimit,
+  enforcePublicSecurity,
+  asyncHandler(async (req, res) => {
+    const institutionId = Number(req.body?.institution_id || 0);
+    const learnerName = cleanValue(req.body?.learner_full_name || req.body?.learner_name);
+    const learnerType = cleanValue(req.body?.learner_type || "NEW").toUpperCase();
+    const gradeOrForm = cleanOptionalValue(req.body?.grade_or_form || req.body?.grade);
+    const stream = cleanOptionalValue(req.body?.stream);
+    const applicantEmail = cleanOptionalValue(req.body?.applicant_email);
+    const applicantPhone = cleanOptionalValue(req.body?.applicant_mobile || req.body?.applicant_phone);
+    const extras =
+      req.body?.payload_json && typeof req.body.payload_json === "object"
+        ? req.body.payload_json
+        : req.body?.details && typeof req.body.details === "object"
+          ? req.body.details
+          : {};
+
+    if (!institutionId) {
+      return res.status(400).json({ error: "institution_id is required." });
+    }
+    if (!learnerName) {
+      return res.status(400).json({ error: "learner_full_name is required." });
+    }
+
+    const instRows = await query(
+      `SELECT id, institution_name, institution_code, is_active, is_suspended
+       FROM institutions
+       WHERE id = ?
+       LIMIT 1`,
+      [institutionId]
+    );
+    if (!instRows.length) {
+      return res.status(404).json({ error: "Selected institution could not be found." });
+    }
+    const institution = instRows[0];
+    if (Number(institution.is_active || 0) !== 1 || Number(institution.is_suspended || 0) === 1) {
+      return res.status(409).json({ error: "This institution is not accepting online admission requests." });
+    }
+
+    const normalizedType =
+      learnerType === "TRANSFER" || learnerType === "TRANSFERRED" ? "TRANSFER" : learnerType === "NEW" ? "NEW" : "NEW";
+
+    const result = await query(
+      `INSERT INTO online_admission_requests
+        (institution_id, applicant_email, applicant_phone, learner_name, learner_type, grade_or_form, stream, payload_json, status)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'PENDING')`,
+      [
+        institutionId,
+        applicantEmail || null,
+        applicantPhone || null,
+        learnerName,
+        normalizedType,
+        gradeOrForm || null,
+        stream || null,
+        JSON.stringify(extras || {})
+      ]
+    );
+    await auditLog(
+      { institution_id: institutionId, id: null, role: "PUBLIC_APPLICANT" },
+      "ONLINE_ADMISSION_REQUEST_SUBMIT",
+      "online_admission_requests",
+      result.insertId,
+      { learner_name: learnerName }
+    );
+
+    const notifyRecipients = async () => {
+      const stakeholderRows = await query(
+        `SELECT email, phone
+         FROM users
+         WHERE institution_id = ?
+           AND is_active = 1
+           AND role IN (?, ?, ?)
+           AND (email IS NOT NULL OR phone IS NOT NULL)`,
+        [institutionId, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.SYSTEM_ADMINISTRATOR]
+      );
+      const devRows = await query(
+        `SELECT email, phone
+         FROM users
+         WHERE role IN (?, ?)
+           AND is_active = 1
+           AND email IS NOT NULL`,
+        [ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER]
+      );
+      const reference = `#${result.insertId}`;
+      const institutionLabel = cleanValue(institution.institution_name || "");
+      const emailSubject = `IMIS admission request (${institutionLabel})`;
+      const emailBodyLines = [
+        `A learner admission request (${reference}) was submitted for ${institutionLabel}.`,
+        `Learner: ${learnerName}`,
+        `Parent/Applicant Email: ${applicantEmail || "n/a"}`,
+        `Grade/Form: ${gradeOrForm || "n/a"} | Stream: ${stream || "n/a"}`,
+        "Open Admission → Admission Processing Hub to review.",
+        "",
+        "(Automated admission notification — do not reply.)"
+      ];
+      const emailBodyText = emailBodyLines.join("\n");
+      const smsTemplate = `${reference}: ${learnerName} admission for ${institutionLabel}.`;
+
+      await Promise.all(
+        [...stakeholderRows, ...devRows].flatMap((row) => {
+          const jobs = [];
+          if (cleanValue(row.email) && emailChannelReady()) {
+            jobs.push(sendTransactionalEmail({ to: cleanValue(row.email), subject: emailSubject, text: emailBodyText }));
+          }
+          if (cleanValue(row.phone) && smsChannelReady()) {
+            jobs.push(sendTransactionalSms({ to: cleanValue(row.phone), text: smsTemplate }));
+          }
+          return jobs.map((promise) =>
+            promise.catch((err) => {
+              // eslint-disable-next-line no-console
+              console.warn("[online-admission] notify failure:", err?.message || err);
+            })
+          );
+        })
+      );
+      if (applicantEmail && emailChannelReady()) {
+        await sendTransactionalEmail({
+          to: applicantEmail,
+          subject: "IMIS — Admission Request Received",
+          text: [
+            "REQUEST RECEIVED:",
+            institutionLabel,
+            learnerName ? `Learner: ${learnerName}` : "",
+            "Please wait for the institution to respond.",
+            `Tracking reference ${reference}`
+          ].join("\n")
+        }).catch(() => {});
+      }
+      if (applicantPhone && smsChannelReady()) {
+        await sendTransactionalSms({
+          to: applicantPhone,
+          text: `IMIS admissions: Received ${reference} for ${learnerName}. Await confirmation from ${institutionLabel}.`
+        }).catch(() => {});
+      }
+    };
+
+    setImmediate(() => {
+      notifyRecipients().catch((err) => {
+        // eslint-disable-next-line no-console
+        console.warn("[online-admission] stakeholder notify cascade failed:", err?.message || err);
+      });
+    });
+
+    res.json({
+      message: "REQUEST SENT SUCCESSFULLY. PLEASE WAIT FOR INSTITUTION RESPONSE.",
+      request_id: result.insertId
+    });
+  })
+);
 
 app.post("/api/public/forgot-username", publicWriteRateLimit, enforcePublicSecurity, asyncHandler(async (req, res) => {
   return res.status(200).json({
@@ -4495,6 +4678,46 @@ app.get(
         message: "There are no active announcements scheduled for today."
       });
     }
+    const privilegedAdmissionBlinkRoles = new Set([
+      ROLES.ADMIN,
+      ROLES.HEAD_OF_INSTITUTION,
+      ROLES.SYSTEM_ADMINISTRATOR,
+      ROLES.SYSTEM_DEVELOPER,
+      ROLES.SUPER_SYSTEM_DEVELOPER
+    ]);
+    let pendingOnlineAdmissionCount = 0;
+    try {
+      const normalizedDashboardRole = normalizeRole(req.user.role);
+      if (privilegedAdmissionBlinkRoles.has(normalizedDashboardRole)) {
+        let counterRows = [];
+        if (isAnySystemDeveloperRole(normalizedDashboardRole)) {
+          counterRows = await query(
+            `SELECT COUNT(*) pending_count FROM online_admission_requests WHERE status = 'PENDING'`
+          );
+        } else {
+          counterRows = await query(
+            `SELECT COUNT(*) pending_count
+             FROM online_admission_requests
+             WHERE institution_id = ? AND status = 'PENDING'`,
+            [institutionId]
+          );
+        }
+        pendingOnlineAdmissionCount = toNumber(counterRows[0]?.pending_count);
+      }
+    } catch {
+      pendingOnlineAdmissionCount = 0;
+    }
+    if (
+      privilegedAdmissionBlinkRoles.has(normalizeRole(req.user.role)) &&
+      pendingOnlineAdmissionCount > 0
+    ) {
+      alerts.unshift({
+        severity: "admission-blink",
+        title: "Online admission submissions pending",
+        message: `${pendingOnlineAdmissionCount} admission request(s) require review.`,
+        blink: true
+      });
+    }
     if (!alerts.length) {
       alerts.push({
         severity: "success",
@@ -4560,6 +4783,7 @@ app.get(
           liabilities: toMoney(financeSession.liabilities)
         }
         : null,
+      pending_online_admission_requests: pendingOnlineAdmissionCount,
       alerts,
       announcements
     });
@@ -7280,18 +7504,29 @@ app.get(
     const statusFilter = cleanValue(req.query?.status).toUpperCase();
     const visibilityScope = determineRecycleVisibilityScope(req.user);
     const requestedScope = Number(req.query?.institution_id || 0) || null;
-    const institutionScope = visibilityScope.includeAllInstitutions
-      ? requestedScope
-      : visibilityScope.scopeInstitutionId;
+    const institutionScopeWhenGlobal = visibilityScope.includeAllInstitutions ? requestedScope : null;
     let sql = `SELECT id, institution_id, entity_name, entity_id, archived_payload_json, deleted_by_user_id, deleted_at,
                       restored_at, restored_by_user_id, permanently_deleted_at, permanently_deleted_by_user_id,
                       status, hidden_for_roles_json
                FROM recycle_bin_items
                WHERE 1=1`;
     const params = [];
-    if (institutionScope) {
+    if (visibilityScope.includeAllInstitutions) {
+      if (institutionScopeWhenGlobal && Number(institutionScopeWhenGlobal) > 0) {
+        sql += " AND institution_id = ?";
+        params.push(Number(institutionScopeWhenGlobal));
+      }
+    } else {
+      const scopedId = Number(visibilityScope.scopeInstitutionId || 0);
+      if (!scopedId) {
+        return res.json({
+          items: [],
+          retention_years: RECYCLE_BIN_RETENTION_YEARS,
+          recycle_scope_notice: "Recycle bin scoped to institution, but no institution id is linked to your user."
+        });
+      }
       sql += " AND institution_id = ?";
-      params.push(institutionScope);
+      params.push(scopedId);
     }
     if (statusFilter) {
       sql += " AND status = ?";
@@ -7301,6 +7536,7 @@ app.get(
     const rows = await query(sql, params);
     const normalizedRows = rows
       .filter((row) => !roleHiddenFromItem(req.user.role, row))
+      .filter((row) => shouldRecycleBinEntryExposeDeleterViewer(req.user.role, row))
       .map((row) => {
         const payload = parseStoredJson(row.archived_payload_json) || {};
         const recycleMeta = parseArchivedRecycleMeta(row.archived_payload_json);
@@ -7356,6 +7592,9 @@ app.post(
       return res.status(404).json({ error: "Recycle bin item not found." });
     }
     const item = rows[0];
+    if (!shouldRecycleBinEntryExposeDeleterViewer(req.user.role, item)) {
+      return res.status(403).json({ error: "This recycle-bin record is retained for supervisory review only." });
+    }
     const restoreScopeError = await assertInstitutionScopeAccess(req, item.institution_id, "You can only restore items from your assigned institution scope.");
     if (restoreScopeError) {
       return res.status(restoreScopeError.status).json({ error: restoreScopeError.error });
@@ -7429,7 +7668,7 @@ app.delete(
     const recycleId = Number(req.params.id);
     if (!recycleId) return res.status(400).json({ error: "Valid recycle bin item id is required." });
     const rows = await query(
-      `SELECT id, institution_id, status, entity_name, entity_id
+      `SELECT id, institution_id, status, entity_name, entity_id, archived_payload_json
        FROM recycle_bin_items
        WHERE id = ?
        LIMIT 1`,
@@ -7439,6 +7678,9 @@ app.delete(
       return res.status(404).json({ error: "Recycle bin item not found." });
     }
     const item = rows[0];
+    if (!shouldRecycleBinEntryExposeDeleterViewer(req.user.role, item)) {
+      return res.status(403).json({ error: "This recycle-bin record is retained for supervisory review only." });
+    }
     const purgeDecision = canPurgeRecycleItem(req.user, item);
     if (!purgeDecision.allowed) {
       return res.status(403).json({ error: "You can only purge items from your institution scope." });
@@ -12084,6 +12326,7 @@ app.post(
     if (String(process.env.OPENAI_API_KEY || "").trim()) {
       try {
         aiStemOverrides = await generateExamStemsWithOpenAi({
+          institutionId: req.user.institution_id,
           learningArea: selectedLearningArea,
           gradeOrForm: selectedGrade || selectedForm || "",
           referenceRows,
@@ -12212,6 +12455,146 @@ app.post(
       count: learners.length
     });
     res.json({ message: "Class register auto-generated.", count: learners.length });
+  })
+);
+
+app.get(
+  "/api/admission/online-requests",
+  auth,
+  enforceModuleAccess(MODULE_KEYS.ADMISSION),
+  enforcePermission(PERMISSIONS.VIEW),
+  enforceRole([
+    ROLES.SUPER_SYSTEM_DEVELOPER,
+    ROLES.SYSTEM_DEVELOPER,
+    ROLES.ADMIN,
+    ROLES.HEAD_OF_INSTITUTION,
+    ROLES.SYSTEM_ADMINISTRATOR
+  ]),
+  asyncHandler(async (req, res) => {
+    const normalizedRole = normalizeRole(req.user.role);
+    const statusFilter = cleanOptionalValue(req.query?.status).toUpperCase() || null;
+    const limit = parseBoundedInt(req.query?.limit, { fallback: 400, min: 1, max: 1000 });
+    let sql = `
+      SELECT *
+      FROM online_admission_requests
+      WHERE 1 = 1`;
+    const params = [];
+    if (!isAnySystemDeveloperRole(normalizedRole)) {
+      sql += " AND institution_id = ?";
+      params.push(req.user.institution_id);
+    }
+    if (statusFilter) {
+      sql += " AND status = ?";
+      params.push(statusFilter);
+    }
+    sql += ` ORDER BY created_at DESC LIMIT ${limit}`;
+    const rows = await query(sql, params);
+    res.json({ items: rows });
+  })
+);
+
+app.patch(
+  "/api/admission/online-requests/:id",
+  auth,
+  enforceModuleAccess(MODULE_KEYS.ADMISSION),
+  enforcePermission(PERMISSIONS.UPDATE),
+  enforceRole([
+    ROLES.SUPER_SYSTEM_DEVELOPER,
+    ROLES.SYSTEM_DEVELOPER,
+    ROLES.ADMIN,
+    ROLES.HEAD_OF_INSTITUTION,
+    ROLES.SYSTEM_ADMINISTRATOR
+  ]),
+  asyncHandler(async (req, res) => {
+    const requestId = Number(req.params.id || 0);
+    if (!requestId) {
+      return res.status(400).json({ error: "Valid request id is required." });
+    }
+    const normalizedStatusInput = cleanValue(req.body?.status || "").toUpperCase();
+    const allowedStatuses = new Set([
+      "PENDING",
+      "APPROVED",
+      "REJECTED",
+      "WAITLIST",
+      "WAITING_LIST",
+      "MORE_INFO",
+      "MORE_INFORMATION_REQUIRED",
+      "INTERVIEW_REQUESTED"
+    ]);
+    if (!normalizedStatusInput || !allowedStatuses.has(normalizedStatusInput)) {
+      return res.status(400).json({ error: "status must reference a recognised admission workflow outcome." });
+    }
+    let normalizedStoredStatus = normalizedStatusInput;
+    if (normalizedStoredStatus === "WAITING_LIST") normalizedStoredStatus = "WAITLIST";
+    if (normalizedStoredStatus === "MORE_INFORMATION_REQUIRED") normalizedStoredStatus = "MORE_INFO";
+
+    const reviewComment = cleanOptionalValue(req.body?.review_comment || req.body?.comment);
+    const rows = await query(`SELECT * FROM online_admission_requests WHERE id = ? LIMIT 1`, [requestId]);
+    if (!rows.length) {
+      return res.status(404).json({ error: "Admission request was not found." });
+    }
+    const record = rows[0];
+    const scopeError = await assertInstitutionScopeAccess(
+      req,
+      record.institution_id,
+      "You can only update admission submissions for institutions you manage."
+    );
+    if (scopeError) {
+      return res.status(scopeError.status).json({ error: scopeError.error });
+    }
+
+    await query(
+      `UPDATE online_admission_requests
+       SET status = ?,
+           review_comment = ?,
+           reviewed_at = NOW(),
+           reviewed_by_user_id = ?
+       WHERE id = ?`,
+      [normalizedStoredStatus, reviewComment || null, req.user.id, requestId]
+    );
+
+    await auditLog(req.user, "ONLINE_ADMISSION_REQUEST_DECISION", "online_admission_requests", requestId, {
+      institution_id: record.institution_id,
+      status: normalizedStoredStatus,
+      review_comment: reviewComment || null
+    });
+
+    const applicantEmail = cleanOptionalValue(record.applicant_email);
+    const applicantPhone = cleanOptionalValue(record.applicant_phone);
+    const learnerName = cleanValue(record.learner_name || "");
+    const instRows = await query(`SELECT institution_name FROM institutions WHERE id = ? LIMIT 1`, [
+      record.institution_id
+    ]);
+    const institutionName = cleanValue(instRows[0]?.institution_name || "Institution");
+    const statusLabel = normalizedStoredStatus.replace(/_/g, " ");
+    const smsBody =
+      learnerName ?
+        `${learnerName}: admission status updated to ${statusLabel}. ${cleanValue(reviewComment || "")}`
+        : `Admission status updated to ${statusLabel}. ${cleanValue(reviewComment || "")}`;
+
+    await Promise.all(
+      [
+        applicantEmail && emailChannelReady()
+          ? sendTransactionalEmail({
+            to: applicantEmail,
+            subject: `${institutionName} — Admission update`,
+            text: [`Status: ${statusLabel}`, learnerName ? `Learner: ${learnerName}` : "", "", reviewComment || ""].join(
+              "\n"
+            )
+          })
+          : null,
+        applicantPhone && smsChannelReady() ? sendTransactionalSms({ to: applicantPhone, text: smsBody }) : null
+      ]
+        .filter(Boolean)
+        .map((promise) =>
+          promise.catch((err) => {
+            // eslint-disable-next-line no-console
+            console.warn("[online-admission] applicant notify:", err?.message || err);
+          })
+        )
+    );
+
+    res.json({ message: "Admission request workflow updated.", id: requestId, status: normalizedStoredStatus });
   })
 );
 

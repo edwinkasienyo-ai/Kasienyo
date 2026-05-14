@@ -251,6 +251,10 @@ function updateLoginFieldState() {
   if (verifyButton) {
     verifyButton.disabled = !isRoleSelected;
   }
+  const resendOtpButton = document.getElementById("resendOtpButton");
+  if (resendOtpButton) {
+    resendOtpButton.disabled = !isRoleSelected || !localStorage.getItem("pendingUsername");
+  }
   if (!isRoleSelected) {
     setAuthNotice("Choose portal role to activate username, password, OTP channel, and OTP code fields.", "info");
   }
@@ -304,22 +308,18 @@ async function login() {
     localStorage.setItem("pendingUsername", username);
     const deliveredBy = data?.otp_channel_used ? ` via ${data.otp_channel_used}` : "";
     const channelSummary = Array.isArray(data?.otp_delivery_log)
-      ? ` Delivery: ${data.otp_delivery_log.join(", ")}.`
+      ? ` Delivery trace: ${data.otp_delivery_log.join(", ")}.`
       : "";
-    const otpHint =
-      data?.otp_code && String(data.otp_code).length >= 4
-        ? ` OTP (on-screen fallback): ${data.otp_code} — also pasted into the OTP box.`
-        : "";
-    const fallbackHint = data?.otp_on_screen_fallback
-      ? " If email/SMS did not arrive, use the code shown above or ask the server operator to read the Node console line [OTP]."
-      : "";
+    const secondsLeft = Number(data?.otp_resend_available_after_seconds || 0);
+    const cooldownHint =
+      secondsLeft > 0 ? ` You can tap “Resend OTP” after roughly ${secondsLeft}s if needed.` : "";
     setAuthNotice(
-      `${data.message || ""}${deliveredBy}.${channelSummary}${otpHint}${fallbackHint} Portal: ${data.portal}.`.trim(),
+      `${data.message || ""}${deliveredBy}.${channelSummary}${cooldownHint} Portal: ${data.portal}.`.trim(),
       "success"
     );
-    if (data?.otp_code && String(data.otp_code).length >= 4) {
-      const otpInput = document.getElementById("otp");
-      if (otpInput) otpInput.value = String(data.otp_code);
+    const resendBtn = document.getElementById("resendOtpButton");
+    if (resendBtn) {
+      resendBtn.disabled = false;
     }
   } catch (error) {
     setAuthNotice(error.message, "error");
@@ -343,6 +343,10 @@ async function verifyOtp() {
     localStorage.setItem("token", data.token);
     localStorage.setItem("portal", data.portal);
     localStorage.removeItem("pendingUsername");
+    const resendCtrl = document.getElementById("resendOtpButton");
+    if (resendCtrl) {
+      resendCtrl.disabled = true;
+    }
     window.location.href = "/dashboard.html";
   } catch (error) {
     setAuthNotice(error.message, "error");
@@ -753,6 +757,7 @@ updateLoginFieldState();
 
 document.getElementById("loginButton").addEventListener("click", login);
 document.getElementById("verifyButton").addEventListener("click", verifyOtp);
+document.getElementById("resendOtpButton")?.addEventListener("click", login);
 document.getElementById("forgotUsernameButton")?.addEventListener("click", recoverUsername);
 document.getElementById("forgotPasswordSendOtpButton")?.addEventListener("click", requestForgotPasswordOtp);
 document.getElementById("forgotPasswordButton")?.addEventListener("click", resetPassword);

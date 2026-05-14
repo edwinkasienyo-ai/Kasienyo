@@ -8,7 +8,7 @@ const {
 const IIMS_BUILD_STAMP = process.env.IIMS_BUILD_STAMP || "ui-deploy-rev45";
 const { query } = require("./config/db");
 const { hashPassword } = require("./utils/password");
-const { ROLES } = require("./config/constants");
+const { ROLES, MODULE_KEYS } = require("./config/constants");
 
 const PORT = Number(process.env.PORT || 5002);
 
@@ -65,6 +65,10 @@ async function ensureDefaultInstitutionAndAdmin() {
     institutionId = existingInstitutions[0].id;
   }
 
+  if (!truthyEnv(process.env.CREATE_DEFAULT_LEGACY_ADMIN_USER, false)) {
+    return institutionId;
+  }
+
   const username = process.env.DEFAULT_ADMIN_USERNAME || "admin";
   const password = process.env.DEFAULT_ADMIN_PASSWORD || "1234";
   const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
@@ -93,7 +97,7 @@ async function ensureDefaultInstitutionAndAdmin() {
       ]
     );
     // eslint-disable-next-line no-console
-    console.log("Default admin created with configured username/password.");
+    console.log("Legacy default admin user created (CREATE_DEFAULT_LEGACY_ADMIN_USER=true).");
   } else if (!existingAdmin[0].password_last_changed_at || !existingAdmin[0].password_expires_at) {
     await query(
       `UPDATE users
@@ -104,6 +108,53 @@ async function ensureDefaultInstitutionAndAdmin() {
     );
   }
   return institutionId;
+}
+
+/**
+ * One-time style migration for upgraded databases: when IMIS_SEED_EXISTING_ADMIN_MODULE_RIGHTS=1,
+ * grant institution administrators the same broad module list they had before strict zero-default rights.
+ */
+async function seedLegacyAdministratorModuleRightsIfRequested() {
+  if (!truthyEnv(process.env.IMIS_SEED_EXISTING_ADMIN_MODULE_RIGHTS, false)) {
+    return;
+  }
+  const legacyModuleList = Object.values(MODULE_KEYS).filter((key) => key !== MODULE_KEYS.SECURITY_AUDIT);
+  const rows = await query(
+    `SELECT id, institution_id, role
+     FROM users
+     WHERE is_active = 1
+       AND role IN (?, ?, ?)`,
+    [ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.SYSTEM_ADMINISTRATOR]
+  );
+  let inserted = 0;
+  for (const row of rows || []) {
+    const userId = Number(row.id || 0);
+    const institutionId = Number(row.institution_id || 0);
+    if (!userId || !institutionId) continue;
+    for (const moduleKey of legacyModuleList) {
+      // eslint-disable-next-line no-await-in-loop
+      const exists = await query(
+        `SELECT id FROM user_module_access_overrides
+         WHERE user_id = ? AND module_key = ?
+           AND (permission_key = 'ACCESS' OR permission_key IS NULL OR permission_key = '')
+         LIMIT 1`,
+        [userId, moduleKey]
+      );
+      if (exists.length) continue;
+      // eslint-disable-next-line no-await-in-loop
+      await query(
+        `INSERT INTO user_module_access_overrides
+          (institution_id, user_id, module_key, permission_key, can_access, created_by_user_id)
+         VALUES (?, ?, ?, 'ACCESS', 1, NULL)`,
+        [institutionId, userId, moduleKey]
+      );
+      inserted += 1;
+    }
+  }
+  // eslint-disable-next-line no-console
+  console.log(
+    `[IIMS] IMIS_SEED_EXISTING_ADMIN_MODULE_RIGHTS: inserted ${inserted} module override row(s) for institution administrators.`
+  );
 }
 
 async function ensureSystemDeveloperAccount(defaultInstitutionId) {
@@ -1381,6 +1432,27 @@ CREATE TABLE IF NOT EXISTS system_developer_institution_assignments (
   CONSTRAINT fk_system_dev_assign_institution FOREIGN KEY (institution_id) REFERENCES institutions(id)
 )`);
 
+  await query(`
+CREATE TABLE IF NOT EXISTS online_admission_requests (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  institution_id BIGINT NOT NULL,
+  applicant_email VARCHAR(255) NULL,
+  applicant_phone VARCHAR(80) NULL,
+  learner_name VARCHAR(255) NOT NULL,
+  learner_type VARCHAR(40) NOT NULL DEFAULT 'NEW',
+  grade_or_form VARCHAR(120) NULL,
+  stream VARCHAR(120) NULL,
+  payload_json JSON NULL,
+  status VARCHAR(40) NOT NULL DEFAULT 'PENDING',
+  review_comment TEXT NULL,
+  reviewed_at DATETIME NULL,
+  reviewed_by_user_id BIGINT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  INDEX idx_online_admission_inst_status (institution_id, status, created_at),
+  CONSTRAINT fk_online_admission_inst FOREIGN KEY (institution_id) REFERENCES institutions(id)
+)`);
+
   const academicExamsTableRows = await query(
     `SELECT COUNT(*) total
      FROM INFORMATION_SCHEMA.TABLES
@@ -1425,6 +1497,7 @@ async function start() {
   await ensureUserPasswordPolicyColumns();
   const defaultInstitutionId = await ensureDefaultInstitutionAndAdmin();
   await ensureSystemDeveloperAccount(defaultInstitutionId);
+  await seedLegacyAdministratorModuleRightsIfRequested();
 
   let boundPort = PORT;
   let server = null;

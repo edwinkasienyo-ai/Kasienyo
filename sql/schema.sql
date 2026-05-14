@@ -832,3 +832,23 @@ CREATE TABLE IF NOT EXISTS laws_regulations_policies (
   INDEX idx_laws_inst_category (institution_id, document_category),
   CONSTRAINT fk_laws_institution FOREIGN KEY (institution_id) REFERENCES institutions(id)
 );
+
+CREATE TABLE IF NOT EXISTS online_admission_requests (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  institution_id BIGINT NOT NULL,
+  applicant_email VARCHAR(255) NULL,
+  applicant_phone VARCHAR(80) NULL,
+  learner_name VARCHAR(255) NOT NULL,
+  learner_type VARCHAR(40) NOT NULL DEFAULT 'NEW',
+  grade_or_form VARCHAR(120) NULL,
+  stream VARCHAR(120) NULL,
+  payload_json JSON NULL,
+  status VARCHAR(40) NOT NULL DEFAULT 'PENDING',
+  review_comment TEXT NULL,
+  reviewed_at DATETIME NULL,
+  reviewed_by_user_id BIGINT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  INDEX idx_online_admission_inst_status (institution_id, status, created_at),
+  CONSTRAINT fk_online_admission_inst FOREIGN KEY (institution_id) REFERENCES institutions(id)
+);
