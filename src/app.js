@@ -11493,6 +11493,223 @@ function examPaperStemFromRef(ref, snippet, learningArea, qn, rng, kind) {
   return `Which statement aligns best with the ideas covered in ${area}?`;
 }
 
+function normalizeQuestionBankMcqForExam(mcqPayload) {
+  let payload = mcqPayload;
+  if (payload === null || payload === undefined || payload === "") {
+    return null;
+  }
+  if (typeof payload === "string") {
+    try {
+      payload = JSON.parse(payload);
+    } catch (_) {
+      return null;
+    }
+  }
+  if (!payload || typeof payload !== "object") {
+    return null;
+  }
+  const letters = ["A", "B", "C", "D"];
+  const answerGuess = cleanValue(payload.answer ?? payload.correct_answer ?? payload.key ?? "");
+  let answerLetter = letters.includes(answerGuess.slice(0, 1).toUpperCase())
+    ? answerGuess.slice(0, 1).toUpperCase()
+    : "";
+
+  let rawItems = [];
+  if (Array.isArray(payload.options)) rawItems = payload.options;
+  else if (Array.isArray(payload.choices)) rawItems = payload.choices;
+  const tuples = [];
+  rawItems.forEach((entry) => {
+    if (typeof entry === "string") {
+      const textLine = cleanValue(entry);
+      if (textLine) {
+        tuples.push({ letter: "", text: textLine });
+      }
+      return;
+    }
+    if (!entry || typeof entry !== "object") return;
+    const labelRaw = entry.label ?? entry.Letter ?? entry.letter ?? entry.key ?? "";
+    const labelLetter = letters.includes(String(labelRaw).trim().toUpperCase().slice(0, 1))
+      ? String(labelRaw).trim().toUpperCase().slice(0, 1)
+      : "";
+    const text = cleanValue(
+      entry.text ?? entry.body ?? entry.value ?? entry.choice ?? entry.answer ?? entry.answer_text ?? ""
+    );
+    if (!text) return;
+    tuples.push({ letter: labelLetter || "", text });
+  });
+
+  if (tuples.length >= 4 && tuples.every((item) => item.text && !item.letter)) {
+    tuples.splice(4);
+    tuples.forEach((item, idx) => {
+      item.letter = letters[idx];
+    });
+  }
+
+  if (tuples.length < 4 && rawItems.length >= 4) {
+    tuples.length = 0;
+    rawItems.slice(0, 8).forEach((entry, idx) => {
+      if (idx > 3) return;
+      const text =
+        typeof entry === "string"
+          ? cleanValue(entry)
+          : cleanValue(
+              entry?.text ?? entry?.body ?? entry?.value ?? entry?.choice ?? entry?.answer ?? entry?.answer_text ?? ""
+            );
+      if (!text) return;
+      tuples.push({ letter: letters[idx], text });
+    });
+  }
+
+  if (tuples.length < 4) {
+    return null;
+  }
+
+  tuples.splice(4);
+  const normalized = tuples.map((item, idx) => ({
+    letter: letters.includes(item.letter) ? item.letter : letters[idx],
+    text: cleanValue(item.text).slice(0, 780)
+  }));
+  const labelSet = new Set(normalized.map((t) => t.letter));
+  if (labelSet.size !== 4) {
+    normalized.forEach((item, idx) => {
+      item.letter = letters[idx];
+    });
+  }
+
+  if (!answerLetter && Number.isFinite(Number(payload.correct_index))) {
+    const idx = Math.floor(Number(payload.correct_index));
+    if (idx >= 0 && idx <= 3) {
+      answerLetter = letters[idx];
+    }
+  }
+
+  if (!answerLetter) {
+    return null;
+  }
+  const hasAnswer = normalized.some((item) => item.letter === answerLetter && item.text);
+  if (!hasAnswer) {
+    return null;
+  }
+
+  return {
+    tuples: normalized,
+    answerLetter
+  };
+}
+
+function examPaperQuestionBankGradeMatchesRow(row, grade, form) {
+  const value = cleanOptionalValue(row?.grade_or_form || "");
+  if (!value) return true;
+  if (grade && value === grade) return true;
+  if (form && value === form) return true;
+  return false;
+}
+
+function examPaperQuestionBankCoverageMatchesRow(row, selectedStrands, selectedSubStrands) {
+  if (!Array.isArray(selectedStrands) || !selectedStrands.length) {
+    return true;
+  }
+  const strandVal = cleanValue(row?.strand || "");
+  if (!strandVal) {
+    return true;
+  }
+  if (!selectedStrands.includes(strandVal)) {
+    return false;
+  }
+  if (!Array.isArray(selectedSubStrands) || !selectedSubStrands.length) {
+    return true;
+  }
+  const subVal = cleanValue(row?.sub_strand || "");
+  if (!subVal) {
+    return true;
+  }
+  return selectedSubStrands.includes(subVal);
+}
+
+function examPaperQuestionBankStatusAllowed(statusRaw) {
+  const normalized = cleanValue(statusRaw || "DRAFT").toUpperCase();
+  const blocked = new Set(["ARCHIVED", "VOID", "DISABLED"]);
+  return !blocked.has(normalized);
+}
+
+function examPaperEmitBankMcqCandidate({
+  bankRow,
+  stemOverrideText,
+  ref,
+  learningArea,
+  startNumber,
+  oneMarkEach,
+  indentOptions,
+  kind,
+  rng,
+  onConsumed,
+  snippet
+}) {
+  const normalized = normalizeQuestionBankMcqForExam(bankRow?.mcq_json);
+  if (!normalized) return null;
+
+  let stemSeed = "";
+  if (stemOverrideText && String(stemOverrideText).trim().length > 12) {
+    stemSeed = String(stemOverrideText).replace(/\s+/g, " ").trim();
+  } else if (cleanValue(bankRow?.stem_text || "")) {
+    stemSeed = String(bankRow.stem_text).replace(/\s+/g, " ").trim();
+  } else if (snippet) {
+    stemSeed = snippet.slice(0, 240);
+  } else {
+    stemSeed = `Using ${cleanValue(learningArea)} curriculum ideas, evaluate the prompts below carefully.`;
+  }
+
+  let stemCore = examPaperStripStrandNoise(stemSeed, ref || {}).trim();
+  if (!stemCore || stemCore.length < 6) {
+    return null;
+  }
+  void kind;
+
+  const choices = normalized.tuples.map((item) => ({
+    txt: item.text,
+    ok: item.letter === normalized.answerLetter
+  }));
+  if (choices.filter((choice) => choice.ok).length !== 1) {
+    return null;
+  }
+
+  const shuffled = examPaperShuffle(choices, rng).slice(0, 4);
+  const letters = ["A", "B", "C", "D"];
+  const labeled = shuffled.map((choice, idx) => ({ ...choice, L: letters[idx] }));
+
+  const answer = labeled.find((choice) => choice.ok)?.L || "A";
+  const lines = [];
+
+  const markNote = oneMarkEach ? " (1 mark)" : "";
+  if (oneMarkEach) {
+    const stemParts = String(stemCore || "")
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean);
+    const opening = stemParts.length ? stemParts[0] : stemCore || "Select the most accurate option.";
+    lines.push(`${startNumber}.${markNote} ${opening}`.trim());
+    for (let pi = 1; pi < stemParts.length; pi += 1) {
+      lines.push(`         ${stemParts[pi]}`);
+    }
+  } else {
+    lines.push(`${startNumber}. ${stemCore}`);
+  }
+
+  const optPad = oneMarkEach ? "         " : indentOptions;
+  labeled.forEach((option) => {
+    lines.push(`${optPad}${option.L}. ${option.txt}`);
+  });
+  lines.push("");
+
+  if (typeof onConsumed === "function") {
+    try {
+      onConsumed();
+    } catch (_) {}
+  }
+
+  return { linesFragment: lines, answerKeyFragment: `${startNumber}:${answer}` };
+}
+
 function examPaperBuildMcqBlock({
   count,
   startNumber,
@@ -11503,7 +11720,8 @@ function examPaperBuildMcqBlock({
   kind,
   oneMarkEach = false,
   indentOptions = "   ",
-  stemOverrides
+  stemOverrides,
+  examBankConsume = null
 }) {
   const refs =
     Array.isArray(referenceRows) && referenceRows.length
@@ -11514,16 +11732,58 @@ function examPaperBuildMcqBlock({
   const rng = examPaperMulberry32(seed);
   const lines = [];
   const keyLines = [];
+  const consumeBankCandidate =
+    examBankConsume && typeof examBankConsume.next === "function" ? examBankConsume.next.bind(examBankConsume) : null;
+  const acknowledgeConsumed =
+    examBankConsume && typeof examBankConsume.onConsumed === "function"
+      ? examBankConsume.onConsumed.bind(examBankConsume)
+      : () => {};
+  let probeBudget = Math.max(count * 6, 30);
   for (let i = 0; i < count; i++) {
     const ref = refs[i % refs.length];
     const snip = snippets.length
       ? examPaperStripStrandNoise(String(snippets[i % snippets.length] || "").replace(/\s+/g, " "), ref).trim()
       : "";
+    const stemOverrideSeed =
+      Array.isArray(stemOverrides) && stemOverrides[i] && String(stemOverrides[i]).trim().length > 12
+        ? String(stemOverrides[i]).trim()
+        : "";
+
+    let bankEmitted = false;
+    while (!bankEmitted && consumeBankCandidate && probeBudget > 0) {
+      probeBudget -= 1;
+      const bankRowCandidate = consumeBankCandidate();
+      if (!bankRowCandidate) {
+        break;
+      }
+      const bankBundle = examPaperEmitBankMcqCandidate({
+        bankRow: bankRowCandidate,
+        stemOverrideText: stemOverrideSeed,
+        ref,
+        learningArea,
+        startNumber: startNumber + i,
+        oneMarkEach,
+        indentOptions,
+        kind,
+        rng,
+        onConsumed: acknowledgeConsumed,
+        snippet: snip
+      });
+      if (bankBundle?.linesFragment?.length && bankBundle.answerKeyFragment) {
+        lines.push(...bankBundle.linesFragment);
+        keyLines.push(bankBundle.answerKeyFragment);
+        bankEmitted = true;
+        break;
+      }
+    }
+
+    if (bankEmitted) {
+      continue;
+    }
+
     const stem =
-      Array.isArray(stemOverrides) &&
-      stemOverrides[i] &&
-      String(stemOverrides[i]).trim().length > 12
-        ? examPaperStripStrandNoise(String(stemOverrides[i]).replace(/\s+/g, " ").trim(), ref).trim()
+      stemOverrideSeed && stemOverrideSeed.length > 12
+        ? examPaperStripStrandNoise(stemOverrideSeed.replace(/\s+/g, " ").trim(), ref).trim()
         : examPaperStemFromRef(ref, snip, learningArea, startNumber + i, rng, kind);
     const correct = examPaperCorrectFromRef(ref, rng);
     const wrong = examPaperBuildDistractors({ kind, correctText: correct, rng });
@@ -11830,7 +12090,8 @@ function buildAdvancedExamText({
   materialSnippets,
   socialStudiesSectionBMarks,
   socialStudiesSectionBQuestions,
-  aiStemOverrides
+  aiStemOverrides,
+  examBankConsume = null
 }) {
   const kind = examPaperSubjectKind(learningArea);
   const refsRaw = Array.isArray(referenceRows) ? referenceRows : [];
@@ -11899,7 +12160,8 @@ function buildAdvancedExamText({
       kind: "social",
       oneMarkEach: true,
       indentOptions: "         ",
-      stemOverrides: stemOv
+      stemOverrides: stemOv,
+      examBankConsume
     });
     body.push(`SECTION A (${sectionAMarks} MARKS)`, "*Answer all questions in this section.*", "");
     body.push(...mcq.lines);
@@ -11930,7 +12192,8 @@ function buildAdvancedExamText({
       materialSnippets: snippets,
       seedKey: `${seedKey}|PT`,
       kind: "pretechnical",
-      stemOverrides: stemOv
+      stemOverrides: stemOv,
+      examBankConsume
     });
     body.push(`SECTION A (${sectionAMarks} MARKS AMONG ${30} ITEMS)`, "*Answer ALL questions in this section.*", "");
     body.push("(Each item carries equal weight within Section A; total Section A = 20 marks.)", "");
@@ -11968,7 +12231,8 @@ function buildAdvancedExamText({
       materialSnippets: snippets,
       seedKey: `${seedKey}|ST-A`,
       kind: "general",
-      stemOverrides: stemOv
+      stemOverrides: stemOv,
+      examBankConsume
     });
     body.push(`${parts[0]} (${aMarks} MARKS) [OBJECTIVE]`, "", ...mcqA.lines);
     mcqKeys.push(...mcqA.keyLines);
@@ -11997,7 +12261,8 @@ function buildAdvancedExamText({
         materialSnippets: snippets,
         seedKey: `${seedKey}|ST-C`,
         kind: "general",
-        stemOverrides: stemOv
+        stemOverrides: stemOv,
+        examBankConsume
       });
       body.push(...mcqC.lines);
       mcqKeys.push(...mcqC.keyLines);
@@ -12030,7 +12295,8 @@ function buildAdvancedExamText({
       materialSnippets: snippets,
       seedKey: `${seedKey}|MS-2`,
       kind: "general",
-      stemOverrides: stemOv
+      stemOverrides: stemOv,
+      examBankConsume
     });
     body.push("", `PAPER 2 (${p2} MARKS) [OBJECTIVE]`, "", ...mcq2.lines);
     mcqKeys.push(...mcq2.keyLines);
@@ -12062,7 +12328,8 @@ function buildAdvancedExamText({
       materialSnippets: snippets,
       seedKey: `${seedKey}|UN`,
       kind: "general",
-      stemOverrides: stemOv
+      stemOverrides: stemOv,
+      examBankConsume
     });
     body.push(`SECTION A (${sectionAObjectiveMarks} MARKS) [OBJECTIVE]`, "", ...mcq.lines);
     mcqKeys.push(...mcq.keyLines);
@@ -12503,6 +12770,65 @@ app.post(
     const { hours: resolvedDurH, minutes: resolvedDurM, label: examDurationLabel } = examPaperResolveDurationParts(body);
     const seedEntropy = `${Date.now()}|${crypto.randomBytes(10).toString("hex")}|${uuidv4()}`;
     const seedKey = `${req.user.institution_id}|${selectedLearningArea}|${selectedSession}|${selectedYear}|${seedEntropy}`;
+    let examBankConsume = null;
+    let questionBankMcqPoolLoaded = 0;
+    const examBankDisableMcqIntegration = ["1", "true", "yes", "on"].includes(
+      String(process.env.EXAM_DISABLE_QUESTION_BANK_MCQ || "").trim().toLowerCase()
+    );
+    if (!examBankDisableMcqIntegration && req.user.institution_id) {
+      try {
+        const qbRowsAll = await query(
+          `SELECT id, stem_text, mcq_json, strand, sub_strand, grade_or_form, status
+           FROM exam_question_bank
+           WHERE institution_id = ?
+             AND learning_area = ?
+             AND deleted_at IS NULL
+             AND UPPER(IFNULL(question_type, '')) = 'MCQ'
+             AND mcq_json IS NOT NULL
+           ORDER BY updated_at DESC, id DESC
+           LIMIT 900`,
+          [req.user.institution_id, selectedLearningArea]
+        );
+        const qbCandidates = (Array.isArray(qbRowsAll) ? qbRowsAll : []).filter((row) => {
+          if (!examPaperQuestionBankStatusAllowed(row?.status)) {
+            return false;
+          }
+          if (!examPaperQuestionBankGradeMatchesRow(row, selectedGrade, selectedForm)) {
+            return false;
+          }
+          if (!examPaperQuestionBankCoverageMatchesRow(row, selectedStrands, selectedSubStrands)) {
+            return false;
+          }
+          if (!normalizeQuestionBankMcqForExam(row.mcq_json)) {
+            return false;
+          }
+          const stemProbe = String(row.stem_text || "")
+            .replace(/\s+/g, " ")
+            .trim();
+          return stemProbe.length >= 6;
+        });
+        questionBankMcqPoolLoaded = qbCandidates.length;
+        if (questionBankMcqPoolLoaded) {
+          const queue = examPaperShuffle(
+            qbCandidates,
+            examPaperMulberry32(examPaperHash32(`${seedKey}|exam-qbank-order`))
+          );
+          examBankConsume = {
+            queue,
+            consumed: 0,
+            next() {
+              return this.queue.length ? this.queue.shift() : null;
+            },
+            onConsumed() {
+              this.consumed += 1;
+            }
+          };
+        }
+      } catch (_) {
+        examBankConsume = null;
+        questionBankMcqPoolLoaded = 0;
+      }
+    }
     let aiStemOverrides = [];
     if (String(process.env.OPENAI_API_KEY || "").trim()) {
       try {
@@ -12544,7 +12870,8 @@ app.post(
       materialSnippets,
       socialStudiesSectionBMarks: Number.isFinite(socialBM) && socialBM >= 10 ? socialBM : null,
       socialStudiesSectionBQuestions: Number.isFinite(socialBQ) && socialBQ >= 3 ? socialBQ : null,
-      aiStemOverrides
+      aiStemOverrides,
+      examBankConsume
     });
     const learnerExamText = examBundle.learnerText;
     const teacherExamSupplement = examBundle.teacherSupplement || "";
@@ -12591,7 +12918,10 @@ app.post(
       used_curriculum_rows: referenceRows.length,
       used_material_rows: supplementalMaterialNotes ? supplementalMaterialNotes.split("\n").length : 0,
       ai_stems_used: aiStemOverrides.length,
-      ai_stems_source: aiStemOverrides.length ? "openai" : "curriculum_template"
+      ai_stems_source: aiStemOverrides.length ? "openai" : "curriculum_template",
+      question_bank_mcq_pool: questionBankMcqPoolLoaded,
+      question_bank_mcqs_used: examBankConsume ? Number(examBankConsume.consumed) || 0 : 0,
+      question_bank_mcqs_env_disabled: examBankDisableMcqIntegration
     });
   })
 );
