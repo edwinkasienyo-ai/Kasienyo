@@ -12003,8 +12003,19 @@ function examPaperDistributeMarks(total, parts, rng) {
   return examPaperShuffle(marks.map((m) => Math.max(1, m)), rng);
 }
 
-function examPaperStructuredSectionLines({ startNumber, totalMarks, questionCount, referenceRows, learningArea, seedKey }) {
-  void referenceRows;
+function examPaperStructuredSectionLines({
+  startNumber,
+  totalMarks,
+  questionCount,
+  referenceRows,
+  learningArea,
+  seedKey,
+  examBankConsumeStructured = null
+}) {
+  const refs =
+    Array.isArray(referenceRows) && referenceRows.length
+      ? referenceRows
+      : [{ strand: learningArea, sub_strand: "", notes: "", specific_learning_outcomes: "" }];
   const rng = examPaperMulberry32(examPaperHash32(`${seedKey}|struct|${totalMarks}|${questionCount}`));
   const marksEach = examPaperDistributeMarks(totalMarks, questionCount, rng);
   const verbs = ["Explain", "Outline", "Describe", "Analyze", "Evaluate", "Justify"];
@@ -12018,10 +12029,50 @@ function examPaperStructuredSectionLines({ startNumber, totalMarks, questionCoun
       `${n}. ${v} how responsible choices support better learning outcomes in everyday activities. (${m} marks)`,
     (v, n, m) => `${n}. ${v} a short plan learners could follow when solving a realistic problem tied to ${area}. (${m} marks)`
   ];
+  const nextBankCandidate =
+    examBankConsumeStructured && typeof examBankConsumeStructured.next === "function"
+      ? examBankConsumeStructured.next.bind(examBankConsumeStructured)
+      : null;
+  const acknowledgeStructuredConsumed =
+    examBankConsumeStructured && typeof examBankConsumeStructured.onConsumed === "function"
+      ? examBankConsumeStructured.onConsumed.bind(examBankConsumeStructured)
+      : () => {};
+  let probeBudget = Math.max(questionCount * 6, 28);
   for (let i = 0; i < questionCount; i++) {
-    const v = verbs[Math.floor(rng() * verbs.length)];
+    const ref = refs[i % refs.length];
     const m = marksEach[i] || 5;
     const n = startNumber + i;
+
+    let usedBankStem = false;
+    while (!usedBankStem && nextBankCandidate && probeBudget > 0) {
+      probeBudget -= 1;
+      const row = nextBankCandidate();
+      if (!row) {
+        break;
+      }
+      const rawStem = String(row.stem_text || "")
+        .replace(/\s+/g, " ")
+        .trim();
+      if (!rawStem || rawStem.length < 12) {
+        continue;
+      }
+      const stem = examPaperStripStrandNoise(rawStem, ref).trim();
+      if (!stem || stem.length < 12) {
+        continue;
+      }
+      lines.push(`${n}. ${stem} (${m} marks)`);
+      lines.push("_______________________________________________________________________________________");
+      lines.push("");
+      acknowledgeStructuredConsumed();
+      usedBankStem = true;
+      break;
+    }
+
+    if (usedBankStem) {
+      continue;
+    }
+
+    const v = verbs[Math.floor(rng() * verbs.length)];
     const pick = promptBank[Math.floor(rng() * promptBank.length)](v, n, m);
     lines.push(pick);
     lines.push("_______________________________________________________________________________________");
@@ -12264,7 +12315,8 @@ function buildAdvancedExamText({
   socialStudiesSectionBMarks,
   socialStudiesSectionBQuestions,
   aiStemOverrides,
-  examBankConsume = null
+  examBankConsume = null,
+  examBankConsumeStructured = null
 }) {
   const kind = examPaperSubjectKind(learningArea);
   const refsRaw = Array.isArray(referenceRows) ? referenceRows : [];
@@ -12348,7 +12400,8 @@ function buildAdvancedExamText({
         questionCount: bCount,
         referenceRows: refs,
         learningArea,
-        seedKey: `${seedKey}|SOC-B`
+        seedKey: `${seedKey}|SOC-B`,
+        examBankConsumeStructured
       })
     );
     qCursor += bCount;
@@ -12382,7 +12435,8 @@ function buildAdvancedExamText({
         questionCount: bCount,
         referenceRows: refs,
         learningArea,
-        seedKey: `${seedKey}|PT-B`
+        seedKey: `${seedKey}|PT-B`,
+        examBankConsumeStructured
       })
     );
     qCursor += bCount;
@@ -12419,7 +12473,8 @@ function buildAdvancedExamText({
         questionCount: bQ,
         referenceRows: refs,
         learningArea,
-        seedKey: `${seedKey}|ST-B`
+        seedKey: `${seedKey}|ST-B`,
+        examBankConsumeStructured
       })
     );
     qCursor += bQ;
@@ -12456,7 +12511,8 @@ function buildAdvancedExamText({
         questionCount: p1q,
         referenceRows: refs,
         learningArea,
-        seedKey: `${seedKey}|MS-1`
+        seedKey: `${seedKey}|MS-1`,
+        examBankConsumeStructured
       })
     );
     qCursor += p1q;
@@ -12484,7 +12540,8 @@ function buildAdvancedExamText({
           questionCount: p3q,
           referenceRows: refs,
           learningArea,
-          seedKey: `${seedKey}|MS-3`
+          seedKey: `${seedKey}|MS-3`,
+          examBankConsumeStructured
         })
       );
       qCursor += p3q;
@@ -12516,7 +12573,8 @@ function buildAdvancedExamText({
         questionCount: bQ,
         referenceRows: refs,
         learningArea,
-        seedKey: `${seedKey}|UN-B`
+        seedKey: `${seedKey}|UN-B`,
+        examBankConsumeStructured
       })
     );
     qCursor += bQ;
@@ -13003,6 +13061,64 @@ app.post(
         questionBankMcqPoolLoaded = 0;
       }
     }
+    let examBankConsumeStructured = null;
+    let questionBankStructuredPoolLoaded = 0;
+    const examBankDisableStructuredIntegration = ["1", "true", "yes", "on"].includes(
+      String(process.env.EXAM_DISABLE_QUESTION_BANK_STRUCTURED || "").trim().toLowerCase()
+    );
+    if (!examBankDisableStructuredIntegration && req.user.institution_id) {
+      try {
+        const qbStructAll = await query(
+          `SELECT id, stem_text, mcq_json, strand, sub_strand, grade_or_form, status, question_type
+           FROM exam_question_bank
+           WHERE institution_id = ?
+             AND learning_area = ?
+             AND deleted_at IS NULL
+             AND UPPER(IFNULL(question_type, '')) <> 'MCQ'
+           ORDER BY updated_at DESC, id DESC
+           LIMIT 600`,
+          [req.user.institution_id, selectedLearningArea]
+        );
+        const qbStructCandidates = (Array.isArray(qbStructAll) ? qbStructAll : []).filter((row) => {
+          if (!examPaperQuestionBankStatusAllowed(row?.status)) {
+            return false;
+          }
+          if (!examPaperQuestionBankGradeMatchesRow(row, selectedGrade, selectedForm)) {
+            return false;
+          }
+          if (!examPaperQuestionBankCoverageMatchesRow(row, selectedStrands, selectedSubStrands)) {
+            return false;
+          }
+          if (normalizeQuestionBankMcqForExam(row.mcq_json)) {
+            return false;
+          }
+          const probe = String(row.stem_text || "")
+            .replace(/\s+/g, " ")
+            .trim();
+          return probe.length >= 12;
+        });
+        questionBankStructuredPoolLoaded = qbStructCandidates.length;
+        if (questionBankStructuredPoolLoaded) {
+          const sq = examPaperShuffle(
+            qbStructCandidates,
+            examPaperMulberry32(examPaperHash32(`${seedKey}|exam-qbank-structured-order`))
+          );
+          examBankConsumeStructured = {
+            queue: sq,
+            consumed: 0,
+            next() {
+              return this.queue.length ? this.queue.shift() : null;
+            },
+            onConsumed() {
+              this.consumed += 1;
+            }
+          };
+        }
+      } catch (_) {
+        examBankConsumeStructured = null;
+        questionBankStructuredPoolLoaded = 0;
+      }
+    }
     let aiStemOverrides = [];
     if (String(process.env.OPENAI_API_KEY || "").trim()) {
       try {
@@ -13045,7 +13161,8 @@ app.post(
       socialStudiesSectionBMarks: Number.isFinite(socialBM) && socialBM >= 10 ? socialBM : null,
       socialStudiesSectionBQuestions: Number.isFinite(socialBQ) && socialBQ >= 3 ? socialBQ : null,
       aiStemOverrides,
-      examBankConsume
+      examBankConsume,
+      examBankConsumeStructured
     });
     const learnerExamText = examBundle.learnerText;
     const teacherExamSupplement = examBundle.teacherSupplement || "";
@@ -13095,7 +13212,10 @@ app.post(
       ai_stems_source: aiStemOverrides.length ? "openai" : "curriculum_template",
       question_bank_mcq_pool: questionBankMcqPoolLoaded,
       question_bank_mcqs_used: examBankConsume ? Number(examBankConsume.consumed) || 0 : 0,
-      question_bank_mcqs_env_disabled: examBankDisableMcqIntegration
+      question_bank_mcqs_env_disabled: examBankDisableMcqIntegration,
+      question_bank_structured_pool: questionBankStructuredPoolLoaded,
+      question_bank_structured_used: examBankConsumeStructured ? Number(examBankConsumeStructured.consumed) || 0 : 0,
+      question_bank_structured_env_disabled: examBankDisableStructuredIntegration
     });
   })
 );
