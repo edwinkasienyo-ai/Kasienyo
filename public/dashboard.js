@@ -13,7 +13,7 @@ let portalContext = null;
 let searchRowDrafts = {};
 let dashboardAutoRefreshHandle = null;
 let currentSidebarSubmoduleId = null;
-const CLIENT_UI_BUNDLE_ID = "dash-bundle-enterprise-v82-exam-institution-access";
+const CLIENT_UI_BUNDLE_ID = "dash-bundle-enterprise-v83-questionbank-ui";
 const examPanelState = {
   generatedExam: null,
   serials: [],
@@ -269,6 +269,7 @@ const SIDEBAR_SUBMODULES = {
     { id: "exam-ai-copilot", label: "AI Copilot", targetModule: "system-cbc-editor", options: { examTab: "ai-copilot" } },
     { id: "exam-templates", label: "Templates", targetModule: "system-cbc-editor", options: { examTab: "templates" } },
     { id: "exam-archives", label: "Archives", targetModule: "system-cbc-editor", options: { examTab: "archives" } },
+    { id: "exam-question-bank", label: "Question Bank", targetModule: "system-cbc-editor", options: { examTab: "question-bank" } },
     { id: "exam-settings", label: "Settings", targetModule: "system-cbc-editor", options: { examTab: "settings" } }
   ],
   "hr-leave": [
@@ -5236,8 +5237,10 @@ function normalizeExamTabKey(tab = "") {
     "compliance-reporting": "compliance",
     "academic-lifecycle": "lifecycle",
     "copilot": "ai-copilot",
-    "ai-assistant": "ai-copilot"
-  };
+    "ai-assistant": "ai-copilot",
+    "exam-question-bank": "question-bank",
+    "questionbank": "question-bank",
+    "exam-questionbank": "question-bank"
   return aliases[value] || value || "exam-generation";
 }
 
@@ -5508,6 +5511,227 @@ async function wireExamAiCopilotPanel() {
   });
   document.getElementById("examAiCopilotPrintBtn")?.addEventListener("click", () => window.print());
   await run();
+}
+
+function renderExamQuestionBankPanel() {
+  return `
+    <div class="exam-v2-layout exam-module-compact">
+      <div class="exam-v2-pane">
+        <div class="module-header-card exam-module-compact-header">
+          <h4>Institution question bank</h4>
+          <p class="exam-tight-note">Store reusable stems for your institution — MCQ payloads must include choices + correct letter in <strong>answer</strong>. Generation will be able to reuse this bank in a future pass.</p>
+        </div>
+        <div class="form-grid form-grid--exam-tight">
+          <label>Filter grade/form</label>
+          <input id="qbFilterGrade" placeholder="e.g. Grade 9" />
+          <label>Filter learning area</label>
+          <input id="qbFilterLearning" placeholder="e.g. Social Studies" />
+          <label>Filter question type</label>
+          <select id="qbFilterType">
+            <option value="">All</option>
+            <option value="STRUCTURED">STRUCTURED</option>
+            <option value="MCQ">MCQ</option>
+          </select>
+          <label>Filter status</label>
+          <select id="qbFilterStatus">
+            <option value="">All</option>
+            <option value="DRAFT">DRAFT</option>
+            <option value="READY">READY</option>
+          </select>
+          <label>Limit</label>
+          <select id="qbLimit">
+            <option value="50">50</option>
+            <option value="120" selected>120</option>
+            <option value="200">200</option>
+          </select>
+        </div>
+        <div class="actions-row exam-icon-group exam-actions-tight">
+          <button type="button" class="ax-btn ax-btn--refresh ax-btn--sm" id="qbReloadBtn" data-keep-button-style="1" title="Reload list">Reload</button>
+        </div>
+        <div id="qbInlineStatus" class="small-note exam-tight-note" aria-live="polite"></div>
+        <div class="dashboard-table-wrap">
+          <table class="dashboard-table">
+            <thead><tr><th>ID</th><th>Level</th><th>Learning area</th><th>Type</th><th>Status</th><th>Stem (preview)</th><th>Updated</th></tr></thead>
+            <tbody id="qbTableRows"><tr><td colspan="7">Loading…</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+      <div class="exam-v2-pane">
+        <div class="module-header-card exam-module-compact-header">
+          <h4>Add item</h4>
+          <p class="exam-tight-note"><strong>Required:</strong> learning area + stem. MCQ adds JSON below.</p>
+        </div>
+        <div class="form-grid form-grid--exam-tight">
+          <label>Learning area *</label>
+          <input id="qbNewLearning" placeholder="e.g. Mathematics" />
+          <label>Grade / form</label>
+          <input id="qbNewGrade" placeholder="Optional" />
+          <label>Type</label>
+          <select id="qbNewType">
+            <option value="STRUCTURED">STRUCTURED</option>
+            <option value="MCQ">MCQ</option>
+          </select>
+          <label>Status</label>
+          <select id="qbNewStatus">
+            <option value="DRAFT">DRAFT</option>
+            <option value="READY">READY</option>
+          </select>
+          <label style="grid-column:1/-1;">Stem / prompt *</label>
+          <textarea id="qbNewStem" rows="6" class="template-spacious" style="grid-column:1/-1;" placeholder="Write the examination-standard stem here."></textarea>
+          <div id="qbMcqBlock" style="grid-column:1/-1;display:none;">
+            <label>MCQ JSON *</label>
+            <textarea id="qbNewMcq" rows="12" class="template-spacious" spellcheck="false" placeholder="{ &quot;options&quot;: [{&quot;label&quot;:&quot;A&quot;,&quot;text&quot;:&quot;...&quot;}], &quot;answer&quot;: &quot;A&quot; }"></textarea>
+          </div>
+        </div>
+        <div class="actions-row exam-icon-group exam-actions-tight">
+          <button type="button" class="ax-btn ax-btn--save ax-btn--sm" id="qbSaveBtn" data-keep-button-style="1" title="Save to bank">Save item</button>
+          <button type="button" class="ax-btn ax-btn--reset ax-btn--sm" id="qbClearFormBtn" data-keep-button-style="1" title="Clear form fields">Clear</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function truncateQuestionBankStem(text = "", max = 140) {
+  const flat = String(text || "").replace(/\s+/g, " ").trim();
+  if (!flat) return "";
+  return flat.length > max ? `${flat.slice(0, max)}…` : flat;
+}
+
+async function wireExamQuestionBankPanel() {
+  const statusEl = document.getElementById("qbInlineStatus");
+  const rowsEl = document.getElementById("qbTableRows");
+  const mcqBlock = document.getElementById("qbMcqBlock");
+  const typeNew = document.getElementById("qbNewType");
+  const mcqEl = document.getElementById("qbNewMcq");
+
+  const setStatus = (message) => {
+    if (statusEl) statusEl.textContent = message || "";
+  };
+
+  const toggleMcq = () => {
+    const mode = String(typeNew?.value || "").toUpperCase();
+    const show = mode === "MCQ";
+    if (mcqBlock) mcqBlock.style.display = show ? "block" : "none";
+  };
+
+  typeNew?.addEventListener("change", toggleMcq);
+  toggleMcq();
+
+  const loadRows = async () => {
+    if (!rowsEl) return;
+    const params = new URLSearchParams();
+    const grade = String(document.getElementById("qbFilterGrade")?.value || "").trim();
+    const learning = String(document.getElementById("qbFilterLearning")?.value || "").trim();
+    const qtype = String(document.getElementById("qbFilterType")?.value || "").trim();
+    const st = String(document.getElementById("qbFilterStatus")?.value || "").trim();
+    const limit = String(document.getElementById("qbLimit")?.value || "120");
+    if (grade) params.set("grade_or_form", grade);
+    if (learning) params.set("learning_area", learning);
+    if (qtype) params.set("question_type", qtype);
+    if (st) params.set("status", st);
+    if (limit) params.set("limit", limit);
+    rowsEl.innerHTML = `<tr><td colspan="7">Loading…</td></tr>`;
+    try {
+      setStatus("Refreshing question bank…");
+      const path = `/api/academic/question-bank${params.toString() ? `?${params.toString()}` : ""}`;
+      const payload = await request(path);
+      const items = Array.isArray(payload?.items) ? payload.items : [];
+      rowsEl.innerHTML = items.length
+        ? items
+            .map((row) => {
+              const stemPreview = truncateQuestionBankStem(row.stem_text || "");
+              return `
+              <tr>
+                <td>${escapeHtml(String(row.id || "-"))}</td>
+                <td>${escapeHtml(row.grade_or_form || "—")}</td>
+                <td>${escapeHtml(row.learning_area || "—")}</td>
+                <td>${escapeHtml(row.question_type || "—")}</td>
+                <td>${escapeHtml(row.status || "—")}</td>
+                <td title="${escapeHtmlAttribute(String(row.stem_text || ""))}">${escapeHtml(stemPreview || "—")}</td>
+                <td>${escapeHtml(formatDateTime(row.updated_at || row.created_at))}</td>
+              </tr>`;
+            })
+            .join("")
+        : `<tr><td colspan="7">No items yet — add stems on the right.</td></tr>`;
+      setStatus(`Loaded ${items.length} item(s).`);
+    } catch (error) {
+      rowsEl.innerHTML = `<tr><td colspan="7">${escapeHtml(error.message || "Load failed.")}</td></tr>`;
+      setStatus(error.message || "Load failed.");
+    }
+  };
+
+  document.getElementById("qbReloadBtn")?.addEventListener("click", loadRows);
+  ["qbFilterType", "qbFilterStatus", "qbLimit"].forEach((id) => {
+    document.getElementById(id)?.addEventListener("change", loadRows);
+  });
+  ["qbFilterGrade", "qbFilterLearning"].forEach((id) => {
+    document.getElementById(id)?.addEventListener("keydown", (evt) => {
+      if (evt.key === "Enter") {
+        evt.preventDefault();
+        loadRows();
+      }
+    });
+  });
+
+  document.getElementById("qbClearFormBtn")?.addEventListener("click", () => {
+    document.getElementById("qbNewLearning").value = "";
+    document.getElementById("qbNewGrade").value = "";
+    document.getElementById("qbNewStem").value = "";
+    if (mcqEl) mcqEl.value = "";
+    if (typeNew) typeNew.value = "STRUCTURED";
+    toggleMcq();
+    setStatus("Form cleared.");
+  });
+
+  document.getElementById("qbSaveBtn")?.addEventListener("click", async () => {
+    const learning = String(document.getElementById("qbNewLearning")?.value || "").trim();
+    const stem = String(document.getElementById("qbNewStem")?.value || "").trim();
+    if (!learning || !stem) {
+      alert("Learning area and stem are required.");
+      return;
+    }
+    const payload = {
+      learning_area: learning,
+      stem_text: stem,
+      grade_or_form: String(document.getElementById("qbNewGrade")?.value || "").trim() || null,
+      question_type: String(typeNew?.value || "STRUCTURED"),
+      status: String(document.getElementById("qbNewStatus")?.value || "DRAFT")
+    };
+    if (String(payload.question_type).toUpperCase() === "MCQ") {
+      const rawMcq = String(mcqEl?.value || "").trim();
+      if (!rawMcq) {
+        alert("MCQ JSON is required.");
+        return;
+      }
+      try {
+        payload.mcq_json = JSON.parse(rawMcq);
+      } catch (_) {
+        alert("MCQ JSON is invalid.");
+        return;
+      }
+    }
+    try {
+      setStatus("Saving…");
+      await request("/api/academic/question-bank", {
+        method: "POST",
+        headers: {
+          Accept: "application/json",
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify(payload)
+      });
+      setStatus("Saved successfully.");
+      document.getElementById("qbNewStem").value = "";
+      if (mcqEl) mcqEl.value = "";
+      await loadRows();
+    } catch (error) {
+      alert(error.message || "Save failed.");
+      setStatus(error.message || "Save failed.");
+    }
+  });
+
+  await loadRows();
 }
 
 function renderExamTemplateManagerPanel() {
@@ -6104,6 +6328,7 @@ async function renderCbcCurriculumEditor(options = {}) {
     { id: "ai-copilot", label: "AI Copilot" },
     { id: "templates", label: "Templates" },
     { id: "archives", label: "Archives" },
+    { id: "question-bank", label: "Question Bank" },
     { id: "settings", label: "Settings" }
   ];
 
@@ -6196,6 +6421,7 @@ async function renderCbcCurriculumEditor(options = {}) {
       { id: "exam-generation", label: "Exam Generation" },
       { id: "exam-entry", label: "Exam Entry" },
       { id: "exam-scripts", label: "Exam Scripts" },
+      { id: "question-bank", label: "Q Bank" },
       { id: "ai-copilot", label: "AI Copilot" }
     ];
     navEl.innerHTML = `
@@ -9947,6 +10173,10 @@ async function renderCbcCurriculumEditor(options = {}) {
     } else if (tab === "archives") {
       panel.innerHTML = renderExamArchivePanel();
       await wireExamArchivePanel();
+      stylePanel();
+    } else if (tab === "question-bank") {
+      panel.innerHTML = renderExamQuestionBankPanel();
+      await wireExamQuestionBankPanel();
       stylePanel();
     } else if (tab === "settings") {
       panel.innerHTML = renderExamSettingsPanel();
