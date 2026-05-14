@@ -5115,14 +5115,13 @@ app.get(
              AND UPPER(REPLACE(role, ' ', '_')) IN (?, ?)
              AND (${bomWhereClause})
            ORDER BY ${orderColumn} ASC
-           LIMIT ?`,
+           LIMIT ${rowLimit}`,
           [
             institutionId,
             ROLES.BOM,
             "BOARD_OF_MANAGEMENT",
             cleanValue(q),
-            ...searchable.map(() => cleanValue(q)),
-            rowLimit
+            ...searchable.map(() => cleanValue(q))
           ]
         );
       })
@@ -5163,8 +5162,8 @@ app.get(
            FROM institutions
            WHERE ${searchClause}
            ORDER BY ${orderColumn} ASC
-           LIMIT ?`,
-          [cleanValue(q), ...searchable.map(() => cleanValue(q)), rowLimit]
+           LIMIT ${rowLimit}`,
+          [cleanValue(q), ...searchable.map(() => cleanValue(q))]
         );
       });
     }
@@ -5197,8 +5196,8 @@ app.get(
              FROM users
              WHERE ${whereClause}
              ORDER BY ${orderColumn} ASC
-             LIMIT ?`,
-            [cleanValue(q), ...searchable.map(() => cleanValue(q)), rowLimit]
+             LIMIT ${rowLimit}`,
+            [cleanValue(q), ...searchable.map(() => cleanValue(q))]
           );
         })
         : [])
@@ -15746,8 +15745,8 @@ app.post(
        FROM communication_messages
        WHERE institution_id = ? AND status = 'Queued'
        ORDER BY id ASC
-       LIMIT ?`,
-      [req.user.institution_id, limit]
+       LIMIT ${limit}`,
+      [req.user.institution_id]
     );
     const results = [];
     for (const row of queuedRows) {
@@ -15930,8 +15929,8 @@ app.get(
        FROM communication_chat_messages
        WHERE institution_id = ? AND thread_key = ?
        ORDER BY id DESC
-       LIMIT ?`,
-      [req.user.institution_id, roomKey, limit]
+       LIMIT ${limit}`,
+      [req.user.institution_id, roomKey]
     );
     res.json({ room_key: roomKey, messages: rows.reverse() });
   })
@@ -15995,8 +15994,8 @@ app.get(
        FROM communication_chat_messages
        WHERE institution_id = ? AND thread_key = ?
        ORDER BY id DESC
-       LIMIT ?`,
-      [req.user.institution_id, conversationKey, limit]
+       LIMIT ${limit}`,
+      [req.user.institution_id, conversationKey]
     );
     res.json(rows.reverse());
   })
