@@ -57,7 +57,14 @@ async function resolvePool() {
 
 async function query(sql, params = []) {
   const pool = await resolvePool();
-  const [rows] = await pool.execute(sql, params);
+  const safeParams = Array.isArray(params)
+    ? params.map((value) => {
+      if (value === undefined) return null;
+      if (typeof value === "number" && !Number.isFinite(value)) return 0;
+      return value;
+    })
+    : [];
+  const [rows] = await pool.execute(sql, safeParams);
   return rows;
 }
 
