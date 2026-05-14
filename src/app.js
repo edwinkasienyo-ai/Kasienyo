@@ -744,6 +744,11 @@ const publicReadRateLimit = enforceRateLimit({
   maxRequests: Number(process.env.RATE_LIMIT_PUBLIC_READ_MAX || 300),
   windowMs: REQUEST_RATE_WINDOW_MS
 });
+const publicAdmissionLookupRateLimit = enforceRateLimit({
+  bucket: "public-admission-lookup",
+  maxRequests: Number(process.env.RATE_LIMIT_PUBLIC_ADMISSION_LOOKUP_MAX || 60),
+  windowMs: REQUEST_RATE_WINDOW_MS
+});
 const accountMutationRateLimit = enforceRateLimit({
   bucket: "account-mutation",
   maxRequests: Number(process.env.RATE_LIMIT_ACCOUNT_MUTATION_MAX || 60),
@@ -3350,6 +3355,9 @@ app.post(
         })
       );
       if (applicantEmail && emailChannelReady()) {
+        const trackerBase =
+          cleanOptionalValue(process.env.ADMISSION_PUBLIC_BASE_URL || "").replace(/\/$/, "") || "";
+        const trackerUrlLine = trackerBase ? [`Or open directly: ${trackerBase}/admission-portal.html`] : [];
         await sendTransactionalEmail({
           to: applicantEmail,
           subject: "IMIS — Admission Request Received",
@@ -3358,14 +3366,19 @@ app.post(
             institutionLabel,
             learnerName ? `Learner: ${learnerName}` : "",
             "Please wait for the institution to respond.",
-            `Tracking reference ${reference}`
+            `Reference ID: ${result.insertId}`,
+            "",
+            "Track status: open Admission Portal (/admission-portal.html) → Track application → enter Reference ID and this exact email.",
+            ...trackerUrlLine,
+            "",
+            "(Do not reply unless your deployment configures inbound mail.)"
           ].join("\n")
         }).catch(() => {});
       }
       if (applicantPhone && smsChannelReady()) {
         await sendTransactionalSms({
           to: applicantPhone,
-          text: `IMIS admissions: Received ${reference} for ${learnerName}. Await confirmation from ${institutionLabel}.`
+          text: `IMIS admissions: Ref ${result.insertId} for ${learnerName} at ${institutionLabel}. Track on admission portal with ID + email.`
         }).catch(() => {});
       }
     };
@@ -3380,6 +3393,75 @@ app.post(
     res.json({
       message: "REQUEST SENT SUCCESSFULLY. PLEASE WAIT FOR INSTITUTION RESPONSE.",
       request_id: result.insertId
+    });
+  })
+);
+
+app.post(
+  "/api/public/online-admission/lookup-status",
+  publicAdmissionLookupRateLimit,
+  enforcePublicSecurity,
+  asyncHandler(async (req, res) => {
+    const requestId = Number(req.body?.request_id || req.body?.id || 0);
+    const applicantEmail = cleanOptionalValue(req.body?.applicant_email || req.body?.email);
+    if (!requestId) {
+      return res.status(400).json({ error: "request_id is required." });
+    }
+    if (!applicantEmail) {
+      return res.status(400).json({ error: "applicant_email is required." });
+    }
+    const emailKey = applicantEmail.trim().toLowerCase();
+    const rows = await query(
+      `SELECT r.id,
+              r.institution_id,
+              r.learner_name,
+              r.learner_type,
+              r.grade_or_form,
+              r.stream,
+              r.status,
+              r.applicant_email,
+              r.applicant_phone,
+              r.created_at,
+              r.updated_at,
+              r.reviewed_at,
+              r.review_comment,
+              i.institution_name
+       FROM online_admission_requests r
+       INNER JOIN institutions i ON i.id = r.institution_id
+       WHERE r.id = ?
+       LIMIT 1`,
+      [requestId]
+    );
+    const ambiguousResponse = async () => {
+      await delayWithRandomJitter();
+      return res.status(404).json({ error: "No matching admission request was found." });
+    };
+    if (!rows.length) {
+      return ambiguousResponse();
+    }
+    const record = rows[0];
+    const storedEmail = String(record.applicant_email || "").trim().toLowerCase();
+    if (!storedEmail || storedEmail !== emailKey) {
+      return ambiguousResponse();
+    }
+    const truncateComment = (value) => {
+      const cleaned = cleanOptionalValue(value || "");
+      if (!cleaned) return "";
+      return cleaned.slice(0, 4000);
+    };
+    res.json({
+      request_id: record.id,
+      institution_name: cleanValue(record.institution_name || ""),
+      learner_name: cleanValue(record.learner_name || ""),
+      learner_type: cleanValue(record.learner_type || ""),
+      grade_or_form: cleanOptionalValue(record.grade_or_form),
+      stream: cleanOptionalValue(record.stream),
+      status: cleanValue(record.status || ""),
+      applicant_email: storedEmail,
+      submitted_at: record.created_at ? dayjs(record.created_at).format("YYYY-MM-DD HH:mm:ss") : null,
+      last_updated_at: record.updated_at ? dayjs(record.updated_at).format("YYYY-MM-DD HH:mm:ss") : null,
+      institution_response_at: record.reviewed_at ? dayjs(record.reviewed_at).format("YYYY-MM-DD HH:mm:ss") : null,
+      institution_comment: truncateComment(record.review_comment)
     });
   })
 );

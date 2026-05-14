@@ -5,7 +5,7 @@
     <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate, private" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>IMIS Admission Portal</title>
-    <link rel="stylesheet" href="/styles.css?v=73" />
+    <link rel="stylesheet" href="/styles.css?v=74" />
     <style>
       .admission-portal-shell {
         max-width: 880px;
@@ -53,7 +53,7 @@
         <p id="portalStatusLine" class="small-note muted" aria-live="polite"></p>
 
         <div class="auth-grid">
-          <label>Landing email (for confirmations)</label>
+          <label>Landing email (required for online status tracking)</label>
           <input id="applicantEmail" type="email" placeholder="parent@domain.com" />
           <label>Mobile SMS (recommended)</label>
           <input id="applicantPhone" placeholder="+2547..." />
@@ -113,9 +113,23 @@
           </div>
         </div>
       </div>
-      <p class="small-note muted">
-        Dedicated applicant accounts will arrive in the next rollout — this MVP captures requests with verifiable parental
-        contact routes.
+
+      <div class="glass-card auth-card auth-card--compact" style="margin-top: 16px;">
+        <h3>Track application status</h3>
+        <p class="small-note muted">Use the Reference ID from your confirmation email together with the exact email address you typed when applying.</p>
+        <div class="auth-grid">
+          <label>Reference ID</label>
+          <input id="trackRequestId" inputmode="numeric" placeholder="e.g. 12" />
+          <label>Email used on application</label>
+          <input id="trackApplicantEmail" type="email" />
+          <div style="grid-column: 1 / -1;">
+            <button id="lookupStatusBtn" type="button" class="auth-primary-btn">Check status</button>
+          </div>
+        </div>
+        <pre id="trackResult" class="small-note" style="margin-top: 12px; white-space: pre-wrap;"></pre>
+      </div>
+      <p class="small-note muted" style="margin-top: 14px;">
+        Dedicated applicant accounts with passwords are planned next; Reference ID plus email proofs keep lookups private until then.
       </p>
     </main>
 
@@ -186,6 +200,10 @@
           alert("Learner name is required.");
           return;
         }
+        if (!applicant_email) {
+          alert("Landing email is required so you can privately track this request later.");
+          return;
+        }
 
         try {
           statusEl.textContent = "Sending request…";
@@ -210,11 +228,47 @@
           const data = await res.json().catch(() => ({}));
           if (!res.ok) throw new Error(data.error || data.message || "Submission failed.");
           statusEl.textContent = data.message || "REQUEST SENT SUCCESSFULLY. PLEASE WAIT FOR INSTITUTION RESPONSE.";
+          if (data.request_id) {
+            document.getElementById("trackRequestId").value = String(data.request_id);
+            document.getElementById("trackApplicantEmail").value = applicant_email;
+            document.getElementById("trackResult").textContent =
+              "Reference ID filled — scroll to Track application status and tap Check status.";
+          }
           alert(data.message || "REQUEST SENT SUCCESSFULLY.");
         } catch (error) {
           console.error(error);
           statusEl.textContent = error.message || "Submission failed.";
           alert(error.message || "Submission failed.");
+        }
+      });
+
+      document.getElementById("lookupStatusBtn").addEventListener("click", async () => {
+        const request_id = Number(document.getElementById("trackRequestId").value.trim() || 0);
+        const applicant_email = document.getElementById("trackApplicantEmail").value.trim();
+        const out = document.getElementById("trackResult");
+        out.textContent = "Checking…";
+        if (!request_id || !applicant_email) {
+          out.textContent = "Enter Reference ID and email.";
+          return;
+        }
+        try {
+          const res = await fetch("/api/public/online-admission/lookup-status", {
+            method: "POST",
+            credentials: "same-origin",
+            headers: {
+              Accept: "application/json",
+              "Content-Type": "application/json"
+            },
+            body: JSON.stringify({ request_id, applicant_email })
+          });
+          const payload = await res.json().catch(() => ({}));
+          if (!res.ok) {
+            out.textContent = payload.error || "Lookup failed.";
+            return;
+          }
+          out.textContent = JSON.stringify(payload, null, 2);
+        } catch (error) {
+          out.textContent = error.message || "Lookup failed.";
         }
       });
 
