@@ -157,29 +157,9 @@ async function seedLegacyAdministratorModuleRightsIfRequested() {
   );
 }
 
-/**
- * Optional pilot shortcut: grant the examination stack alone (dashboard key cbc-curriculum-editor plus
- * academic-exams/academic-marks) to ACTIVE institution admins without opening every module like IMIS_SEED_EXISTING_ADMIN_MODULE_RIGHTS.
- */
-async function seedInstitutionExaminationStackIfRequested() {
-  if (!truthyEnv(process.env.IMIS_SEED_INSTITUTION_EXAM_ACCESS, false)) {
-    return;
-  }
-  const bundleKeys = [
-    MODULE_KEYS.CBC_CURRICULUM_EDITOR,
-    MODULE_KEYS.ACADEMIC_EXAMS,
-    MODULE_KEYS.ACADEMIC_MARKS
-  ];
-  const rows = await query(
-    `SELECT id, institution_id, role
-     FROM users
-     WHERE is_active = 1
-       AND institution_id IS NOT NULL AND institution_id <> 0
-       AND role IN (?, ?, ?)`,
-    [ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.SYSTEM_ADMINISTRATOR]
-  );
+async function insertMissingExamStackOverrides(userRows, bundleKeys, logLabel) {
   let inserted = 0;
-  for (const row of rows || []) {
+  for (const row of userRows || []) {
     const userId = Number(row.id || 0);
     const institutionId = Number(row.institution_id || 0);
     if (!userId || !institutionId) continue;
@@ -204,9 +184,54 @@ async function seedInstitutionExaminationStackIfRequested() {
     }
   }
   // eslint-disable-next-line no-console
-  console.log(
-    `[IIMS] IMIS_SEED_INSTITUTION_EXAM_ACCESS: inserted ${inserted} module override row(s) for institution examination stack.`
+  console.log(`[IIMS] ${logLabel}: inserted ${inserted} module override row(s) for examination stack.`);
+}
+
+/**
+ * Optional pilot shortcut: grant the examination stack alone (dashboard key cbc-curriculum-editor plus
+ * academic-exams/academic-marks) to ACTIVE institution admins without opening every module like IMIS_SEED_EXISTING_ADMIN_MODULE_RIGHTS.
+ */
+async function seedInstitutionExaminationStackIfRequested() {
+  if (!truthyEnv(process.env.IMIS_SEED_INSTITUTION_EXAM_ACCESS, false)) {
+    return;
+  }
+  const bundleKeys = [
+    MODULE_KEYS.CBC_CURRICULUM_EDITOR,
+    MODULE_KEYS.ACADEMIC_EXAMS,
+    MODULE_KEYS.ACADEMIC_MARKS
+  ];
+  const rows = await query(
+    `SELECT id, institution_id, role
+     FROM users
+     WHERE is_active = 1
+       AND institution_id IS NOT NULL AND institution_id <> 0
+       AND role IN (?, ?, ?)`,
+    [ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.SYSTEM_ADMINISTRATOR]
   );
+  await insertMissingExamStackOverrides(rows, bundleKeys, "IMIS_SEED_INSTITUTION_EXAM_ACCESS");
+}
+
+/**
+ * Optional: grant examination stack ACCESS to teachers / departmental leads tied to an institution.
+ */
+async function seedTeacherExaminationStackIfRequested() {
+  if (!truthyEnv(process.env.IMIS_SEED_TEACHER_EXAM_ACCESS, false)) {
+    return;
+  }
+  const bundleKeys = [
+    MODULE_KEYS.CBC_CURRICULUM_EDITOR,
+    MODULE_KEYS.ACADEMIC_EXAMS,
+    MODULE_KEYS.ACADEMIC_MARKS
+  ];
+  const rows = await query(
+    `SELECT id, institution_id, role
+     FROM users
+     WHERE is_active = 1
+       AND institution_id IS NOT NULL AND institution_id <> 0
+       AND role IN (?, ?, ?)`,
+    [ROLES.TEACHER, ROLES.SENIOR_TEACHER, ROLES.HEAD_OF_DEPARTMENT]
+  );
+  await insertMissingExamStackOverrides(rows, bundleKeys, "IMIS_SEED_TEACHER_EXAM_ACCESS");
 }
 
 async function ensureSystemDeveloperAccount(defaultInstitutionId) {
@@ -1505,6 +1530,33 @@ CREATE TABLE IF NOT EXISTS online_admission_requests (
   CONSTRAINT fk_online_admission_inst FOREIGN KEY (institution_id) REFERENCES institutions(id)
 )`);
 
+  await query(`
+CREATE TABLE IF NOT EXISTS exam_question_bank (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  institution_id BIGINT NOT NULL,
+  grade_or_form VARCHAR(120) NULL,
+  learning_area VARCHAR(255) NOT NULL,
+  strand VARCHAR(255) NULL,
+  sub_strand VARCHAR(255) NULL,
+  slo_reference VARCHAR(120) NULL,
+  competency_tag VARCHAR(120) NULL,
+  bloom_level VARCHAR(40) NULL,
+  difficulty VARCHAR(40) NULL,
+  question_type VARCHAR(40) NOT NULL DEFAULT 'STRUCTURED',
+  stem_text MEDIUMTEXT NOT NULL,
+  mcq_json JSON NULL,
+  status VARCHAR(40) NOT NULL DEFAULT 'DRAFT',
+  source VARCHAR(40) NOT NULL DEFAULT 'MANUAL',
+  reviewed_at DATETIME NULL,
+  reviewed_by_user_id BIGINT NULL,
+  deleted_at DATETIME NULL,
+  created_by_user_id VARCHAR(100) NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  INDEX idx_exam_question_bank_scope (institution_id, learning_area, grade_or_form, question_type, status),
+  CONSTRAINT fk_exam_question_bank_institution FOREIGN KEY (institution_id) REFERENCES institutions(id)
+)`);
+
   const academicExamsTableRows = await query(
     `SELECT COUNT(*) total
      FROM INFORMATION_SCHEMA.TABLES
@@ -1551,6 +1603,7 @@ async function start() {
   await ensureSystemDeveloperAccount(defaultInstitutionId);
   await seedLegacyAdministratorModuleRightsIfRequested();
   await seedInstitutionExaminationStackIfRequested();
+  await seedTeacherExaminationStackIfRequested();
 
   let boundPort = PORT;
   let server = null;

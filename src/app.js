@@ -1411,6 +1411,16 @@ function canManageAcrossInstitutions(user) {
   return isSuperSystemDeveloperRole(user?.role);
 }
 
+function resolveTenantInstitutionId(req) {
+  const ownId = Number(req.user?.institution_id || 0);
+  const overrideId = Number(req.body?.institution_id || req.query?.institution_id || 0);
+  if (isAnySystemDeveloperRole(req.user?.role)) {
+    const picked = overrideId || ownId;
+    return Number.isFinite(picked) && picked > 0 ? picked : 0;
+  }
+  return Number.isFinite(ownId) && ownId > 0 ? ownId : 0;
+}
+
 async function getSystemDeveloperAssignedInstitutionIds(userId) {
   const normalizedUserId = Number(userId || 0);
   if (!normalizedUserId) return [];
@@ -12083,6 +12093,156 @@ function buildAdvancedExamText({
   const mcqAnswerKey = mcqKeys.length ? ["IMIS_MCQ_KEY", ...mcqKeys, "IMIS_MCQ_KEY_END"].join("\n") : "";
   return { learnerText, teacherSupplement, mcqAnswerKey };
 }
+
+const QUESTION_BANK_ROLES = [
+  ROLES.SUPER_SYSTEM_DEVELOPER,
+  ROLES.SYSTEM_DEVELOPER,
+  ROLES.ADMIN,
+  ROLES.HEAD_OF_INSTITUTION,
+  ROLES.SYSTEM_ADMINISTRATOR,
+  ROLES.TEACHER,
+  ROLES.SENIOR_TEACHER,
+  ROLES.HEAD_OF_DEPARTMENT
+];
+
+app.get(
+  "/api/academic/question-bank",
+  auth,
+  enforceAnyModuleAccess([MODULE_KEYS.ACADEMIC_EXAMS, MODULE_KEYS.CBC_CURRICULUM_EDITOR]),
+  enforceRole(QUESTION_BANK_ROLES),
+  enforcePermission(PERMISSIONS.VIEW),
+  asyncHandler(async (req, res) => {
+    const institutionId = resolveTenantInstitutionId(req);
+    if (!institutionId) {
+      return res.status(403).json({ error: "No institution scope attached to this account." });
+    }
+    const gradeOrForm = cleanOptionalValue(req.query.grade_or_form || req.query.grade || req.query.form);
+    const learningArea = cleanOptionalValue(req.query.learning_area || req.query.subject);
+    const questionType = cleanOptionalValue(req.query.question_type)?.toUpperCase();
+    const statusFilter = cleanOptionalValue(req.query.status)?.toUpperCase();
+    let limit = Number(req.query.limit || 120);
+    if (!Number.isFinite(limit) || limit < 1) limit = 120;
+    limit = Math.min(400, limit);
+    let offset = Number(req.query.offset || 0);
+    if (!Number.isFinite(offset) || offset < 0) offset = 0;
+    let sql = `SELECT id, institution_id, grade_or_form, learning_area, strand, sub_strand, slo_reference,
+         competency_tag, bloom_level, difficulty, question_type, stem_text, mcq_json, status, source,
+         reviewed_at, reviewed_by_user_id, created_at, updated_at
+       FROM exam_question_bank
+       WHERE institution_id = ? AND deleted_at IS NULL`;
+    const params = [institutionId];
+    if (gradeOrForm) {
+      sql += ` AND grade_or_form = ?`;
+      params.push(gradeOrForm);
+    }
+    if (learningArea) {
+      sql += ` AND learning_area = ?`;
+      params.push(cleanValue(learningArea));
+    }
+    if (questionType) {
+      sql += ` AND UPPER(question_type) = ?`;
+      params.push(questionType.slice(0, 40));
+    }
+    if (statusFilter) {
+      sql += ` AND UPPER(status) = ?`;
+      params.push(statusFilter.slice(0, 40));
+    }
+    sql += ` ORDER BY id DESC LIMIT ? OFFSET ?`;
+    params.push(limit, offset);
+    const rows = await query(sql, params);
+    res.json({ items: rows });
+  })
+);
+
+app.post(
+  "/api/academic/question-bank",
+  auth,
+  enforceAnyModuleAccess([MODULE_KEYS.ACADEMIC_EXAMS, MODULE_KEYS.CBC_CURRICULUM_EDITOR]),
+  enforceRole(QUESTION_BANK_ROLES),
+  enforcePermission(PERMISSIONS.CREATE),
+  asyncHandler(async (req, res) => {
+    const institutionId = resolveTenantInstitutionId(req);
+    if (!institutionId) {
+      return res.status(403).json({ error: "No institution scope attached to this account." });
+    }
+    const exists = await query("SELECT id FROM institutions WHERE id = ? LIMIT 1", [institutionId]);
+    if (!exists.length) {
+      return res.status(404).json({ error: "Institution not found for this scope." });
+    }
+    const learningArea = cleanValue(req.body?.learning_area || req.body?.subject || "");
+    const stemRaw = req.body?.stem_text ?? req.body?.stem ?? "";
+    const stem =
+      typeof stemRaw === "string"
+        ? stemRaw.slice(0, 62000).trim()
+        : String(stemRaw || "").slice(0, 62000).trim();
+    if (!learningArea || !stem) {
+      return res.status(400).json({ error: "learning_area and stem_text are required." });
+    }
+    const questionTypeUpper = cleanValue(req.body?.question_type || "STRUCTURED").toUpperCase().slice(0, 40) || "STRUCTURED";
+    const gradeOrForm = cleanOptionalValue(req.body?.grade_or_form || req.body?.grade || req.body?.form_name);
+    const strand = cleanOptionalValue(req.body?.strand);
+    const subStrand = cleanOptionalValue(req.body?.sub_strand);
+    const sloRef = cleanOptionalValue(req.body?.slo_reference);
+    const competencyTag = cleanOptionalValue(req.body?.competency_tag);
+    const bloomLevel = cleanOptionalValue(req.body?.bloom_level);
+    const difficulty = cleanOptionalValue(req.body?.difficulty);
+    const statusUpper = cleanValue(req.body?.status || "DRAFT").toUpperCase().slice(0, 40) || "DRAFT";
+    const sourceUpper = cleanValue(req.body?.source || "MANUAL").toUpperCase().slice(0, 40) || "MANUAL";
+
+    let mcqJsonPayload = req.body?.mcq_json ?? null;
+    if (mcqJsonPayload === null && typeof req.body?.mcq_payload === "object") {
+      mcqJsonPayload = req.body?.mcq_payload;
+    }
+    if (questionTypeUpper === "MCQ" && !mcqJsonPayload) {
+      return res.status(400).json({ error: "mcq_json (or mcq_payload) is required for MCQ rows." });
+    }
+    let mcqJsonSerialized = null;
+    if (mcqJsonPayload !== null && mcqJsonPayload !== undefined && mcqJsonPayload !== "") {
+      try {
+        const parsed =
+          typeof mcqJsonPayload === "string" ? JSON.parse(mcqJsonPayload) : mcqJsonPayload;
+        mcqJsonSerialized = JSON.stringify(parsed);
+      } catch (_) {
+        return res.status(400).json({ error: "mcq_json must be valid JSON." });
+      }
+    }
+
+    const result = await query(
+      `INSERT INTO exam_question_bank
+        (institution_id, grade_or_form, learning_area, strand, sub_strand, slo_reference,
+         competency_tag, bloom_level, difficulty, question_type, stem_text, mcq_json, status, source,
+         created_by_user_id)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      [
+        institutionId,
+        gradeOrForm || null,
+        learningArea,
+        strand || null,
+        subStrand || null,
+        sloRef || null,
+        competencyTag || null,
+        bloomLevel || null,
+        difficulty || null,
+        questionTypeUpper,
+        stem,
+        mcqJsonSerialized,
+        statusUpper,
+        sourceUpper,
+        String(Number(req.user.id || 0) || "") || null
+      ]
+    );
+    const insertId = result.insertId;
+    await auditLog(req.user, "EXAM_QUESTION_BANK_CREATE", "exam_question_bank", insertId, {
+      institution_id: institutionId,
+      learning_area: learningArea,
+      question_type: questionTypeUpper
+    });
+    res.status(201).json({
+      message: "Question bank item captured.",
+      id: insertId
+    });
+  })
+);
 
 app.post(
   "/api/academic/exams/auto-generate",

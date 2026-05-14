@@ -545,6 +545,32 @@ CREATE TABLE IF NOT EXISTS academic_marks (
   CONSTRAINT fk_marks_learner FOREIGN KEY (learner_id) REFERENCES learners(id)
 );
 
+CREATE TABLE IF NOT EXISTS exam_question_bank (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  institution_id BIGINT NOT NULL,
+  grade_or_form VARCHAR(120) NULL,
+  learning_area VARCHAR(255) NOT NULL,
+  strand VARCHAR(255) NULL,
+  sub_strand VARCHAR(255) NULL,
+  slo_reference VARCHAR(120) NULL,
+  competency_tag VARCHAR(120) NULL,
+  bloom_level VARCHAR(40) NULL,
+  difficulty VARCHAR(40) NULL,
+  question_type VARCHAR(40) NOT NULL DEFAULT 'STRUCTURED',
+  stem_text MEDIUMTEXT NOT NULL,
+  mcq_json JSON NULL,
+  status VARCHAR(40) NOT NULL DEFAULT 'DRAFT',
+  source VARCHAR(40) NOT NULL DEFAULT 'MANUAL',
+  reviewed_at DATETIME NULL,
+  reviewed_by_user_id BIGINT NULL,
+  deleted_at DATETIME NULL,
+  created_by_user_id VARCHAR(100) NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  INDEX idx_exam_question_bank_scope (institution_id, learning_area, grade_or_form, question_type, status),
+  CONSTRAINT fk_exam_question_bank_institution FOREIGN KEY (institution_id) REFERENCES institutions(id)
+);
+
 CREATE TABLE IF NOT EXISTS hr_leave_requests (
   id BIGINT PRIMARY KEY AUTO_INCREMENT,
   institution_id BIGINT NOT NULL,
