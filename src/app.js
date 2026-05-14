@@ -12588,8 +12588,9 @@ app.get(
       sql += ` AND UPPER(status) = ?`;
       params.push(statusFilter.slice(0, 40));
     }
-    sql += ` ORDER BY id DESC LIMIT ? OFFSET ?`;
-    params.push(limit, offset);
+    const safeLimitInt = Math.min(400, Math.max(1, Math.floor(Number(limit))));
+    const safeOffsetInt = Math.max(0, Math.floor(Number(offset)));
+    sql += ` ORDER BY id DESC LIMIT ${safeLimitInt} OFFSET ${safeOffsetInt}`;
     const rows = await query(sql, params);
     res.json({ items: rows });
   })
