@@ -13,7 +13,7 @@ let portalContext = null;
 let searchRowDrafts = {};
 let dashboardAutoRefreshHandle = null;
 let currentSidebarSubmoduleId = null;
-const CLIENT_UI_BUNDLE_ID = "dash-bundle-enterprise-v81-phase1-security";
+const CLIENT_UI_BUNDLE_ID = "dash-bundle-enterprise-v82-exam-institution-access";
 const examPanelState = {
   generatedExam: null,
   serials: [],
@@ -6051,24 +6051,9 @@ async function renderCbcCurriculumEditor(options = {}) {
   stopDashboardAutoRefresh();
 
   const actorRole = normalizeRoleKey(portalContext?.role || "");
-  const isSuperSystemDeveloper = actorRole === "SUPER_SYSTEM_DEVELOPER";
-  if (!isSuperSystemDeveloper) {
-    document.getElementById("cards").innerHTML = `
-      <div class="card stats-card metric-emphasis"><h4>Examination Management</h4><p>Restricted</p></div>
-      <div class="card stats-card"><h4>Allowed Role</h4><p>SUPER SYSTEM DEVELOPER</p></div>
-      <div class="card stats-card"><h4>Current Role</h4><p>${escapeHtml(actorRole || "-")}</p></div>
-    `;
-    document.getElementById("formArea").innerHTML = `
-      <div class="module-header-card">
-        <h3>Examination Management Module</h3>
-        <p>This redesigned module is available only to <strong>SUPER SYSTEM DEVELOPER</strong>.</p>
-      </div>
-    `;
-    resetDataTable("Examination module access restricted.");
-    return;
-  }
+  const canManageCurriculum =
+    actorRole === "SUPER_SYSTEM_DEVELOPER" || actorRole === "SYSTEM_DEVELOPER";
 
-  const initialTab = normalizeExamTabKey(options?.examTab || "exam-generation");
   const canonicalGrades = [
     "PP1",
     "PP2",
@@ -6122,6 +6107,16 @@ async function renderCbcCurriculumEditor(options = {}) {
     { id: "settings", label: "Settings" }
   ];
 
+  const visibleTabDefs = canManageCurriculum ? tabDefs : tabDefs.filter((t) => t.id !== "curriculum");
+  let initialTab = normalizeExamTabKey(options?.examTab || "exam-generation");
+  if (initialTab === "curriculum" && !canManageCurriculum) {
+    initialTab = "exam-generation";
+  }
+  const resolveExamTabLabel = (id = "") =>
+    visibleTabDefs.find((item) => item.id === id)?.label ||
+    tabDefs.find((item) => item.id === id)?.label ||
+    "Module";
+
   const renderExamCards = async () => {
     try {
       const [curriculum, materials, exams, marks] = await Promise.all([
@@ -6140,7 +6135,7 @@ async function renderCbcCurriculumEditor(options = {}) {
       document.getElementById("cards").innerHTML = `
         <div class="card stats-card metric-emphasis"><h4>Examination Engine</h4><p>Ready</p></div>
         <div class="card stats-card"><h4>Mode</h4><p>Dynamic</p></div>
-        <div class="card stats-card"><h4>Access</h4><p>SSD only</p></div>
+        <div class="card stats-card"><h4>Access</h4><p>${canManageCurriculum ? "Developer tools" : "Institution workspace"}</p></div>
       `;
     }
   };
@@ -6194,9 +6189,10 @@ async function renderCbcCurriculumEditor(options = {}) {
 
   const renderNav = (activeTab = "exam-generation") => {
     if (!navEl) return;
-    const active = normalizeExamTabKey(activeTab);
+    let active = normalizeExamTabKey(activeTab);
+    if (active === "curriculum" && !canManageCurriculum) active = "exam-generation";
     const quickTabs = [
-      { id: "curriculum", label: "Curriculum" },
+      ...(canManageCurriculum ? [{ id: "curriculum", label: "Curriculum" }] : []),
       { id: "exam-generation", label: "Exam Generation" },
       { id: "exam-entry", label: "Exam Entry" },
       { id: "exam-scripts", label: "Exam Scripts" },
@@ -6207,7 +6203,12 @@ async function renderCbcCurriculumEditor(options = {}) {
         <div class="exam-nav-rework-primary">
           <label class="exam-nav-rework-label" for="examTabQuickSelect">Section</label>
           <select id="examTabQuickSelect" class="exam-tab-quick-select" aria-label="Jump to examination section">
-            ${tabDefs.map((t) => `<option value="${escapeHtmlAttribute(t.id)}"${active === t.id ? " selected" : ""}>${escapeHtml(t.label)}</option>`).join("")}
+            ${visibleTabDefs
+              .map(
+                (t) =>
+                  `<option value="${escapeHtmlAttribute(t.id)}"${active === t.id ? " selected" : ""}>${escapeHtml(t.label)}</option>`
+              )
+              .join("")}
           </select>
         </div>
         <div class="exam-nav-rework-links" aria-label="Quick links">
@@ -9916,9 +9917,10 @@ async function renderCbcCurriculumEditor(options = {}) {
   };
 
   const activateTab = async (targetTab = "exam-generation") => {
-    const tab = normalizeExamTabKey(targetTab || "exam-generation");
+    let tab = normalizeExamTabKey(targetTab || "exam-generation");
+    if (tab === "curriculum" && !canManageCurriculum) tab = "exam-generation";
     renderNav(tab);
-    setStatus(`Loading ${tabDefs.find((item) => item.id === tab)?.label || "module"}...`);
+    setStatus(`Loading ${resolveExamTabLabel(tab)}...`);
     if (tab === "curriculum") await renderCurriculumTab();
     else if (tab === "exam-generation") await renderExamGenerationTab();
     else if (tab === "exam-entry" || tab === "marks-entry") await renderExamEntryTab();
@@ -9951,9 +9953,9 @@ async function renderCbcCurriculumEditor(options = {}) {
       await wireExamSettingsPanel();
       stylePanel();
     } else {
-      await renderCurriculumTab();
+      await renderExamGenerationTab();
     }
-    setStatus(`${tabDefs.find((item) => item.id === tab)?.label || "Module"} ready.`);
+    setStatus(`${resolveExamTabLabel(tab)} ready.`);
   };
 
   if (navEl && navEl.dataset.examNavDelegation !== "1") {
