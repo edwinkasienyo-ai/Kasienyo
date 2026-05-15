@@ -1,15 +1,17 @@
 {
-  "name": "iims-basic-learning",
+  "name": "imis-basic-education",
   "version": "1.0.0",
-  "description": "Integrated Information Management System for Basic Learning Institutions",
+  "description": "IMIS — Integrated Management Information System for Basic Education (institutions & learning)",
   "main": "src/server.js",
   "scripts": {
+    "prestart": "node scripts/ensure-env.js",
+    "predev": "node scripts/ensure-env.js",
     "start": "node src/server.js",
     "dev": "nodemon src/server.js",
     "go": "npm install && npm run dev",
     "autofix:win": "powershell -ExecutionPolicy Bypass -File scripts/windows-auto-setup.ps1",
     "hash": "node scripts/hash.js",
-    "check": "node --check src/server.js && node --check src/app.js && node --check src/readIndexFingerprint.js"
+    "check": "node --check scripts/ensure-env.js && node --check src/server.js && node --check src/app.js && node --check src/readIndexFingerprint.js && node --check public/dashboard.js"
   },
   "keywords": [
     "education",
@@ -30,9 +32,11 @@
     "express": "^4.21.2",
     "helmet": "^8.0.0",
     "jsonwebtoken": "^9.0.2",
+    "jsqr": "^1.4.0",
     "multer": "^2.1.1",
     "mysql2": "^3.11.3",
     "nodemailer": "^6.9.15",
+    "pdf-parse": "^1.1.1",
     "pdfkit": "^0.15.0",
     "qrcode": "^1.5.4",
     "speakeasy": "^2.0.0",
