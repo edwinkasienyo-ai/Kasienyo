@@ -1,54 +1,5 @@
 const path = require("path");
-const fs = require("fs");
-const envPath = path.join(__dirname, "..", ".env");
-const envExamplePath = path.join(__dirname, "..", ".env.example");
-let envJustCreated = false;
-if (!fs.existsSync(envPath)) {
-  try {
-    if (fs.existsSync(envExamplePath)) {
-      fs.copyFileSync(envExamplePath, envPath);
-      envJustCreated = true;
-      console.warn(`[IMIS Basic Education] Created .env from .env.example at ${envPath}`);
-    } else {
-      const minimalDotEnv = [
-        "NODE_ENV=development",
-        "PORT=5002",
-        "JWT_SECRET=change-me-very-long-secret",
-        "DB_HOST=127.0.0.1",
-        "DB_PORT=3306",
-        "DB_USER=root",
-        "DB_PASS=",
-        "DB_NAME=iims_school_system",
-        "FRONTEND_ORIGIN=http://localhost:5002"
-      ].join("\n");
-      fs.writeFileSync(envPath, minimalDotEnv, "utf8");
-      envJustCreated = true;
-      console.warn(
-        `[IMIS Basic Education] Created minimal .env at ${envPath} (.env.example was missing — restore repo files or edit DB_PASS here).`
-      );
-    }
-  } catch (err) {
-    console.warn(`[IMIS Basic Education] Could not auto-create .env: ${err?.message || err}`);
-  }
-}
-require("dotenv").config({ path: envPath });
-if (envJustCreated) {
-  const u = String(process.env.DB_USER || "root").trim();
-  console.error(
-    `[IMIS Basic Education] First-time setup: open .env in Notepad, set DB_PASS to your MySQL password for "${u}", save, then run: npm start`
-  );
-  process.exit(1);
-}
-if (!fs.existsSync(envPath)) {
-  console.warn(
-    `[IMIS Basic Education] No .env file at ${envPath}. Copy .env.example to .env and set DB_PASS (MySQL), JWT_SECRET, PORT, etc.`
-  );
-} else if (String(process.env.NODE_ENV || "").toLowerCase() !== "production") {
-  const hasDbPass = String(process.env.DB_PASS ?? "").length > 0;
-  console.log(
-    `[IMIS Basic Education] Loaded .env from project root · DB_PASS ${hasDbPass ? "is set" : "is empty (only OK if MySQL user has no password)"}`
-  );
-}
+require("dotenv").config({ path: path.join(__dirname, "..", ".env") });
 const app = require("./app");
 const {
   readPublicIndexFingerprint,

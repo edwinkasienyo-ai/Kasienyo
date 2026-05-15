@@ -8,7 +8,7 @@ $ErrorActionPreference = "Stop"
 
 # ============ CHANGE ONLY IF YOUR FOLDER IS DIFFERENT ============
 $RepoRoot = "C:\dev\Kasienyo"
-$Branch   = "cursor/imis-basic-education-dotenv-package-rename-3b70"
+$Branch   = "main"
 # ================================================================
 
 function Set-DotEnvKey {

@@ -17,7 +17,7 @@ $ErrorActionPreference = "Stop"
 $RepoRoot = "C:\path\to\Kasienyo"
 
 # === 2) Branch to deploy (push target from Cursor/cloud agents typically cursor/<feature>-3b70)
-$Branch = "cursor/imis-basic-education-dotenv-package-rename-3b70"
+$Branch = "main"
 
 Set-Location -LiteralPath $RepoRoot
 

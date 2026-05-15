@@ -5,7 +5,7 @@ $ErrorActionPreference = "Stop"
 
 # === CHANGE THIS to your real folder (yours is C:\dev\Kasienyo if you cloned there)
 $RepoRoot = "C:\dev\Kasienyo"
-$Branch   = "cursor/imis-basic-education-dotenv-package-rename-3b70"
+$Branch   = "main"
 
 Set-Location -LiteralPath $RepoRoot
 
