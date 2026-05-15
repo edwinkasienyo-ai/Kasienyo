@@ -43,7 +43,7 @@
     <link rel="apple-touch-icon" href="/uploads/index-hero.jpg?v=20260411" />
     <link rel="manifest" href="/site.webmanifest" />
     <link rel="preload" as="image" href="/uploads/index-hero.jpg?v=20260411" />
-    <link rel="stylesheet" href="/styles.css?v=51" />
+    <link rel="stylesheet" href="/styles.css?v=73" />
   </head>
   <body class="login-page login-page--split">
     <div class="login-split">
@@ -112,6 +112,9 @@
 
       <div class="login-right-stack">
         <div class="login-right">
+          <nav class="auth-portal-quicklinks" aria-label="Public portals">
+            <a href="/admission-portal.html">Admission portal</a>
+          </nav>
           <div class="card auth-card auth-card--compact auth-card--index glass-card">
             <header class="auth-card-head auth-card-head--welcome-only">
               <h3 class="auth-welcome-heading">Welcome back</h3>
@@ -153,16 +156,32 @@
             <input id="password" type="password" placeholder="Enter password" disabled />
             <label>OTP channel</label>
             <select id="otpChannel" disabled>
-              <option value="sms_email" selected>SMS &amp; Email</option>
+              <option value="sms_email" selected>SMS &amp; Email (recommended)</option>
               <option value="sms">SMS only</option>
               <option value="email">Email only</option>
               <option value="console" data-sysdev-only="1">Console (System Developer)</option>
             </select>
+            <p class="small-note" style="margin-top:4px;">
+              OTP codes are delivered only through your selected channel. Operators may enable a guarded server console hint in non-production deployments when configured.
+            </p>
             <button id="loginButton" class="auth-primary-btn" type="button" disabled>Send OTP</button>
+            <div class="auth-inline-actions" style="margin-top:6px;">
+              <button id="resendOtpButton" type="button" class="link-btn link-btn--subtle" disabled>
+                Resend OTP (wait for cooldown)
+              </button>
+            </div>
 
             <p class="step-label">STEP 2 — OTP CODE VERIFICATION</p>
             <label>OTP code</label>
-            <input id="otp" placeholder="Enter the code you received" disabled />
+            <input
+              id="otp"
+              placeholder="Enter the code you received"
+              disabled
+              autocomplete="one-time-code"
+              inputmode="numeric"
+              autocapitalize="off"
+              spellcheck="false"
+            />
             <button id="verifyButton" class="auth-primary-btn" type="button" disabled>Verify OTP &amp; log in</button>
 
             <div class="auth-link-row auth-link-row--after-verify">
@@ -258,6 +277,6 @@
       </div>
     </div>
 
-    <script src="/main.js?v=51"></script>
+    <script src="/main.js?v=53"></script>
   </body>
 </html>
