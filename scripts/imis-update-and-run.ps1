@@ -7,7 +7,7 @@ $ErrorActionPreference = "Stop"
 $RepoRoot = "C:\path\to\Kasienyo"
 
 # === 2) Branch to deploy (push target from Cursor/cloud agents typically cursor/<feature>-3b70)
-$Branch = "cursor/imis-batch-12-admission-detail-buildstamp-exam-guard-3b70"
+$Branch = "cursor/imis-batch-13-status-qb-stem-exam-hints-3b70"
 
 Set-Location -LiteralPath $RepoRoot
 
@@ -19,7 +19,7 @@ if ($current -ne $Branch) {
 }
 git pull -u origin $Branch
 
-Write-Host "Syntax check (server/app) ..."
+Write-Host "Syntax check (server/app + dashboard bundle) ..."
 npm run check
 
 Write-Host "Installing dependencies ..."
@@ -48,3 +48,4 @@ Write-Host "Stop duplicate/old Node listeners on PORT, then start once:" -Foregr
 Write-Host "  npm start" -ForegroundColor Cyan
 Write-Host ""
 Write-Host "Hard-refresh dashboard (Ctrl+F5) after deploy — dashboard.js is cache-busted via dashboard.html query string." -ForegroundColor Yellow
+Write-Host "This branch includes Batch 13 dashboard SyntaxError fix (admission workflow prompt) + npm check on public/dashboard.js." -ForegroundColor Gray
