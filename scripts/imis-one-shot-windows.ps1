@@ -1,4 +1,4 @@
-# IMIS / Kasienyo — paste ONCE in PowerShell: full path to this file with -File
+# IMIS Basic Education — one-paste Windows setup (GitHub repo folder name may still be "Kasienyo"; product name is IMIS Basic Education)
 #   powershell -ExecutionPolicy Bypass -File "C:\dev\Kasienyo\scripts\imis-one-shot-windows.ps1"
 #
 # Or paste the entire script body from the repo/README into PowerShell ISE / save as .ps1 first.
@@ -8,7 +8,7 @@ $ErrorActionPreference = "Stop"
 
 # ============ CHANGE ONLY IF YOUR FOLDER IS DIFFERENT ============
 $RepoRoot = "C:\dev\Kasienyo"
-$Branch   = "cursor/imis-batch-13-status-qb-stem-exam-hints-3b70"
+$Branch   = "cursor/imis-basic-education-dotenv-package-rename-3b70"
 # ================================================================
 
 function Set-DotEnvKey {
@@ -29,7 +29,7 @@ function Set-DotEnvKey {
 
 Write-Host "`n=== IMIS: repo update ===" -ForegroundColor Cyan
 if (-not (Test-Path -LiteralPath "$RepoRoot\.git")) {
-  Write-Host "ERROR: Not a git repo: $RepoRoot`nClone first: git clone https://github.com/edwinkasienyo-ai/Kasienyo.git $RepoRoot" -ForegroundColor Red
+  Write-Host "ERROR: Not a git repo: $RepoRoot`nClone GitHub repo (IMIS Basic Education codebase): git clone https://github.com/edwinkasienyo-ai/Kasienyo.git $RepoRoot" -ForegroundColor Red
   exit 1
 }
 Set-Location -LiteralPath $RepoRoot

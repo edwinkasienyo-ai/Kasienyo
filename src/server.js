@@ -1,4 +1,17 @@
-require("dotenv").config();
+const path = require("path");
+const fs = require("fs");
+const envPath = path.join(__dirname, "..", ".env");
+require("dotenv").config({ path: envPath });
+if (!fs.existsSync(envPath)) {
+  console.warn(
+    `[IMIS Basic Education] No .env file at ${envPath}. Copy .env.example to .env and set DB_PASS (MySQL), JWT_SECRET, PORT, etc.`
+  );
+} else if (String(process.env.NODE_ENV || "").toLowerCase() !== "production") {
+  const hasDbPass = String(process.env.DB_PASS ?? "").length > 0;
+  console.log(
+    `[IMIS Basic Education] Loaded .env from project root · DB_PASS ${hasDbPass ? "is set" : "is empty (only OK if MySQL user has no password)"}`
+  );
+}
 const app = require("./app");
 const {
   readPublicIndexFingerprint,

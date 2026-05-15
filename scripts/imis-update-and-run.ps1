@@ -1,4 +1,4 @@
-# IMIS / Kasienyo — Git pull + npm install + deployment reminders (Windows PowerShell)
+# IMIS Basic Education — Git pull + npm install + deployment reminders (Windows PowerShell)
 #
 # HOW TO RUN (choose one):
 #   A) Save this entire file, then:
@@ -17,7 +17,7 @@ $ErrorActionPreference = "Stop"
 $RepoRoot = "C:\path\to\Kasienyo"
 
 # === 2) Branch to deploy (push target from Cursor/cloud agents typically cursor/<feature>-3b70)
-$Branch = "cursor/imis-batch-13-status-qb-stem-exam-hints-3b70"
+$Branch = "cursor/imis-basic-education-dotenv-package-rename-3b70"
 
 Set-Location -LiteralPath $RepoRoot
 

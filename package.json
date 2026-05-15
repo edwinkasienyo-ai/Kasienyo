@@ -1,7 +1,7 @@
 {
-  "name": "iims-basic-learning",
+  "name": "imis-basic-education",
   "version": "1.0.0",
-  "description": "Integrated Information Management System for Basic Learning Institutions",
+  "description": "IMIS — Integrated Management Information System for Basic Education (institutions & learning)",
   "main": "src/server.js",
   "scripts": {
     "start": "node src/server.js",
