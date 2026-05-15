@@ -1,4 +1,14 @@
 # IMIS / Kasienyo — Git pull + npm install + deployment reminders (Windows PowerShell)
+#
+# HOW TO RUN (choose one):
+#   A) Save this entire file, then:
+#        powershell -ExecutionPolicy Bypass -File "C:\dev\Kasienyo\scripts\imis-update-and-run.ps1"
+#   B) Use the simpler script with fewer conditionals:
+#        .\scripts\imis-pull-simple.ps1
+#
+# DO NOT paste fragments (lines starting with elseif/else) into the console by themselves —
+# PowerShell will error. elseif/else only work after a matching "if { ... }" in the same block or script.
+#
 # Paste into PowerShell after editing $RepoRoot (path to repo root). Whole-file copy is OK.
 
 $ErrorActionPreference = "Stop"
