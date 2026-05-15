@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- STEP1_IDX_REV=51 — index left stacks like owner reference (light panel + hero + bordered strips) -->
+<!-- STEP1_IDX_REV=52 — portal role optgroups so Super System Developer is easy to find -->
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
@@ -43,7 +43,7 @@
     <link rel="apple-touch-icon" href="/uploads/index-hero.jpg?v=20260411" />
     <link rel="manifest" href="/site.webmanifest" />
     <link rel="preload" as="image" href="/uploads/index-hero.jpg?v=20260411" />
-    <link rel="stylesheet" href="/styles.css?v=51" />
+    <link rel="stylesheet" href="/styles.css?v=73" />
   </head>
   <body class="login-page login-page--split">
     <div class="login-split">
@@ -112,40 +112,55 @@
 
       <div class="login-right-stack">
         <div class="login-right">
+          <nav class="auth-portal-quicklinks" aria-label="Public portals">
+            <a href="/admission-portal.html">Admission portal</a>
+          </nav>
           <div class="card auth-card auth-card--compact auth-card--index glass-card">
             <header class="auth-card-head auth-card-head--welcome-only">
               <h3 class="auth-welcome-heading">Welcome back</h3>
               <p class="small-note auth-intro auth-intro--tight">
                 Sign in with your credentials and verify OTP. Select <strong>Portal role</strong> first — other fields
                 activate afterward.
+                Super System Developer accounts: open the list and choose the <strong>System access</strong> group →
+                <strong>Super System Developer</strong>.
               </p>
             </header>
             <p id="authNotice" class="small-note auth-notice" aria-live="polite"></p>
 
             <p class="step-label">STEP 1 — CREDENTIALS</p>
             <label>Portal role *</label>
-            <select id="loginPortalRole">
+            <select id="loginPortalRole" aria-label="Portal role for sign-in">
               <option value="">Choose your portal role first...</option>
-              <option value="SUPER_SYSTEM_DEVELOPER">SUPER SYSTEM DEVELOPER</option>
-              <option value="SYSTEM_DEVELOPER">SYSTEM DEVELOPER</option>
-              <option value="SYSTEM_ADMINISTRATOR">SYSTEM ADMINISTRATOR</option>
-              <option value="ADMIN">HOI / ADMINISTRATOR</option>
-              <option value="TSC">TSC</option>
-              <option value="MOD">MOE</option>
-              <option value="HEAD_OF_INSTITUTION">D / HOI</option>
-              <option value="SENIOR_TEACHER">S / TEACHER</option>
-              <option value="TEACHER">TEACHER</option>
-              <option value="NON_TEACHING_STAFF">SUPPORT STAFF</option>
-              <option value="BOM">BOM</option>
-              <option value="TSC_SCD">TSC SCD</option>
-              <option value="MOE_SCD">MOE SCD</option>
-              <option value="TSC_CD">TSC CD</option>
-              <option value="MOE_CD">MOE CD</option>
-              <option value="MOE_RD">MOE RD</option>
-              <option value="TSC_RD">TSC RD</option>
-              <option value="SUPPLIER">SERVICE PROVIDER</option>
-              <option value="PARENT">PARENT / GUARDIAN</option>
-              <option value="LEARNER">LEARNER</option>
+              <optgroup label="System access (developers & platform)">
+                <option value="SUPER_SYSTEM_DEVELOPER">Super System Developer — highest technical access</option>
+                <option value="SYSTEM_DEVELOPER">System Developer</option>
+                <option value="SYSTEM_ADMINISTRATOR">System Administrator</option>
+              </optgroup>
+              <optgroup label="Institution heads & admins">
+                <option value="ADMIN">HOI / Administrator</option>
+                <option value="HEAD_OF_INSTITUTION">D / HOI</option>
+              </optgroup>
+              <optgroup label="Ministry / agencies">
+                <option value="TSC">TSC</option>
+                <option value="MOD">MOE</option>
+                <option value="TSC_SCD">TSC SCD</option>
+                <option value="MOE_SCD">MOE SCD</option>
+                <option value="TSC_CD">TSC CD</option>
+                <option value="MOE_CD">MOE CD</option>
+                <option value="MOE_RD">MOE RD</option>
+                <option value="TSC_RD">TSC RD</option>
+              </optgroup>
+              <optgroup label="School staff">
+                <option value="SENIOR_TEACHER">S / Teacher (Senior)</option>
+                <option value="TEACHER">Teacher</option>
+                <option value="NON_TEACHING_STAFF">Support staff</option>
+                <option value="BOM">BOM</option>
+              </optgroup>
+              <optgroup label="Partners & guardians">
+                <option value="SUPPLIER">Service provider</option>
+                <option value="PARENT">Parent / Guardian</option>
+                <option value="LEARNER">Learner</option>
+              </optgroup>
             </select>
             <label>Username</label>
             <input id="username" placeholder="Enter username" disabled />
@@ -153,16 +168,32 @@
             <input id="password" type="password" placeholder="Enter password" disabled />
             <label>OTP channel</label>
             <select id="otpChannel" disabled>
-              <option value="sms_email" selected>SMS &amp; Email</option>
+              <option value="sms_email" selected>SMS &amp; Email (recommended)</option>
               <option value="sms">SMS only</option>
               <option value="email">Email only</option>
               <option value="console" data-sysdev-only="1">Console (System Developer)</option>
             </select>
+            <p class="small-note" style="margin-top:4px;">
+              OTP codes are delivered only through your selected channel. Operators may enable a guarded server console hint in non-production deployments when configured.
+            </p>
             <button id="loginButton" class="auth-primary-btn" type="button" disabled>Send OTP</button>
+            <div class="auth-inline-actions" style="margin-top:6px;">
+              <button id="resendOtpButton" type="button" class="link-btn link-btn--subtle" disabled>
+                Resend OTP (wait for cooldown)
+              </button>
+            </div>
 
             <p class="step-label">STEP 2 — OTP CODE VERIFICATION</p>
             <label>OTP code</label>
-            <input id="otp" placeholder="Enter the code you received" disabled />
+            <input
+              id="otp"
+              placeholder="Enter the code you received"
+              disabled
+              autocomplete="one-time-code"
+              inputmode="numeric"
+              autocapitalize="off"
+              spellcheck="false"
+            />
             <button id="verifyButton" class="auth-primary-btn" type="button" disabled>Verify OTP &amp; log in</button>
 
             <div class="auth-link-row auth-link-row--after-verify">
@@ -258,6 +289,6 @@
       </div>
     </div>
 
-    <script src="/main.js?v=51"></script>
+    <script src="/main.js?v=54"></script>
   </body>
 </html>
