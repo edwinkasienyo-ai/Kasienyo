@@ -13,7 +13,7 @@ let portalContext = null;
 let searchRowDrafts = {};
 let dashboardAutoRefreshHandle = null;
 let currentSidebarSubmoduleId = null;
-const CLIENT_UI_BUNDLE_ID = "dash-bundle-enterprise-v84-dashboard-syntax-bulk-learners-admission-fix";
+const CLIENT_UI_BUNDLE_ID = "dash-bundle-enterprise-v85-exam-gen-qbank-stats-ui";
 const examPanelState = {
   generatedExam: null,
   serials: [],
@@ -27,6 +27,32 @@ const examPanelState = {
   curriculumRows: [],
   curriculumMaterials: []
 };
+
+/** Plain summary after POST /api/academic/exams/auto-generate (question bank blend telemetry). */
+function formatExamQuestionBankBlendSummary(gen) {
+  if (!gen || typeof gen !== "object") return "";
+  const mcqU = Number(gen.question_bank_mcqs_used);
+  const mcqP = Number(gen.question_bank_mcq_pool);
+  const strU = Number(gen.question_bank_structured_used);
+  const strP = Number(gen.question_bank_structured_pool);
+  const mcqOff = Boolean(gen.question_bank_mcqs_env_disabled);
+  const strOff = Boolean(gen.question_bank_structured_env_disabled);
+
+  const mcqPart = mcqOff
+    ? "MCQ bank blending disabled on server"
+    : Number.isFinite(mcqP) && mcqP > 0
+      ? `MCQ bank: ${Number.isFinite(mcqU) ? mcqU : 0}/${mcqP} drawn`
+      : "MCQ bank: no matching items for filters";
+
+  const strPart = strOff
+    ? "Structured bank blending disabled on server"
+    : Number.isFinite(strP) && strP > 0
+      ? `Structured bank: ${Number.isFinite(strU) ? strU : 0}/${strP} stems drawn`
+      : "Structured bank: no matching stems for filters";
+
+  return `${mcqPart}. ${strPart}.`;
+}
+
 const DASHBOARD_STAT_LABELS = {
   totalLearners: "Total Learners Population",
   totalActiveLearners: "Active Learners",
@@ -4196,9 +4222,10 @@ function wireExamGenerationPanel() {
       setEnabled(controls.save, true);
       renderPerLearnerActions(payload);
       if (controls.preview) {
+        const qbNote = escapeHtml(formatExamQuestionBankBlendSummary(generated));
         controls.preview.innerHTML = `Generated exam ID <strong>${escapeHtml(String(generated?.id || "-"))}</strong>. ${
           examPanelState.serials.length
-        } serial record(s) prepared for marks entry.`;
+        } serial record(s) prepared for marks entry.${qbNote ? `<br/><span class="small-note">${qbNote}</span>` : ""}`;
       }
     } catch (error) {
       alert(`${error.message}\nExam generation uses strands/sub-strands with AI even without uploaded notes.`);
@@ -8352,8 +8379,9 @@ async function renderCbcCurriculumEditor(options = {}) {
         setSchemeStatus("Marking scheme will activate after Process.");
         examPanelState.generatedExam = { id: generatedExamId, payload };
         examPanelState.serials = [];
+        const qbNote = formatExamQuestionBankBlendSummary(generated);
         setGenStatus(
-          `Generated exam #${generatedExamId || "-"} using ${selectedStrandsList.length} strand(s) and ${selectedSubsList.length} sub-strand(s). Next: click Process to create learner serials and QR codes (they only appear after Process).`
+          `Generated exam #${generatedExamId || "-"} using ${selectedStrandsList.length} strand(s) and ${selectedSubsList.length} sub-strand(s). ${qbNote} Next: click Process to create learner serials and QR codes (they only appear after Process).`
         );
         updateActivation();
       } catch (error) {
