@@ -5,7 +5,7 @@
     <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate, private" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>IMIS Admission Portal</title>
-    <link rel="stylesheet" href="/styles.css?v=75" />
+    <link rel="stylesheet" href="/styles.css?v=76" />
     <style>
       /* Full-page scroll — do not inherit login-page overflow:hidden + fixed height */
       body.admission-portal-page {
@@ -370,7 +370,25 @@
             out.textContent = payload.error || "Lookup failed.";
             return;
           }
-          out.textContent = JSON.stringify(payload, null, 2);
+          const areas =
+            Array.isArray(payload.learning_areas) && payload.learning_areas.length
+              ? payload.learning_areas.join(", ")
+              : payload.learning_areas_summary || "";
+          const lines = [
+            `Institution: ${payload.institution_name || "—"}`,
+            `Learner: ${payload.learner_name || "—"}${payload.learner_type ? " (" + payload.learner_type + ")" : ""}`,
+            `Grade / form: ${payload.grade_or_form || "—"}`,
+            `Stream: ${payload.stream || "—"}`
+          ];
+          if (areas) lines.push(`Learning areas / interests: ${areas}`);
+          lines.push(
+            `Status: ${payload.status || "—"}`,
+            `Submitted: ${payload.submitted_at || "—"}`,
+            `Last updated: ${payload.last_updated_at || "—"}`,
+            `Institution response at: ${payload.institution_response_at || "—"}`
+          );
+          if (payload.institution_comment) lines.push(`Comment: ${payload.institution_comment}`);
+          out.textContent = lines.join("\n");
         } catch (error) {
           out.textContent = error.message || "Lookup failed.";
         }

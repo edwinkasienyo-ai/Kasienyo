@@ -13,7 +13,7 @@ let portalContext = null;
 let searchRowDrafts = {};
 let dashboardAutoRefreshHandle = null;
 let currentSidebarSubmoduleId = null;
-const CLIENT_UI_BUNDLE_ID = "dash-bundle-enterprise-v86-batch-10-polish";
+const CLIENT_UI_BUNDLE_ID = "dash-bundle-enterprise-v87-batch-11-exam-lock-qb-filters";
 const examPanelState = {
   generatedExam: null,
   serials: [],
@@ -5566,6 +5566,10 @@ function renderExamQuestionBankPanel() {
           <input id="qbFilterGrade" placeholder="e.g. Grade 9" />
           <label>Filter learning area</label>
           <input id="qbFilterLearning" placeholder="e.g. Social Studies" />
+          <label>Filter strand (contains)</label>
+          <input id="qbFilterStrand" placeholder="Optional partial match" />
+          <label>Filter sub-strand (contains)</label>
+          <input id="qbFilterSubStrand" placeholder="Optional partial match" />
           <label>Filter question type</label>
           <select id="qbFilterType">
             <option value="">All</option>
@@ -5663,11 +5667,15 @@ async function wireExamQuestionBankPanel() {
     const params = new URLSearchParams();
     const grade = String(document.getElementById("qbFilterGrade")?.value || "").trim();
     const learning = String(document.getElementById("qbFilterLearning")?.value || "").trim();
+    const strand = String(document.getElementById("qbFilterStrand")?.value || "").trim();
+    const subStrand = String(document.getElementById("qbFilterSubStrand")?.value || "").trim();
     const qtype = String(document.getElementById("qbFilterType")?.value || "").trim();
     const st = String(document.getElementById("qbFilterStatus")?.value || "").trim();
     const limit = String(document.getElementById("qbLimit")?.value || "120");
     if (grade) params.set("grade_or_form", grade);
     if (learning) params.set("learning_area", learning);
+    if (strand) params.set("strand", strand);
+    if (subStrand) params.set("sub_strand", subStrand);
     if (qtype) params.set("question_type", qtype);
     if (st) params.set("status", st);
     if (limit) params.set("limit", limit);
@@ -5749,7 +5757,7 @@ async function wireExamQuestionBankPanel() {
   ["qbFilterType", "qbFilterStatus", "qbLimit"].forEach((id) => {
     document.getElementById(id)?.addEventListener("change", loadRows);
   });
-  ["qbFilterGrade", "qbFilterLearning"].forEach((id) => {
+  ["qbFilterGrade", "qbFilterLearning", "qbFilterStrand", "qbFilterSubStrand"].forEach((id) => {
     const el = document.getElementById(id);
     el?.addEventListener("keydown", (evt) => {
       if (evt.key === "Enter") {

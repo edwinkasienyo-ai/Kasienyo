@@ -3186,26 +3186,29 @@ app.get(
   })
 );
 
-function summarizeOnlineAdmissionLearningAreas(payloadJson) {
+function parseOnlineAdmissionPayloadLearningAreas(payloadJson) {
   let payload = payloadJson;
   if (payload === null || payload === undefined) {
-    return "";
+    return [];
   }
   if (typeof payload === "string") {
     try {
       payload = JSON.parse(payload);
     } catch (_) {
-      return "";
+      return [];
     }
   }
   if (!payload || typeof payload !== "object") {
-    return "";
+    return [];
   }
   const raw = payload.learning_areas ?? payload.learningAreas ?? [];
-  const arr = Array.isArray(raw)
-    ? raw.map((item) => cleanValue(String(item))).filter(Boolean)
+  return Array.isArray(raw)
+    ? raw.map((item) => cleanValue(String(item))).filter(Boolean).slice(0, 36)
     : [];
-  return arr.slice(0, 16).join(", ");
+}
+
+function summarizeOnlineAdmissionLearningAreas(payloadJson) {
+  return parseOnlineAdmissionPayloadLearningAreas(payloadJson).slice(0, 16).join(", ");
 }
 
 app.post(
@@ -3409,6 +3412,7 @@ app.post(
               r.status,
               r.applicant_email,
               r.applicant_phone,
+              r.payload_json,
               r.created_at,
               r.updated_at,
               r.reviewed_at,
@@ -3437,6 +3441,7 @@ app.post(
       if (!cleaned) return "";
       return cleaned.slice(0, 4000);
     };
+    const learningAreas = parseOnlineAdmissionPayloadLearningAreas(record.payload_json);
     res.json({
       request_id: record.id,
       institution_name: cleanValue(record.institution_name || ""),
@@ -3446,6 +3451,8 @@ app.post(
       stream: cleanOptionalValue(record.stream),
       status: cleanValue(record.status || ""),
       applicant_email: storedEmail,
+      learning_areas: learningAreas,
+      learning_areas_summary: summarizeOnlineAdmissionLearningAreas(record.payload_json),
       submitted_at: record.created_at ? dayjs(record.created_at).format("YYYY-MM-DD HH:mm:ss") : null,
       last_updated_at: record.updated_at ? dayjs(record.updated_at).format("YYYY-MM-DD HH:mm:ss") : null,
       institution_response_at: record.reviewed_at ? dayjs(record.reviewed_at).format("YYYY-MM-DD HH:mm:ss") : null,
@@ -11154,7 +11161,35 @@ moduleConfigs.forEach((config) => {
           Object.prototype.hasOwnProperty.call(data, "generated_exam_text") ||
           Object.prototype.hasOwnProperty.call(data, "teacher_exam_supplement");
         if (touchesExam) {
-          data.serials_processed_at = null;
+          const examCols = await getExistingColumns("academic_exams", ["serials_processed_at"]);
+          let processedAt = null;
+          if (examCols.includes("serials_processed_at")) {
+            const prevRows = await query(
+              `SELECT serials_processed_at FROM academic_exams WHERE id = ? AND institution_id = ?${scopedFilter.where} LIMIT 1`,
+              [req.params.id, req.user.institution_id, ...scopedFilter.params]
+            );
+            processedAt = prevRows[0]?.serials_processed_at;
+          }
+          const processed = Boolean(processedAt);
+          if (processed) {
+            const envAllow = ["1", "true", "yes", "on"].includes(
+              String(process.env.EXAM_ALLOW_EDIT_AFTER_SERIAL_PROCESS || "").trim().toLowerCase()
+            );
+            const force =
+              req.body?.force_override_processed_exam === true ||
+              req.body?.force_override_processed_exam === "true" ||
+              req.body?.force_override_processed_exam === 1;
+            const ssd = isAnySystemDeveloperRole(normalizeRole(req.user.role));
+            if (!(envAllow || (ssd && force))) {
+              return res.status(409).json({
+                error:
+                  "This exam has already been processed for serial numbers / QR payloads. Use Generate for a new paper, set EXAM_ALLOW_EDIT_AFTER_SERIAL_PROCESS for controlled pilots, or have a System Developer retry with force_override_processed_exam."
+              });
+            }
+            if (examCols.includes("serials_processed_at")) {
+              data.serials_processed_at = null;
+            }
+          }
         }
       }
       data = await filterRowByTableColumns(config.table, data);
@@ -12658,6 +12693,16 @@ app.get(
     if (learningArea) {
       sql += ` AND learning_area = ?`;
       params.push(cleanValue(learningArea));
+    }
+    const strandContains = cleanOptionalValue(req.query.strand || req.query.strand_contains);
+    const subStrandContains = cleanOptionalValue(req.query.sub_strand || req.query.sub_strand_contains);
+    if (strandContains) {
+      sql += ` AND strand LIKE ?`;
+      params.push(`%${cleanValue(strandContains)}%`);
+    }
+    if (subStrandContains) {
+      sql += ` AND sub_strand LIKE ?`;
+      params.push(`%${cleanValue(subStrandContains)}%`);
     }
     if (questionType) {
       sql += ` AND UPPER(question_type) = ?`;
