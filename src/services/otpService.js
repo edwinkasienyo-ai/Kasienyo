@@ -107,10 +107,19 @@ async function sendEmailOtp(destination, code) {
   const subject = "IMIS OTP Verification Code";
   const text = `Your IMIS OTP is ${code}. It expires in ${OTP_EXPIRY_MINUTES} minutes. Never share this code.`;
 
+  return sendTransactionalEmail({ to: destination, subject, text });
+}
+
+async function sendTransactionalEmail({ to, subject, text }) {
+  if (!to || !subject) {
+    throw new Error("Transactional email requires to and subject.");
+  }
+  const bodyText = text || "";
+
   // Prefer SendGrid (faster, more reliable). Fall back to SMTP.
   if (sendgridReady()) {
     try {
-      await sendEmailViaSendgrid({ to: destination, subject, text });
+      await sendEmailViaSendgrid({ to, subject, text: bodyText });
       return;
     } catch (err) {
       if (!smtpReady()) throw err;
@@ -123,7 +132,7 @@ async function sendEmailOtp(destination, code) {
   if (!smtpReady()) {
     throw new Error("No email provider configured. Set SENDGRID_API_KEY+SENDGRID_FROM or SMTP_*");
   }
-  await sendEmailViaSmtp({ to: destination, subject, text });
+  await sendEmailViaSmtp({ to, subject, text: bodyText });
 }
 
 // =============================================================================
@@ -185,22 +194,38 @@ async function sendSmsViaTwilio({ to, text }) {
 async function sendSmsOtp(destination, code) {
   const text = `IMIS OTP: ${code}. Expires in ${OTP_EXPIRY_MINUTES} minutes. Never share this code.`;
 
+  return sendTransactionalSms({ to: destination, text });
+}
+
+async function sendTransactionalSms({ to, text }) {
+  const bodyText = cleanPlainSmsText(text);
+  if (!to || !bodyText) {
+    throw new Error("Transactional SMS requires destination and body text.");
+  }
+
   // Prefer Africa's Talking for Kenyan numbers (faster, cheaper).
   if (africasTalkingReady()) {
     try {
-      await sendSmsViaAfricasTalking({ to: destination, text });
+      await sendSmsViaAfricasTalking({ to, text: bodyText });
       return;
     } catch (err) {
       if (!twilioSmsReady()) throw err;
       // eslint-disable-next-line no-console
-      console.warn(`[otp] AfricasTalking failed, falling back to Twilio: ${err.message}`);
+      console.warn(`[sms] AfricasTalking failed, falling back to Twilio: ${err.message}`);
     }
   }
 
   if (!twilioSmsReady()) {
     throw new Error("No SMS provider configured. Set AT_API_KEY+AT_USERNAME+AT_FROM or TWILIO_*");
   }
-  await sendSmsViaTwilio({ to: destination, text });
+  await sendSmsViaTwilio({ to, text: bodyText });
+}
+
+function cleanPlainSmsText(value) {
+  return String(value || "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 920);
 }
 
 // =============================================================================
@@ -257,6 +282,8 @@ module.exports = {
   generateOtpCode,
   buildOtpExpiry,
   sendOtp,
+  sendTransactionalEmail,
+  sendTransactionalSms,
   verifyTwilioOtp,
   smtpReady,
   sendgridReady,
