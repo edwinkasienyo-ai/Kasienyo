@@ -2379,9 +2379,16 @@ async function getExistingColumns(tableName, candidateColumns = []) {
   return candidateColumns.filter((column) => available.has(column));
 }
 
-function sendBuildInfoJson(res) {
+function hideServerBuildIdentifiersFromPublicEndpoints() {
+  return ["1", "true", "yes", "on"].includes(
+    String(process.env.IMIS_HIDE_BUILD_STAMP_FROM_CLIENTS || "").trim().toLowerCase()
+  );
+}
+
+function sendBuildInfoJson(req, res) {
+  void req;
   res.set("Cache-Control", "no-store");
-  res.json({
+  const payload = {
     build_stamp: IIMS_BUILD_STAMP,
     public_index: PUBLIC_INDEX_FINGERPRINT,
     public_dashboard: PUBLIC_DASHBOARD_FINGERPRINT,
@@ -2394,12 +2401,21 @@ function sendBuildInfoJson(res) {
       devtools_disable_cache:
         "F12 → Network → check 'Disable cache' (applies while DevTools stays open)."
     }
-  });
+  };
+  if (hideServerBuildIdentifiersFromPublicEndpoints()) {
+    delete payload.build_stamp;
+    delete payload.public_index;
+    delete payload.public_dashboard;
+    payload.build_identifiers_hidden = true;
+    payload.tip =
+      "Detailed server fingerprints are hidden because IMIS_HIDE_BUILD_STAMP_FROM_CLIENTS is enabled. Use the dashboard footer bundle tag after login.";
+  }
+  res.json(payload);
 }
 
-app.get("/api/build-info", (_, res) => sendBuildInfoJson(res));
+app.get("/api/build-info", (req, res) => sendBuildInfoJson(req, res));
 // Common typo when testing in the browser
-app.get("/api/building-info", (_, res) => sendBuildInfoJson(res));
+app.get("/api/building-info", (req, res) => sendBuildInfoJson(req, res));
 
 app.get("/api/meta", (_, res) => {
   const cbcLearningAreas = Array.from(
@@ -2567,13 +2583,18 @@ app.get("/api/health", asyncHandler(async (_, res) => {
 }));
 
 app.get("/api/health/messaging", (_, res) => {
-  res.json({
+  const payload = {
     smtp_configured: Boolean(process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS),
     twilio_sms_configured: Boolean(process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN && process.env.TWILIO_FROM),
     twilio_verify_configured: Boolean(process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN && process.env.TWILIO_VERIFY_SERVICE_SID),
-    otp_channels_supported: ["console", "email", "sms", "sms_email"],
-    build_stamp: IIMS_BUILD_STAMP
-  });
+    otp_channels_supported: ["console", "email", "sms", "sms_email"]
+  };
+  if (hideServerBuildIdentifiersFromPublicEndpoints()) {
+    payload.build_identifiers_hidden = true;
+  } else {
+    payload.build_stamp = IIMS_BUILD_STAMP;
+  }
+  res.json(payload);
 });
 
 app.post("/api/auth/login", authLoginRateLimit, asyncHandler(async (req, res) => {
@@ -12704,6 +12725,11 @@ app.get(
       sql += ` AND sub_strand LIKE ?`;
       params.push(`%${cleanValue(subStrandContains)}%`);
     }
+    const stemContains = cleanOptionalValue(req.query.stem_q || req.query.stem || req.query.q);
+    if (stemContains) {
+      sql += ` AND stem_text LIKE ?`;
+      params.push(`%${cleanValue(stemContains)}%`);
+    }
     if (questionType) {
       sql += ` AND UPPER(question_type) = ?`;
       params.push(questionType.slice(0, 40));
@@ -13443,6 +13469,52 @@ app.get(
       learning_areas_summary: summarizeOnlineAdmissionLearningAreas(row.payload_json)
     }));
     res.json({ items });
+  })
+);
+
+app.get(
+  "/api/admission/online-requests/:id",
+  auth,
+  enforceModuleAccess(MODULE_KEYS.ADMISSION),
+  enforcePermission(PERMISSIONS.VIEW),
+  enforceRole([
+    ROLES.SUPER_SYSTEM_DEVELOPER,
+    ROLES.SYSTEM_DEVELOPER,
+    ROLES.ADMIN,
+    ROLES.HEAD_OF_INSTITUTION,
+    ROLES.SYSTEM_ADMINISTRATOR
+  ]),
+  asyncHandler(async (req, res) => {
+    const requestId = Number(req.params.id || 0);
+    if (!requestId) {
+      return res.status(400).json({ error: "Valid request id is required." });
+    }
+    const normalizedRole = normalizeRole(req.user.role);
+    const rows = await query(`SELECT * FROM online_admission_requests WHERE id = ? LIMIT 1`, [requestId]);
+    if (!rows.length) {
+      return res.status(404).json({ error: "Admission request was not found." });
+    }
+    const record = rows[0];
+    const scopeError = await assertInstitutionScopeAccess(
+      req,
+      record.institution_id,
+      "You can only view admission submissions for institutions you manage."
+    );
+    if (scopeError) {
+      return res.status(scopeError.status).json({ error: scopeError.error });
+    }
+    if (!isAnySystemDeveloperRole(normalizedRole) && Number(record.institution_id || 0) !== Number(req.user.institution_id || 0)) {
+      return res.status(403).json({ error: "You cannot access admission submissions outside your institution." });
+    }
+    const parsedPayload = parseStoredJson(record.payload_json);
+    res.json({
+      item: {
+        ...record,
+        learning_areas: parseOnlineAdmissionPayloadLearningAreas(record.payload_json),
+        learning_areas_summary: summarizeOnlineAdmissionLearningAreas(record.payload_json),
+        payload_json_parsed: parsedPayload
+      }
+    });
   })
 );
 

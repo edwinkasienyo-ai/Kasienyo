@@ -56,6 +56,11 @@ async function loadBuildStampLogin() {
       response = await fetch("/api/building-info");
     }
     const data = response.ok ? await response.json() : null;
+    if (data?.build_identifiers_hidden) {
+      el.textContent =
+        "Release identifiers hidden by server policy (IMIS_HIDE_BUILD_STAMP_FROM_CLIENTS). Sign in normally.";
+      return;
+    }
     const stamp = data?.build_stamp || "unknown";
     el.textContent = `Release: ${stamp} · UI bundle rev45 — Twilio Verify + Gmail SMTP wired, HR Management renamed.`;
   } catch (_) {

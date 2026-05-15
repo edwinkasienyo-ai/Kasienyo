@@ -4695,3 +4695,47 @@ body {
   padding-left: 8px;
   margin: 4px 0 8px !important;
 }
+
+/* admission-online-detail-modal */
+.admission-online-detail-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(6, 18, 32, 0.55);
+  z-index: 12000;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+}
+.admission-online-detail-panel {
+  background: #0f2740;
+  color: #e8f4ff;
+  max-width: min(920px, 100%);
+  max-height: min(82vh, 900px);
+  overflow: hidden;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  display: flex;
+  flex-direction: column;
+}
+.admission-online-detail-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+.admission-online-detail-pre {
+  margin: 0;
+  padding: 12px;
+  overflow: auto;
+  flex: 1;
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+}
+.admission-online-actions .ax-btn {
+  margin-right: 6px;
+  margin-bottom: 4px;
+}

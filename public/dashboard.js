@@ -13,7 +13,7 @@ let portalContext = null;
 let searchRowDrafts = {};
 let dashboardAutoRefreshHandle = null;
 let currentSidebarSubmoduleId = null;
-const CLIENT_UI_BUNDLE_ID = "dash-bundle-enterprise-v87-batch-11-exam-lock-qb-filters";
+const CLIENT_UI_BUNDLE_ID = "dash-bundle-enterprise-v88-batch-12-admission-detail-private-build-info";
 const examPanelState = {
   generatedExam: null,
   serials: [],
@@ -63,6 +63,24 @@ function formatExamAutoGenerateTelemetry(gen) {
   const aiPart =
     Number.isFinite(aiUsed) && aiUsed > 0 ? `OpenAI stems used: ${aiUsed}.` : "OpenAI stems: none.";
   return `${qb} ${aiPart}`.trim();
+}
+
+async function fetchExamRowSnapshot(examId) {
+  const id = Number(examId || 0);
+  if (!id) return null;
+  try {
+    return await request(`/api/academic/exams/${id}`);
+  } catch (_) {
+    return null;
+  }
+}
+
+async function confirmExamEditIfProcessed(examId) {
+  const row = await fetchExamRowSnapshot(examId);
+  if (!row?.serials_processed_at) return true;
+  return window.confirm(
+    "This exam has already been processed for serial numbers / QR. Saving learner-facing edits may be rejected by the server unless overrides are enabled. Continue?"
+  );
 }
 
 const DASHBOARD_STAT_LABELS = {
@@ -4256,6 +4274,7 @@ function wireExamGenerationPanel() {
       alert("Generate exam first.");
       return;
     }
+    if (!(await confirmExamEditIfProcessed(examId))) return;
     try {
       await request(`/api/academic/exams/${examId}`, {
         method: "PUT",
@@ -5570,6 +5589,8 @@ function renderExamQuestionBankPanel() {
           <input id="qbFilterStrand" placeholder="Optional partial match" />
           <label>Filter sub-strand (contains)</label>
           <input id="qbFilterSubStrand" placeholder="Optional partial match" />
+          <label>Stem search (contains)</label>
+          <input id="qbFilterStem" placeholder="Match inside stem text" />
           <label>Filter question type</label>
           <select id="qbFilterType">
             <option value="">All</option>
@@ -5669,6 +5690,7 @@ async function wireExamQuestionBankPanel() {
     const learning = String(document.getElementById("qbFilterLearning")?.value || "").trim();
     const strand = String(document.getElementById("qbFilterStrand")?.value || "").trim();
     const subStrand = String(document.getElementById("qbFilterSubStrand")?.value || "").trim();
+    const stemQ = String(document.getElementById("qbFilterStem")?.value || "").trim();
     const qtype = String(document.getElementById("qbFilterType")?.value || "").trim();
     const st = String(document.getElementById("qbFilterStatus")?.value || "").trim();
     const limit = String(document.getElementById("qbLimit")?.value || "120");
@@ -5676,6 +5698,7 @@ async function wireExamQuestionBankPanel() {
     if (learning) params.set("learning_area", learning);
     if (strand) params.set("strand", strand);
     if (subStrand) params.set("sub_strand", subStrand);
+    if (stemQ) params.set("stem_q", stemQ);
     if (qtype) params.set("question_type", qtype);
     if (st) params.set("status", st);
     if (limit) params.set("limit", limit);
@@ -5757,7 +5780,7 @@ async function wireExamQuestionBankPanel() {
   ["qbFilterType", "qbFilterStatus", "qbLimit"].forEach((id) => {
     document.getElementById(id)?.addEventListener("change", loadRows);
   });
-  ["qbFilterGrade", "qbFilterLearning", "qbFilterStrand", "qbFilterSubStrand"].forEach((id) => {
+  ["qbFilterGrade", "qbFilterLearning", "qbFilterStrand", "qbFilterSubStrand", "qbFilterStem"].forEach((id) => {
     const el = document.getElementById(id);
     el?.addEventListener("keydown", (evt) => {
       if (evt.key === "Enter") {
@@ -8459,6 +8482,7 @@ async function renderCbcCurriculumEditor(options = {}) {
         alert("Generate exam first.");
         return;
       }
+      if (!(await confirmExamEditIfProcessed(generatedExamId))) return;
       try {
         await request(`/api/academic/exams/${generatedExamId}`, {
           method: "PUT",
@@ -8623,6 +8647,7 @@ async function renderCbcCurriculumEditor(options = {}) {
         alert("Generate marking scheme first.");
         return;
       }
+      if (!(await confirmExamEditIfProcessed(generatedExamId))) return;
       try {
         const examText = String(outputEl?.value || "").split("==== TEACHER MARKING SCHEME START ====")[0].trimEnd();
         const merged = [
@@ -12253,9 +12278,25 @@ function wireOnlineAdmissionProcessingHub() {
   const refreshBtn = document.getElementById("admissionOnlineRefreshBtn");
   const statusFilter = document.getElementById("admissionOnlineStatusFilter");
   const tbody = document.getElementById("admissionOnlineRequestsBody");
+  const backdrop = document.getElementById("admissionOnlineDetailBackdrop");
+  const detailBody = document.getElementById("admissionOnlineDetailBody");
+  const detailClose = document.getElementById("admissionOnlineDetailClose");
   if (!refreshBtn || !tbody) {
     return;
   }
+
+  const hideDetail = () => {
+    if (backdrop) {
+      backdrop.style.display = "none";
+      backdrop.setAttribute("aria-hidden", "true");
+    }
+  };
+
+  detailClose?.addEventListener("click", hideDetail);
+  backdrop?.addEventListener("click", (evt) => {
+    if (evt.target === backdrop) hideDetail();
+  });
+
   const loadRows = async () => {
     try {
       const status = String(statusFilter?.value || "").trim();
@@ -12282,36 +12323,13 @@ function wireOnlineAdmissionProcessingHub() {
             truncateQuestionBankStem(row.learning_areas_summary || "", 140) || "—"
           )}</td>
           <td>${escapeHtml(row.status || "-")}</td>
-          <td>
-            <button type="button" class="ax-btn ax-btn--process ax-btn--sm" data-admission-online-id="${escapeHtmlAttribute(
-              String(rid)
-            )}">Workflow</button>
+          <td class="table-actions-cell admission-online-actions">
+            <button type="button" class="ax-btn ax-btn--view ax-btn--sm" data-admission-online-view="${escapeHtmlAttribute(String(rid))}">View</button>
+            <button type="button" class="ax-btn ax-btn--process ax-btn--sm" data-admission-online-workflow="${escapeHtmlAttribute(String(rid))}">Workflow</button>
           </td>
         </tr>`;
         })
         .join("");
-      tbody.querySelectorAll("[data-admission-online-id]").forEach((button) => {
-        button.addEventListener("click", async () => {
-          const id = Number(button.getAttribute("data-admission-online-id") || 0);
-          if (!id) return;
-          const decision = window.prompt(
-            "Set workflow status:\nAPPROVED | REJECTED | WAITLIST | MORE_INFO | INTERVIEW_REQUESTED",
-            "APPROVED"
-          );
-          if (!decision) return;
-          const reviewComment = window.prompt("Family-facing comment / directions (stored and emailed/SMS'ed if configured):", "") || "";
-          try {
-            await request(`/api/admission/online-requests/${id}`, {
-              method: "PATCH",
-              body: JSON.stringify({ status: decision.trim(), review_comment: reviewComment })
-            });
-            alert("Admission workflow updated.");
-            await loadRows();
-          } catch (error) {
-            alert(error.message || "Unable to update this request.");
-          }
-        });
-      });
     } catch (error) {
       tbody.innerHTML = `<tr><td colspan="10" class="small-note error">${escapeHtml(
         error.message || "Unable to load online admission requests."
@@ -12319,10 +12337,75 @@ function wireOnlineAdmissionProcessingHub() {
     }
   };
 
+  if (tbody.dataset.admissionHubDelegation !== "1") {
+    tbody.dataset.admissionHubDelegation = "1";
+    tbody.addEventListener("click", async (evt) => {
+      const viewBtn = evt.target.closest("[data-admission-online-view]");
+      if (viewBtn) {
+        const id = Number(viewBtn.getAttribute("data-admission-online-view") || 0);
+        if (!id || !detailBody) return;
+        detailBody.textContent = "Loading…";
+        if (backdrop) {
+          backdrop.style.display = "flex";
+          backdrop.removeAttribute("aria-hidden");
+        }
+        try {
+          const pack = await request(`/api/admission/online-requests/${id}`);
+          const item = pack?.item || pack;
+          const printable = {
+            id: item?.id,
+            institution_id: item?.institution_id,
+            learner_name: item?.learner_name,
+            learner_type: item?.learner_type,
+            grade_or_form: item?.grade_or_form,
+            stream: item?.stream,
+            status: item?.status,
+            applicant_email: item?.applicant_email,
+            applicant_phone: item?.applicant_phone,
+            learning_areas: item?.learning_areas,
+            learning_areas_summary: item?.learning_areas_summary,
+            review_comment: item?.review_comment,
+            payload_json_parsed: item?.payload_json_parsed,
+            created_at: item?.created_at,
+            updated_at: item?.updated_at,
+            reviewed_at: item?.reviewed_at
+          };
+          detailBody.textContent = JSON.stringify(printable, null, 2);
+        } catch (error) {
+          detailBody.textContent = error.message || "Unable to load detail.";
+        }
+        return;
+      }
+
+      const wfBtn = evt.target.closest("[data-admission-online-workflow]");
+      if (!wfBtn) return;
+      const id = Number(wfBtn.getAttribute("data-admission-online-workflow") || 0);
+      if (!id) return;
+      const decision = window.prompt(
+        "Set workflow status:
+APPROVED | REJECTED | WAITLIST | MORE_INFO | INTERVIEW_REQUESTED",
+        "APPROVED"
+      );
+      if (!decision) return;
+      const reviewComment = window.prompt("Family-facing comment / directions (stored and emailed/SMS'ed if configured):", "") || "";
+      try {
+        await request(`/api/admission/online-requests/${id}`, {
+          method: "PATCH",
+          body: JSON.stringify({ status: decision.trim(), review_comment: reviewComment })
+        });
+        alert("Admission workflow updated.");
+        await loadRows();
+      } catch (error) {
+        alert(error.message || "Unable to update this request.");
+      }
+    });
+  }
+
   refreshBtn.addEventListener("click", loadRows);
   statusFilter?.addEventListener("change", loadRows);
   loadRows();
 }
+
 
 function wireAdmissionModuleUi(container, config) {
   wireAdmissionGradeFormExclusive(container);
@@ -12879,6 +12962,15 @@ function renderCrudModule(moduleKey, options = {}) {
           </thead>
           <tbody id="admissionOnlineRequestsBody"></tbody>
         </table>
+      </div>
+      <div id="admissionOnlineDetailBackdrop" class="admission-online-detail-backdrop" style="display:none;" aria-hidden="true">
+        <div class="admission-online-detail-panel" role="dialog" aria-modal="true">
+          <div class="admission-online-detail-toolbar">
+            <strong>Online admission detail</strong>
+            <button type="button" id="admissionOnlineDetailClose" class="ax-btn ax-btn--reset ax-btn--sm">Close</button>
+          </div>
+          <pre id="admissionOnlineDetailBody" class="admission-online-detail-pre"></pre>
+        </div>
       </div>
     </section>
   `;
@@ -15666,11 +15758,13 @@ async function init() {
 
   await safeStep("build-info fingerprint", async () => {
     let stamp = "unknown";
+    let hiddenPolicy = false;
     try {
       const buildRes = await fetch("/api/build-info", { cache: "no-store" });
       if (buildRes.ok) {
         const b = await buildRes.json();
-        stamp = b?.build_stamp || stamp;
+        hiddenPolicy = Boolean(b?.build_identifiers_hidden);
+        stamp = hiddenPolicy ? "hidden-by-policy" : b?.build_stamp || stamp;
       }
     } catch (_) { /* ignore */ }
     const fp = document.getElementById("dashUiFingerprint");
@@ -15678,7 +15772,9 @@ async function init() {
       const roleHints = dashboardAuthenticatedRoleHint || portalContext?.role || "";
       if (shouldShowTechnicalDashboardFingerprint(roleHints)) {
         fp.removeAttribute("hidden");
-        fp.textContent = `${CLIENT_UI_BUNDLE_ID} · API build_stamp: ${stamp} — Ctrl+F5 if this text looks old.`;
+        fp.textContent = hiddenPolicy
+          ? `${CLIENT_UI_BUNDLE_ID} · Server hides API build fingerprints (IMIS_HIDE_BUILD_STAMP_FROM_CLIENTS). Ctrl+F5 after deploy.`
+          : `${CLIENT_UI_BUNDLE_ID} · API build_stamp: ${stamp} — Ctrl+F5 if this text looks old.`;
       } else {
         fp.textContent = "";
         fp.setAttribute("hidden", "true");
