@@ -13,7 +13,7 @@ let portalContext = null;
 let searchRowDrafts = {};
 let dashboardAutoRefreshHandle = null;
 let currentSidebarSubmoduleId = null;
-const CLIENT_UI_BUNDLE_ID = "dash-bundle-enterprise-v88-batch-12-admission-detail-private-build-info";
+const CLIENT_UI_BUNDLE_ID = "dash-bundle-enterprise-v89-fix-prompt-syntax-dashboard-load";
 const examPanelState = {
   generatedExam: null,
   serials: [],
@@ -12382,8 +12382,7 @@ function wireOnlineAdmissionProcessingHub() {
       const id = Number(wfBtn.getAttribute("data-admission-online-workflow") || 0);
       if (!id) return;
       const decision = window.prompt(
-        "Set workflow status:
-APPROVED | REJECTED | WAITLIST | MORE_INFO | INTERVIEW_REQUESTED",
+        "Set workflow status:\nAPPROVED | REJECTED | WAITLIST | MORE_INFO | INTERVIEW_REQUESTED",
         "APPROVED"
       );
       if (!decision) return;
