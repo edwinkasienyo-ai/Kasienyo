@@ -869,6 +869,7 @@ CREATE TABLE IF NOT EXISTS online_admission_requests (
   grade_or_form VARCHAR(120) NULL,
   stream VARCHAR(120) NULL,
   payload_json JSON NULL,
+  applicant_access_token_hash CHAR(64) NULL,
   status VARCHAR(40) NOT NULL DEFAULT 'PENDING',
   review_comment TEXT NULL,
   reviewed_at DATETIME NULL,
@@ -877,4 +878,17 @@ CREATE TABLE IF NOT EXISTS online_admission_requests (
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   INDEX idx_online_admission_inst_status (institution_id, status, created_at),
   CONSTRAINT fk_online_admission_inst FOREIGN KEY (institution_id) REFERENCES institutions(id)
+);
+
+CREATE TABLE IF NOT EXISTS online_admission_request_documents (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  online_admission_request_id BIGINT NOT NULL,
+  doc_category VARCHAR(80) NOT NULL,
+  original_filename VARCHAR(512) NOT NULL,
+  stored_filename VARCHAR(512) NOT NULL,
+  mime_type VARCHAR(120) NOT NULL,
+  byte_size BIGINT UNSIGNED NOT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  INDEX idx_oadoc_request (online_admission_request_id, doc_category, created_at),
+  CONSTRAINT fk_oadoc_request FOREIGN KEY (online_admission_request_id) REFERENCES online_admission_requests(id) ON DELETE CASCADE
 );

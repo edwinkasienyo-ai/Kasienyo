@@ -13,7 +13,7 @@ let portalContext = null;
 let searchRowDrafts = {};
 let dashboardAutoRefreshHandle = null;
 let currentSidebarSubmoduleId = null;
-const CLIENT_UI_BUNDLE_ID = "dash-bundle-enterprise-v92-reqs-matrix-labels";
+const CLIENT_UI_BUNDLE_ID = "dash-bundle-enterprise-v93-admission-docs-recycle-tests";
 const examPanelState = {
   generatedExam: null,
   serials: [],
@@ -12312,6 +12312,18 @@ function htmlAdmissionOnlineDetailHuman(item) {
   if (Array.isArray(item?.learning_areas) && item.learning_areas.length) {
     parts.splice(10, 0, ["Learning areas (legacy)", item.learning_areas.join(", ")]);
   }
+  const docs = Array.isArray(item?.applicant_documents) ? item.applicant_documents : [];
+  if (docs.length) {
+    parts.push([
+      "Supporting documents",
+      docs
+        .map((d) => {
+          const label = `${d.document_category || "DOC"}: ${d.original_filename || "file"}`;
+          return d.file_url ? `${label} — ${d.file_url}` : label;
+        })
+        .join("\n")
+    ]);
+  }
   return `<dl class="admission-detail-dl">${parts
     .map(([k, v]) => {
       const val = v === undefined || v === null || v === "" ? "—" : String(v);
@@ -12461,6 +12473,7 @@ function wireOnlineAdmissionProcessingHub() {
             intake_summary: item?.intake_summary,
             learning_areas_summary: item?.learning_areas_summary,
             review_comment: item?.review_comment,
+            applicant_documents: item?.applicant_documents,
             payload_json_parsed: item?.payload_json_parsed,
             created_at: item?.created_at,
             updated_at: item?.updated_at,

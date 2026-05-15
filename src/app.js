@@ -11,6 +11,18 @@ const nodemailer = require("nodemailer");
 const twilio = require("twilio");
 const { v4: uuidv4 } = require("uuid");
 const crypto = require("crypto");
+const { isSafeTableIdentifier, verifyThreeStepDeleteConfirm } = require("./recycleBinPure");
+const {
+  ADMISSION_DOC_ALLOWED_MIME_TYPES,
+  MIME_TO_EXT,
+  KNOWN_DOCUMENT_CATEGORIES,
+  admissionDocMaxBytes,
+  admissionMaxDocumentsPerApplicantRequest,
+  hashAdmissionApplicantAccessToken,
+  timingSafeEqualSha256Hex,
+  normalizeAdmissionDocCategory,
+  sanitizeOriginalFilename
+} = require("./admissionApplicantUploads");
 const { generateExamStemsWithOpenAi } = require("./services/examAiService");
 const dayjs = require("dayjs");
 const { query } = require("./config/db");
@@ -139,6 +151,10 @@ const uploadsPath = path.join(process.cwd(), "uploads");
 if (!fs.existsSync(uploadsPath)) {
   fs.mkdirSync(uploadsPath, { recursive: true });
 }
+const admissionUploadsPath = path.join(uploadsPath, "admission");
+if (!fs.existsSync(admissionUploadsPath)) {
+  fs.mkdirSync(admissionUploadsPath, { recursive: true });
+}
 
 app.use("/uploads", express.static(uploadsPath));
 
@@ -214,6 +230,44 @@ function heroImageUploadMiddleware(req, res, next) {
       });
     }
     return res.status(400).json({ error: error.message || "Hero image upload failed." });
+  });
+}
+
+const ADMISSION_UPLOAD_MAX_BYTES_RUNTIME = admissionDocMaxBytes();
+
+const admissionDocUpload = multer({
+  storage: multer.diskStorage({
+    destination: (_, __, cb) => cb(null, admissionUploadsPath),
+    filename: (_, file, cb) => {
+      const ext =
+        MIME_TO_EXT[file.mimetype] ||
+        cleanValue(path.extname(file.originalname || "")).toLowerCase() ||
+        ".bin";
+      cb(null, `adm-${uuidv4()}${ext}`);
+    }
+  }),
+  limits: {
+    fileSize: ADMISSION_UPLOAD_MAX_BYTES_RUNTIME
+  },
+  fileFilter: (_, file, cb) => {
+    if (!ADMISSION_DOC_ALLOWED_MIME_TYPES.has(file.mimetype)) {
+      return cb(new Error("Admission documents must be PDF, JPEG, or PNG."));
+    }
+    return cb(null, true);
+  }
+});
+
+function admissionDocUploadMiddleware(req, res, next) {
+  admissionDocUpload.single("file")(req, res, (error) => {
+    if (!error) {
+      return next();
+    }
+    if (error.code === "LIMIT_FILE_SIZE") {
+      return res.status(400).json({
+        error: `That file exceeds the admission upload limit (${Math.round(ADMISSION_UPLOAD_MAX_BYTES_RUNTIME / (1024 * 1024))}MB).`
+      });
+    }
+    return res.status(400).json({ error: error.message || "Admission document upload failed." });
   });
 }
 
@@ -775,6 +829,21 @@ function enforcePublicSecurity(req, res, next) {
   return next();
 }
 
+function enforcePublicAdmissionMultipartUpload(req, res, next) {
+  const contentType = cleanValue(req.headers["content-type"]).toLowerCase();
+  if (!contentType || !contentType.includes("multipart/form-data")) {
+    return res.status(415).json({
+      error: "Document uploads must use multipart/form-data with a file field named file."
+    });
+  }
+  const maxBytes = admissionDocMaxBytes() + 256 * 1024;
+  const cl = Number(req.headers["content-length"] || 0);
+  if (cl > maxBytes) {
+    return res.status(413).json({ error: `Request is larger than the admission upload limit (${Math.round(maxBytes / (1024 * 1024))}MB envelope).` });
+  }
+  return next();
+}
+
 function evaluatePasswordStrength(password) {
   const value = cleanValue(password);
   const errors = [];
@@ -973,14 +1042,6 @@ function shouldRecycleBinEntryExposeDeleterViewer(actorRole, recycleItemRow) {
     return false;
   }
   return true;
-}
-
-function verifyThreeStepDeleteConfirm(confirmations = []) {
-  if (!Array.isArray(confirmations) || confirmations.length < 3) {
-    return false;
-  }
-  const expected = ["YES", "CONFIRM", "DELETE"];
-  return expected.every((step, index) => cleanValue(confirmations[index]).toUpperCase() === step);
 }
 
 async function recordOtpFailure(identity) {
@@ -1600,10 +1661,6 @@ function buildRecycleContextFromRequest(req, extra = {}) {
     user_agent: cleanValue(authDetails?.user_agent || null) || null,
     ...extra
   };
-}
-
-function isSafeTableIdentifier(name) {
-  return /^[a-z_][a-z0-9_]*$/i.test(cleanValue(name));
 }
 
 const cachedTableColumns = new Map();
@@ -3263,6 +3320,102 @@ function summarizeOnlineAdmissionIntakeDetails(payloadJson) {
   return intakeLine || legacySubjects || "";
 }
 
+function extractOnlineAdmissionApplicantToken(req) {
+  const headerTok = cleanValue(req.get("X-Admission-Access-Token") || req.get("x-admission-access-token") || "");
+  if (headerTok) return headerTok;
+  if (typeof req.query?.access_token === "string") return cleanValue(req.query.access_token);
+  if (req.body && typeof req.body.access_token === "string") return cleanValue(req.body.access_token);
+  return "";
+}
+
+async function assertOnlineAdmissionApplicantAccess(requestId, tokenPlain) {
+  const id = Number(requestId || 0);
+  if (!id) {
+    return { ok: false, status: 400, error: "Valid request id is required." };
+  }
+  const t = cleanValue(tokenPlain);
+  if (!t) {
+    return {
+      ok: false,
+      status: 401,
+      error: "Admission access token is required (X-Admission-Access-Token header or access_token in body/query)."
+    };
+  }
+  const rows = await query(
+    `SELECT id, institution_id, applicant_access_token_hash
+     FROM online_admission_requests
+     WHERE id = ?
+     LIMIT 1`,
+    [id]
+  );
+  if (!rows.length) {
+    await delayWithRandomJitter();
+    return { ok: false, status: 404, error: "Admission request was not found." };
+  }
+  const hash = rows[0].applicant_access_token_hash;
+  if (!hash) {
+    return {
+      ok: false,
+      status: 403,
+      error:
+        "This application predates secure document upload. Contact the institution so they can collect documents manually."
+    };
+  }
+  const candidate = hashAdmissionApplicantAccessToken(t);
+  if (!timingSafeEqualSha256Hex(candidate, String(hash))) {
+    await delayWithRandomJitter();
+    return { ok: false, status: 403, error: "Invalid admission access token." };
+  }
+  return { ok: true, row: rows[0] };
+}
+
+async function fetchOnlineAdmissionDocumentsForRequest(requestId) {
+  return query(
+    `SELECT id,
+            doc_category AS document_category,
+            original_filename,
+            mime_type,
+            byte_size,
+            stored_filename,
+            created_at
+     FROM online_admission_request_documents
+     WHERE online_admission_request_id = ?
+     ORDER BY id ASC`,
+    [requestId]
+  );
+}
+
+function mapAdmissionDocRowPublic(row) {
+  const fname = cleanValue(row.stored_filename || "");
+  const safeName = path.basename(fname).replace(/[^\w.\-+ ]+/g, "_");
+  if (!safeName || safeName.includes("..")) {
+    return {
+      id: row.id,
+      document_category: row.document_category,
+      original_filename: row.original_filename,
+      mime_type: row.mime_type,
+      byte_size: row.byte_size,
+      created_at: row.created_at,
+      file_url: null
+    };
+  }
+  return {
+    id: row.id,
+    document_category: row.document_category,
+    original_filename: row.original_filename,
+    mime_type: row.mime_type,
+    byte_size: row.byte_size,
+    created_at: row.created_at,
+    file_url: `/uploads/admission/${encodeURIComponent(safeName)}`
+  };
+}
+
+function sanitizeOnlineAdmissionRequestRow(row) {
+  const copy = typeof row === "object" && row ? { ...row } : {};
+  delete copy.applicant_access_token_hash;
+  return copy;
+}
+
 app.post(
   "/api/public/online-admission-requests",
   publicWriteRateLimit,
@@ -3333,10 +3486,13 @@ app.post(
     const pathwayLabel = pathwayBits.join(" · ");
     const finalGradeOrForm = cleanOptionalValue(gradeOrForm) || pathwayLabel || null;
 
+    const applicantAccessTokenPlain = crypto.randomBytes(32).toString("base64url");
+    const applicantAccessTokenHash = hashAdmissionApplicantAccessToken(applicantAccessTokenPlain);
+
     const result = await query(
       `INSERT INTO online_admission_requests
-        (institution_id, applicant_email, applicant_phone, learner_name, learner_type, grade_or_form, stream, payload_json, status)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'PENDING')`,
+        (institution_id, applicant_email, applicant_phone, learner_name, learner_type, grade_or_form, stream, payload_json, applicant_access_token_hash, status)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING')`,
       [
         institutionId,
         applicantEmail || null,
@@ -3345,7 +3501,8 @@ app.post(
         normalizedType,
         finalGradeOrForm || null,
         stream || null,
-        JSON.stringify(extras || {})
+        JSON.stringify(extras || {}),
+        applicantAccessTokenHash
       ]
     );
     await auditLog(
@@ -3431,6 +3588,9 @@ app.post(
             "Please wait for the institution to respond.",
             `Reference ID: ${result.insertId}`,
             "",
+            `Private upload token (save this securely; use it once on the Admission Portal to attach PDF/JPEG documents):`,
+            applicantAccessTokenPlain,
+            "",
             "Track status: open Admission Portal (/admission-portal.html) → Track application → enter Reference ID and this exact email.",
             ...trackerUrlLine,
             "",
@@ -3455,7 +3615,114 @@ app.post(
 
     res.json({
       message: "REQUEST SENT SUCCESSFULLY. PLEASE WAIT FOR INSTITUTION RESPONSE.",
-      request_id: result.insertId
+      request_id: result.insertId,
+      applicant_access_token: applicantAccessTokenPlain,
+      allowed_document_categories: KNOWN_DOCUMENT_CATEGORIES,
+      documents_endpoint: `/api/public/online-admission-requests/${result.insertId}/documents`,
+      documents_upload_hint:
+        "Send multipart form: field file plus document_category (BIRTH_CERTIFICATE, PARENT_ID, LEARNER_REPORT, TRANSFER_LETTER, PASSPORT_PHOTO, OTHER); header X-Admission-Access-Token with the applicant_access_token from this response."
+    });
+  })
+);
+
+app.get(
+  "/api/public/online-admission-requests/:requestId/documents",
+  publicReadRateLimit,
+  enforcePublicSecurity,
+  asyncHandler(async (req, res) => {
+    const requestId = Number(req.params.requestId || 0);
+    const authz = await assertOnlineAdmissionApplicantAccess(requestId, extractOnlineAdmissionApplicantToken(req));
+    if (!authz.ok) {
+      return res.status(authz.status).json({ error: authz.error });
+    }
+    const rows = await fetchOnlineAdmissionDocumentsForRequest(requestId);
+    res.json({ documents: rows.map(mapAdmissionDocRowPublic) });
+  })
+);
+
+app.post(
+  "/api/public/online-admission-requests/:requestId/documents",
+  publicWriteRateLimit,
+  enforcePublicAdmissionMultipartUpload,
+  admissionDocUploadMiddleware,
+  asyncHandler(async (req, res) => {
+    const requestId = Number(req.params.requestId || 0);
+    const uploaded = req.file;
+    const removeUploaded = () => {
+      try {
+        if (uploaded?.path && fs.existsSync(uploaded.path)) {
+          fs.unlinkSync(uploaded.path);
+        }
+      } catch (_) {
+        /* ignore cleanup failure */
+      }
+    };
+
+    if (!uploaded) {
+      return res.status(400).json({
+        error: "Select a file to upload (PDF, JPEG, or PNG; multipart field name file)."
+      });
+    }
+
+    const authz = await assertOnlineAdmissionApplicantAccess(requestId, extractOnlineAdmissionApplicantToken(req));
+    if (!authz.ok) {
+      removeUploaded();
+      return res.status(authz.status).json({ error: authz.error });
+    }
+
+    const cat = normalizeAdmissionDocCategory(req.body?.document_category || req.body?.doc_category);
+    if (!cat) {
+      removeUploaded();
+      return res.status(400).json({
+        error: `document_category must be one of: ${KNOWN_DOCUMENT_CATEGORIES.join(", ")}`
+      });
+    }
+
+    const countRows = await query(
+      `SELECT COUNT(*) AS c FROM online_admission_request_documents WHERE online_admission_request_id = ?`,
+      [requestId]
+    );
+    const maxDocs = admissionMaxDocumentsPerApplicantRequest();
+    if (Number(countRows[0]?.c || 0) >= maxDocs) {
+      removeUploaded();
+      return res.status(409).json({ error: `Maximum of ${maxDocs} documents reached for this application.` });
+    }
+
+    const orig = sanitizeOriginalFilename(uploaded.originalname, uploaded.mimetype);
+    const insertResult = await query(
+      `INSERT INTO online_admission_request_documents
+        (online_admission_request_id, doc_category, original_filename, stored_filename, mime_type, byte_size)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [requestId, cat, orig, uploaded.filename, uploaded.mimetype, Number(uploaded.size || 0)]
+    );
+    await auditLog(
+      {
+        institution_id: authz.row?.institution_id || null,
+        id: null,
+        role: "PUBLIC_APPLICANT"
+      },
+      "ONLINE_ADMISSION_APPLICANT_DOC_UPLOAD",
+      "online_admission_request_documents",
+      insertResult.insertId,
+      {
+        admission_request_id: requestId,
+        document_category: cat,
+        mime_type: uploaded.mimetype,
+        byte_size: Number(uploaded.size || 0)
+      }
+    );
+    const mapped = mapAdmissionDocRowPublic({
+      id: insertResult.insertId,
+      document_category: cat,
+      original_filename: orig,
+      mime_type: uploaded.mimetype,
+      byte_size: Number(uploaded.size || 0),
+      stored_filename: uploaded.filename,
+      created_at: new Date().toISOString()
+    });
+    res.status(201).json({
+      message: "Document uploaded successfully.",
+      document: mapped
     });
   })
 );
@@ -13521,7 +13788,7 @@ app.get(
     sql += ` ORDER BY created_at DESC LIMIT ${limit}`;
     const rows = await query(sql, params);
     const items = rows.map((row) => ({
-      ...row,
+      ...sanitizeOnlineAdmissionRequestRow(row),
       intake_summary: summarizeOnlineAdmissionIntakeDetails(row.payload_json),
       learning_areas_summary: summarizeOnlineAdmissionLearningAreas(row.payload_json)
     }));
@@ -13551,26 +13818,32 @@ app.get(
     if (!rows.length) {
       return res.status(404).json({ error: "Admission request was not found." });
     }
-    const record = rows[0];
+    const recordRaw = rows[0];
     const scopeError = await assertInstitutionScopeAccess(
       req,
-      record.institution_id,
+      recordRaw.institution_id,
       "You can only view admission submissions for institutions you manage."
     );
     if (scopeError) {
       return res.status(scopeError.status).json({ error: scopeError.error });
     }
-    if (!isAnySystemDeveloperRole(normalizedRole) && Number(record.institution_id || 0) !== Number(req.user.institution_id || 0)) {
+    if (
+      !isAnySystemDeveloperRole(normalizedRole) &&
+      Number(recordRaw.institution_id || 0) !== Number(req.user.institution_id || 0)
+    ) {
       return res.status(403).json({ error: "You cannot access admission submissions outside your institution." });
     }
-    const parsedPayload = parseStoredJson(record.payload_json);
+    const parsedPayload = parseStoredJson(recordRaw.payload_json);
+    const applicantDocs = await fetchOnlineAdmissionDocumentsForRequest(requestId);
+    const record = sanitizeOnlineAdmissionRequestRow(recordRaw);
     res.json({
       item: {
         ...record,
-        learning_areas: parseOnlineAdmissionPayloadLearningAreas(record.payload_json),
-        learning_areas_summary: summarizeOnlineAdmissionLearningAreas(record.payload_json),
-        intake_summary: summarizeOnlineAdmissionIntakeDetails(record.payload_json),
-        payload_json_parsed: parsedPayload
+        learning_areas: parseOnlineAdmissionPayloadLearningAreas(recordRaw.payload_json),
+        learning_areas_summary: summarizeOnlineAdmissionLearningAreas(recordRaw.payload_json),
+        intake_summary: summarizeOnlineAdmissionIntakeDetails(recordRaw.payload_json),
+        payload_json_parsed: parsedPayload,
+        applicant_documents: applicantDocs.map(mapAdmissionDocRowPublic)
       }
     });
   })

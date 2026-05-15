@@ -166,6 +166,37 @@
       </div>
 
       <div class="glass-card auth-card auth-card--compact" style="margin-top: 16px;">
+        <h3>Upload supporting documents</h3>
+        <p class="small-note muted">
+          After you submit an application, the server returns a private <strong>upload token</strong> (shown once).
+          Paste it below with your Reference ID — PDF / JPEG / PNG only, up to the configured size limit per file.
+        </p>
+        <div class="auth-grid">
+          <label>Reference ID</label>
+          <input id="uploadRequestId" inputmode="numeric" placeholder="same as Track application" />
+          <label>Upload token (from confirmation)</label>
+          <input id="uploadAccessToken" type="password" autocomplete="new-password" placeholder="paste applicant_access_token" />
+          <label>Document category</label>
+          <select id="uploadDocCategory">
+            <option value="">Select…</option>
+            <option value="BIRTH_CERTIFICATE">Birth certificate</option>
+            <option value="PARENT_ID">Parent / guardian ID</option>
+            <option value="LEARNER_REPORT">Latest school report</option>
+            <option value="TRANSFER_LETTER">Transfer letter</option>
+            <option value="PASSPORT_PHOTO">Passport-style photo</option>
+            <option value="OTHER">Other supporting doc</option>
+          </select>
+          <label>File (PDF, JPEG, PNG)</label>
+          <input id="uploadDocFile" type="file" accept=".pdf,.png,.jpg,.jpeg,image/png,image/jpeg,application/pdf" />
+          <div style="grid-column: 1 / -1;">
+            <button id="uploadDocSubmitBtn" type="button" class="auth-primary-btn">Upload document</button>
+            <button id="uploadDocRefreshBtn" type="button" class="auth-primary-btn">Refresh uploaded list</button>
+          </div>
+        </div>
+        <pre id="uploadDocStatus" class="small-note" style="margin-top: 12px; white-space: pre-wrap;"></pre>
+      </div>
+
+      <div class="glass-card auth-card auth-card--compact" style="margin-top: 16px;">
         <h3>Track application status</h3>
         <p class="small-note muted">
           Use the Reference ID from your confirmation email together with the exact email address you typed when applying.
@@ -182,7 +213,7 @@
         <pre id="trackResult" class="small-note" style="margin-top: 12px; white-space: pre-wrap;"></pre>
       </div>
       <p class="small-note muted" style="margin-top: 14px;">
-        Dedicated applicant accounts with passwords are planned next; Reference ID plus email proofs keep lookups private until then.
+        Status lookup stays private via Reference ID + applicant email; document uploads additionally require the single-use-style upload token issued with your submission (save it like a password).
       </p>
     </main>
 
@@ -205,6 +236,9 @@
       const FORM_LIST = ["Form 1", "Form 2", "Form 3", "Form 4", "N/A (CBC / Primary pathway only)"];
 
       const TERMS = ["Term 1", "Term 2", "Term 3"];
+
+      const UP_REQ_KEY = "imisAdmissionUploadRequestId";
+      const UP_TOK_KEY = "imisAdmissionUploadToken";
 
       const statusEl = document.getElementById("portalStatusLine");
       const institutionPick = document.getElementById("institutionPick");
@@ -233,6 +267,52 @@
         for (let y = y0 - 1; y <= y0 + 4; y += 1) years.push(String(y));
         fillSelectFromList(document.getElementById("admissionYearPick"), "Select year…", years);
         fillSelectFromList(document.getElementById("admissionTermPick"), "Select term…", TERMS);
+      }
+
+      function hydrateUploadPanelFromStorage() {
+        try {
+          const rid = sessionStorage.getItem(UP_REQ_KEY);
+          const tok = sessionStorage.getItem(UP_TOK_KEY);
+          if (rid) document.getElementById("uploadRequestId").value = rid;
+          if (tok) document.getElementById("uploadAccessToken").value = tok;
+        } catch (_) {
+          /* private mode / blocked storage */
+        }
+      }
+
+      async function refreshUploadedDocsList() {
+        const rid = Number(document.getElementById("uploadRequestId").value.trim() || 0);
+        const tok = document.getElementById("uploadAccessToken").value.trim();
+        const out = document.getElementById("uploadDocStatus");
+        if (!rid || !tok) {
+          out.textContent = "Enter Reference ID and upload token.";
+          return;
+        }
+        out.textContent = "Loading uploads…";
+        try {
+          const res = await fetch(`/api/public/online-admission-requests/${rid}/documents`, {
+            credentials: "same-origin",
+            headers: {
+              Accept: "application/json",
+              "X-Admission-Access-Token": tok
+            }
+          });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) throw new Error(data.error || "Unable to load documents.");
+          const docs = Array.isArray(data.documents) ? data.documents : [];
+          out.textContent = docs.length
+            ? docs
+                .map(
+                  (d) =>
+                    `${d.document_category}: ${d.original_filename} (${Math.round(
+                      Number(d.byte_size || 0) / 1024
+                    )} KB)`
+                )
+                .join("\n")
+            : "No documents uploaded yet for this Reference ID.";
+        } catch (error) {
+          out.textContent = error.message || "Load failed.";
+        }
       }
 
       async function bootstrapInstitutions() {
@@ -361,10 +441,25 @@
           if (data.request_id) {
             document.getElementById("trackRequestId").value = String(data.request_id);
             document.getElementById("trackApplicantEmail").value = applicant_email;
+            try {
+              sessionStorage.setItem(UP_REQ_KEY, String(data.request_id));
+            } catch (_) {}
+            document.getElementById("uploadRequestId").value = String(data.request_id);
             document.getElementById("trackResult").textContent =
               "Reference ID filled — scroll to Track application status and tap Check status.";
           }
-          alert(data.message || "REQUEST SENT SUCCESSFULLY.");
+          if (data.applicant_access_token) {
+            try {
+              sessionStorage.setItem(UP_TOK_KEY, data.applicant_access_token);
+            } catch (_) {}
+            document.getElementById("uploadAccessToken").value = data.applicant_access_token;
+          }
+          alert(
+            (data.message || "REQUEST SENT SUCCESSFULLY.") +
+              (data.applicant_access_token
+                ? "\n\nSave your private upload token securely (needed to attach documents)."
+                : "")
+          );
         } catch (error) {
           console.error(error);
           statusEl.textContent = error.message || "Submission failed.";
@@ -424,7 +519,53 @@
         }
       });
 
+      document.getElementById("uploadDocSubmitBtn")?.addEventListener("click", async () => {
+        const rid = Number(document.getElementById("uploadRequestId").value.trim() || 0);
+        const tok = document.getElementById("uploadAccessToken").value.trim();
+        const cat = document.getElementById("uploadDocCategory").value;
+        const fileInput = document.getElementById("uploadDocFile");
+        const file = fileInput && fileInput.files && fileInput.files[0];
+        const out = document.getElementById("uploadDocStatus");
+        if (!rid || !tok) {
+          alert("Reference ID and upload token are required.");
+          return;
+        }
+        if (!cat) {
+          alert("Pick a document category.");
+          return;
+        }
+        if (!file) {
+          alert("Choose a PDF or image file.");
+          return;
+        }
+        try {
+          out.textContent = "Uploading…";
+          const fd = new FormData();
+          fd.append("file", file);
+          fd.append("document_category", cat);
+          const res = await fetch(`/api/public/online-admission-requests/${rid}/documents`, {
+            method: "POST",
+            credentials: "same-origin",
+            headers: {
+              Accept: "application/json",
+              "X-Admission-Access-Token": tok
+            },
+            body: fd
+          });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) throw new Error(data.error || "Upload failed.");
+          out.textContent = data.message || "Uploaded.";
+          fileInput.value = "";
+          await refreshUploadedDocsList();
+        } catch (error) {
+          out.textContent = error.message || "Upload failed.";
+          alert(error.message || "Upload failed.");
+        }
+      });
+      document.getElementById("uploadDocRefreshBtn")?.addEventListener("click", refreshUploadedDocsList);
+
       hydrateIntakeSelectors();
+      hydrateUploadPanelFromStorage();
       toggleWorkflowPanels();
       bootstrapInstitutions();
     </script>
