@@ -1,3 +1,4 @@
+const path = require("path");
 const mysql = require("mysql2/promise");
 
 const dbHost = process.env.DB_HOST || "127.0.0.1";
@@ -27,6 +28,7 @@ async function resolvePool() {
 
   const candidatePorts = [...new Set([requestedPort, 3307, 3306].filter((value) => Number.isFinite(value) && value > 0))];
   const errors = [];
+  const envPath = path.join(__dirname, "..", "..", ".env");
 
   for (const port of candidatePorts) {
     const candidatePool = mysql.createPool(buildPoolConfig(port));
@@ -50,8 +52,21 @@ async function resolvePool() {
     }
   }
 
+  const fullMessage = errors.join(" | ");
+  let hint = "";
+  if (/Access denied/i.test(fullMessage)) {
+    if (/using password:\s*NO/i.test(fullMessage)) {
+      hint = `\n\n[HINT] MySQL got no password from the app. Edit this file and set DB_PASS= your MySQL password, then save:\n  ${envPath}`;
+    } else {
+      hint = `\n\n[HINT] Wrong MySQL user/password. Fix DB_USER / DB_PASS in:\n  ${envPath}`;
+    }
+    if (/172\.17\.|docker/i.test(fullMessage)) {
+      hint += `\n(Docker networking: MySQL may need a user that allows your client host — e.g. GRANT for '%' or fix root host rules.)`;
+    }
+  }
+
   throw new Error(
-    `Unable to connect to MySQL on ${dbHost}. Tried ports: ${candidatePorts.join(", ")}. ${errors.join(" | ")}`
+    `Unable to connect to MySQL on ${dbHost}. Tried ports: ${candidatePorts.join(", ")}. ${fullMessage}${hint}`
   );
 }
 
