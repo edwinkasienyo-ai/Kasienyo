@@ -857,7 +857,9 @@ function normalizeDateTime(value) {
   return parsed.format("YYYY-MM-DD HH:mm:ss");
 }
 
-function isAccountLocked(user = {}) {
+function isAccountLocked(user) {
+  // Callers pass `null` when no matching active row (default `{}` does not apply to null).
+  if (!user || typeof user !== "object") return false;
   const lockedUntil = normalizeDateTime(user.locked_until);
   if (!lockedUntil) return false;
   return dayjs(lockedUntil).isAfter(dayjs());
@@ -2651,7 +2653,7 @@ app.post("/api/auth/login", authLoginRateLimit, asyncHandler(async (req, res) =>
     await delayWithRandomJitter();
     return res.status(423).json({
       error: "Account temporarily locked due to repeated failed login attempts.",
-      locked_until: normalizeDateTime(securityUser.locked_until)
+      locked_until: normalizeDateTime(securityUser?.locked_until)
     });
   }
 
