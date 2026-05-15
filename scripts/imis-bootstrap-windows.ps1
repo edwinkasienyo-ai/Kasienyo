@@ -1,9 +1,6 @@
-# IMIS Windows — one-shot: Docker MySQL on 3307 + write DB_* into .env + optional npm start
-# Run from your project folder (where package.json lives), e.g. C:\dev\Kasienyo
+# IMIS Windows - Docker MySQL on 3307 + write DB_* into .env (ASCII-only - safe for all PowerShell locales)
+# Run from project root (folder with package.json):
 #   powershell -ExecutionPolicy Bypass -File ".\scripts\imis-bootstrap-windows.ps1"
-#
-# PowerShell tip: do NOT use ^ for line breaks (that is cmd.exe). Use one line for docker run,
-# or backtick ` at line end for continuation.
 
 $ErrorActionPreference = "Stop"
 
@@ -32,29 +29,32 @@ $RepoRoot = if ($PSScriptRoot) { (Resolve-Path (Join-Path $PSScriptRoot "..")).P
 $envFile = Join-Path $RepoRoot ".env"
 $exFile = Join-Path $RepoRoot ".env.example"
 
-Write-Host "`n=== Repo: $RepoRoot ===" -ForegroundColor Cyan
+Write-Host ""
+Write-Host "=== Repo: $RepoRoot ===" -ForegroundColor Cyan
 if (-not (Test-Path (Join-Path $RepoRoot "package.json"))) {
   Write-Host "ERROR: package.json not found. cd into your IMIS project folder first." -ForegroundColor Red
   exit 1
 }
 
-Write-Host "`n>>> Docker daemon check..." -ForegroundColor Cyan
+Write-Host ""
+Write-Host ">>> Docker daemon check..." -ForegroundColor Cyan
 docker info 2>$null | Out-Null
 if ($LASTEXITCODE -ne 0) {
-  Write-Host "Docker is not running. Start Docker Desktop, wait until it says Running, then run this script again." -ForegroundColor Red
+  Write-Host "Docker is not running. Start Docker Desktop, then run this script again." -ForegroundColor Red
   exit 1
 }
 
 if (-not (Test-Path -LiteralPath $envFile)) {
   if (-not (Test-Path -LiteralPath $exFile)) {
-    Write-Host "ERROR: Missing .env.example — repo incomplete." -ForegroundColor Red
+    Write-Host "ERROR: Missing .env.example" -ForegroundColor Red
     exit 1
   }
   Copy-Item -LiteralPath $exFile -Destination $envFile
   Write-Host "Created .env from .env.example" -ForegroundColor Green
 }
 
-Write-Host "`n>>> Starting MySQL container $ContainerName on host port $HostDbPort..." -ForegroundColor Cyan
+Write-Host ""
+Write-Host ">>> Starting MySQL container $ContainerName on host port $HostDbPort ..." -ForegroundColor Cyan
 docker rm -f imis_mysql 2>$null | Out-Null
 docker rm -f $ContainerName 2>$null | Out-Null
 
@@ -69,13 +69,13 @@ $runArgs = @(
 & docker @runArgs
 
 if ($LASTEXITCODE -ne 0) {
-  Write-Host "docker run failed. Try changing HostDbPort in this script to 3308 if 3307 is busy." -ForegroundColor Red
+  Write-Host "docker run failed. Edit HostDbPort in this script to 3308 if 3307 is busy." -ForegroundColor Red
   exit 1
 }
 
-Write-Host "Waiting for MySQL to accept connections..." -ForegroundColor Yellow
+Write-Host "Waiting for MySQL (first start can take 30-90 seconds)..." -ForegroundColor Yellow
 $ready = $false
-for ($i = 0; $i -lt 30; $i++) {
+for ($i = 0; $i -lt 60; $i++) {
   docker exec $ContainerName mysqladmin ping -h 127.0.0.1 -uroot "-p$MysqlRootPass" 2>$null | Out-Null
   if ($LASTEXITCODE -eq 0) {
     $ready = $true
@@ -88,7 +88,8 @@ if (-not $ready) {
   exit 1
 }
 
-Write-Host "`n>>> Writing DB_* lines to .env" -ForegroundColor Cyan
+Write-Host ""
+Write-Host ">>> Writing DB_* lines to .env" -ForegroundColor Cyan
 Set-DotEnvKey -FilePath $envFile -Key "DB_HOST" -Value "127.0.0.1"
 Set-DotEnvKey -FilePath $envFile -Key "DB_PORT" -Value $HostDbPort
 Set-DotEnvKey -FilePath $envFile -Key "DB_USER" -Value "root"
@@ -103,11 +104,13 @@ if ([string]::IsNullOrWhiteSpace($jwtVal) -or $jwtVal -eq "change-me-very-long-s
   Write-Host "Set JWT_SECRET to a random value." -ForegroundColor Green
 }
 
-Write-Host "`n>>> Verifying Node reads DB_PASS from .env..." -ForegroundColor Cyan
+Write-Host ""
+Write-Host ">>> Verifying Node reads DB_PASS from .env..." -ForegroundColor Cyan
 Set-Location -LiteralPath $RepoRoot
 node -e 'const p=require("path");require("dotenv").config({path:p.join(process.cwd(),".env")});const n=(process.env.DB_PASS||"").length;if(!n){console.error("FAIL: DB_PASS still empty");process.exit(1);}console.log("OK: DB_PASS length =",n);'
 
-Write-Host "`n=== Done ===" -ForegroundColor Green
-Write-Host "Root password / DB_PASS: $MysqlRootPass"
-Write-Host "MySQL Workbench: 127.0.0.1  port $HostDbPort  user root"
-Write-Host "Start IMIS with: npm start" -ForegroundColor Yellow
+Write-Host ""
+Write-Host "=== Done ===" -ForegroundColor Green
+Write-Host ('Root password / DB_PASS: ' + $MysqlRootPass)
+Write-Host ('MySQL Workbench host 127.0.0.1 port ' + $HostDbPort + ' user root')
+Write-Host 'Next run in this folder: npm start' -ForegroundColor Yellow
