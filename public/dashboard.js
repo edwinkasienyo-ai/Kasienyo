@@ -13,7 +13,7 @@ let portalContext = null;
 let searchRowDrafts = {};
 let dashboardAutoRefreshHandle = null;
 let currentSidebarSubmoduleId = null;
-const CLIENT_UI_BUNDLE_ID = "dash-bundle-enterprise-v85-exam-gen-qbank-stats-ui";
+const CLIENT_UI_BUNDLE_ID = "dash-bundle-enterprise-v86-batch-10-polish";
 const examPanelState = {
   generatedExam: null,
   serials: [],
@@ -51,6 +51,18 @@ function formatExamQuestionBankBlendSummary(gen) {
       : "Structured bank: no matching stems for filters";
 
   return `${mcqPart}. ${strPart}.`;
+}
+
+/** Question bank + OpenAI stem telemetry after exam auto-generation (single line for UI). */
+function formatExamAutoGenerateTelemetry(gen) {
+  const qb = formatExamQuestionBankBlendSummary(gen);
+  if (!gen || typeof gen !== "object") {
+    return qb;
+  }
+  const aiUsed = Number(gen.ai_stems_used);
+  const aiPart =
+    Number.isFinite(aiUsed) && aiUsed > 0 ? `OpenAI stems used: ${aiUsed}.` : "OpenAI stems: none.";
+  return `${qb} ${aiPart}`.trim();
 }
 
 const DASHBOARD_STAT_LABELS = {
@@ -4222,7 +4234,7 @@ function wireExamGenerationPanel() {
       setEnabled(controls.save, true);
       renderPerLearnerActions(payload);
       if (controls.preview) {
-        const qbNote = escapeHtml(formatExamQuestionBankBlendSummary(generated));
+        const qbNote = escapeHtml(formatExamAutoGenerateTelemetry(generated));
         controls.preview.innerHTML = `Generated exam ID <strong>${escapeHtml(String(generated?.id || "-"))}</strong>. ${
           examPanelState.serials.length
         } serial record(s) prepared for marks entry.${qbNote ? `<br/><span class="small-note">${qbNote}</span>` : ""}`;
@@ -5547,7 +5559,7 @@ function renderExamQuestionBankPanel() {
       <div class="exam-v2-pane">
         <div class="module-header-card exam-module-compact-header">
           <h4>Institution question bank</h4>
-          <p class="exam-tight-note">Store reusable stems for your institution — MCQ payloads must include choices + correct letter in <strong>answer</strong>. Generation will be able to reuse this bank in a future pass.</p>
+          <p class="exam-tight-note">Store reusable stems for your institution — MCQ payloads must include choices + correct letter in <strong>answer</strong>. Exam auto-generation blends READY MCQs and structured stems when enabled server-side.</p>
         </div>
         <div class="form-grid form-grid--exam-tight">
           <label>Filter grade/form</label>
@@ -5579,8 +5591,8 @@ function renderExamQuestionBankPanel() {
         <div id="qbInlineStatus" class="small-note exam-tight-note" aria-live="polite"></div>
         <div class="dashboard-table-wrap">
           <table class="dashboard-table">
-            <thead><tr><th>ID</th><th>Level</th><th>Learning area</th><th>Type</th><th>Status</th><th>Stem (preview)</th><th>Updated</th></tr></thead>
-            <tbody id="qbTableRows"><tr><td colspan="7">Loading…</td></tr></tbody>
+            <thead><tr><th>ID</th><th>Level</th><th>Learning area</th><th>Strand</th><th>Sub-strand</th><th>Type</th><th>Status</th><th>Stem (preview)</th><th>Updated</th><th>Actions</th></tr></thead>
+            <tbody id="qbTableRows"><tr><td colspan="10">Loading…</td></tr></tbody>
           </table>
         </div>
       </div>
@@ -5659,7 +5671,7 @@ async function wireExamQuestionBankPanel() {
     if (qtype) params.set("question_type", qtype);
     if (st) params.set("status", st);
     if (limit) params.set("limit", limit);
-    rowsEl.innerHTML = `<tr><td colspan="7">Loading…</td></tr>`;
+    rowsEl.innerHTML = `<tr><td colspan="10">Loading…</td></tr>`;
     try {
       setStatus("Refreshing question bank…");
       const path = `/api/academic/question-bank${params.toString() ? `?${params.toString()}` : ""}`;
@@ -5669,37 +5681,83 @@ async function wireExamQuestionBankPanel() {
         ? items
             .map((row) => {
               const stemPreview = truncateQuestionBankStem(row.stem_text || "");
+              const sid = Number(row.id || 0);
+              const strandDisp = truncateQuestionBankStem(row.strand || "", 56);
+              const subDisp = truncateQuestionBankStem(row.sub_strand || "", 56);
               return `
               <tr>
                 <td>${escapeHtml(String(row.id || "-"))}</td>
                 <td>${escapeHtml(row.grade_or_form || "—")}</td>
                 <td>${escapeHtml(row.learning_area || "—")}</td>
+                <td title="${escapeHtmlAttribute(String(row.strand || ""))}">${escapeHtml(strandDisp || "—")}</td>
+                <td title="${escapeHtmlAttribute(String(row.sub_strand || ""))}">${escapeHtml(subDisp || "—")}</td>
                 <td>${escapeHtml(row.question_type || "—")}</td>
                 <td>${escapeHtml(row.status || "—")}</td>
                 <td title="${escapeHtmlAttribute(String(row.stem_text || ""))}">${escapeHtml(stemPreview || "—")}</td>
                 <td>${escapeHtml(formatDateTime(row.updated_at || row.created_at))}</td>
+                <td class="qb-actions-cell">
+                  <button type="button" class="ax-btn ax-btn--save ax-btn--sm" data-qb-item-id="${escapeHtmlAttribute(String(sid))}" data-qb-patch-action="ready" ${sid ? "" : "disabled"}>READY</button>
+                  <button type="button" class="ax-btn ax-btn--reset ax-btn--sm" data-qb-item-id="${escapeHtmlAttribute(String(sid))}" data-qb-patch-action="draft" ${sid ? "" : "disabled"}>DRAFT</button>
+                  <button type="button" class="ax-btn ax-btn--delete ax-btn--sm" data-qb-item-id="${escapeHtmlAttribute(String(sid))}" data-qb-patch-action="hide" ${sid ? "" : "disabled"}>Hide</button>
+                </td>
               </tr>`;
             })
             .join("")
-        : `<tr><td colspan="7">No items yet — add stems on the right.</td></tr>`;
+        : `<tr><td colspan="10">No items yet — add stems on the right.</td></tr>`;
       setStatus(`Loaded ${items.length} item(s).`);
     } catch (error) {
-      rowsEl.innerHTML = `<tr><td colspan="7">${escapeHtml(error.message || "Load failed.")}</td></tr>`;
+      rowsEl.innerHTML = `<tr><td colspan="10">${escapeHtml(error.message || "Load failed.")}</td></tr>`;
       setStatus(error.message || "Load failed.");
     }
   };
+
+  if (rowsEl && rowsEl.dataset.qbPatchDelegation !== "1") {
+    rowsEl.dataset.qbPatchDelegation = "1";
+    rowsEl.addEventListener("click", async (evt) => {
+      const btn = evt.target.closest("[data-qb-patch-action]");
+      if (!btn) return;
+      const id = Number(btn.getAttribute("data-qb-item-id") || 0);
+      const action = String(btn.getAttribute("data-qb-patch-action") || "").toLowerCase();
+      if (!id || !action) return;
+      let body = {};
+      if (action === "ready") body = { status: "READY" };
+      else if (action === "draft") body = { status: "DRAFT" };
+      else if (action === "hide") {
+        if (!window.confirm("Hide this item from the bank? (Soft-delete; retained for audit.)")) return;
+        body = { soft_delete: true };
+      } else return;
+      try {
+        setStatus(`Updating item #${id}…`);
+        await request(`/api/academic/question-bank/${id}`, {
+          method: "PATCH",
+          headers: {
+            Accept: "application/json",
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify(body)
+        });
+        setStatus(`Updated item #${id}.`);
+        await loadRows();
+      } catch (error) {
+        alert(error.message || "Update failed.");
+        setStatus(error.message || "Update failed.");
+      }
+    });
+  }
 
   document.getElementById("qbReloadBtn")?.addEventListener("click", loadRows);
   ["qbFilterType", "qbFilterStatus", "qbLimit"].forEach((id) => {
     document.getElementById(id)?.addEventListener("change", loadRows);
   });
   ["qbFilterGrade", "qbFilterLearning"].forEach((id) => {
-    document.getElementById(id)?.addEventListener("keydown", (evt) => {
+    const el = document.getElementById(id);
+    el?.addEventListener("keydown", (evt) => {
       if (evt.key === "Enter") {
         evt.preventDefault();
         loadRows();
       }
     });
+    el?.addEventListener("blur", () => loadRows());
   });
 
   document.getElementById("qbClearFormBtn")?.addEventListener("click", () => {
@@ -8379,7 +8437,7 @@ async function renderCbcCurriculumEditor(options = {}) {
         setSchemeStatus("Marking scheme will activate after Process.");
         examPanelState.generatedExam = { id: generatedExamId, payload };
         examPanelState.serials = [];
-        const qbNote = formatExamQuestionBankBlendSummary(generated);
+        const qbNote = formatExamAutoGenerateTelemetry(generated);
         setGenStatus(
           `Generated exam #${generatedExamId || "-"} using ${selectedStrandsList.length} strand(s) and ${selectedSubsList.length} sub-strand(s). ${qbNote} Next: click Process to create learner serials and QR codes (they only appear after Process).`
         );
@@ -12197,7 +12255,7 @@ function wireOnlineAdmissionProcessingHub() {
       const data = await request(`/api/admission/online-requests${qs}`);
       const items = Array.isArray(data?.items) ? data.items : [];
       if (!items.length) {
-        tbody.innerHTML = `<tr><td colspan="9" class="small-note">No records for this filter.</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="10" class="small-note">No records for this filter.</td></tr>`;
         return;
       }
       tbody.innerHTML = items
@@ -12212,6 +12270,9 @@ function wireOnlineAdmissionProcessingHub() {
           <td>${escapeHtml(row.stream || "-")}</td>
           <td>${escapeHtml(row.applicant_email || "-")}</td>
           <td>${escapeHtml(row.applicant_phone || "-")}</td>
+          <td class="small-note" title="${escapeHtmlAttribute(String(row.learning_areas_summary || ""))}">${escapeHtml(
+            truncateQuestionBankStem(row.learning_areas_summary || "", 140) || "—"
+          )}</td>
           <td>${escapeHtml(row.status || "-")}</td>
           <td>
             <button type="button" class="ax-btn ax-btn--process ax-btn--sm" data-admission-online-id="${escapeHtmlAttribute(
@@ -12244,7 +12305,7 @@ function wireOnlineAdmissionProcessingHub() {
         });
       });
     } catch (error) {
-      tbody.innerHTML = `<tr><td colspan="9" class="small-note error">${escapeHtml(
+      tbody.innerHTML = `<tr><td colspan="10" class="small-note error">${escapeHtml(
         error.message || "Unable to load online admission requests."
       )}</td></tr>`;
     }
@@ -12803,6 +12864,7 @@ function renderCrudModule(moduleKey, options = {}) {
               <th>Stream</th>
               <th>Applicant Email</th>
               <th>Applicant Phone</th>
+              <th>Learning areas</th>
               <th>Status</th>
               <th>Actions</th>
             </tr>

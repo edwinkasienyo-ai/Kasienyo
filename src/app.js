@@ -3186,6 +3186,28 @@ app.get(
   })
 );
 
+function summarizeOnlineAdmissionLearningAreas(payloadJson) {
+  let payload = payloadJson;
+  if (payload === null || payload === undefined) {
+    return "";
+  }
+  if (typeof payload === "string") {
+    try {
+      payload = JSON.parse(payload);
+    } catch (_) {
+      return "";
+    }
+  }
+  if (!payload || typeof payload !== "object") {
+    return "";
+  }
+  const raw = payload.learning_areas ?? payload.learningAreas ?? [];
+  const arr = Array.isArray(raw)
+    ? raw.map((item) => cleanValue(String(item))).filter(Boolean)
+    : [];
+  return arr.slice(0, 16).join(", ");
+}
+
 app.post(
   "/api/public/online-admission-requests",
   publicWriteRateLimit,
@@ -12743,6 +12765,83 @@ app.post(
   })
 );
 
+app.patch(
+  "/api/academic/question-bank/:id",
+  auth,
+  enforceAnyModuleAccess([MODULE_KEYS.ACADEMIC_EXAMS, MODULE_KEYS.CBC_CURRICULUM_EDITOR]),
+  enforceRole(QUESTION_BANK_ROLES),
+  enforcePermission(PERMISSIONS.UPDATE),
+  asyncHandler(async (req, res) => {
+    const institutionId = resolveTenantInstitutionId(req);
+    if (!institutionId) {
+      return res.status(403).json({ error: "No institution scope attached to this account." });
+    }
+    const bankId = Number(req.params.id || 0);
+    if (!bankId) {
+      return res.status(400).json({ error: "Valid question bank id is required." });
+    }
+    const existing = await query(
+      `SELECT id FROM exam_question_bank WHERE id = ? AND institution_id = ? AND deleted_at IS NULL LIMIT 1`,
+      [bankId, institutionId]
+    );
+    if (!existing.length) {
+      return res.status(404).json({ error: "Question bank item not found." });
+    }
+
+    const wantsSoftDelete =
+      req.body?.soft_delete === true ||
+      req.body?.soft_delete === 1 ||
+      String(req.body?.soft_delete || "").toLowerCase() === "true";
+
+    const sets = [];
+    const vals = [];
+
+    if (req.body?.status !== undefined && req.body.status !== null && String(req.body.status).trim() !== "") {
+      const st = cleanValue(req.body.status).toUpperCase().slice(0, 40);
+      if (!["DRAFT", "READY", "RETIRED"].includes(st)) {
+        return res.status(400).json({ error: "status must be DRAFT, READY, or RETIRED." });
+      }
+      sets.push("status = ?");
+      vals.push(st);
+      if (st === "READY") {
+        sets.push("reviewed_at = NOW()", "reviewed_by_user_id = ?");
+        vals.push(req.user.id);
+      }
+    }
+
+    if (req.body?.strand !== undefined) {
+      sets.push("strand = ?");
+      vals.push(cleanOptionalValue(req.body.strand));
+    }
+    if (req.body?.sub_strand !== undefined) {
+      sets.push("sub_strand = ?");
+      vals.push(cleanOptionalValue(req.body.sub_strand));
+    }
+
+    if (wantsSoftDelete) {
+      sets.push("deleted_at = NOW()");
+    }
+
+    if (!sets.length) {
+      return res.status(400).json({ error: "No recognised updates supplied." });
+    }
+
+    vals.push(bankId, institutionId);
+    await query(
+      `UPDATE exam_question_bank SET ${sets.join(", ")}, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND institution_id = ?`,
+      vals
+    );
+
+    await auditLog(req.user, "EXAM_QUESTION_BANK_PATCH", "exam_question_bank", bankId, {
+      institution_id: institutionId,
+      soft_delete: wantsSoftDelete,
+      fields: sets.map((s) => s.split(" ")[0])
+    });
+
+    res.json({ message: "Question bank item updated.", id: bankId });
+  })
+);
+
 app.post(
   "/api/academic/exams/auto-generate",
   auth,
@@ -13294,7 +13393,11 @@ app.get(
     }
     sql += ` ORDER BY created_at DESC LIMIT ${limit}`;
     const rows = await query(sql, params);
-    res.json({ items: rows });
+    const items = rows.map((row) => ({
+      ...row,
+      learning_areas_summary: summarizeOnlineAdmissionLearningAreas(row.payload_json)
+    }));
+    res.json({ items });
   })
 );
 
