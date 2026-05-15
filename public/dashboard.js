@@ -13,7 +13,7 @@ let portalContext = null;
 let searchRowDrafts = {};
 let dashboardAutoRefreshHandle = null;
 let currentSidebarSubmoduleId = null;
-const CLIENT_UI_BUNDLE_ID = "dash-bundle-enterprise-v91-admission-hub-modal";
+const CLIENT_UI_BUNDLE_ID = "dash-bundle-enterprise-v92-reqs-matrix-labels";
 const examPanelState = {
   generatedExam: null,
   serials: [],
@@ -233,8 +233,16 @@ const SIDEBAR_SUBMODULES = {
   ],
   "system-audit": [
     { id: "system-security-audit-main", label: "Security Logs", targetModule: "system-audit" },
-    { id: "system-ops-center-main", label: "Ops Center", targetModule: "system-ops-center" },
-    { id: "system-incident-response-main", label: "Incident Response", targetModule: "system-incident-response" }
+    {
+      id: "system-ops-center-main",
+      label: "Ops Centre (within Security audit)",
+      targetModule: "system-ops-center"
+    },
+    {
+      id: "system-incident-response-main",
+      label: "Incident Response (within Security audit)",
+      targetModule: "system-incident-response"
+    }
   ],
   admission: [
     {
