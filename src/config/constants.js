@@ -81,6 +81,135 @@ const GRADES = [
 ];
 
 const FORMS = ["Form 3", "Form 4"];
+const CBC_LEVELS = [
+  {
+    key: "pre-primary",
+    label: "Pre-Primary",
+    grades: ["Play Group", "PP1", "PP2"],
+    learningAreas: [
+      "Language Activities",
+      "Mathematical Activities",
+      "Creative Activities",
+      "Environmental Activities",
+      "Religious Activities",
+      "Pastoral Instruction Programme"
+    ]
+  },
+  {
+    key: "lower-primary",
+    label: "Lower Primary",
+    grades: ["Grade 1", "Grade 2", "Grade 3"],
+    learningAreas: [
+      "Indigenous Language Activities",
+      "Kiswahili Language Activities/Kenya Sign Language Activities",
+      "English Language Activities",
+      "Mathematical Activities",
+      "Christian Religious Education Activities",
+      "Environmental Activities",
+      "Creative Activities",
+      "Pastoral Instruction Programme"
+    ]
+  },
+  {
+    key: "upper-primary",
+    label: "Upper Primary",
+    grades: ["Grade 4", "Grade 5", "Grade 6"],
+    learningAreas: [
+      "English Number",
+      "Kiswahili/Kenya Sign Language",
+      "Mathematics",
+      "Religious Education",
+      "Science & Technology",
+      "Agriculture",
+      "Social Studies",
+      "Creative Arts",
+      "Pastoral/Religious Instruction Programme"
+    ]
+  },
+  {
+    key: "junior-secondary",
+    label: "Junior Secondary",
+    grades: ["Grade 7", "Grade 8", "Grade 9"],
+    learningAreas: [
+      "English",
+      "Kiswahili/Kenya Sign Language",
+      "Mathematics",
+      "Religious Education (CRE, HRE, IRE)",
+      "Social Studies",
+      "Integrated Science",
+      "Pre-Technical Studies",
+      "Agriculture",
+      "Creative Arts and Sports",
+      "Pastoral/Religious Instructional Program",
+      "Arabic",
+      "French",
+      "German",
+      "Indigenous Language",
+      "Mandarin"
+    ]
+  },
+  {
+    key: "senior-secondary",
+    label: "Senior Secondary",
+    grades: ["Grade 10", "Grade 11", "Grade 12", "Form 3", "Form 4"],
+    pathways: {
+      STEM: [
+        "English",
+        "Kiswahili/KSL",
+        "Community Service Learning",
+        "Physical Education",
+        "Mathematics/Advanced Mathematics",
+        "Biology",
+        "Chemistry",
+        "Physics",
+        "General Science",
+        "Agriculture",
+        "Computer Studies",
+        "Home Science",
+        "Drawing and Design",
+        "Aviation Technology",
+        "Building and Construction",
+        "Electrical Technology",
+        "Metal Technology",
+        "Power Mechanics",
+        "Wood Technology",
+        "Media Technology",
+        "Marine and Fisheries Technology"
+      ],
+      "Social Sciences": [
+        "English",
+        "Kiswahili/KSL",
+        "Community Service Learning",
+        "Physical Education",
+        "Advanced English",
+        "Literature in English",
+        "Indigenous Language",
+        "Kiswahili Kipevu/Kenya Sign Language",
+        "Fasihi ya Kiswahili",
+        "Sign Language",
+        "Arabic",
+        "French",
+        "German",
+        "Mandarin Chinese",
+        "History and Citizenship",
+        "Geography",
+        "Christian Religious Education/ Islamic Religious Education/Hindu Religious Education",
+        "Business Studies"
+      ],
+      "Arts & Sports Science": [
+        "English",
+        "Kiswahili/KSL",
+        "Community Service Learning",
+        "Physical Education",
+        "Sports and Recreation",
+        "Physical Education (C)",
+        "Music and Dance",
+        "Theatre and Film",
+        "Fine Arts"
+      ]
+    }
+  }
+];
 const TERMS = ["Term One", "Term Two", "Term Three"];
 const YEAR_JOINED_OPTIONS = Array.from({ length: 25 }, (_, index) => 1945 + index);
 const GENDER_OPTIONS = ["Male", "Female", "Other"];
@@ -212,12 +341,15 @@ const EXPORT_FORMATS = [
   "Other Microsoft Office Format"
 ];
 
+const { MODULE_KEYS } = require("./moduleKeys");
+
 module.exports = {
   ROLES,
   PERMISSIONS,
   ROLE_PERMISSIONS,
   GRADES,
   FORMS,
+  CBC_LEVELS,
   TERMS,
   YEAR_JOINED_OPTIONS,
   YEAR_JOINED_WIDE_OPTIONS,
@@ -234,5 +366,6 @@ module.exports = {
   LEAVE_TYPES,
   TERMS_OF_SERVICE,
   DOCUMENT_CATEGORIES,
-  EXPORT_FORMATS
+  EXPORT_FORMATS,
+  MODULE_KEYS
 };
