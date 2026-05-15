@@ -108,12 +108,12 @@ async function loadPublicHeroImage() {
     heroImageEl.onerror = function onHeroLoadError() {
       if (!this.dataset.fallbackApplied) {
         this.dataset.fallbackApplied = "1";
-        this.src = "/uploads/index.jpg";
+        this.src = "/uploads/index-hero.jpg";
         return;
       }
       if (!this.dataset.fallback2Applied) {
         this.dataset.fallback2Applied = "1";
-        this.src = "/assets/imis-hero.jpg";
+        this.src = "/uploads/index.jpg";
         return;
       }
       this.onerror = null;

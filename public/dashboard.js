@@ -13,7 +13,7 @@ let portalContext = null;
 let searchRowDrafts = {};
 let dashboardAutoRefreshHandle = null;
 let currentSidebarSubmoduleId = null;
-const CLIENT_UI_BUNDLE_ID = "dash-bundle-enterprise-v89-fix-prompt-syntax-dashboard-load";
+const CLIENT_UI_BUNDLE_ID = "dash-bundle-enterprise-v90-hero-svg-admission-intake";
 const examPanelState = {
   generatedExam: null,
   serials: [],
@@ -12319,8 +12319,8 @@ function wireOnlineAdmissionProcessingHub() {
           <td>${escapeHtml(row.stream || "-")}</td>
           <td>${escapeHtml(row.applicant_email || "-")}</td>
           <td>${escapeHtml(row.applicant_phone || "-")}</td>
-          <td class="small-note" title="${escapeHtmlAttribute(String(row.learning_areas_summary || ""))}">${escapeHtml(
-            truncateQuestionBankStem(row.learning_areas_summary || "", 140) || "—"
+          <td class="small-note" title="${escapeHtmlAttribute(String(row.intake_summary || row.learning_areas_summary || ""))}">${escapeHtml(
+            truncateQuestionBankStem(row.intake_summary || row.learning_areas_summary || "", 140) || "—"
           )}</td>
           <td>${escapeHtml(row.status || "-")}</td>
           <td class="table-actions-cell admission-online-actions">
@@ -12954,7 +12954,7 @@ function renderCrudModule(moduleKey, options = {}) {
               <th>Stream</th>
               <th>Applicant Email</th>
               <th>Applicant Phone</th>
-              <th>Learning areas</th>
+              <th>Intake / pathway</th>
               <th>Status</th>
               <th>Actions</th>
             </tr>

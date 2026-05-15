@@ -3232,6 +3232,35 @@ function summarizeOnlineAdmissionLearningAreas(payloadJson) {
   return parseOnlineAdmissionPayloadLearningAreas(payloadJson).slice(0, 16).join(", ");
 }
 
+function summarizeOnlineAdmissionIntakeDetails(payloadJson) {
+  let payload = payloadJson;
+  if (payload !== null && typeof payload === "object" && !Array.isArray(payload)) {
+    /* already a parsed object */
+  } else if (typeof payload === "string") {
+    payload = parseStoredJson(payload);
+  } else {
+    payload = null;
+  }
+  if (!payload || typeof payload !== "object") {
+    return summarizeOnlineAdmissionLearningAreas(payloadJson);
+  }
+  const g = cleanOptionalValue(payload.admission_grade);
+  const f = cleanOptionalValue(payload.admission_form);
+  const y = cleanOptionalValue(payload.academic_year_intake);
+  const t = cleanOptionalValue(payload.term_intake);
+  const bits = [];
+  if (g) bits.push(g);
+  if (f) bits.push(f);
+  if (y) bits.push(y);
+  if (t) bits.push(t);
+  const intakeLine = bits.filter(Boolean).join(" · ");
+  const legacySubjects = summarizeOnlineAdmissionLearningAreas(payloadJson);
+  if (intakeLine && legacySubjects) {
+    return `${intakeLine} · Prior subject picks: ${legacySubjects}`;
+  }
+  return intakeLine || legacySubjects || "";
+}
+
 app.post(
   "/api/public/online-admission-requests",
   publicWriteRateLimit,
@@ -3250,6 +3279,16 @@ app.post(
         : req.body?.details && typeof req.body.details === "object"
           ? req.body.details
           : {};
+
+    const intakePairs = [
+      ["admission_grade", cleanOptionalValue(req.body?.admission_grade)],
+      ["admission_form", cleanOptionalValue(req.body?.admission_form)],
+      ["academic_year_intake", cleanOptionalValue(req.body?.academic_year_intake)],
+      ["term_intake", cleanOptionalValue(req.body?.term_intake)]
+    ];
+    for (const [key, val] of intakePairs) {
+      if (val) extras[key] = val;
+    }
 
     if (Array.isArray(req.body?.learning_areas) && req.body.learning_areas.length) {
       extras.learning_areas = req.body.learning_areas
@@ -3283,6 +3322,15 @@ app.post(
     const normalizedType =
       learnerType === "TRANSFER" || learnerType === "TRANSFERRED" ? "TRANSFER" : learnerType === "NEW" ? "NEW" : "NEW";
 
+    const pathwayBits = [
+      cleanOptionalValue(extras.admission_grade),
+      cleanOptionalValue(extras.admission_form),
+      cleanOptionalValue(extras.academic_year_intake),
+      cleanOptionalValue(extras.term_intake)
+    ].filter(Boolean);
+    const pathwayLabel = pathwayBits.join(" · ");
+    const finalGradeOrForm = cleanOptionalValue(gradeOrForm) || pathwayLabel || null;
+
     const result = await query(
       `INSERT INTO online_admission_requests
         (institution_id, applicant_email, applicant_phone, learner_name, learner_type, grade_or_form, stream, payload_json, status)
@@ -3293,7 +3341,7 @@ app.post(
         applicantPhone || null,
         learnerName,
         normalizedType,
-        gradeOrForm || null,
+        finalGradeOrForm || null,
         stream || null,
         JSON.stringify(extras || {})
       ]
@@ -3331,8 +3379,9 @@ app.post(
         `A learner admission request (${reference}) was submitted for ${institutionLabel}.`,
         `Learner: ${learnerName}`,
         `Parent/Applicant Email: ${applicantEmail || "n/a"}`,
-        `Grade/Form: ${gradeOrForm || "n/a"} | Stream: ${stream || "n/a"}`,
-        `Learning areas: ${
+        `Grade/Form: ${finalGradeOrForm || "n/a"} | Stream: ${stream || "n/a"}`,
+        `Intake pathway: ${summarizeOnlineAdmissionIntakeDetails(extras) || "n/a"}`,
+        `Learning areas / legacy: ${
           Array.isArray(extras?.learning_areas) && extras.learning_areas.length
             ? extras.learning_areas.join("; ")
             : "n/a"
@@ -3463,6 +3512,7 @@ app.post(
       return cleaned.slice(0, 4000);
     };
     const learningAreas = parseOnlineAdmissionPayloadLearningAreas(record.payload_json);
+    const intakePayload = parseStoredJson(record.payload_json) || {};
     res.json({
       request_id: record.id,
       institution_name: cleanValue(record.institution_name || ""),
@@ -3472,6 +3522,10 @@ app.post(
       stream: cleanOptionalValue(record.stream),
       status: cleanValue(record.status || ""),
       applicant_email: storedEmail,
+      admission_grade: cleanOptionalValue(intakePayload.admission_grade),
+      admission_form: cleanOptionalValue(intakePayload.admission_form),
+      academic_year_intake: cleanOptionalValue(intakePayload.academic_year_intake),
+      term_intake: cleanOptionalValue(intakePayload.term_intake),
       learning_areas: learningAreas,
       learning_areas_summary: summarizeOnlineAdmissionLearningAreas(record.payload_json),
       submitted_at: record.created_at ? dayjs(record.created_at).format("YYYY-MM-DD HH:mm:ss") : null,
@@ -13466,6 +13520,7 @@ app.get(
     const rows = await query(sql, params);
     const items = rows.map((row) => ({
       ...row,
+      intake_summary: summarizeOnlineAdmissionIntakeDetails(row.payload_json),
       learning_areas_summary: summarizeOnlineAdmissionLearningAreas(row.payload_json)
     }));
     res.json({ items });

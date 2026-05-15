@@ -122,6 +122,8 @@ select:disabled {
   --radius-lg: 18px;
   --shadow-sm: 0 8px 18px rgba(13, 45, 79, 0.08);
   --shadow-md: 0 14px 28px rgba(13, 45, 79, 0.12);
+  /* Shipped banner (no /uploads dependency for local dev); override via --hero-image-url in custom CSS if needed */
+  --hero-image-url: url("/assets/imis-index-hero.svg");
 }
 
 .login-page {
@@ -303,7 +305,7 @@ select:disabled {
   content: "";
   position: absolute;
   inset: 0;
-  background-image: var(--hero-image-url, url("/uploads/index-hero.jpg"));
+  background-image: var(--hero-image-url, url("/assets/imis-index-hero.svg"));
   background-size: cover;
   background-position: center top;
   background-repeat: no-repeat;
@@ -1485,6 +1487,17 @@ button:hover {
   background: radial-gradient(circle at top right, #ebf5ff 0%, #f7faff 44%, #f2f6fc 100%);
 }
 
+.dashboard-page:not(.read-only-portal) .main-content,
+.dashboard-page:not(.read-only-portal) .main-content textarea,
+.dashboard-page:not(.read-only-portal) .main-content input[type="text"],
+.dashboard-page:not(.read-only-portal) .main-content input[type="search"],
+.dashboard-page:not(.read-only-portal) .main-content input[type="email"],
+.dashboard-page:not(.read-only-portal) .main-content input[type="number"],
+.dashboard-page:not(.read-only-portal) .exam-strand-panel label {
+  user-select: text;
+  -webkit-user-select: text;
+}
+
 .app-shell {
   min-height: 100vh;
   height: 100vh;
@@ -1567,6 +1580,23 @@ button:hover {
   font-size: 9px;
   font-weight: 700;
   line-height: 1.2;
+}
+
+.sidebar-hero-mini {
+  margin: 6px 0 10px;
+  border-radius: 10px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  background: rgba(0, 0, 0, 0.12);
+}
+
+.sidebar-hero-mini img {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-height: 88px;
+  object-fit: cover;
+  pointer-events: none;
 }
 
 .nav-group-label {
