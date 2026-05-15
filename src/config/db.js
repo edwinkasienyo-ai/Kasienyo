@@ -2,7 +2,7 @@ const mysql = require("mysql2/promise");
 
 const dbHost = process.env.DB_HOST || "127.0.0.1";
 const dbUser = process.env.DB_USER || "root";
-const dbPass = process.env.DB_PASS || "";
+const dbPass = process.env.DB_PASS || process.env.DB_PASSWORD || "";
 const dbName = process.env.DB_NAME || "iims_school_system";
 const requestedPort = Number(process.env.DB_PORT || 3306);
 

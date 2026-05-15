@@ -3,13 +3,30 @@ const fs = require("fs");
 const envPath = path.join(__dirname, "..", ".env");
 const envExamplePath = path.join(__dirname, "..", ".env.example");
 let envJustCreated = false;
-if (!fs.existsSync(envPath) && fs.existsSync(envExamplePath)) {
+if (!fs.existsSync(envPath)) {
   try {
-    fs.copyFileSync(envExamplePath, envPath);
-    envJustCreated = true;
-    console.warn(
-      `[IMIS Basic Education] Created .env from .env.example at ${envPath}`
-    );
+    if (fs.existsSync(envExamplePath)) {
+      fs.copyFileSync(envExamplePath, envPath);
+      envJustCreated = true;
+      console.warn(`[IMIS Basic Education] Created .env from .env.example at ${envPath}`);
+    } else {
+      const minimalDotEnv = [
+        "NODE_ENV=development",
+        "PORT=5002",
+        "JWT_SECRET=change-me-very-long-secret",
+        "DB_HOST=127.0.0.1",
+        "DB_PORT=3306",
+        "DB_USER=root",
+        "DB_PASS=",
+        "DB_NAME=iims_school_system",
+        "FRONTEND_ORIGIN=http://localhost:5002"
+      ].join("\n");
+      fs.writeFileSync(envPath, minimalDotEnv, "utf8");
+      envJustCreated = true;
+      console.warn(
+        `[IMIS Basic Education] Created minimal .env at ${envPath} (.env.example was missing — restore repo files or edit DB_PASS here).`
+      );
+    }
   } catch (err) {
     console.warn(`[IMIS Basic Education] Could not auto-create .env: ${err?.message || err}`);
   }
@@ -18,7 +35,7 @@ require("dotenv").config({ path: envPath });
 if (envJustCreated) {
   const u = String(process.env.DB_USER || "root").trim();
   console.error(
-    `[IMIS Basic Education] Stop here once: edit .env in the project root, set DB_PASS (MySQL password for ${u}), set JWT_SECRET (long random text), save, then run: npm start`
+    `[IMIS Basic Education] First-time setup: open .env in Notepad, set DB_PASS to your MySQL password for "${u}", save, then run: npm start`
   );
   process.exit(1);
 }

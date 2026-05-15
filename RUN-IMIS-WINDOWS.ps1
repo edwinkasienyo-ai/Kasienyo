@@ -1,16 +1,17 @@
-# IMIS Basic Education — CREATE .env + SET PASSWORD + npm start (no git)
-# Run: powershell -ExecutionPolicy Bypass -File "C:\dev\Kasienyo\RUN-IMIS-WINDOWS.ps1"
-# (same idea as scripts\imis-env-and-start.ps1 but this file sits in the project root so it is easy to find)
-# Or run from repo root:  .\RUN-IMIS-WINDOWS.ps1
-# Or paste this entire file's contents into PowerShell ISE / save as .ps1 first.
+# IMIS Basic Education — double-click or run:
+#   powershell -ExecutionPolicy Bypass -File "C:\dev\Kasienyo\RUN-IMIS-WINDOWS.ps1"
+# This file lives in the PROJECT ROOT (next to package.json) so the path is short and obvious.
 
 $ErrorActionPreference = "Stop"
-$RepoRoot = if ($PSScriptRoot) { Split-Path -Parent $PSScriptRoot } else { "C:\dev\Kasienyo" }
+
+# When started with -File, $PSScriptRoot is this folder. Fallback for copy-paste use.
+$RepoRoot = if ($PSScriptRoot) { $PSScriptRoot } else { "C:\dev\Kasienyo" }
 
 function Set-DotEnvKey {
   param([string]$FilePath, [string]$Key, [string]$Value)
   if (-not (Test-Path -LiteralPath $FilePath)) { return }
   $raw = Get-Content -LiteralPath $FilePath -Raw
+  if ($null -eq $raw) { $raw = "" }
   $pat = "(?m)^" + [regex]::Escape($Key) + "=.*$"
   $line = "$Key=" + ($Value -replace "`r|`n", "")
   if ($raw -match $pat) {
@@ -24,6 +25,7 @@ function Set-DotEnvKey {
 }
 
 Set-Location -LiteralPath $RepoRoot
+
 $envFile = Join-Path $RepoRoot ".env"
 $example = Join-Path $RepoRoot ".env.example"
 
@@ -45,13 +47,13 @@ FRONTEND_ORIGIN=http://localhost:5002
 "@
     $enc = New-Object System.Text.UTF8Encoding $false
     [System.IO.File]::WriteAllText($envFile, $minimal.TrimStart() + "`r`n", $enc)
-    Write-Host "Created minimal .env (no .env.example)" -ForegroundColor Yellow
+    Write-Host "Created minimal .env (no .env.example found)" -ForegroundColor Yellow
   }
 }
 
 Write-Host ""
-Write-Host "Enter the MySQL password for the user in .env (default DB_USER=root)." -ForegroundColor Cyan
-Write-Host "Press Enter only if that MySQL user has NO password."
+Write-Host "MySQL must be running. Enter password for DB_USER (in .env, usually root)." -ForegroundColor Cyan
+Write-Host "Press Enter only if MySQL uses NO password for that user."
 $dbPass = Read-Host "DB_PASS"
 Set-DotEnvKey -FilePath $envFile -Key "DB_PASS" -Value $dbPass
 
@@ -64,5 +66,5 @@ if ([string]::IsNullOrWhiteSpace($jwtVal) -or $jwtVal -eq "change-me-very-long-s
 }
 
 Write-Host ""
-Write-Host "Starting server (Ctrl+C to stop)..." -ForegroundColor Green
+Write-Host "Starting IMIS (Ctrl+C to stop)..." -ForegroundColor Green
 npm start
