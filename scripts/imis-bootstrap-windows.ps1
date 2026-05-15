@@ -54,7 +54,7 @@ if (-not (Test-Path -LiteralPath $envFile)) {
   Write-Host "Created .env from .env.example" -ForegroundColor Green
 }
 
-Write-Host "`n>>> Starting MySQL container ($ContainerName host port ${HostDbPort})..." -ForegroundColor Cyan
+Write-Host "`n>>> Starting MySQL container $ContainerName on host port $HostDbPort..." -ForegroundColor Cyan
 docker rm -f imis_mysql 2>$null | Out-Null
 docker rm -f $ContainerName 2>$null | Out-Null
 
@@ -105,7 +105,7 @@ if ([string]::IsNullOrWhiteSpace($jwtVal) -or $jwtVal -eq "change-me-very-long-s
 
 Write-Host "`n>>> Verifying Node reads DB_PASS from .env..." -ForegroundColor Cyan
 Set-Location -LiteralPath $RepoRoot
-node -e "const p=require('path');require('dotenv').config({path:p.join(process.cwd(),'.env')});const n=(process.env.DB_PASS||'').length;if(!n){console.error('FAIL: DB_PASS still empty');process.exit(1)}console.log('OK: DB_PASS length =',n);"
+node -e 'const p=require("path");require("dotenv").config({path:p.join(process.cwd(),".env")});const n=(process.env.DB_PASS||"").length;if(!n){console.error("FAIL: DB_PASS still empty");process.exit(1);}console.log("OK: DB_PASS length =",n);'
 
 Write-Host "`n=== Done ===" -ForegroundColor Green
 Write-Host "Root password / DB_PASS: $MysqlRootPass"
