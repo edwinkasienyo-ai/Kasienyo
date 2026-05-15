@@ -1,7 +1,27 @@
 const path = require("path");
 const fs = require("fs");
 const envPath = path.join(__dirname, "..", ".env");
+const envExamplePath = path.join(__dirname, "..", ".env.example");
+let envJustCreated = false;
+if (!fs.existsSync(envPath) && fs.existsSync(envExamplePath)) {
+  try {
+    fs.copyFileSync(envExamplePath, envPath);
+    envJustCreated = true;
+    console.warn(
+      `[IMIS Basic Education] Created .env from .env.example at ${envPath}`
+    );
+  } catch (err) {
+    console.warn(`[IMIS Basic Education] Could not auto-create .env: ${err?.message || err}`);
+  }
+}
 require("dotenv").config({ path: envPath });
+if (envJustCreated) {
+  const u = String(process.env.DB_USER || "root").trim();
+  console.error(
+    `[IMIS Basic Education] Stop here once: edit .env in the project root, set DB_PASS (MySQL password for ${u}), set JWT_SECRET (long random text), save, then run: npm start`
+  );
+  process.exit(1);
+}
 if (!fs.existsSync(envPath)) {
   console.warn(
     `[IMIS Basic Education] No .env file at ${envPath}. Copy .env.example to .env and set DB_PASS (MySQL), JWT_SECRET, PORT, etc.`
