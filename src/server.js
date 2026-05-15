@@ -1,4 +1,6 @@
 const path = require("path");
+const fs = require("fs");
+const mysql = require("mysql2/promise");
 require("dotenv").config({ path: path.join(__dirname, "..", ".env") });
 const app = require("./app");
 const {
@@ -1596,6 +1598,81 @@ CREATE TABLE IF NOT EXISTS exam_question_bank (
   }
 }
 
+function dbSslOption() {
+  const useSsl =
+    String(process.env.DB_SSL || "").trim().toLowerCase() === "true" ||
+    String(process.env.DB_SSL || "").trim() === "1";
+  return useSsl ? {} : false;
+}
+
+/**
+ * Fresh Docker/MySQL installs only create an empty database; apply sql/schema.sql once.
+ * Skipped when IMIS_SKIP_AUTO_SCHEMA=1 (advanced / multi-tenant custom flows).
+ */
+async function ensureBaseSchemaLoaded() {
+  if (truthyEnv(process.env.IMIS_SKIP_AUTO_SCHEMA, false)) {
+    return;
+  }
+  let tableRows = await query(
+    `SELECT COUNT(*) AS total
+     FROM INFORMATION_SCHEMA.TABLES
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = ?
+     LIMIT 1`,
+    ["users"]
+  );
+  if (Number(tableRows?.[0]?.total || 0) > 0) {
+    return;
+  }
+
+  const schemaPath = path.join(__dirname, "..", "sql", "schema.sql");
+  if (!fs.existsSync(schemaPath)) {
+    throw new Error(`Missing sql/schema.sql (expected ${schemaPath}).`);
+  }
+
+  const sqlDump = fs.readFileSync(schemaPath, "utf8");
+  const dbHost = process.env.DB_HOST || "127.0.0.1";
+  const dbUser = process.env.DB_USER || "root";
+  const dbPass = process.env.DB_PASS || "";
+  const dbName = process.env.DB_NAME || "iims_school_system";
+  const dbPort = Number(process.env.DB_PORT || 3306);
+
+  // eslint-disable-next-line no-console
+  console.warn(
+    `[IIMS] Empty database (${dbName}); applying ${schemaPath.replace(/\\/g, "/")} (first start only)...`
+  );
+
+  const conn = await mysql.createConnection({
+    host: dbHost,
+    user: dbUser,
+    password: dbPass,
+    database: dbName,
+    port: dbPort,
+    multipleStatements: true,
+    ssl: dbSslOption(),
+    connectTimeout: Math.min(120000, Math.max(5000, Number(process.env.DB_CONNECT_TIMEOUT_MS || 30000)))
+  });
+  try {
+    await conn.query(sqlDump);
+  } finally {
+    await conn.end();
+  }
+
+  const verify = await query(
+    `SELECT COUNT(*) AS total
+     FROM INFORMATION_SCHEMA.TABLES
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = ?
+     LIMIT 1`,
+    ["users"]
+  );
+  if (!Number(verify?.[0]?.total || 0)) {
+    throw new Error("Schema import finished but users table is still missing. Check sql/schema.sql and MySQL errors above.");
+  }
+  // eslint-disable-next-line no-console
+  console.warn("[IIMS] Base schema applied successfully.");
+}
+
 function ensureDatabaseCredentialEnv() {
   const pass = String(process.env.DB_PASS ?? "").trim();
   if (pass.length) return;
@@ -1614,6 +1691,7 @@ async function start() {
   ensureJwtSecretConfig();
   ensureDatabaseCredentialEnv();
   await query("SELECT 1");
+  await ensureBaseSchemaLoaded();
   await ensureUserPasswordPolicyColumns();
   const defaultInstitutionId = await ensureDefaultInstitutionAndAdmin();
   await ensureSystemDeveloperAccount(defaultInstitutionId);

@@ -125,7 +125,15 @@ if ([string]::IsNullOrWhiteSpace($jwtVal) -or $jwtVal -eq "change-me-very-long-s
 
 Write-Host ""
 Write-Host ">>> Verifying Node reads DB_PASS from .env..." -ForegroundColor Cyan
-node -e 'const p=require("path");require("dotenv").config({path:p.join(process.cwd(),".env")});const n=(process.env.DB_PASS||"").length;if(!n){console.error("FAIL: DB_PASS still empty");process.exit(1);}console.log("OK: DB_PASS length =",n);'
+$verifyJs = Join-Path $RepoRoot "scripts\verify-dotenv-db-pass.js"
+if (-not (Test-Path -LiteralPath $verifyJs)) {
+  Write-Host "ERROR: scripts/verify-dotenv-db-pass.js missing from repo." -ForegroundColor Red
+  exit 1
+}
+node $verifyJs
+if ($LASTEXITCODE -ne 0) {
+  exit $LASTEXITCODE
+}
 
 Write-Host ""
 Write-Host "=== Done ===" -ForegroundColor Green
