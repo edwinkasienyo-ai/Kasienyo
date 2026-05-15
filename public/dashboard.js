@@ -13,7 +13,7 @@ let portalContext = null;
 let searchRowDrafts = {};
 let dashboardAutoRefreshHandle = null;
 let currentSidebarSubmoduleId = null;
-const CLIENT_UI_BUNDLE_ID = "dash-bundle-enterprise-v90-hero-svg-admission-intake";
+const CLIENT_UI_BUNDLE_ID = "dash-bundle-enterprise-v91-admission-hub-modal";
 const examPanelState = {
   generatedExam: null,
   serials: [],
@@ -12274,27 +12274,112 @@ function wireAdmissionExtendedActions() {
   });
 }
 
+function htmlAdmissionOnlineDetailHuman(item) {
+  const payload =
+    item && typeof item.payload_json_parsed === "object" && item.payload_json_parsed !== null
+      ? item.payload_json_parsed
+      : {};
+  const intakeLine = String(item?.intake_summary || "").trim();
+  const parts = [
+    ["Request ID", item?.id],
+    ["Institution ID", item?.institution_id],
+    ["Learner", item?.learner_name],
+    ["Learner type", item?.learner_type],
+    ["Grade / form (summary)", item?.grade_or_form],
+    ["Intake pathway", intakeLine],
+    ["Stream", item?.stream],
+    ["Applicant email", item?.applicant_email],
+    ["Applicant phone", item?.applicant_phone],
+    ["CBC grade", payload.admission_grade],
+    ["Secondary form", payload.admission_form],
+    ["Academic year", payload.academic_year_intake],
+    ["Term", payload.term_intake],
+    ["Additional notes", payload.intake_notes],
+    ["Workflow status", item?.status],
+    ["Submitted", item?.created_at],
+    ["Updated", item?.updated_at],
+    ["Reviewed at", item?.reviewed_at],
+    ["Institution-facing comment", item?.review_comment]
+  ];
+  if (Array.isArray(item?.learning_areas) && item.learning_areas.length) {
+    parts.splice(10, 0, ["Learning areas (legacy)", item.learning_areas.join(", ")]);
+  }
+  return `<dl class="admission-detail-dl">${parts
+    .map(([k, v]) => {
+      const val = v === undefined || v === null || v === "" ? "—" : String(v);
+      return `<dt>${escapeHtml(k)}</dt><dd>${escapeHtml(val)}</dd>`;
+    })
+    .join("")}</dl>`;
+}
+
 function wireOnlineAdmissionProcessingHub() {
   const refreshBtn = document.getElementById("admissionOnlineRefreshBtn");
   const statusFilter = document.getElementById("admissionOnlineStatusFilter");
   const tbody = document.getElementById("admissionOnlineRequestsBody");
   const backdrop = document.getElementById("admissionOnlineDetailBackdrop");
+  const detailHuman = document.getElementById("admissionOnlineDetailHuman");
   const detailBody = document.getElementById("admissionOnlineDetailBody");
   const detailClose = document.getElementById("admissionOnlineDetailClose");
+  const wfBackdrop = document.getElementById("admissionOnlineWorkflowBackdrop");
+  const wfCancel = document.getElementById("admissionWorkflowCancelBtn");
+  const wfApply = document.getElementById("admissionWorkflowApplyBtn");
+  const wfStatus = document.getElementById("admissionWorkflowStatus");
+  const wfComment = document.getElementById("admissionWorkflowComment");
+  const wfIdLabel = document.getElementById("admissionWorkflowIdLabel");
   if (!refreshBtn || !tbody) {
     return;
   }
+
+  let pendingWorkflowId = 0;
 
   const hideDetail = () => {
     if (backdrop) {
       backdrop.style.display = "none";
       backdrop.setAttribute("aria-hidden", "true");
     }
+    if (detailHuman) detailHuman.innerHTML = "";
+    if (detailBody) detailBody.textContent = "";
+  };
+
+  const hideWorkflow = () => {
+    if (wfBackdrop) {
+      wfBackdrop.style.display = "none";
+      wfBackdrop.setAttribute("aria-hidden", "true");
+    }
+    pendingWorkflowId = 0;
+    if (wfComment) wfComment.value = "";
   };
 
   detailClose?.addEventListener("click", hideDetail);
   backdrop?.addEventListener("click", (evt) => {
     if (evt.target === backdrop) hideDetail();
+  });
+  wfBackdrop?.addEventListener("click", (evt) => {
+    if (evt.target === wfBackdrop) hideWorkflow();
+  });
+  wfCancel?.addEventListener("click", hideWorkflow);
+  wfApply?.addEventListener("click", async () => {
+    const id = Number(pendingWorkflowId || 0);
+    const status = String(wfStatus?.value || "").trim().toUpperCase();
+    const review_comment = String(wfComment?.value || "").trim();
+    if (!id || !status) {
+      hideWorkflow();
+      return;
+    }
+    try {
+      wfApply.disabled = true;
+      await request(`/api/admission/online-requests/${id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ status, review_comment })
+      });
+      alert("Admission workflow updated.");
+      hideWorkflow();
+      await loadRows();
+    } catch (error) {
+      alert(error.message || "Unable to update this request.");
+    } finally {
+      wfApply.disabled = false;
+    }
   });
 
   const loadRows = async () => {
@@ -12344,7 +12429,8 @@ function wireOnlineAdmissionProcessingHub() {
       if (viewBtn) {
         const id = Number(viewBtn.getAttribute("data-admission-online-view") || 0);
         if (!id || !detailBody) return;
-        detailBody.textContent = "Loading…";
+        if (detailHuman) detailHuman.innerHTML = `<p class="small-note">Loading…</p>`;
+        detailBody.textContent = "";
         if (backdrop) {
           backdrop.style.display = "flex";
           backdrop.removeAttribute("aria-hidden");
@@ -12352,6 +12438,7 @@ function wireOnlineAdmissionProcessingHub() {
         try {
           const pack = await request(`/api/admission/online-requests/${id}`);
           const item = pack?.item || pack;
+          if (detailHuman) detailHuman.innerHTML = htmlAdmissionOnlineDetailHuman(item);
           const printable = {
             id: item?.id,
             institution_id: item?.institution_id,
@@ -12363,6 +12450,7 @@ function wireOnlineAdmissionProcessingHub() {
             applicant_email: item?.applicant_email,
             applicant_phone: item?.applicant_phone,
             learning_areas: item?.learning_areas,
+            intake_summary: item?.intake_summary,
             learning_areas_summary: item?.learning_areas_summary,
             review_comment: item?.review_comment,
             payload_json_parsed: item?.payload_json_parsed,
@@ -12372,6 +12460,7 @@ function wireOnlineAdmissionProcessingHub() {
           };
           detailBody.textContent = JSON.stringify(printable, null, 2);
         } catch (error) {
+          if (detailHuman) detailHuman.innerHTML = "";
           detailBody.textContent = error.message || "Unable to load detail.";
         }
         return;
@@ -12380,23 +12469,13 @@ function wireOnlineAdmissionProcessingHub() {
       const wfBtn = evt.target.closest("[data-admission-online-workflow]");
       if (!wfBtn) return;
       const id = Number(wfBtn.getAttribute("data-admission-online-workflow") || 0);
-      if (!id) return;
-      const decision = window.prompt(
-        "Set workflow status:\nAPPROVED | REJECTED | WAITLIST | MORE_INFO | INTERVIEW_REQUESTED",
-        "APPROVED"
-      );
-      if (!decision) return;
-      const reviewComment = window.prompt("Family-facing comment / directions (stored and emailed/SMS'ed if configured):", "") || "";
-      try {
-        await request(`/api/admission/online-requests/${id}`, {
-          method: "PATCH",
-          body: JSON.stringify({ status: decision.trim(), review_comment: reviewComment })
-        });
-        alert("Admission workflow updated.");
-        await loadRows();
-      } catch (error) {
-        alert(error.message || "Unable to update this request.");
-      }
+      if (!id || !wfBackdrop) return;
+      pendingWorkflowId = id;
+      if (wfIdLabel) wfIdLabel.textContent = `#${id}`;
+      if (wfStatus) wfStatus.value = "APPROVED";
+      if (wfComment) wfComment.value = "";
+      wfBackdrop.style.display = "flex";
+      wfBackdrop.removeAttribute("aria-hidden");
     });
   }
 
@@ -12968,7 +13047,34 @@ function renderCrudModule(moduleKey, options = {}) {
             <strong>Online admission detail</strong>
             <button type="button" id="admissionOnlineDetailClose" class="ax-btn ax-btn--reset ax-btn--sm">Close</button>
           </div>
-          <pre id="admissionOnlineDetailBody" class="admission-online-detail-pre"></pre>
+          <div class="admission-online-detail-body">
+            <div id="admissionOnlineDetailHuman" class="admission-online-detail-human"></div>
+            <details class="admission-online-detail-raw">
+              <summary>Technical — raw payload (JSON)</summary>
+              <pre id="admissionOnlineDetailBody" class="admission-online-detail-pre"></pre>
+            </details>
+          </div>
+        </div>
+      </div>
+      <div id="admissionOnlineWorkflowBackdrop" class="admission-online-workflow-backdrop" style="display:none;" aria-hidden="true">
+        <div class="admission-online-workflow-panel" role="dialog" aria-modal="true">
+          <h4>Update admission workflow</h4>
+          <p class="small-note" style="margin:0 0 8px;">Request <span id="admissionWorkflowIdLabel">—</span></p>
+          <label for="admissionWorkflowStatus">New status</label>
+          <select id="admissionWorkflowStatus">
+            <option value="PENDING">PENDING</option>
+            <option value="APPROVED" selected>APPROVED</option>
+            <option value="REJECTED">REJECTED</option>
+            <option value="WAITLIST">WAITLIST</option>
+            <option value="MORE_INFO">MORE_INFO</option>
+            <option value="INTERVIEW_REQUESTED">INTERVIEW_REQUESTED</option>
+          </select>
+          <label for="admissionWorkflowComment">Family-facing comment / directions</label>
+          <textarea id="admissionWorkflowComment" rows="4" placeholder="Shown to the applicant on status lookup and in email/SMS when configured."></textarea>
+          <div class="admission-online-workflow-actions">
+            <button type="button" id="admissionWorkflowCancelBtn" class="ax-btn ax-btn--reset ax-btn--sm">Cancel</button>
+            <button type="button" id="admissionWorkflowApplyBtn" class="ax-btn ax-btn--save ax-btn--sm">Save status</button>
+          </div>
         </div>
       </div>
     </section>

@@ -13567,6 +13567,7 @@ app.get(
         ...record,
         learning_areas: parseOnlineAdmissionPayloadLearningAreas(record.payload_json),
         learning_areas_summary: summarizeOnlineAdmissionLearningAreas(record.payload_json),
+        intake_summary: summarizeOnlineAdmissionIntakeDetails(record.payload_json),
         payload_json_parsed: parsedPayload
       }
     });
