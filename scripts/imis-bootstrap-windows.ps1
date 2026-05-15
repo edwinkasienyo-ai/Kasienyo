@@ -8,6 +8,21 @@ $MysqlRootPass = "ImisLocalDev2025"
 $HostDbPort = "3307"
 $ContainerName = "imis-mysql"
 
+# Docker writes "No such container" to stderr; with $ErrorActionPreference Stop, PowerShell 5.x treats that as terminating.
+function Invoke-DockerQuiet {
+  param([string[]]$DockerArgs)
+  $prevEa = $ErrorActionPreference
+  $ErrorActionPreference = "SilentlyContinue"
+  $code = 1
+  try {
+    & docker @DockerArgs *> $null
+    $code = $LASTEXITCODE
+  } finally {
+    $ErrorActionPreference = $prevEa
+  }
+  return [int]$code
+}
+
 function Set-DotEnvKey {
   param([string]$FilePath, [string]$Key, [string]$Value)
   if (-not (Test-Path -LiteralPath $FilePath)) { return }
@@ -36,6 +51,8 @@ if (-not (Test-Path (Join-Path $RepoRoot "package.json"))) {
   exit 1
 }
 
+Set-Location -LiteralPath $RepoRoot
+
 Write-Host ""
 Write-Host ">>> Docker daemon check..." -ForegroundColor Cyan
 docker info 2>$null | Out-Null
@@ -55,8 +72,8 @@ if (-not (Test-Path -LiteralPath $envFile)) {
 
 Write-Host ""
 Write-Host ">>> Starting MySQL container $ContainerName on host port $HostDbPort ..." -ForegroundColor Cyan
-docker rm -f imis_mysql 2>$null | Out-Null
-docker rm -f $ContainerName 2>$null | Out-Null
+[void](Invoke-DockerQuiet -DockerArgs @("rm", "-f", "imis_mysql"))
+[void](Invoke-DockerQuiet -DockerArgs @("rm", "-f", "--", $ContainerName))
 
 $runArgs = @(
   "run", "-d",
@@ -76,8 +93,10 @@ if ($LASTEXITCODE -ne 0) {
 Write-Host "Waiting for MySQL (first start can take 30-90 seconds)..." -ForegroundColor Yellow
 $ready = $false
 for ($i = 0; $i -lt 60; $i++) {
-  docker exec $ContainerName mysqladmin ping -h 127.0.0.1 -uroot "-p$MysqlRootPass" 2>$null | Out-Null
-  if ($LASTEXITCODE -eq 0) {
+  $ping = Invoke-DockerQuiet -DockerArgs @(
+    "exec", $ContainerName, "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-p${MysqlRootPass}"
+  )
+  if ($ping -eq 0) {
     $ready = $true
     break
   }
@@ -106,7 +125,6 @@ if ([string]::IsNullOrWhiteSpace($jwtVal) -or $jwtVal -eq "change-me-very-long-s
 
 Write-Host ""
 Write-Host ">>> Verifying Node reads DB_PASS from .env..." -ForegroundColor Cyan
-Set-Location -LiteralPath $RepoRoot
 node -e 'const p=require("path");require("dotenv").config({path:p.join(process.cwd(),".env")});const n=(process.env.DB_PASS||"").length;if(!n){console.error("FAIL: DB_PASS still empty");process.exit(1);}console.log("OK: DB_PASS length =",n);'
 
 Write-Host ""

@@ -78,8 +78,12 @@ async function resolvePool() {
     }
   }
 
+  const emptyPassHint =
+    String(dbPass ?? "").trim().length === 0
+      ? " DB_PASS is empty in .env; set DB_PASS (see scripts/imis-bootstrap-windows.ps1 on Windows)."
+      : "";
   throw new Error(
-    `Unable to connect to MySQL on ${dbHost}. Tried ports: ${candidatePorts.join(", ")}. ${errors.join(" | ")}`
+    `Unable to connect to MySQL on ${dbHost}. Tried ports: ${candidatePorts.join(", ")}. ${errors.join(" | ")}${emptyPassHint}`
   );
 }
 

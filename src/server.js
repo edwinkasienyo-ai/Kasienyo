@@ -1596,8 +1596,23 @@ CREATE TABLE IF NOT EXISTS exam_question_bank (
   }
 }
 
+function ensureDatabaseCredentialEnv() {
+  const pass = String(process.env.DB_PASS ?? "").trim();
+  if (pass.length) return;
+  const bootstrapScriptPath = path.join(__dirname, "..", "scripts", "imis-bootstrap-windows.ps1");
+  const quotedBootstrap = JSON.stringify(bootstrapScriptPath);
+  const hint =
+    process.platform === "win32"
+      ? `Run: powershell -ExecutionPolicy Bypass -File ${quotedBootstrap}`
+      : "Copy .env.example to .env and set DB_PASS to your database password.";
+  throw new Error(
+    `DB_PASS is missing or empty in .env. Without it MySQL reports "Access denied ... using password: NO". ${hint}`
+  );
+}
+
 async function start() {
   ensureJwtSecretConfig();
+  ensureDatabaseCredentialEnv();
   await query("SELECT 1");
   await ensureUserPasswordPolicyColumns();
   const defaultInstitutionId = await ensureDefaultInstitutionAndAdmin();
