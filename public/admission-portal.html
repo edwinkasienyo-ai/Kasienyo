@@ -1,0 +1,573 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate, private" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>IMIS Admission Portal</title>
+    <link rel="stylesheet" href="/styles.css?v=77" />
+    <style>
+      /* Full-page scroll — do not inherit login-page overflow:hidden + fixed height */
+      body.admission-portal-page {
+        min-height: 100vh;
+        min-height: 100dvh;
+        height: auto !important;
+        overflow-x: hidden !important;
+        overflow-y: auto !important;
+        margin: 0;
+        display: block;
+        background: radial-gradient(ellipse 120% 80% at 10% 10%, #1a5482 0%, #0a2440 52%, #071a2e 100%);
+      }
+
+      .admission-portal-shell {
+        max-width: min(980px, calc(100vw - 24px));
+        margin: 0 auto;
+        padding: 24px 14px 72px;
+      }
+
+      .admission-portal-banner {
+        display: flex;
+        justify-content: space-between;
+        flex-wrap: wrap;
+        gap: 10px;
+        margin-bottom: 16px;
+      }
+
+      .admission-portal-banner a {
+        text-decoration: none;
+      }
+
+      .muted {
+        opacity: 0.85;
+        font-size: 13px;
+      }
+
+      body.admission-portal-page .glass-card.auth-card--compact {
+        max-height: none !important;
+        overflow-y: visible !important;
+        overflow-x: hidden;
+      }
+
+      body.admission-portal-page .auth-grid {
+        gap: 10px;
+      }
+
+      body.admission-portal-page .auth-grid select {
+        width: 100%;
+      }
+
+      .workflow-grid {
+        display: grid;
+        gap: 8px;
+        margin-top: 10px;
+        padding-top: 10px;
+        border-top: 1px dashed #d2deec;
+      }
+
+      .workflow-grid.hidden {
+        display: none;
+      }
+    </style>
+  </head>
+  <body class="admission-portal-page">
+    <main class="admission-portal-shell">
+      <div class="admission-portal-banner">
+        <div>
+          <h1 style="margin: 0 0 8px;">Online admission portal</h1>
+          <p class="muted">Submit a provisional admission request — the institution completes verification inside IMIS.</p>
+        </div>
+        <a class="quicklink-pill" href="/" style="padding: 8px 12px;">← Institution login</a>
+      </div>
+
+      <div class="glass-card auth-card auth-card--compact">
+        <h3>New application</h3>
+        <p id="portalStatusLine" class="small-note muted" aria-live="polite"></p>
+
+        <div class="auth-grid">
+          <label>Landing email (required for online status tracking)</label>
+          <input id="applicantEmail" type="email" placeholder="parent@domain.com" />
+          <label>Mobile SMS (recommended)</label>
+          <input id="applicantPhone" placeholder="+2547..." />
+
+          <label>Institution</label>
+          <select id="institutionPick">
+            <option value="">Loading institutions…</option>
+          </select>
+
+          <label>Learner full name</label>
+          <input id="learnerName" />
+
+          <label>Learner pathway</label>
+          <select id="learnerType">
+            <option value="NEW">New learner</option>
+            <option value="TRANSFER">Transferred learner</option>
+          </select>
+
+          <label>CBC grade (choose one pathway)</label>
+          <select id="admissionGradePick" aria-required="true">
+            <option value="">Select grade…</option>
+          </select>
+
+          <label>Secondary form</label>
+          <select id="admissionFormPick" aria-required="true">
+            <option value="">Select form…</option>
+          </select>
+
+          <label>Academic year intending to join</label>
+          <select id="admissionYearPick" aria-required="true">
+            <option value="">Select year…</option>
+          </select>
+
+          <label>Term intending to join</label>
+          <select id="admissionTermPick" aria-required="true">
+            <option value="">Select term…</option>
+          </select>
+
+          <label>Preferred stream (optional)</label>
+          <input id="preferredStream" placeholder="Optional stream" />
+
+          <label>Additional notes (optional)</label>
+          <input id="intakeNotes" placeholder="Any extra placement context for the institution" />
+
+          <div class="workflow-grid hidden" id="newLearnerExtras">
+            <strong>New learner — parent basics</strong>
+            <label>Parent / guardian full name</label>
+            <input id="parentNameNew" />
+            <label>Residence</label>
+            <input id="parentResidence" />
+            <label>Emergency contact</label>
+            <input id="parentEmergency" />
+          </div>
+
+          <div class="workflow-grid hidden" id="transferExtras">
+            <strong>Transferred learner — prior school</strong>
+            <label>Transferred from (relationship)</label>
+            <input id="transferRelation" placeholder="County / relationship" />
+            <label>Previous school name</label>
+            <input id="priorSchoolName" />
+            <label>Previous school county</label>
+            <input id="priorCounty" />
+            <label>Previous school sub-county</label>
+            <input id="priorSubCounty" />
+            <label>Assessment number</label>
+            <input id="assessmentNumber" />
+            <label>UPI number</label>
+            <input id="upiNumber" />
+            <label>Previous performance snapshot</label>
+            <input id="priorPerformance" />
+            <label>Transfer reason</label>
+            <input id="transferReason" />
+          </div>
+
+          <div style="grid-column: 1 / -1;">
+            <button id="submitAdmissionBtn" type="button" class="auth-primary-btn">Submit admission request</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="glass-card auth-card auth-card--compact" style="margin-top: 16px;">
+        <h3>Upload supporting documents</h3>
+        <p class="small-note muted">
+          After you submit an application, the server returns a private <strong>upload token</strong> (shown once).
+          Paste it below with your Reference ID — PDF / JPEG / PNG only, up to the configured size limit per file.
+        </p>
+        <div class="auth-grid">
+          <label>Reference ID</label>
+          <input id="uploadRequestId" inputmode="numeric" placeholder="same as Track application" />
+          <label>Upload token (from confirmation)</label>
+          <input id="uploadAccessToken" type="password" autocomplete="new-password" placeholder="paste applicant_access_token" />
+          <label>Document category</label>
+          <select id="uploadDocCategory">
+            <option value="">Select…</option>
+            <option value="BIRTH_CERTIFICATE">Birth certificate</option>
+            <option value="PARENT_ID">Parent / guardian ID</option>
+            <option value="LEARNER_REPORT">Latest school report</option>
+            <option value="TRANSFER_LETTER">Transfer letter</option>
+            <option value="PASSPORT_PHOTO">Passport-style photo</option>
+            <option value="OTHER">Other supporting doc</option>
+          </select>
+          <label>File (PDF, JPEG, PNG)</label>
+          <input id="uploadDocFile" type="file" accept=".pdf,.png,.jpg,.jpeg,image/png,image/jpeg,application/pdf" />
+          <div style="grid-column: 1 / -1;">
+            <button id="uploadDocSubmitBtn" type="button" class="auth-primary-btn">Upload document</button>
+            <button id="uploadDocRefreshBtn" type="button" class="auth-primary-btn">Refresh uploaded list</button>
+          </div>
+        </div>
+        <pre id="uploadDocStatus" class="small-note" style="margin-top: 12px; white-space: pre-wrap;"></pre>
+      </div>
+
+      <div class="glass-card auth-card auth-card--compact" style="margin-top: 16px;">
+        <h3>Track application status</h3>
+        <p class="small-note muted">
+          Use the Reference ID from your confirmation email together with the exact email address you typed when applying.
+        </p>
+        <div class="auth-grid">
+          <label>Reference ID</label>
+          <input id="trackRequestId" inputmode="numeric" placeholder="e.g. 12" />
+          <label>Email used on application</label>
+          <input id="trackApplicantEmail" type="email" />
+          <div style="grid-column: 1 / -1;">
+            <button id="lookupStatusBtn" type="button" class="auth-primary-btn">Check status</button>
+          </div>
+        </div>
+        <pre id="trackResult" class="small-note" style="margin-top: 12px; white-space: pre-wrap;"></pre>
+      </div>
+      <p class="small-note muted" style="margin-top: 14px;">
+        Status lookup stays private via Reference ID + applicant email; document uploads additionally require the single-use-style upload token issued with your submission (save it like a password).
+      </p>
+    </main>
+
+    <script>
+      const GRADE_LIST = [
+        "Pre-Primary 1",
+        "Pre-Primary 2",
+        "Grade 1",
+        "Grade 2",
+        "Grade 3",
+        "Grade 4",
+        "Grade 5",
+        "Grade 6",
+        "Grade 7",
+        "Grade 8",
+        "Grade 9",
+        "N/A (Secondary / Form pathway only)"
+      ];
+
+      const FORM_LIST = ["Form 1", "Form 2", "Form 3", "Form 4", "N/A (CBC / Primary pathway only)"];
+
+      const TERMS = ["Term 1", "Term 2", "Term 3"];
+
+      const UP_REQ_KEY = "imisAdmissionUploadRequestId";
+      const UP_TOK_KEY = "imisAdmissionUploadToken";
+
+      const statusEl = document.getElementById("portalStatusLine");
+      const institutionPick = document.getElementById("institutionPick");
+      const learnerType = document.getElementById("learnerType");
+
+      function fillSelectFromList(selectEl, placeholder, strings) {
+        if (!selectEl) return;
+        selectEl.innerHTML = "";
+        const ph = document.createElement("option");
+        ph.value = "";
+        ph.textContent = placeholder;
+        selectEl.appendChild(ph);
+        strings.forEach((s) => {
+          const opt = document.createElement("option");
+          opt.value = s;
+          opt.textContent = s;
+          selectEl.appendChild(opt);
+        });
+      }
+
+      function hydrateIntakeSelectors() {
+        fillSelectFromList(document.getElementById("admissionGradePick"), "Select grade…", GRADE_LIST);
+        fillSelectFromList(document.getElementById("admissionFormPick"), "Select form…", FORM_LIST);
+        const y0 = new Date().getFullYear();
+        const years = [];
+        for (let y = y0 - 1; y <= y0 + 4; y += 1) years.push(String(y));
+        fillSelectFromList(document.getElementById("admissionYearPick"), "Select year…", years);
+        fillSelectFromList(document.getElementById("admissionTermPick"), "Select term…", TERMS);
+      }
+
+      function hydrateUploadPanelFromStorage() {
+        try {
+          const rid = sessionStorage.getItem(UP_REQ_KEY);
+          const tok = sessionStorage.getItem(UP_TOK_KEY);
+          if (rid) document.getElementById("uploadRequestId").value = rid;
+          if (tok) document.getElementById("uploadAccessToken").value = tok;
+        } catch (_) {
+          /* private mode / blocked storage */
+        }
+      }
+
+      async function refreshUploadedDocsList() {
+        const rid = Number(document.getElementById("uploadRequestId").value.trim() || 0);
+        const tok = document.getElementById("uploadAccessToken").value.trim();
+        const out = document.getElementById("uploadDocStatus");
+        if (!rid || !tok) {
+          out.textContent = "Enter Reference ID and upload token.";
+          return;
+        }
+        out.textContent = "Loading uploads…";
+        try {
+          const res = await fetch(`/api/public/online-admission-requests/${rid}/documents`, {
+            credentials: "same-origin",
+            headers: {
+              Accept: "application/json",
+              "X-Admission-Access-Token": tok
+            }
+          });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) throw new Error(data.error || "Unable to load documents.");
+          const docs = Array.isArray(data.documents) ? data.documents : [];
+          out.textContent = docs.length
+            ? docs
+                .map(
+                  (d) =>
+                    `${d.document_category}: ${d.original_filename} (${Math.round(
+                      Number(d.byte_size || 0) / 1024
+                    )} KB)`
+                )
+                .join("\n")
+            : "No documents uploaded yet for this Reference ID.";
+        } catch (error) {
+          out.textContent = error.message || "Load failed.";
+        }
+      }
+
+      async function bootstrapInstitutions() {
+        try {
+          const res = await fetch("/api/public/online-admission/institutions-summary", { credentials: "same-origin" });
+          if (!res.ok) throw new Error("Unable to load institutions.");
+          const body = await res.json();
+          const rows = Array.isArray(body.institutions) ? body.institutions : [];
+          institutionPick.innerHTML =
+            `<option value="">Choose institution…</option>` +
+            rows
+              .map(
+                (row) =>
+                  `<option value="${row.id}">${row.institution_name} (${row.institution_code})</option>`
+              )
+              .join("");
+          statusEl.textContent = `${rows.length} institution(s) available for intake.`;
+        } catch (error) {
+          statusEl.textContent = error.message || "Institution picker failed.";
+        }
+      }
+
+      function toggleWorkflowPanels() {
+        const mode = String(learnerType.value || "").toUpperCase();
+        document.getElementById("newLearnerExtras").classList.toggle("hidden", mode !== "NEW");
+        document.getElementById("transferExtras").classList.toggle("hidden", mode !== "TRANSFER");
+      }
+
+      learnerType.addEventListener("change", toggleWorkflowPanels);
+
+      document.getElementById("submitAdmissionBtn").addEventListener("click", async () => {
+        const applicant_email = document.getElementById("applicantEmail").value.trim();
+        const applicant_mobile = document.getElementById("applicantPhone").value.trim();
+        const institution_id = Number(institutionPick.value || 0);
+        const learner_full_name = document.getElementById("learnerName").value.trim();
+        const learner_type = learnerType.value;
+        const stream = document.getElementById("preferredStream").value.trim();
+
+        const admission_grade = document.getElementById("admissionGradePick").value.trim();
+        const admission_form = document.getElementById("admissionFormPick").value.trim();
+        const academic_year_intake = document.getElementById("admissionYearPick").value.trim();
+        const term_intake = document.getElementById("admissionTermPick").value.trim();
+        const intake_notes = document.getElementById("intakeNotes").value.trim();
+
+        const gradeNA = admission_grade === "N/A (Secondary / Form pathway only)";
+        const formNA = admission_form === "N/A (CBC / Primary pathway only)";
+        const gradeReal = admission_grade && !gradeNA;
+        const formReal = admission_form && !formNA;
+
+        const payload_json = {};
+        if (intake_notes) payload_json.intake_notes = intake_notes;
+
+        if (learner_type === "NEW") {
+          payload_json.parent_guardian_full_name = document.getElementById("parentNameNew").value.trim();
+          payload_json.residence = document.getElementById("parentResidence").value.trim();
+          payload_json.emergency_contact = document.getElementById("parentEmergency").value.trim();
+        } else if (learner_type === "TRANSFER") {
+          payload_json.transferred_from = document.getElementById("transferRelation").value.trim();
+          payload_json.previous_school_name = document.getElementById("priorSchoolName").value.trim();
+          payload_json.previous_school_county = document.getElementById("priorCounty").value.trim();
+          payload_json.previous_school_sub_county = document.getElementById("priorSubCounty").value.trim();
+          payload_json.assessment_number = document.getElementById("assessmentNumber").value.trim();
+          payload_json.upi_number = document.getElementById("upiNumber").value.trim();
+          payload_json.previous_performance = document.getElementById("priorPerformance").value.trim();
+          payload_json.transfer_reason = document.getElementById("transferReason").value.trim();
+        }
+
+        if (!institution_id) {
+          alert("Pick an institution first.");
+          return;
+        }
+        if (!learner_full_name) {
+          alert("Learner name is required.");
+          return;
+        }
+        if (!applicant_email) {
+          alert("Landing email is required so you can privately track this request later.");
+          return;
+        }
+        if (!admission_grade || !admission_form) {
+          alert("Select both grade and form rows (use N/A on the pathway that does not apply).");
+          return;
+        }
+        if (!gradeReal && !formReal) {
+          alert("Choose a real CBC grade or a real secondary form — both cannot be N/A.");
+          return;
+        }
+        if (!academic_year_intake || !term_intake) {
+          alert("Select academic year and term.");
+          return;
+        }
+
+        const pathwayParts = [];
+        if (gradeReal) pathwayParts.push(admission_grade);
+        if (formReal) pathwayParts.push(admission_form);
+        pathwayParts.push(academic_year_intake, term_intake);
+        const grade_or_form = pathwayParts.join(" · ");
+
+        try {
+          statusEl.textContent = "Sending request…";
+          const res = await fetch("/api/public/online-admission-requests", {
+            method: "POST",
+            credentials: "same-origin",
+            headers: {
+              Accept: "application/json",
+              "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+              applicant_email,
+              applicant_mobile,
+              institution_id,
+              learner_full_name,
+              learner_type,
+              grade_or_form,
+              stream,
+              admission_grade,
+              admission_form,
+              academic_year_intake,
+              term_intake,
+              payload_json
+            })
+          });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) throw new Error(data.error || data.message || "Submission failed.");
+          statusEl.textContent = data.message || "REQUEST SENT SUCCESSFULLY. PLEASE WAIT FOR INSTITUTION RESPONSE.";
+          if (data.request_id) {
+            document.getElementById("trackRequestId").value = String(data.request_id);
+            document.getElementById("trackApplicantEmail").value = applicant_email;
+            try {
+              sessionStorage.setItem(UP_REQ_KEY, String(data.request_id));
+            } catch (_) {}
+            document.getElementById("uploadRequestId").value = String(data.request_id);
+            document.getElementById("trackResult").textContent =
+              "Reference ID filled — scroll to Track application status and tap Check status.";
+          }
+          if (data.applicant_access_token) {
+            try {
+              sessionStorage.setItem(UP_TOK_KEY, data.applicant_access_token);
+            } catch (_) {}
+            document.getElementById("uploadAccessToken").value = data.applicant_access_token;
+          }
+          alert(
+            (data.message || "REQUEST SENT SUCCESSFULLY.") +
+              (data.applicant_access_token
+                ? "\n\nSave your private upload token securely (needed to attach documents)."
+                : "")
+          );
+        } catch (error) {
+          console.error(error);
+          statusEl.textContent = error.message || "Submission failed.";
+          alert(error.message || "Submission failed.");
+        }
+      });
+
+      document.getElementById("lookupStatusBtn").addEventListener("click", async () => {
+        const request_id = Number(document.getElementById("trackRequestId").value.trim() || 0);
+        const applicant_email = document.getElementById("trackApplicantEmail").value.trim();
+        const out = document.getElementById("trackResult");
+        out.textContent = "Checking…";
+        if (!request_id || !applicant_email) {
+          out.textContent = "Enter Reference ID and email.";
+          return;
+        }
+        try {
+          const res = await fetch("/api/public/online-admission/lookup-status", {
+            method: "POST",
+            credentials: "same-origin",
+            headers: {
+              Accept: "application/json",
+              "Content-Type": "application/json"
+            },
+            body: JSON.stringify({ request_id, applicant_email })
+          });
+          const payload = await res.json().catch(() => ({}));
+          if (!res.ok) {
+            out.textContent = payload.error || "Lookup failed.";
+            return;
+          }
+          const areas =
+            Array.isArray(payload.learning_areas) && payload.learning_areas.length
+              ? payload.learning_areas.join(", ")
+              : payload.learning_areas_summary || "";
+          const lines = [
+            `Institution: ${payload.institution_name || "—"}`,
+            `Learner: ${payload.learner_name || "—"}${payload.learner_type ? " (" + payload.learner_type + ")" : ""}`,
+            `Grade / form (summary): ${payload.grade_or_form || "—"}`,
+            `CBC grade: ${payload.admission_grade || "—"}`,
+            `Secondary form: ${payload.admission_form || "—"}`,
+            `Academic year: ${payload.academic_year_intake || "—"}`,
+            `Term: ${payload.term_intake || "—"}`,
+            `Stream: ${payload.stream || "—"}`
+          ];
+          if (areas) lines.push(`Legacy learning-area picks (if any): ${areas}`);
+          lines.push(
+            `Status: ${payload.status || "—"}`,
+            `Submitted: ${payload.submitted_at || "—"}`,
+            `Last updated: ${payload.last_updated_at || "—"}`,
+            `Institution response at: ${payload.institution_response_at || "—"}`
+          );
+          if (payload.institution_comment) lines.push(`Comment: ${payload.institution_comment}`);
+          out.textContent = lines.join("\n");
+        } catch (error) {
+          out.textContent = error.message || "Lookup failed.";
+        }
+      });
+
+      document.getElementById("uploadDocSubmitBtn")?.addEventListener("click", async () => {
+        const rid = Number(document.getElementById("uploadRequestId").value.trim() || 0);
+        const tok = document.getElementById("uploadAccessToken").value.trim();
+        const cat = document.getElementById("uploadDocCategory").value;
+        const fileInput = document.getElementById("uploadDocFile");
+        const file = fileInput && fileInput.files && fileInput.files[0];
+        const out = document.getElementById("uploadDocStatus");
+        if (!rid || !tok) {
+          alert("Reference ID and upload token are required.");
+          return;
+        }
+        if (!cat) {
+          alert("Pick a document category.");
+          return;
+        }
+        if (!file) {
+          alert("Choose a PDF or image file.");
+          return;
+        }
+        try {
+          out.textContent = "Uploading…";
+          const fd = new FormData();
+          fd.append("file", file);
+          fd.append("document_category", cat);
+          const res = await fetch(`/api/public/online-admission-requests/${rid}/documents`, {
+            method: "POST",
+            credentials: "same-origin",
+            headers: {
+              Accept: "application/json",
+              "X-Admission-Access-Token": tok
+            },
+            body: fd
+          });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) throw new Error(data.error || "Upload failed.");
+          out.textContent = data.message || "Uploaded.";
+          fileInput.value = "";
+          await refreshUploadedDocsList();
+        } catch (error) {
+          out.textContent = error.message || "Upload failed.";
+          alert(error.message || "Upload failed.");
+        }
+      });
+      document.getElementById("uploadDocRefreshBtn")?.addEventListener("click", refreshUploadedDocsList);
+
+      hydrateIntakeSelectors();
+      hydrateUploadPanelFromStorage();
+      toggleWorkflowPanels();
+      bootstrapInstitutions();
+    </script>
+  </body>
+</html>

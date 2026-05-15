@@ -1,4 +1,7 @@
-require("dotenv").config();
+const path = require("path");
+const fs = require("fs");
+const mysql = require("mysql2/promise");
+require("dotenv").config({ path: path.join(__dirname, "..", ".env") });
 const app = require("./app");
 const {
   readPublicIndexFingerprint,
@@ -8,7 +11,7 @@ const {
 const IIMS_BUILD_STAMP = process.env.IIMS_BUILD_STAMP || "ui-deploy-rev45";
 const { query } = require("./config/db");
 const { hashPassword } = require("./utils/password");
-const { ROLES } = require("./config/constants");
+const { ROLES, MODULE_KEYS } = require("./config/constants");
 
 const PORT = Number(process.env.PORT || 5002);
 
@@ -65,6 +68,10 @@ async function ensureDefaultInstitutionAndAdmin() {
     institutionId = existingInstitutions[0].id;
   }
 
+  if (!truthyEnv(process.env.CREATE_DEFAULT_LEGACY_ADMIN_USER, false)) {
+    return institutionId;
+  }
+
   const username = process.env.DEFAULT_ADMIN_USERNAME || "admin";
   const password = process.env.DEFAULT_ADMIN_PASSWORD || "1234";
   const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
@@ -93,7 +100,7 @@ async function ensureDefaultInstitutionAndAdmin() {
       ]
     );
     // eslint-disable-next-line no-console
-    console.log("Default admin created with configured username/password.");
+    console.log("Legacy default admin user created (CREATE_DEFAULT_LEGACY_ADMIN_USER=true).");
   } else if (!existingAdmin[0].password_last_changed_at || !existingAdmin[0].password_expires_at) {
     await query(
       `UPDATE users
@@ -104,6 +111,130 @@ async function ensureDefaultInstitutionAndAdmin() {
     );
   }
   return institutionId;
+}
+
+/**
+ * One-time style migration for upgraded databases: when IMIS_SEED_EXISTING_ADMIN_MODULE_RIGHTS=1,
+ * grant institution administrators the same broad module list they had before strict zero-default rights.
+ */
+async function seedLegacyAdministratorModuleRightsIfRequested() {
+  if (!truthyEnv(process.env.IMIS_SEED_EXISTING_ADMIN_MODULE_RIGHTS, false)) {
+    return;
+  }
+  const legacyModuleList = Object.values(MODULE_KEYS).filter((key) => key !== MODULE_KEYS.SECURITY_AUDIT);
+  const rows = await query(
+    `SELECT id, institution_id, role
+     FROM users
+     WHERE is_active = 1
+       AND role IN (?, ?, ?)`,
+    [ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.SYSTEM_ADMINISTRATOR]
+  );
+  let inserted = 0;
+  for (const row of rows || []) {
+    const userId = Number(row.id || 0);
+    const institutionId = Number(row.institution_id || 0);
+    if (!userId || !institutionId) continue;
+    for (const moduleKey of legacyModuleList) {
+      // eslint-disable-next-line no-await-in-loop
+      const exists = await query(
+        `SELECT id FROM user_module_access_overrides
+         WHERE user_id = ? AND module_key = ?
+           AND (permission_key = 'ACCESS' OR permission_key IS NULL OR permission_key = '')
+         LIMIT 1`,
+        [userId, moduleKey]
+      );
+      if (exists.length) continue;
+      // eslint-disable-next-line no-await-in-loop
+      await query(
+        `INSERT INTO user_module_access_overrides
+          (institution_id, user_id, module_key, permission_key, can_access, created_by_user_id)
+         VALUES (?, ?, ?, 'ACCESS', 1, NULL)`,
+        [institutionId, userId, moduleKey]
+      );
+      inserted += 1;
+    }
+  }
+  // eslint-disable-next-line no-console
+  console.log(
+    `[IIMS] IMIS_SEED_EXISTING_ADMIN_MODULE_RIGHTS: inserted ${inserted} module override row(s) for institution administrators.`
+  );
+}
+
+async function insertMissingExamStackOverrides(userRows, bundleKeys, logLabel) {
+  let inserted = 0;
+  for (const row of userRows || []) {
+    const userId = Number(row.id || 0);
+    const institutionId = Number(row.institution_id || 0);
+    if (!userId || !institutionId) continue;
+    for (const moduleKey of bundleKeys) {
+      // eslint-disable-next-line no-await-in-loop
+      const exists = await query(
+        `SELECT id FROM user_module_access_overrides
+         WHERE user_id = ? AND module_key = ?
+           AND (permission_key = 'ACCESS' OR permission_key IS NULL OR permission_key = '')
+         LIMIT 1`,
+        [userId, moduleKey]
+      );
+      if (exists.length) continue;
+      // eslint-disable-next-line no-await-in-loop
+      await query(
+        `INSERT INTO user_module_access_overrides
+          (institution_id, user_id, module_key, permission_key, can_access, created_by_user_id)
+         VALUES (?, ?, ?, 'ACCESS', 1, NULL)`,
+        [institutionId, userId, moduleKey]
+      );
+      inserted += 1;
+    }
+  }
+  // eslint-disable-next-line no-console
+  console.log(`[IIMS] ${logLabel}: inserted ${inserted} module override row(s) for examination stack.`);
+}
+
+/**
+ * Optional pilot shortcut: grant the examination stack alone (dashboard key cbc-curriculum-editor plus
+ * academic-exams/academic-marks) to ACTIVE institution admins without opening every module like IMIS_SEED_EXISTING_ADMIN_MODULE_RIGHTS.
+ */
+async function seedInstitutionExaminationStackIfRequested() {
+  if (!truthyEnv(process.env.IMIS_SEED_INSTITUTION_EXAM_ACCESS, false)) {
+    return;
+  }
+  const bundleKeys = [
+    MODULE_KEYS.CBC_CURRICULUM_EDITOR,
+    MODULE_KEYS.ACADEMIC_EXAMS,
+    MODULE_KEYS.ACADEMIC_MARKS
+  ];
+  const rows = await query(
+    `SELECT id, institution_id, role
+     FROM users
+     WHERE is_active = 1
+       AND institution_id IS NOT NULL AND institution_id <> 0
+       AND role IN (?, ?, ?)`,
+    [ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.SYSTEM_ADMINISTRATOR]
+  );
+  await insertMissingExamStackOverrides(rows, bundleKeys, "IMIS_SEED_INSTITUTION_EXAM_ACCESS");
+}
+
+/**
+ * Optional: grant examination stack ACCESS to teachers / departmental leads tied to an institution.
+ */
+async function seedTeacherExaminationStackIfRequested() {
+  if (!truthyEnv(process.env.IMIS_SEED_TEACHER_EXAM_ACCESS, false)) {
+    return;
+  }
+  const bundleKeys = [
+    MODULE_KEYS.CBC_CURRICULUM_EDITOR,
+    MODULE_KEYS.ACADEMIC_EXAMS,
+    MODULE_KEYS.ACADEMIC_MARKS
+  ];
+  const rows = await query(
+    `SELECT id, institution_id, role
+     FROM users
+     WHERE is_active = 1
+       AND institution_id IS NOT NULL AND institution_id <> 0
+       AND role IN (?, ?, ?)`,
+    [ROLES.TEACHER, ROLES.SENIOR_TEACHER, ROLES.HEAD_OF_DEPARTMENT]
+  );
+  await insertMissingExamStackOverrides(rows, bundleKeys, "IMIS_SEED_TEACHER_EXAM_ACCESS");
 }
 
 async function ensureSystemDeveloperAccount(defaultInstitutionId) {
@@ -923,6 +1054,7 @@ async function ensureUserPasswordPolicyColumns() {
   }
 
   const learnerColMigrations = [
+    ["learner_serial_number", "BIGINT NULL"],
     ["learner_condition", "VARCHAR(80) NULL"],
     ["disability_type", "VARCHAR(120) NULL"],
     ["biological_parental_status", "VARCHAR(80) NULL"],
@@ -961,6 +1093,60 @@ async function ensureUserPasswordPolicyColumns() {
     if (!Number(checkCol[0]?.total || 0)) {
       await query(`ALTER TABLE learners ADD COLUMN ${colName} ${ddl}`);
     }
+  }
+
+  // Backfill permanent learner serials for legacy rows (first-registered order by id).
+  const learnerSerialNullRows = await query(
+    `SELECT id
+     FROM learners
+     WHERE learner_serial_number IS NULL
+     ORDER BY id ASC`
+  );
+  if (learnerSerialNullRows.length) {
+    for (const row of learnerSerialNullRows) {
+      // eslint-disable-next-line no-await-in-loop
+      await query(
+        `UPDATE learners
+         SET learner_serial_number = ?
+         WHERE id = ? AND learner_serial_number IS NULL`,
+        [Number(row.id), Number(row.id)]
+      );
+    }
+  }
+
+  const learnerSerialDuplicateRows = await query(
+    `SELECT learner_serial_number
+     FROM learners
+     WHERE learner_serial_number IS NOT NULL
+     GROUP BY learner_serial_number
+     HAVING COUNT(*) > 1`
+  );
+  if (learnerSerialDuplicateRows.length) {
+    const allLearnersById = await query(
+      `SELECT id
+       FROM learners
+       ORDER BY id ASC`
+    );
+    for (const row of allLearnersById) {
+      // eslint-disable-next-line no-await-in-loop
+      await query(
+        `UPDATE learners
+         SET learner_serial_number = ?
+         WHERE id = ?`,
+        [Number(row.id), Number(row.id)]
+      );
+    }
+  }
+
+  const learnerSerialIndexRows = await query(
+    `SELECT COUNT(*) total
+     FROM INFORMATION_SCHEMA.STATISTICS
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = 'learners'
+       AND INDEX_NAME = 'unique_learner_serial_number'`
+  );
+  if (!Number(learnerSerialIndexRows[0]?.total || 0)) {
+    await query("ALTER TABLE learners ADD UNIQUE KEY unique_learner_serial_number (learner_serial_number)");
   }
 
   const teacherEmploymentStatusRows = await query(
@@ -1209,6 +1395,109 @@ CREATE TABLE IF NOT EXISTS institutional_registers (
 )`);
 
   await query(`
+CREATE TABLE IF NOT EXISTS institution_documents (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  institution_id BIGINT NOT NULL,
+  module_key VARCHAR(120) NULL,
+  submodule_key VARCHAR(120) NULL,
+  document_type VARCHAR(120) NOT NULL,
+  document_title VARCHAR(255) NOT NULL,
+  notes TEXT NULL,
+  file_path VARCHAR(255) NOT NULL,
+  mime_type VARCHAR(120) NULL,
+  uploaded_by_user_id BIGINT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  INDEX idx_institution_documents_lookup (institution_id, document_type, module_key),
+  CONSTRAINT fk_institution_documents_institution FOREIGN KEY (institution_id) REFERENCES institutions(id)
+)`);
+
+  await query(`
+CREATE TABLE IF NOT EXISTS exam_templates (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  institution_id BIGINT NOT NULL,
+  template_key VARCHAR(120) NOT NULL,
+  template_name VARCHAR(255) NOT NULL,
+  version_tag VARCHAR(60) NULL,
+  content LONGTEXT NOT NULL,
+  is_active TINYINT(1) NOT NULL DEFAULT 1,
+  created_by_user_id VARCHAR(100) NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  INDEX idx_exam_templates_lookup (institution_id, template_key, is_active),
+  CONSTRAINT fk_exam_templates_institution FOREIGN KEY (institution_id) REFERENCES institutions(id)
+)`);
+
+  await query(`
+CREATE TABLE IF NOT EXISTS exam_archives (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  institution_id BIGINT NOT NULL,
+  archive_type VARCHAR(100) NOT NULL,
+  title VARCHAR(255) NOT NULL,
+  reference_id BIGINT NULL,
+  payload_json JSON NULL,
+  status VARCHAR(40) NOT NULL DEFAULT 'ARCHIVED',
+  created_by_user_id VARCHAR(100) NULL,
+  archived_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  INDEX idx_exam_archives_lookup (institution_id, archive_type, status),
+  CONSTRAINT fk_exam_archives_institution FOREIGN KEY (institution_id) REFERENCES institutions(id)
+)`);
+
+  await query(`
+CREATE TABLE IF NOT EXISTS exam_module_settings (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  institution_id BIGINT NOT NULL,
+  settings_json JSON NULL,
+  updated_by_user_id VARCHAR(100) NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY uq_exam_module_settings_inst (institution_id),
+  CONSTRAINT fk_exam_module_settings_institution FOREIGN KEY (institution_id) REFERENCES institutions(id)
+)`);
+
+  await query(`
+CREATE TABLE IF NOT EXISTS system_security_incidents (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  institution_id BIGINT NOT NULL,
+  incident_code VARCHAR(60) NOT NULL,
+  incident_type VARCHAR(120) NOT NULL DEFAULT 'GENERAL',
+  severity VARCHAR(30) NOT NULL DEFAULT 'MEDIUM',
+  status VARCHAR(30) NOT NULL DEFAULT 'OPEN',
+  title VARCHAR(255) NOT NULL,
+  description TEXT NOT NULL,
+  affected_module VARCHAR(120) NULL,
+  source_channel VARCHAR(80) NULL,
+  details_json JSON NULL,
+  response_actions TEXT NULL,
+  assigned_to_user_id VARCHAR(100) NULL,
+  resolution_notes TEXT NULL,
+  detected_at DATETIME NOT NULL,
+  resolved_at DATETIME NULL,
+  created_by_user_id VARCHAR(100) NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY uq_security_incident_code (incident_code),
+  INDEX idx_security_incident_scope (institution_id, status, severity, detected_at),
+  CONSTRAINT fk_security_incident_institution FOREIGN KEY (institution_id) REFERENCES institutions(id)
+)`);
+
+  await query(`
+CREATE TABLE IF NOT EXISTS system_module_health_snapshots (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  institution_id BIGINT NOT NULL,
+  module_key VARCHAR(120) NOT NULL,
+  module_label VARCHAR(180) NULL,
+  status VARCHAR(40) NOT NULL,
+  total_rows BIGINT NULL,
+  metric_payload_json JSON NULL,
+  created_by_user_id VARCHAR(100) NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  INDEX idx_module_health_snapshot_scope (institution_id, module_key, created_at),
+  CONSTRAINT fk_module_health_snapshot_institution FOREIGN KEY (institution_id) REFERENCES institutions(id)
+)`);
+
+  await query(`
 CREATE TABLE IF NOT EXISTS system_developer_institution_assignments (
   id BIGINT PRIMARY KEY AUTO_INCREMENT,
   developer_user_id BIGINT NOT NULL,
@@ -1222,14 +1511,230 @@ CREATE TABLE IF NOT EXISTS system_developer_institution_assignments (
   CONSTRAINT fk_system_dev_assign_user FOREIGN KEY (developer_user_id) REFERENCES users(id),
   CONSTRAINT fk_system_dev_assign_institution FOREIGN KEY (institution_id) REFERENCES institutions(id)
 )`);
+
+  await query(`
+CREATE TABLE IF NOT EXISTS online_admission_requests (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  institution_id BIGINT NOT NULL,
+  applicant_email VARCHAR(255) NULL,
+  applicant_phone VARCHAR(80) NULL,
+  learner_name VARCHAR(255) NOT NULL,
+  learner_type VARCHAR(40) NOT NULL DEFAULT 'NEW',
+  grade_or_form VARCHAR(120) NULL,
+  stream VARCHAR(120) NULL,
+  payload_json JSON NULL,
+  applicant_access_token_hash CHAR(64) NULL,
+  status VARCHAR(40) NOT NULL DEFAULT 'PENDING',
+  review_comment TEXT NULL,
+  reviewed_at DATETIME NULL,
+  reviewed_by_user_id BIGINT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  INDEX idx_online_admission_inst_status (institution_id, status, created_at),
+  CONSTRAINT fk_online_admission_inst FOREIGN KEY (institution_id) REFERENCES institutions(id)
+)`);
+
+  const onlineAdmissionReqTokenHashRows = await query(
+    `SELECT COUNT(*) total
+     FROM INFORMATION_SCHEMA.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = 'online_admission_requests'
+       AND COLUMN_NAME = 'applicant_access_token_hash'`
+  );
+  if (!Number(onlineAdmissionReqTokenHashRows[0]?.total || 0)) {
+    await query(
+      `ALTER TABLE online_admission_requests
+       ADD COLUMN applicant_access_token_hash CHAR(64) NULL AFTER payload_json`
+    );
+  }
+
+  const onlineAdmissionDocsTableRows = await query(
+    `SELECT COUNT(*) total
+     FROM INFORMATION_SCHEMA.TABLES
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = 'online_admission_request_documents'`
+  );
+  if (!Number(onlineAdmissionDocsTableRows[0]?.total || 0)) {
+    await query(`
+CREATE TABLE online_admission_request_documents (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  online_admission_request_id BIGINT NOT NULL,
+  doc_category VARCHAR(80) NOT NULL,
+  original_filename VARCHAR(512) NOT NULL,
+  stored_filename VARCHAR(512) NOT NULL,
+  mime_type VARCHAR(120) NOT NULL,
+  byte_size BIGINT UNSIGNED NOT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  INDEX idx_oadoc_request (online_admission_request_id, doc_category, created_at),
+  CONSTRAINT fk_oadoc_request FOREIGN KEY (online_admission_request_id) REFERENCES online_admission_requests(id) ON DELETE CASCADE
+)`);
+  }
+
+  await query(`
+CREATE TABLE IF NOT EXISTS exam_question_bank (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  institution_id BIGINT NOT NULL,
+  grade_or_form VARCHAR(120) NULL,
+  learning_area VARCHAR(255) NOT NULL,
+  strand VARCHAR(255) NULL,
+  sub_strand VARCHAR(255) NULL,
+  slo_reference VARCHAR(120) NULL,
+  competency_tag VARCHAR(120) NULL,
+  bloom_level VARCHAR(40) NULL,
+  difficulty VARCHAR(40) NULL,
+  question_type VARCHAR(40) NOT NULL DEFAULT 'STRUCTURED',
+  stem_text MEDIUMTEXT NOT NULL,
+  mcq_json JSON NULL,
+  status VARCHAR(40) NOT NULL DEFAULT 'DRAFT',
+  source VARCHAR(40) NOT NULL DEFAULT 'MANUAL',
+  reviewed_at DATETIME NULL,
+  reviewed_by_user_id BIGINT NULL,
+  deleted_at DATETIME NULL,
+  created_by_user_id VARCHAR(100) NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  INDEX idx_exam_question_bank_scope (institution_id, learning_area, grade_or_form, question_type, status),
+  CONSTRAINT fk_exam_question_bank_institution FOREIGN KEY (institution_id) REFERENCES institutions(id)
+)`);
+
+  const academicExamsTableRows = await query(
+    `SELECT COUNT(*) total
+     FROM INFORMATION_SCHEMA.TABLES
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = 'academic_exams'`
+  );
+  if (Number(academicExamsTableRows[0]?.total || 0)) {
+    const academicExamsTeacherSupplementRows = await query(
+      `SELECT COUNT(*) total
+       FROM INFORMATION_SCHEMA.COLUMNS
+       WHERE TABLE_SCHEMA = DATABASE()
+         AND TABLE_NAME = 'academic_exams'
+         AND COLUMN_NAME = 'teacher_exam_supplement'`
+    );
+    if (!Number(academicExamsTeacherSupplementRows[0]?.total || 0)) {
+      await query(
+        `ALTER TABLE academic_exams ADD COLUMN teacher_exam_supplement LONGTEXT NULL AFTER generated_exam_text`
+      );
+      // eslint-disable-next-line no-console
+      console.warn("[IIMS] Added academic_exams.teacher_exam_supplement for learner/teacher exam split.");
+    }
+    const academicExamsSerialsProcessedRows = await query(
+      `SELECT COUNT(*) total
+       FROM INFORMATION_SCHEMA.COLUMNS
+       WHERE TABLE_SCHEMA = DATABASE()
+         AND TABLE_NAME = 'academic_exams'
+         AND COLUMN_NAME = 'serials_processed_at'`
+    );
+    if (!Number(academicExamsSerialsProcessedRows[0]?.total || 0)) {
+      await query(
+        `ALTER TABLE academic_exams ADD COLUMN serials_processed_at DATETIME NULL AFTER teacher_exam_supplement`
+      );
+      // eslint-disable-next-line no-console
+      console.warn("[IIMS] Added academic_exams.serials_processed_at for one-time serial/QR processing per exam.");
+    }
+  }
+}
+
+function dbSslOption() {
+  const useSsl =
+    String(process.env.DB_SSL || "").trim().toLowerCase() === "true" ||
+    String(process.env.DB_SSL || "").trim() === "1";
+  return useSsl ? {} : false;
+}
+
+/**
+ * Fresh Docker/MySQL installs only create an empty database; apply sql/schema.sql once.
+ * Skipped when IMIS_SKIP_AUTO_SCHEMA=1 (advanced / multi-tenant custom flows).
+ */
+async function ensureBaseSchemaLoaded() {
+  if (truthyEnv(process.env.IMIS_SKIP_AUTO_SCHEMA, false)) {
+    return;
+  }
+  let tableRows = await query(
+    `SELECT COUNT(*) AS total
+     FROM INFORMATION_SCHEMA.TABLES
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = ?
+     LIMIT 1`,
+    ["users"]
+  );
+  if (Number(tableRows?.[0]?.total || 0) > 0) {
+    return;
+  }
+
+  const schemaPath = path.join(__dirname, "..", "sql", "schema.sql");
+  if (!fs.existsSync(schemaPath)) {
+    throw new Error(`Missing sql/schema.sql (expected ${schemaPath}).`);
+  }
+
+  const sqlDump = fs.readFileSync(schemaPath, "utf8");
+  const dbHost = process.env.DB_HOST || "127.0.0.1";
+  const dbUser = process.env.DB_USER || "root";
+  const dbPass = process.env.DB_PASS || "";
+  const dbName = process.env.DB_NAME || "iims_school_system";
+  const dbPort = Number(process.env.DB_PORT || 3306);
+
+  // eslint-disable-next-line no-console
+  console.warn(
+    `[IIMS] Empty database (${dbName}); applying ${schemaPath.replace(/\\/g, "/")} (first start only)...`
+  );
+
+  const conn = await mysql.createConnection({
+    host: dbHost,
+    user: dbUser,
+    password: dbPass,
+    database: dbName,
+    port: dbPort,
+    multipleStatements: true,
+    ssl: dbSslOption(),
+    connectTimeout: Math.min(120000, Math.max(5000, Number(process.env.DB_CONNECT_TIMEOUT_MS || 30000)))
+  });
+  try {
+    await conn.query(sqlDump);
+  } finally {
+    await conn.end();
+  }
+
+  const verify = await query(
+    `SELECT COUNT(*) AS total
+     FROM INFORMATION_SCHEMA.TABLES
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = ?
+     LIMIT 1`,
+    ["users"]
+  );
+  if (!Number(verify?.[0]?.total || 0)) {
+    throw new Error("Schema import finished but users table is still missing. Check sql/schema.sql and MySQL errors above.");
+  }
+  // eslint-disable-next-line no-console
+  console.warn("[IIMS] Base schema applied successfully.");
+}
+
+function ensureDatabaseCredentialEnv() {
+  const pass = String(process.env.DB_PASS ?? "").trim();
+  if (pass.length) return;
+  const bootstrapScriptPath = path.join(__dirname, "..", "scripts", "imis-bootstrap-windows.ps1");
+  const quotedBootstrap = JSON.stringify(bootstrapScriptPath);
+  const hint =
+    process.platform === "win32"
+      ? `Run: powershell -ExecutionPolicy Bypass -File ${quotedBootstrap}`
+      : "Copy .env.example to .env and set DB_PASS to your database password.";
+  throw new Error(
+    `DB_PASS is missing or empty in .env. Without it MySQL reports "Access denied ... using password: NO". ${hint}`
+  );
 }
 
 async function start() {
   ensureJwtSecretConfig();
+  ensureDatabaseCredentialEnv();
   await query("SELECT 1");
+  await ensureBaseSchemaLoaded();
   await ensureUserPasswordPolicyColumns();
   const defaultInstitutionId = await ensureDefaultInstitutionAndAdmin();
   await ensureSystemDeveloperAccount(defaultInstitutionId);
+  await seedLegacyAdministratorModuleRightsIfRequested();
+  await seedInstitutionExaminationStackIfRequested();
+  await seedTeacherExaminationStackIfRequested();
 
   let boundPort = PORT;
   let server = null;
