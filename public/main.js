@@ -1,19 +1,57 @@
 const API_BASE = "";
 
+// rev48: read imis_csrf cookie and forward as X-CSRF-Token on mutating calls.
+const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
+function readCsrfCookieValue() {
+  const m = String(document.cookie || "").split("; ").find((c) => c.startsWith("imis_csrf="));
+  if (!m) return "";
+  return decodeURIComponent(m.split("=")[1] || "");
+}
+async function ensureCsrfTokenPublic() {
+  let v = readCsrfCookieValue();
+  if (v && v.length >= 16) return v;
+  try {
+    const res = await fetch(`${API_BASE}/api/csrf-token`, { credentials: "same-origin", cache: "no-store" });
+    if (res.ok) {
+      const j = await res.json().catch(() => null);
+      v = (j && j.csrf_token) || readCsrfCookieValue();
+    }
+  } catch (_) { /* ignore */ }
+  return v || "";
+}
+
 async function request(path, options = {}) {
   const controller = new AbortController();
   const timeoutMs = options.timeoutMs || 25000;
   const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const method = String(options?.method || "GET").toUpperCase();
+  const headers = {
+    "Content-Type": "application/json",
+    ...(options.headers || {})
+  };
+  if (!SAFE_METHODS.has(method)) {
+    const csrf = await ensureCsrfTokenPublic();
+    if (csrf) headers["X-CSRF-Token"] = csrf;
+  }
   let response;
   try {
     response = await fetch(`${API_BASE}${path}`, {
-      headers: {
-        "Content-Type": "application/json",
-        ...(options.headers || {})
-      },
-      signal: controller.signal,
-      ...options
+      credentials: "same-origin",
+      ...options,
+      headers,
+      signal: controller.signal
     });
+    if (response.status === 419) {
+      try { await fetch(`${API_BASE}/api/csrf-token`, { credentials: "same-origin", cache: "no-store" }); } catch (_) {}
+      const retryCsrf = readCsrfCookieValue();
+      if (retryCsrf) headers["X-CSRF-Token"] = retryCsrf;
+      response = await fetch(`${API_BASE}${path}`, {
+        credentials: "same-origin",
+        ...options,
+        headers,
+        signal: controller.signal
+      });
+    }
   } catch (err) {
     clearTimeout(timer);
     if (err && err.name === "AbortError") {
@@ -766,3 +804,6 @@ document.getElementById("resendOtpButton")?.addEventListener("click", login);
 document.getElementById("forgotUsernameButton")?.addEventListener("click", recoverUsername);
 document.getElementById("forgotPasswordSendOtpButton")?.addEventListener("click", requestForgotPasswordOtp);
 document.getElementById("forgotPasswordButton")?.addEventListener("click", resetPassword);
+
+// rev48: prewarm CSRF cookie so the first POST already has a token.
+(async () => { try { await ensureCsrfTokenPublic(); } catch (_) {} })();

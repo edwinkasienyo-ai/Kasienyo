@@ -13,7 +13,7 @@ let portalContext = null;
 let searchRowDrafts = {};
 let dashboardAutoRefreshHandle = null;
 let currentSidebarSubmoduleId = null;
-const CLIENT_UI_BUNDLE_ID = "dash-bundle-rev47-finalize-extras";
+const CLIENT_UI_BUNDLE_ID = "dash-bundle-rev48-csrf-frontend";
 const examPanelState = {
   generatedExam: null,
   serials: [],
@@ -10762,15 +10762,53 @@ const moduleConfigs = {
   }
 };
 
+// =====================================================================
+// rev48: CSRF support — read imis_csrf cookie and forward as X-CSRF-Token.
+// On 419 (CSRF mismatch) re-fetch the token once, then retry the request.
+// =====================================================================
+const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
+function readCsrfCookieValue() {
+  const match = String(document.cookie || "").split("; ").find((c) => c.startsWith("imis_csrf="));
+  if (!match) return "";
+  return decodeURIComponent(match.split("=")[1] || "");
+}
+async function ensureCsrfToken() {
+  let value = readCsrfCookieValue();
+  if (value && value.length >= 16) return value;
+  try {
+    const res = await fetch("/api/csrf-token", { credentials: "same-origin", cache: "no-store" });
+    if (res.ok) {
+      const json = await res.json().catch(() => null);
+      value = (json && json.csrf_token) || readCsrfCookieValue();
+    }
+  } catch (_) { /* offline first paint */ }
+  return value || "";
+}
+
+async function _doFetch(path, options) {
+  const method = String(options?.method || "GET").toUpperCase();
+  const headers = {
+    Authorization: `Bearer ${token}`,
+    "Content-Type": "application/json",
+    ...(options.headers || {})
+  };
+  if (!SAFE_METHODS.has(method)) {
+    const csrf = await ensureCsrfToken();
+    if (csrf) headers["X-CSRF-Token"] = csrf;
+  }
+  return fetch(path, { credentials: "same-origin", ...options, headers });
+}
+
 async function request(path, options = {}) {
-  const response = await fetch(path, {
-    headers: {
-      Authorization: `Bearer ${token}`,
-      "Content-Type": "application/json",
-      ...(options.headers || {})
-    },
-    ...options
-  });
+  let response = await _doFetch(path, options);
+
+  // CSRF mismatch — refresh the token and retry exactly once.
+  if (response.status === 419) {
+    try {
+      await fetch("/api/csrf-token", { credentials: "same-origin", cache: "no-store" });
+    } catch (_) { /* ignore */ }
+    response = await _doFetch(path, options);
+  }
 
   if (response.status === 401) {
     localStorage.clear();
@@ -10833,10 +10871,13 @@ async function uploadFileWithAuth(file) {
   if (!file) throw new Error("Select a file first.");
   const formData = new FormData();
   formData.append("file", file);
+  const csrf = await ensureCsrfToken();
   const response = await fetch("/api/uploads", {
     method: "POST",
+    credentials: "same-origin",
     headers: {
-      Authorization: `Bearer ${token}`
+      Authorization: `Bearer ${token}`,
+      ...(csrf ? { "X-CSRF-Token": csrf } : {})
     },
     body: formData
   });
@@ -10853,10 +10894,13 @@ async function uploadHeroImage(file) {
   }
   const formData = new FormData();
   formData.append("hero_image", file);
+  const csrf = await ensureCsrfToken();
   const response = await fetch("/api/system/branding/hero-image", {
     method: "POST",
+    credentials: "same-origin",
     headers: {
-      Authorization: `Bearer ${token}`
+      Authorization: `Bearer ${token}`,
+      ...(csrf ? { "X-CSRF-Token": csrf } : {})
     },
     body: formData
   });
