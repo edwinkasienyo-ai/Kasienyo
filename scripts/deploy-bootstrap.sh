@@ -13,8 +13,23 @@ if [[ -z "$DOMAIN" ]]; then
 fi
 
 echo "[1/8] Updating apt + installing docker, certbot, ufw..."
+export DEBIAN_FRONTEND=noninteractive
 sudo apt-get update -y
-sudo apt-get install -y docker.io docker-compose-plugin ufw curl git certbot
+sudo apt-get install -y ca-certificates curl gnupg lsb-release ufw git certbot
+
+# Install Docker Engine + Compose plugin from the official Docker repo so the
+# 'docker compose' subcommand is always available (the Ubuntu repo no longer
+# carries 'docker-compose-plugin' on noble 24.04).
+if ! command -v docker >/dev/null 2>&1 || ! docker compose version >/dev/null 2>&1; then
+  sudo install -m 0755 -d /etc/apt/keyrings
+  sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+  sudo chmod a+r /etc/apt/keyrings/docker.asc
+  echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" \
+    | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+  sudo apt-get update -y
+  sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+fi
+sudo systemctl enable --now docker
 
 echo "[2/8] Firewalling 22, 80, 443 only..."
 sudo ufw default deny incoming || true
