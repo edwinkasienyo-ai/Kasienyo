@@ -4739,3 +4739,46 @@ body {
   margin-right: 6px;
   margin-bottom: 4px;
 }
+
+/* rev46 (item 34): admission alert blinking ribbon (HoI / Admin / SysDev only) */
+.admission-alert-ribbon {
+  display: none;
+  width: 100%;
+  margin: 6px 0 4px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: 0;
+  background: linear-gradient(90deg, #d63f2f 0%, #b22222 100%);
+  color: #fff;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-align: left;
+  cursor: pointer;
+  box-shadow: 0 4px 14px rgba(178, 34, 34, 0.32);
+  position: relative;
+  overflow: hidden;
+}
+.admission-alert-ribbon[data-pending="1"] {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  animation: imis-admission-blink 1.4s steps(1, end) infinite;
+}
+.admission-alert-ribbon__dot {
+  width: 12px; height: 12px;
+  border-radius: 50%;
+  background: #ffffff;
+  box-shadow: 0 0 0 4px rgba(255,255,255,0.35);
+  animation: imis-admission-pulse 1s ease-in-out infinite;
+}
+.admission-alert-ribbon__text {
+  flex: 1 1 auto;
+}
+@keyframes imis-admission-blink {
+  0%, 60%   { background: linear-gradient(90deg, #d63f2f 0%, #b22222 100%); }
+  61%, 100% { background: linear-gradient(90deg, #f7c948 0%, #d63f2f 100%); }
+}
+@keyframes imis-admission-pulse {
+  0%, 100% { transform: scale(1); }
+  50%      { transform: scale(1.35); }
+}

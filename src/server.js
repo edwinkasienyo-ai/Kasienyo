@@ -5,7 +5,7 @@ const {
   readPublicDashboardFingerprint
 } = require("./readIndexFingerprint");
 
-const IIMS_BUILD_STAMP = process.env.IIMS_BUILD_STAMP || "ui-deploy-rev45";
+const IIMS_BUILD_STAMP = process.env.IIMS_BUILD_STAMP || "ui-deploy-rev46-finalize";
 const { query } = require("./config/db");
 const { hashPassword } = require("./utils/password");
 const { ROLES, MODULE_KEYS } = require("./config/constants");
@@ -1595,6 +1595,169 @@ CREATE TABLE IF NOT EXISTS exam_question_bank (
   }
 }
 
+async function ensureRev46FinalizeTables() {
+  // rev46 (item 27): missing tables for AI logs, admission notifications,
+  // admission comments, admission applicant accounts, parent directory cache,
+  // institution templates and document upload.
+  await query(`
+CREATE TABLE IF NOT EXISTS ai_generation_logs (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  institution_id BIGINT NULL,
+  requested_by_user_id BIGINT NULL,
+  service VARCHAR(80) NOT NULL,
+  model VARCHAR(120) NULL,
+  endpoint VARCHAR(255) NULL,
+  prompt_tokens INT NULL,
+  completion_tokens INT NULL,
+  total_tokens INT NULL,
+  status VARCHAR(40) NOT NULL DEFAULT 'OK',
+  error_message TEXT NULL,
+  metadata_json JSON NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  INDEX idx_ai_logs_inst_created (institution_id, created_at),
+  INDEX idx_ai_logs_status (status, created_at)
+)`);
+
+  await query(`
+CREATE TABLE IF NOT EXISTS admission_notifications (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  institution_id BIGINT NULL,
+  request_id BIGINT NULL,
+  channel VARCHAR(40) NOT NULL,
+  destination VARCHAR(255) NOT NULL,
+  subject VARCHAR(255) NULL,
+  body TEXT NULL,
+  status VARCHAR(40) NOT NULL DEFAULT 'QUEUED',
+  error_message TEXT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  sent_at DATETIME NULL,
+  INDEX idx_admission_notify_request (request_id, channel),
+  INDEX idx_admission_notify_inst (institution_id, status)
+)`);
+
+  await query(`
+CREATE TABLE IF NOT EXISTS admission_comments (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  request_id BIGINT NOT NULL,
+  institution_id BIGINT NULL,
+  author_user_id BIGINT NULL,
+  comment_type VARCHAR(40) NOT NULL DEFAULT 'INSTITUTION',
+  body TEXT NOT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  INDEX idx_admission_comments_request (request_id, created_at),
+  INDEX idx_admission_comments_inst (institution_id, created_at)
+)`);
+
+  await query(`
+CREATE TABLE IF NOT EXISTS admission_documents (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  request_id BIGINT NULL,
+  institution_id BIGINT NULL,
+  applicant_user_id BIGINT NULL,
+  document_type VARCHAR(80) NOT NULL,
+  original_filename VARCHAR(255) NULL,
+  stored_path VARCHAR(500) NOT NULL,
+  mime_type VARCHAR(120) NULL,
+  size_bytes INT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  INDEX idx_admission_docs_request (request_id),
+  INDEX idx_admission_docs_applicant (applicant_user_id)
+)`);
+
+  // rev46 (item 29): applicant authentication accounts (separate from staff users).
+  await query(`
+CREATE TABLE IF NOT EXISTS admission_applicants (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  email VARCHAR(255) NOT NULL UNIQUE,
+  password_hash VARCHAR(255) NOT NULL,
+  full_name VARCHAR(255) NULL,
+  phone VARCHAR(60) NULL,
+  email_verified TINYINT(1) NOT NULL DEFAULT 0,
+  email_verification_token VARCHAR(120) NULL,
+  email_verification_expires_at DATETIME NULL,
+  password_reset_token VARCHAR(120) NULL,
+  password_reset_expires_at DATETIME NULL,
+  is_active TINYINT(1) NOT NULL DEFAULT 1,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  INDEX idx_applicant_email_token (email, email_verification_token),
+  INDEX idx_applicant_reset (password_reset_token)
+)`);
+
+  // rev46 (approval gate): every action requires an approved module access grant
+  // for non-developer users. Defaults are *empty* until HoI/SuperDev approves.
+  await query(`
+CREATE TABLE IF NOT EXISTS module_access_grants (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  institution_id BIGINT NOT NULL,
+  user_id BIGINT NOT NULL,
+  module_key VARCHAR(120) NOT NULL,
+  permission_key VARCHAR(60) NOT NULL DEFAULT 'ACCESS',
+  approved TINYINT(1) NOT NULL DEFAULT 0,
+  approved_by_user_id BIGINT NULL,
+  approved_at DATETIME NULL,
+  approval_note VARCHAR(255) NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY uq_module_access_grant (institution_id, user_id, module_key, permission_key),
+  INDEX idx_module_access_grant_user (user_id, approved)
+)`);
+
+  // rev46 (items 23, 24): persistent serial / QR ledger (separate from on-the-fly
+  // serial allocator from rev43) so /api/exam/scan can resolve a QR back to its
+  // intended exam + learner.
+  await query(`
+CREATE TABLE IF NOT EXISTS qr_tracking (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  institution_id BIGINT NOT NULL,
+  exam_id BIGINT NULL,
+  learner_id BIGINT NULL,
+  serial VARCHAR(120) NOT NULL,
+  qr_payload_json JSON NULL,
+  status VARCHAR(40) NOT NULL DEFAULT 'ACTIVE',
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  scanned_at DATETIME NULL,
+  UNIQUE KEY uq_qr_serial (serial),
+  INDEX idx_qr_inst_exam (institution_id, exam_id, status)
+)`);
+
+  // rev46 (item 27): canonical learner-exam record table that other ranking /
+  // analytics endpoints can re-use.
+  await query(`
+CREATE TABLE IF NOT EXISTS learner_exam_records (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  institution_id BIGINT NOT NULL,
+  exam_id BIGINT NULL,
+  learner_id BIGINT NOT NULL,
+  serial VARCHAR(120) NULL,
+  marks DECIMAL(8,2) NULL,
+  percentage DECIMAL(6,2) NULL,
+  cbc_grade_band VARCHAR(20) NULL,
+  rank_position INT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  INDEX idx_lex_records_inst_exam (institution_id, exam_id),
+  INDEX idx_lex_records_learner (learner_id),
+  UNIQUE KEY uq_lex_records_exam_learner (institution_id, exam_id, learner_id)
+)`);
+
+  await query(`
+CREATE TABLE IF NOT EXISTS institution_templates (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  institution_id BIGINT NULL,
+  template_kind VARCHAR(80) NOT NULL,
+  title VARCHAR(255) NULL,
+  format VARCHAR(20) NOT NULL DEFAULT 'PDF',
+  storage_path VARCHAR(500) NOT NULL,
+  version INT NOT NULL DEFAULT 1,
+  is_active TINYINT(1) NOT NULL DEFAULT 1,
+  uploaded_by_user_id BIGINT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  INDEX idx_inst_templates (institution_id, template_kind, is_active)
+)`);
+}
+
 async function start() {
   ensureJwtSecretConfig();
   await query("SELECT 1");
@@ -1604,6 +1767,7 @@ async function start() {
   await seedLegacyAdministratorModuleRightsIfRequested();
   await seedInstitutionExaminationStackIfRequested();
   await seedTeacherExaminationStackIfRequested();
+  await ensureRev46FinalizeTables();
 
   let boundPort = PORT;
   let server = null;

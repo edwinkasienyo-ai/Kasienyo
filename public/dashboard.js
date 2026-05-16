@@ -13,7 +13,7 @@ let portalContext = null;
 let searchRowDrafts = {};
 let dashboardAutoRefreshHandle = null;
 let currentSidebarSubmoduleId = null;
-const CLIENT_UI_BUNDLE_ID = "dash-bundle-enterprise-v88-batch-12-admission-detail-private-build-info";
+const CLIENT_UI_BUNDLE_ID = "dash-bundle-rev46-finalize";
 const examPanelState = {
   generatedExam: null,
   serials: [],
@@ -12382,8 +12382,7 @@ function wireOnlineAdmissionProcessingHub() {
       const id = Number(wfBtn.getAttribute("data-admission-online-workflow") || 0);
       if (!id) return;
       const decision = window.prompt(
-        "Set workflow status:
-APPROVED | REJECTED | WAITLIST | MORE_INFO | INTERVIEW_REQUESTED",
+        "Set workflow status:\nAPPROVED | REJECTED | WAITLIST | MORE_INFO | INTERVIEW_REQUESTED",
         "APPROVED"
       );
       if (!decision) return;
@@ -14980,6 +14979,8 @@ async function openModule(targetModule, options = {}) {
   if (targetModule === "hr-institutional-letters") return renderInstitutionalLettersHub();
   if (targetModule === "finance-fee-status") return renderFeeStatusHub();
   if (targetModule === "institutional-registers") return renderInstitutionalRegistersHub();
+  if (targetModule === "admission-processing-centre") return renderAdmissionProcessingCentre();
+  if (targetModule === "parents-directory") return renderParentsDirectoryHub();
   if (moduleConfigs[targetModule]) return renderCrudModule(targetModule, options);
   return null;
 }
@@ -15842,4 +15843,265 @@ window.deleteCbcEntryPermanently = async (entryId) => {
     alert(error.message);
   }
 };
-init();
+
+// =====================================================================
+// rev46 (item 34): admission red blinking ribbon for HoI/Admin/SysDev.
+// Polls /api/dashboard/summary and toggles the ribbon. Click goes to the
+// Admission Processing Centre tab (item 35).
+// =====================================================================
+function setupRev46AdmissionRibbon() {
+  const ribbon = document.getElementById("admissionAlertRibbon");
+  if (!ribbon) return;
+  const role = String(portalContext?.role || "").toUpperCase();
+  const allowed = ["SUPER_SYSTEM_DEVELOPER", "SYSTEM_DEVELOPER", "SYSTEM_ADMINISTRATOR", "ADMIN", "HEAD_OF_INSTITUTION"]
+    .includes(role);
+  if (!allowed) {
+    ribbon.hidden = true;
+    return;
+  }
+  ribbon.hidden = false;
+  const refresh = async () => {
+    try {
+      const data = await request("/api/dashboard/summary");
+      const pending = Number(data?.pending_online_admission_requests || 0);
+      ribbon.dataset.pending = pending > 0 ? "1" : "0";
+      ribbon.querySelector(".admission-alert-ribbon__text").textContent =
+        pending > 0
+          ? `RED ALERT — ${pending} pending admission request${pending === 1 ? "" : "s"} awaiting your review. Click to open Admission Processing Centre.`
+          : "No pending admission requests.";
+    } catch (_) {
+      ribbon.dataset.pending = "0";
+    }
+  };
+  ribbon.addEventListener("click", () => {
+    if (typeof renderAdmissionProcessingCentre === "function") {
+      renderAdmissionProcessingCentre();
+    } else {
+      // Fallback: use existing module navigation
+      const btn = document.querySelector('button[data-module="admission-processing-centre"]');
+      if (btn) btn.click();
+    }
+  });
+  refresh();
+  setInterval(refresh, 60_000);
+}
+
+// =====================================================================
+// rev46 (item 35): Admission Processing Centre — pending / approved /
+// rejected / waiting list / interview tabs.
+// =====================================================================
+async function renderAdmissionProcessingCentre() {
+  if (typeof setActiveSidebarButton === "function") {
+    setActiveSidebarButton("admission-processing-centre");
+  }
+  const moduleTitle = document.getElementById("moduleTitle");
+  if (moduleTitle) moduleTitle.textContent = "Admission Processing Centre";
+  const target =
+    document.getElementById("formArea") ||
+    document.getElementById("dashboardMain") ||
+    document.body;
+  if (!target) return;
+  target.innerHTML = `
+    <section class="dashboard-section admission-processing-centre">
+      <h3>Admission Processing Centre</h3>
+      <p class="small-note">Review applicants submitted from the public Admission Portal. Decisions trigger automatic email + SMS to applicants.</p>
+      <div class="iim-actions-row" style="gap:6px;flex-wrap:wrap">
+        ${["PENDING","APPROVED","REJECTED","WAITLIST","MORE_INFO","INTERVIEW_REQUESTED"]
+          .map((s, i) => `<button class="iim-action-btn${i===0?" success":""}" data-apc-tab="${s}">${s.replace("_"," ")}</button>`).join("")}
+      </div>
+      <div id="apcResult" style="margin-top:10px"></div>
+    </section>
+  `;
+  const apcResult = target.querySelector("#apcResult");
+  const load = async (status) => {
+    apcResult.innerHTML = `<p class="small-note">Loading ${status}…</p>`;
+    try {
+      const data = await request(`/api/admission/online-requests?status=${encodeURIComponent(status)}&limit=200`);
+      const rows = Array.isArray(data?.rows) ? data.rows : (Array.isArray(data) ? data : []);
+      if (!rows.length) { apcResult.innerHTML = `<p class="small-note">No requests in ${status}.</p>`; return; }
+      apcResult.innerHTML = `
+        <table style="width:100%;border-collapse:collapse">
+          <thead><tr>
+            <th>Ref</th><th>Learner</th><th>Type</th><th>Grade/Form</th><th>Stream</th><th>Email</th><th>Phone</th><th>Submitted</th><th>Action</th>
+          </tr></thead>
+          <tbody>
+            ${rows.map((r) => `
+              <tr data-apc-row="${Number(r.id)}">
+                <td>#${escapeHtml(String(r.id))}</td>
+                <td>${escapeHtml(r.learner_name || "-")}</td>
+                <td>${escapeHtml(r.learner_type || "-")}</td>
+                <td>${escapeHtml(r.grade_or_form || "-")}</td>
+                <td>${escapeHtml(r.stream || "-")}</td>
+                <td>${escapeHtml(r.applicant_email || "-")}</td>
+                <td>${escapeHtml(r.applicant_phone || "-")}</td>
+                <td>${escapeHtml(String(r.created_at || "").replace("T"," ").slice(0,16))}</td>
+                <td>
+                  <button class="iim-action-btn success" data-apc-decision="APPROVED">Approve</button>
+                  <button class="iim-action-btn" data-apc-decision="MORE_INFO">More info</button>
+                  <button class="iim-action-btn" data-apc-decision="WAITLIST">Waitlist</button>
+                  <button class="iim-action-btn" data-apc-decision="INTERVIEW_REQUESTED">Interview</button>
+                  <button class="iim-action-btn delete" data-apc-decision="REJECTED">Reject</button>
+                </td>
+              </tr>`).join("")}
+          </tbody>
+        </table>
+      `;
+      apcResult.querySelectorAll("button[data-apc-decision]").forEach((btn) => {
+        btn.onclick = async () => {
+          const tr = btn.closest("[data-apc-row]");
+          const id = Number(tr?.dataset?.apcRow || 0);
+          const decision = btn.getAttribute("data-apc-decision");
+          if (!id || !decision) return;
+          const reviewComment = window.prompt(`Comment for applicant (decision: ${decision}). Saved permanently and shown on the applicant tracker:`, "") || "";
+          try {
+            await request(`/api/admission/online-requests/${id}`, {
+              method: "PATCH",
+              body: JSON.stringify({ status: decision, review_comment: reviewComment })
+            });
+            tr.style.opacity = "0.45";
+          } catch (err) { alert(err?.message || "Decision failed."); }
+        };
+      });
+    } catch (err) {
+      apcResult.innerHTML = `<p class="small-note error">${escapeHtml(err?.message || "Failed to load.")}</p>`;
+    }
+  };
+  target.querySelectorAll("[data-apc-tab]").forEach((btn) => {
+    btn.onclick = () => {
+      target.querySelectorAll("[data-apc-tab]").forEach((b) => b.classList.remove("success"));
+      btn.classList.add("success");
+      load(btn.getAttribute("data-apc-tab") || "PENDING");
+    };
+  });
+  load("PENDING");
+}
+window.renderAdmissionProcessingCentre = renderAdmissionProcessingCentre;
+
+// =====================================================================
+// rev46 (item 9): Parent / Guardian Directory hub.
+// =====================================================================
+async function renderParentsDirectoryHub() {
+  if (typeof setActiveSidebarButton === "function") setActiveSidebarButton("parents-directory");
+  const moduleTitle = document.getElementById("moduleTitle");
+  if (moduleTitle) moduleTitle.textContent = "Parent / Guardian Directory";
+  const target = document.getElementById("formArea") || document.body;
+  if (!target) return;
+  target.innerHTML = `
+    <section class="dashboard-section parents-directory-hub">
+      <h3>Parent / Guardian Directory</h3>
+      <p class="small-note">Auto-generated from learner biodata. One row per parent, with all linked learners grouped together.</p>
+      <div class="iim-actions-row" style="gap:8px;flex-wrap:wrap">
+        <input id="pdGrade" placeholder="Grade (e.g. Grade 7)" />
+        <input id="pdStream" placeholder="Stream" />
+        <input id="pdForm" placeholder="Form" />
+        <select id="pdGender">
+          <option value="">All genders</option>
+          <option>Male</option>
+          <option>Female</option>
+          <option>Other</option>
+        </select>
+        <input id="pdYear" placeholder="Year" type="number" />
+        <button class="iim-action-btn success" id="pdLoad">Load</button>
+        <button class="iim-action-btn" id="pdExport">Export CSV</button>
+        <button class="iim-action-btn" id="pdBulkEmail">Bulk Email</button>
+        <button class="iim-action-btn" id="pdBulkSms">Bulk SMS</button>
+      </div>
+      <div id="pdResult" style="margin-top:10px"></div>
+    </section>
+  `;
+  const pdResult = document.getElementById("pdResult");
+  let lastParents = [];
+  const escAttr = (typeof escapeHtmlAttribute === "function") ? escapeHtmlAttribute : ((s) => String(s || "").replace(/"/g, "&quot;"));
+  const load = async () => {
+    const params = new URLSearchParams({
+      grade: document.getElementById("pdGrade").value || "",
+      stream: document.getElementById("pdStream").value || "",
+      form: document.getElementById("pdForm").value || "",
+      gender: document.getElementById("pdGender").value || "",
+      year: document.getElementById("pdYear").value || ""
+    });
+    pdResult.innerHTML = `<p class="small-note">Loading…</p>`;
+    try {
+      const data = await request(`/api/admission/parents?${params.toString()}`);
+      const parents = Array.isArray(data?.parents) ? data.parents : [];
+      lastParents = parents;
+      if (!parents.length) { pdResult.innerHTML = `<p class="small-note">No parents matched the filters.</p>`; return; }
+      pdResult.innerHTML = `
+        <table style="width:100%;border-collapse:collapse">
+          <thead><tr>
+            <th>Parent</th><th>Phone</th><th>Email</th><th>National ID</th>
+            <th>Residence</th><th>Occupation</th><th>Relationship</th>
+            <th>Emergency contact</th><th>Learners</th>
+          </tr></thead>
+          <tbody>
+            ${parents.map((p) => `
+              <tr>
+                <td><strong>${escapeHtml(p.parent_full_name || "-")}</strong></td>
+                <td>${escapeHtml(p.parent_phone || "-")}</td>
+                <td>${escapeHtml(p.parent_email || "-")}</td>
+                <td>${escapeHtml(p.parent_id_number || "-")}</td>
+                <td>${escapeHtml(p.parent_residence || "-")}</td>
+                <td>${escapeHtml(p.parent_occupation || "-")}</td>
+                <td>${escapeHtml(p.parent_relationship || "-")}</td>
+                <td>${escapeHtml(p.emergency_contact_phone || "-")}</td>
+                <td>
+                  <ul style="margin:0;padding-left:14px">
+                    ${(p.children || []).map((c) =>
+                      `<li>${escapeHtml(c.full_name || "-")} — ${escapeHtml(c.admission_number || "-")} · ${escapeHtml(c.grade || "-")}${c.stream ? " · " + escapeHtml(c.stream) : ""}</li>`
+                    ).join("")}
+                  </ul>
+                </td>
+              </tr>`).join("")}
+          </tbody>
+        </table>
+      `;
+    } catch (err) {
+      pdResult.innerHTML = `<p class="small-note error">${escapeHtml(err?.message || "Failed to load.")}</p>`;
+    }
+  };
+  document.getElementById("pdLoad").onclick = load;
+  document.getElementById("pdExport").onclick = () => {
+    if (!lastParents.length) return;
+    const header = ["parent_full_name","parent_phone","parent_email","parent_id_number","parent_residence","parent_occupation","parent_relationship","emergency_contact","learners"];
+    const rows = lastParents.map((p) => [
+      p.parent_full_name, p.parent_phone, p.parent_email, p.parent_id_number,
+      p.parent_residence, p.parent_occupation, p.parent_relationship, p.emergency_contact_phone,
+      (p.children || []).map((c) => `${c.full_name} (${c.admission_number} ${c.grade || ""} ${c.stream || ""})`.trim()).join("; ")
+    ].map((cell) => `"${String(cell || "").replace(/"/g, '""')}"`).join(","));
+    const csv = [header.join(","), ...rows].join("\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `parent-directory-${Date.now()}.csv`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+  };
+  const bulk = async (channel) => {
+    if (!lastParents.length) return alert("Load the directory first.");
+    const subject = window.prompt("Subject (used for email):", "School notice");
+    if (subject == null) return;
+    const body = window.prompt("Message body:", "");
+    if (!body) return;
+    const recipients = lastParents.map((p) => ({ email: p.parent_email, phone: p.parent_phone })).filter((r) => r.email || r.phone);
+    try {
+      const result = await request("/api/admission/parents/bulk-message", {
+        method: "POST",
+        body: JSON.stringify({ channel, subject, body, recipients })
+      });
+      alert(`Bulk ${channel} requested: ${recipients.length}, OK: ${result.ok}, failed: ${(result.failures || []).length}.`);
+    } catch (err) { alert(err?.message || "Bulk send failed."); }
+  };
+  document.getElementById("pdBulkEmail").onclick = () => bulk("EMAIL");
+  document.getElementById("pdBulkSms").onclick = () => bulk("SMS");
+  load();
+}
+window.renderParentsDirectoryHub = renderParentsDirectoryHub;
+
+// Run ribbon setup once init flow has populated portalContext.
+(async () => {
+  try {
+    await init();
+  } finally {
+    try { setupRev46AdmissionRibbon(); } catch (_) { /* non-fatal */ }
+  }
+})();

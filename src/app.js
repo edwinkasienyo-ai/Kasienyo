@@ -76,7 +76,7 @@ const {
 const { importLocalCurriculumFromPdfDirectory } = require("./services/localCurriculumImportService");
 
 /** Bump when shipping UI/API changes so schools can confirm they run the right copy. */
-const IIMS_BUILD_STAMP = process.env.IIMS_BUILD_STAMP || "ui-deploy-rev45";
+const IIMS_BUILD_STAMP = process.env.IIMS_BUILD_STAMP || "ui-deploy-rev46-finalize";
 const {
   readPublicIndexFingerprint,
   readPublicDashboardFingerprint
@@ -1283,8 +1283,10 @@ const DEFAULT_MODULE_ACCESS_BY_ROLE = {
 };
 
 async function hasModuleAccessSingle(user, normalizedRole, moduleKey) {
+  // rev46 (approval gate): non-developer users start with NO access until an
+  // approved row exists in module_access_grants. Existing
+  // user_module_access_overrides remain authoritative if present.
   const defaultModules = DEFAULT_MODULE_ACCESS_BY_ROLE[normalizedRole] || [];
-  const defaultAllowed = defaultModules.includes(moduleKey);
   const overrides = await query(
     `SELECT can_access
      FROM user_module_access_overrides
@@ -1297,7 +1299,27 @@ async function hasModuleAccessSingle(user, normalizedRole, moduleKey) {
   if (overrides.length) {
     return Number(overrides[0].can_access) === 1;
   }
-  return defaultAllowed;
+  // If approval-gate is enabled (default true), require an explicit grant for
+  // institution roles. The Super/System Developer paths above already returned.
+  const approvalGateEnabled =
+    String(process.env.IIMS_APPROVAL_GATE || "true").toLowerCase() !== "false";
+  if (approvalGateEnabled) {
+    try {
+      const grants = await query(
+        `SELECT 1 FROM module_access_grants
+         WHERE user_id = ? AND institution_id = ? AND module_key = ?
+           AND (permission_key = 'ACCESS' OR permission_key IS NULL OR permission_key = '')
+           AND approved = 1
+         LIMIT 1`,
+        [user.id, user.institution_id, moduleKey]
+      );
+      if (grants.length) return true;
+    } catch (_) {
+      // module_access_grants may not yet be migrated on first boot.
+    }
+    return false;
+  }
+  return defaultModules.includes(moduleKey);
 }
 
 async function hasModuleAccess(user, moduleKey) {
@@ -1554,6 +1576,7 @@ async function archiveRecycleBinItem({
   entityId = null,
   payload = {},
   deletedByUserId = null,
+  deletedByRole = null,
   recycleContext = null
 }) {
   const parsedPayload = payload && typeof payload === "object" ? { ...payload } : {};
@@ -1567,16 +1590,29 @@ async function archiveRecycleBinItem({
     deleted_at: dayjs().format("YYYY-MM-DD HH:mm:ss")
   };
   parsedPayload.__recycle_meta = mergedMeta;
+  // rev46 (item 8): when a developer (Super/System) deletes anything, the row is
+  // hidden from institution admins and HoIs no matter what. Institutions only see
+  // items deleted by themselves or other institution-scoped users.
+  const effectiveRole = normalizeRole(
+    deletedByRole || mergedMeta?.deleted_by_role || ""
+  );
+  const isDeveloperDeletion =
+    effectiveRole === ROLES.SUPER_SYSTEM_DEVELOPER ||
+    effectiveRole === ROLES.SYSTEM_DEVELOPER;
+  const hiddenRoles = isDeveloperDeletion
+    ? JSON.stringify(["ADMIN", "HEAD_OF_INSTITUTION"])
+    : null;
   await query(
     `INSERT INTO recycle_bin_items
-      (institution_id, entity_name, entity_id, archived_payload_json, deleted_by_user_id, status)
-     VALUES (?, ?, ?, ?, ?, 'TRASHED')`,
+      (institution_id, entity_name, entity_id, archived_payload_json, deleted_by_user_id, status, hidden_for_roles_json)
+     VALUES (?, ?, ?, ?, ?, 'TRASHED', ?)`,
     [
       institutionId,
       cleanValue(entityName),
       Number(entityId) || null,
       JSON.stringify(parsedPayload),
-      Number(deletedByUserId) || null
+      Number(deletedByUserId) || null,
+      hiddenRoles
     ]
   );
 }
@@ -3074,7 +3110,7 @@ app.patch("/api/users/:id/force-reset-password", auth, accountMutationRateLimit,
   });
 }));
 
-app.patch("/api/system-developer/credentials", auth, accountMutationRateLimit, accountMutationCooldown, enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER]), asyncHandler(async (req, res) => {
+app.patch("/api/system-developer/credentials", auth, accountMutationRateLimit, accountMutationCooldown, enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER]), asyncHandler(async (req, res) => {
   const currentUsername = cleanValue(req.body?.current_username) || cleanValue(req.user.username);
   const newUsername = cleanOptionalValue(req.body?.new_username);
   const newPasswordRaw = cleanOptionalValue(req.body?.new_password);
@@ -3849,7 +3885,7 @@ app.get(
 app.get(
   "/api/system-developer/institution-assignments",
   auth,
-  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER]),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER]),
   asyncHandler(async (req, res) => {
     const developerUserId = Number(req.query?.developer_user_id || 0) || null;
     const rows = await query(
@@ -3870,7 +3906,7 @@ app.get(
 app.post(
   "/api/system-developer/institution-assignments",
   auth,
-  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER]),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER]),
   asyncHandler(async (req, res) => {
     const developerUserId = Number(req.body?.developer_user_id || 0);
     const institutionId = Number(req.body?.institution_id || 0);
@@ -3934,7 +3970,7 @@ app.post(
 app.delete(
   "/api/system-developer/institution-assignments/:id",
   auth,
-  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER]),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER]),
   asyncHandler(async (req, res) => {
     const assignmentId = Number(req.params.id || 0);
     if (!assignmentId) return res.status(400).json({ error: "Valid assignment id is required." });
@@ -4056,7 +4092,7 @@ app.post(
   "/api/institutions/preview-code",
   auth,
   enforceModuleAccess(MODULE_KEYS.REGISTRATION),
-  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER]),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER]),
   asyncHandler(async (req, res) => {
     const countyInput = cleanOptionalValue(req.body?.county);
     const countyCodeInput = cleanOptionalValue(req.body?.county_code);
@@ -4092,7 +4128,7 @@ app.post(
   accountMutationRateLimit,
   accountMutationCooldown,
   enforceModuleAccess(MODULE_KEYS.REGISTRATION),
-  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER]),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER]),
   enforcePermission(PERMISSIONS.CREATE),
   asyncHandler(async (req, res) => {
     const institutionName = cleanValue(req.body?.institution_name);
@@ -5686,7 +5722,7 @@ app.get(
   "/api/templates/institution-streams.csv",
   auth,
   enforceModuleAccess(MODULE_KEYS.ADMISSION),
-  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER]),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER]),
   asyncHandler(async (req, res) => {
     const csv = [
       "grade_or_form,stream_name",
@@ -5703,7 +5739,7 @@ app.get(
 app.post(
   "/api/institutions/streams/bulk",
   auth,
-  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER]),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER]),
   asyncHandler(async (req, res) => {
     const institutionId = Number(req.user.institution_id);
     const entries = Array.isArray(req.body?.entries) ? req.body.entries : [];
@@ -5803,7 +5839,7 @@ app.get(
 app.get(
   "/api/templates/staff-profiles.csv",
   auth,
-  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER]),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER]),
   asyncHandler(async (req, res) => {
     const profileType = cleanValue(req.query?.type || "teacher").toLowerCase();
     const csv = profileType === "support"
@@ -6168,7 +6204,7 @@ app.get(
   "/api/institutions/:id/agreement-template",
   auth,
   enforceModuleAccess(MODULE_KEYS.REGISTRATION),
-  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER]),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER]),
   asyncHandler(async (req, res) => {
     const institutionId = Number(req.params.id);
     const institution = await loadInstitutionAgreementContext(institutionId);
@@ -6188,7 +6224,7 @@ app.put(
   accountMutationRateLimit,
   accountMutationCooldown,
   enforceModuleAccess(MODULE_KEYS.REGISTRATION),
-  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER]),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER]),
   asyncHandler(async (req, res) => {
     const institutionId = Number(req.params.id);
     const institution = await loadInstitutionAgreementContext(institutionId);
@@ -6216,7 +6252,7 @@ app.delete(
   accountMutationRateLimit,
   accountMutationCooldown,
   enforceModuleAccess(MODULE_KEYS.REGISTRATION),
-  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER]),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER]),
   asyncHandler(async (req, res) => {
     const institutionId = Number(req.params.id);
     const institution = await loadInstitutionAgreementContext(institutionId);
@@ -6397,7 +6433,13 @@ app.delete(
   auth,
   accountMutationRateLimit,
   accountMutationCooldown,
-  enforceRole([ROLES.SYSTEM_DEVELOPER]),
+  // rev46 (item 7): HoI/Administrator may delete users in their institution.
+  enforceRole([
+    ROLES.SUPER_SYSTEM_DEVELOPER,
+    ROLES.SYSTEM_DEVELOPER,
+    ROLES.ADMIN,
+    ROLES.HEAD_OF_INSTITUTION
+  ]),
   asyncHandler(async (req, res) => {
     const userId = Number(req.params.id);
     if (!userId) {
@@ -6405,6 +6447,32 @@ app.delete(
     }
     if (Number(req.user.id) === userId) {
       return res.status(400).json({ error: "You cannot delete your own account." });
+    }
+    const deletionReason = cleanValue(req.body?.deletion_reason || "");
+    const passwordConfirm = cleanValue(req.body?.password_confirm || "");
+    const ackText = cleanValue(req.body?.confirm_text || "").toUpperCase();
+    if (!deletionReason || deletionReason.length < 6) {
+      return res.status(400).json({
+        error: "deletion_reason is required (>= 6 chars). All deletes are audited and irreversible."
+      });
+    }
+    if (!passwordConfirm) {
+      return res.status(400).json({ error: "password_confirm is required to authorise deletion." });
+    }
+    if (ackText !== "DELETE") {
+      return res.status(400).json({
+        error: "confirm_text must be the literal word 'DELETE' (third confirmation)."
+      });
+    }
+    // Verify the actor's password.
+    const actorRows = await query("SELECT password_hash FROM users WHERE id = ? LIMIT 1", [req.user.id]);
+    if (!actorRows.length) return res.status(401).json({ error: "Auth context missing." });
+    const passwordOk = await verifyPassword(passwordConfirm, actorRows[0].password_hash);
+    if (!passwordOk) {
+      await auditLog(req.user, "DELETE_USER_PASSWORD_MISMATCH", "users", userId, {
+        target_user_id: userId
+      });
+      return res.status(401).json({ error: "password_confirm is incorrect." });
     }
     const users = await query(
       `SELECT id, institution_id, username, role
@@ -6422,8 +6490,17 @@ app.delete(
     if (!deleteScopeAllowed) {
       return res.status(403).json({ error: "You can only delete users within your assigned institution scope." });
     }
+    // HoI/Admin can never delete a developer-role account.
+    if (
+      [ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION].includes(requesterRole) &&
+      isAnySystemDeveloperRole(targetUser.role)
+    ) {
+      return res
+        .status(403)
+        .json({ error: "Institution administrators cannot delete System/Super Developer accounts." });
+    }
     if (!isSuperSystemDeveloperRole(requesterRole) && isAnySystemDeveloperRole(targetUser.role)) {
-      return res.status(403).json({ error: "Only the Super/System Developer can delete this account." });
+      return res.status(403).json({ error: "Only the Super System Developer can delete this account." });
     }
     await archiveRecycleBinItem({
       institutionId: targetUser.institution_id,
@@ -6431,16 +6508,19 @@ app.delete(
       entityId: targetUser.id,
       payload: targetUser,
       deletedByUserId: req.user.id,
+      deletedByRole: requesterRole,
       recycleContext: buildRecycleContextFromRequest(req, {
-        description: `User account ${targetUser.username} deleted from registry.`
+        description: `User account ${targetUser.username} deleted from registry. Reason: ${deletionReason}`,
+        reason: deletionReason
       })
     });
     await query("DELETE FROM users WHERE id = ?", [userId]);
     await auditLog(req.user, "DELETE_USER", "users", userId, {
       username: targetUser.username,
-      role: targetUser.role
+      role: targetUser.role,
+      deletion_reason: deletionReason
     });
-    res.json({ message: "User deleted successfully." });
+    res.json({ message: "User deleted successfully and archived to recycle bin." });
   })
 );
 
@@ -6925,7 +7005,7 @@ app.get(
   "/api/system/institution-documents/institutions",
   auth,
   enforceModuleAccess(MODULE_KEYS.INSTITUTIONS_USERS_REGISTRY),
-  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER]),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER]),
   enforcePermission(PERMISSIONS.VIEW),
   asyncHandler(async (_req, res) => {
     const institutions = await query(
@@ -6941,7 +7021,7 @@ app.get(
   "/api/system/institution-documents",
   auth,
   enforceModuleAccess(MODULE_KEYS.INSTITUTIONS_USERS_REGISTRY),
-  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER]),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER]),
   enforcePermission(PERMISSIONS.VIEW),
   asyncHandler(async (req, res) => {
     const institutionId = Number(req.query?.institution_id || 0);
@@ -6974,7 +7054,7 @@ app.post(
   "/api/system/institution-documents",
   auth,
   enforceModuleAccess(MODULE_KEYS.INSTITUTIONS_USERS_REGISTRY),
-  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER]),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER]),
   enforcePermission(PERMISSIONS.CREATE),
   asyncHandler(async (req, res) => {
     const institutionId = Number(req.body?.institution_id || 0);
@@ -7018,7 +7098,7 @@ app.delete(
   "/api/system/institution-documents/:id",
   auth,
   enforceModuleAccess(MODULE_KEYS.INSTITUTIONS_USERS_REGISTRY),
-  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER]),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER]),
   enforcePermission(PERMISSIONS.DELETE),
   asyncHandler(async (req, res) => {
     const id = Number(req.params.id || 0);
@@ -7310,7 +7390,7 @@ app.delete(
   "/api/system/registry/institutions/:id",
   auth,
   enforceModuleAccess(MODULE_KEYS.INSTITUTIONS_USERS_REGISTRY),
-  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER]),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER]),
   asyncHandler(async (req, res) => {
     const institutionId = Number(req.params.id);
     if (!institutionId) return res.status(400).json({ error: "Valid institution id is required." });
@@ -8228,7 +8308,7 @@ app.patch(
 app.get(
   "/api/cbc/curriculum",
   auth,
-  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER]),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER]),
   enforcePermission(PERMISSIONS.VIEW),
   asyncHandler(async (req, res) => {
     const rows = await getPaginatedRows({
@@ -8246,7 +8326,7 @@ app.get(
 app.get(
   "/api/cbc/curriculum/:id(\\d+)",
   auth,
-  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER]),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER]),
   enforcePermission(PERMISSIONS.VIEW),
   asyncHandler(async (req, res) => {
     const rows = await query(
@@ -8264,7 +8344,7 @@ app.get(
 app.post(
   "/api/cbc/curriculum",
   auth,
-  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER]),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER]),
   enforcePermission(PERMISSIONS.CREATE),
   asyncHandler(async (req, res) => {
     let data = pickFields(req.body, [
@@ -8303,7 +8383,7 @@ app.post(
 app.put(
   "/api/cbc/curriculum/:id(\\d+)",
   auth,
-  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER]),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER]),
   enforcePermission(PERMISSIONS.UPDATE),
   asyncHandler(async (req, res) => {
     const entryId = Number(req.params.id);
@@ -8342,7 +8422,7 @@ app.put(
 app.delete(
   "/api/cbc/curriculum/:id(\\d+)",
   auth,
-  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER]),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER]),
   enforcePermission(PERMISSIONS.DELETE),
   asyncHandler(async (req, res) => {
     const entryId = Number(req.params.id);
@@ -8626,7 +8706,7 @@ app.post(
 app.get(
   "/api/cbc/curriculum/materials",
   auth,
-  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER]),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER]),
   enforcePermission(PERMISSIONS.VIEW),
   asyncHandler(async (req, res) => {
     const rows = await query(
@@ -8677,7 +8757,7 @@ async function extractUploadedMaterialSnippet(file = null) {
 app.post(
   "/api/cbc/curriculum/materials/upload",
   auth,
-  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER]),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER]),
   enforcePermission(PERMISSIONS.CREATE),
   upload.single("file"),
   asyncHandler(async (req, res) => {
@@ -8737,7 +8817,7 @@ app.post(
 app.patch(
   "/api/cbc/curriculum/materials/:id(\\d+)",
   auth,
-  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER]),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER]),
   enforcePermission(PERMISSIONS.UPDATE),
   asyncHandler(async (req, res) => {
     const materialId = Number(req.params.id);
@@ -8761,7 +8841,7 @@ app.patch(
 app.delete(
   "/api/cbc/curriculum/materials/:id(\\d+)",
   auth,
-  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER]),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER]),
   enforcePermission(PERMISSIONS.DELETE),
   asyncHandler(async (req, res) => {
     const materialId = Number(req.params.id);
@@ -8797,7 +8877,7 @@ app.delete(
 app.post(
   "/api/cbc/curriculum/bulk-generate",
   auth,
-  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER]),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER]),
   enforcePermission(PERMISSIONS.CREATE),
   asyncHandler(async (req, res) => {
     const grade = cleanValue(req.body?.grade);
@@ -9067,7 +9147,7 @@ function csvCell(value) {
 app.get(
   "/api/cbc/curriculum/structure-mappings/template",
   auth,
-  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER]),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER]),
   enforcePermission(PERMISSIONS.VIEW),
   asyncHandler(async (_, res) => {
     const levelOrder = [
@@ -9147,7 +9227,7 @@ app.get(
 app.get(
   "/api/cbc/curriculum/structure-mappings/template-doc",
   auth,
-  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER]),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER]),
   enforcePermission(PERMISSIONS.VIEW),
   asyncHandler(async (_, res) => {
     const docText = [
@@ -9176,7 +9256,7 @@ app.get(
 app.post(
   "/api/cbc/curriculum/structure-mappings/import",
   auth,
-  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER]),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER]),
   enforcePermission(PERMISSIONS.CREATE),
   upload.single("file"),
   asyncHandler(async (req, res) => {
@@ -9318,7 +9398,7 @@ app.post(
 app.post(
   "/api/cbc/curriculum/structure-mappings",
   auth,
-  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER]),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER]),
   enforcePermission(PERMISSIONS.CREATE),
   asyncHandler(async (req, res) => {
     const learningArea = cleanValue(req.body?.learning_area);
@@ -9388,7 +9468,7 @@ app.get(
 app.patch(
   "/api/cbc/curriculum/structure-mappings/:id(\\d+)",
   auth,
-  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER]),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER]),
   enforcePermission(PERMISSIONS.UPDATE),
   asyncHandler(async (req, res) => {
     const mappingId = Number(req.params.id);
@@ -9435,7 +9515,7 @@ app.post(
   "/api/cbc/kicd/import",
   auth,
   enforceModuleAccess(MODULE_KEYS.CBC_CURRICULUM_EDITOR),
-  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER]),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER]),
   enforcePermission(PERMISSIONS.CREATE),
   asyncHandler(async (req, res) => {
     const includeLevels = Array.isArray(req.body?.include_levels)
@@ -9637,7 +9717,7 @@ app.post(
   "/api/cbc/curriculum/pretechnical-seed",
   auth,
   enforceModuleAccess(MODULE_KEYS.CBC_CURRICULUM_EDITOR),
-  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER]),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER]),
   enforcePermission(PERMISSIONS.CREATE),
   asyncHandler(async (req, res) => {
     const replaceExisting = parseTruthy(req.body?.replace_existing);
@@ -9831,7 +9911,7 @@ app.post(
   "/api/cbc/local-curriculum/import",
   auth,
   enforceModuleAccess(MODULE_KEYS.CBC_CURRICULUM_EDITOR),
-  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER]),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER]),
   enforcePermission(PERMISSIONS.CREATE),
   asyncHandler(async (req, res) => {
     const baseDirectory = cleanOptionalValue(req.body?.base_directory) || path.join(process.cwd(), "uploads", "curriculum-design");
@@ -10308,16 +10388,13 @@ app.post(
       update_type: updateType,
       otp_channels: otpSession.sendResults || []
     });
-    const exposeOtp =
-      isSuperSystemDeveloperRole(req.user.role) &&
-      (process.env.NODE_ENV !== "production" || parseTruthy(process.env.EXPOSE_OTP_PREVIEW));
+    // rev46 (item 2): OTP code MUST NEVER reach any browser. Even SuperDev
+    // must read OTPs from server logs / Security & Audit, not the response.
     res.json({
-      message: `OTP dispatched (${(otpSession.sendResults || []).join(", ")}).`,
+      message: "OTP dispatched. Check email or SMS.",
       otp_required: true,
       otp_channels_used: deliveryPlan.channels.map((c) => c.channel),
-      otp_delivery_log: otpSession.sendResults || [],
-      otp_preview: exposeOtp ? otpSession.code : null,
-      otp_expires_at: exposeOtp ? otpSession.expiresAt : null
+      otp_expires_in_minutes: Number(process.env.OTP_EXPIRY_MINUTES || 10)
     });
   })
 );
@@ -14551,7 +14628,7 @@ app.get(
   "/api/examinations/analytics/overview",
   auth,
   enforceModuleAccess(MODULE_KEYS.CBC_CURRICULUM_EDITOR),
-  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER]),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER]),
   enforcePermission(PERMISSIONS.VIEW),
   asyncHandler(async (req, res) => {
     const institutionId = Number(req.user.institution_id);
@@ -14616,7 +14693,7 @@ app.post(
   "/api/examinations/ai-copilot/recommendations",
   auth,
   enforceModuleAccess(MODULE_KEYS.CBC_CURRICULUM_EDITOR),
-  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER]),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER]),
   enforcePermission(PERMISSIONS.VIEW),
   asyncHandler(async (req, res) => {
     const institutionId = Number(req.user.institution_id);
@@ -14707,7 +14784,7 @@ app.get(
   "/api/examinations/gradebook/overview",
   auth,
   enforceModuleAccess(MODULE_KEYS.CBC_CURRICULUM_EDITOR),
-  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER]),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER]),
   enforcePermission(PERMISSIONS.VIEW),
   asyncHandler(async (req, res) => {
     const institutionId = Number(req.user.institution_id);
@@ -14830,7 +14907,7 @@ app.get(
   "/api/examinations/assessment-tracking/overview",
   auth,
   enforceModuleAccess(MODULE_KEYS.CBC_CURRICULUM_EDITOR),
-  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER]),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER]),
   enforcePermission(PERMISSIONS.VIEW),
   asyncHandler(async (req, res) => {
     const institutionId = Number(req.user.institution_id);
@@ -14932,7 +15009,7 @@ app.get(
   "/api/examinations/portals/overview",
   auth,
   enforceModuleAccess(MODULE_KEYS.CBC_CURRICULUM_EDITOR),
-  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER]),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER]),
   enforcePermission(PERMISSIONS.VIEW),
   asyncHandler(async (req, res) => {
     const institutionId = Number(req.user.institution_id);
@@ -15006,7 +15083,7 @@ app.get(
   "/api/examinations/compliance/overview",
   auth,
   enforceModuleAccess(MODULE_KEYS.CBC_CURRICULUM_EDITOR),
-  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER]),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER]),
   enforcePermission(PERMISSIONS.VIEW),
   asyncHandler(async (req, res) => {
     const institutionId = Number(req.user.institution_id);
@@ -15094,7 +15171,7 @@ app.get(
   "/api/examinations/lifecycle/timeline",
   auth,
   enforceModuleAccess(MODULE_KEYS.CBC_CURRICULUM_EDITOR),
-  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER]),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER]),
   enforcePermission(PERMISSIONS.VIEW),
   asyncHandler(async (req, res) => {
     const institutionId = Number(req.user.institution_id);
@@ -15258,7 +15335,7 @@ app.get(
   "/api/examinations/templates",
   auth,
   enforceModuleAccess(MODULE_KEYS.CBC_CURRICULUM_EDITOR),
-  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER]),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER]),
   enforcePermission(PERMISSIONS.VIEW),
   asyncHandler(async (req, res) => {
     const rows = await query(
@@ -15276,7 +15353,7 @@ app.post(
   "/api/examinations/templates",
   auth,
   enforceModuleAccess(MODULE_KEYS.CBC_CURRICULUM_EDITOR),
-  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER]),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER]),
   enforcePermission(PERMISSIONS.CREATE),
   asyncHandler(async (req, res) => {
     const templateKey = normalizeExamTemplateKey(req.body?.template_key);
@@ -15313,7 +15390,7 @@ app.put(
   "/api/examinations/templates/:id(\\d+)",
   auth,
   enforceModuleAccess(MODULE_KEYS.CBC_CURRICULUM_EDITOR),
-  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER]),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER]),
   enforcePermission(PERMISSIONS.UPDATE),
   asyncHandler(async (req, res) => {
     const templateId = Number(req.params.id || 0);
@@ -15352,7 +15429,7 @@ app.delete(
   "/api/examinations/templates/:id(\\d+)",
   auth,
   enforceModuleAccess(MODULE_KEYS.CBC_CURRICULUM_EDITOR),
-  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER]),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER]),
   enforcePermission(PERMISSIONS.DELETE),
   asyncHandler(async (req, res) => {
     const templateId = Number(req.params.id || 0);
@@ -15372,7 +15449,7 @@ app.post(
   "/api/examinations/templates/:id(\\d+)/clone",
   auth,
   enforceModuleAccess(MODULE_KEYS.CBC_CURRICULUM_EDITOR),
-  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER]),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER]),
   enforcePermission(PERMISSIONS.CREATE),
   asyncHandler(async (req, res) => {
     const templateId = Number(req.params.id || 0);
@@ -15408,7 +15485,7 @@ app.get(
   "/api/examinations/archives",
   auth,
   enforceModuleAccess(MODULE_KEYS.CBC_CURRICULUM_EDITOR),
-  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER]),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER]),
   enforcePermission(PERMISSIONS.VIEW),
   asyncHandler(async (req, res) => {
     const statusFilter = cleanValue(req.query?.status || "").toUpperCase();
@@ -15429,7 +15506,7 @@ app.post(
   "/api/examinations/archives",
   auth,
   enforceModuleAccess(MODULE_KEYS.CBC_CURRICULUM_EDITOR),
-  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER]),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER]),
   enforcePermission(PERMISSIONS.CREATE),
   asyncHandler(async (req, res) => {
     const archiveType = cleanValue(req.body?.archive_type || "");
@@ -15460,7 +15537,7 @@ app.patch(
   "/api/examinations/archives/:id(\\d+)",
   auth,
   enforceModuleAccess(MODULE_KEYS.CBC_CURRICULUM_EDITOR),
-  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER]),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER]),
   enforcePermission(PERMISSIONS.UPDATE),
   asyncHandler(async (req, res) => {
     const archiveId = Number(req.params.id || 0);
@@ -15497,7 +15574,7 @@ app.get(
   "/api/examinations/settings",
   auth,
   enforceModuleAccess(MODULE_KEYS.CBC_CURRICULUM_EDITOR),
-  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER]),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER]),
   enforcePermission(PERMISSIONS.VIEW),
   asyncHandler(async (req, res) => {
     const rows = await query(
@@ -15516,7 +15593,7 @@ app.put(
   "/api/examinations/settings",
   auth,
   enforceModuleAccess(MODULE_KEYS.CBC_CURRICULUM_EDITOR),
-  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER]),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER]),
   enforcePermission(PERMISSIONS.UPDATE),
   asyncHandler(async (req, res) => {
     const incoming = req.body && typeof req.body === "object" ? req.body : {};
@@ -16471,6 +16548,512 @@ app.use((req, res, next) => {
   }
   return res.status(404).sendFile(path.join(process.cwd(), "public", "404.html"));
 });
+
+// =====================================================================
+// rev46-finalize: items 9, 27, 29, 32, 34, 35, 38, 40 + approval gate
+// =====================================================================
+const REV46_UPLOADS_DIR = path.join(uploadsPath, "admission-documents");
+if (!fs.existsSync(REV46_UPLOADS_DIR)) {
+  fs.mkdirSync(REV46_UPLOADS_DIR, { recursive: true });
+}
+const rev46AdmissionDocStorage = multer.diskStorage({
+  destination: (_req, _file, cb) => cb(null, REV46_UPLOADS_DIR),
+  filename: (_req, file, cb) => {
+    const ext = path.extname(file.originalname || "").toLowerCase().slice(0, 12);
+    const safe = `${Date.now()}-${crypto.randomBytes(8).toString("hex")}${ext}`;
+    cb(null, safe);
+  }
+});
+const REV46_ALLOWED_DOC_MIME = new Set([
+  "application/pdf",
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+  "image/gif",
+  "image/heic",
+  "image/heif",
+  "image/tiff",
+  "application/msword",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+]);
+const rev46AdmissionDocUpload = multer({
+  storage: rev46AdmissionDocStorage,
+  limits: { fileSize: Number(process.env.REV46_DOC_MAX_BYTES || 10 * 1024 * 1024) },
+  fileFilter: (_req, file, cb) => {
+    if (!REV46_ALLOWED_DOC_MIME.has(String(file.mimetype || "").toLowerCase())) {
+      return cb(new Error(`Unsupported file type: ${file.mimetype}`));
+    }
+    cb(null, true);
+  }
+});
+
+async function logAdmissionNotification({ requestId, institutionId, channel, destination, subject, body, status, error }) {
+  try {
+    await query(
+      `INSERT INTO admission_notifications
+        (institution_id, request_id, channel, destination, subject, body, status, error_message, sent_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ${status === "SENT" ? "NOW()" : "NULL"})`,
+      [
+        Number(institutionId) || null,
+        Number(requestId) || null,
+        cleanValue(channel),
+        cleanValue(destination),
+        cleanValue(subject || "").slice(0, 250),
+        cleanValue(body || "").slice(0, 4000),
+        cleanValue(status || "QUEUED"),
+        cleanValue(error || "") || null
+      ]
+    );
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn("[admission-notify] log failed:", err?.message);
+  }
+}
+
+// === Item 9: Parent / Guardian directory ===
+app.get(
+  "/api/admission/parents",
+  auth,
+  enforceRole([
+    ROLES.SUPER_SYSTEM_DEVELOPER,
+    ROLES.SYSTEM_DEVELOPER,
+    ROLES.SYSTEM_ADMINISTRATOR,
+    ROLES.ADMIN,
+    ROLES.HEAD_OF_INSTITUTION,
+    ROLES.TEACHER
+  ]),
+  asyncHandler(async (req, res) => {
+    const institutionId = Number(req.user.institution_id);
+    const grade = cleanValue(req.query?.grade || "");
+    const stream = cleanValue(req.query?.stream || "");
+    const form = cleanValue(req.query?.form || "");
+    const gender = cleanValue(req.query?.gender || "");
+    const year = Number(req.query?.year || 0) || null;
+    const isDev =
+      normalizeRole(req.user.role) === ROLES.SUPER_SYSTEM_DEVELOPER ||
+      normalizeRole(req.user.role) === ROLES.SYSTEM_DEVELOPER;
+    const filters = [];
+    const params = [];
+    if (!isDev) { filters.push("l.institution_id = ?"); params.push(institutionId); }
+    if (grade) { filters.push("l.grade = ?"); params.push(grade); }
+    if (stream) { filters.push("l.stream = ?"); params.push(stream); }
+    if (form) { filters.push("(l.grade = ? OR l.form_name = ?)"); params.push(form, form); }
+    if (gender) { filters.push("l.gender = ?"); params.push(gender); }
+    if (year) { filters.push("YEAR(l.created_at) = ?"); params.push(year); }
+    const where = filters.length ? `WHERE ${filters.join(" AND ")}` : "";
+    const learners = await query(
+      `SELECT l.id, l.full_name, l.admission_number, l.upi_number, l.grade, l.stream,
+              l.parent_full_name, l.parent_phone, l.parent_email, l.parent_id_number,
+              l.parent_relationship, l.parent_residence, l.parent_occupation,
+              l.emergency_contact_phone, l.gender, l.fee_balance,
+              l.institution_id
+       FROM learners l
+       ${where}
+       ORDER BY l.parent_full_name ASC, l.full_name ASC
+       LIMIT 5000`,
+      params
+    );
+    const grouped = new Map();
+    for (const row of learners) {
+      const key = (cleanValue(row.parent_id_number || "") + "|" + cleanValue(row.parent_phone || "") + "|" + cleanValue(row.parent_email || "")).toLowerCase()
+        || `lid:${row.id}`;
+      const existing = grouped.get(key);
+      const child = {
+        learner_id: row.id,
+        full_name: row.full_name,
+        admission_number: row.admission_number,
+        upi_number: row.upi_number,
+        grade: row.grade,
+        stream: row.stream,
+        gender: row.gender,
+        fee_balance: row.fee_balance == null ? null : Number(row.fee_balance)
+      };
+      if (existing) {
+        existing.children.push(child);
+      } else {
+        grouped.set(key, {
+          parent_full_name: row.parent_full_name || "(unknown parent)",
+          parent_phone: row.parent_phone || "",
+          parent_email: row.parent_email || "",
+          parent_id_number: row.parent_id_number || "",
+          parent_relationship: row.parent_relationship || "",
+          parent_residence: row.parent_residence || "",
+          parent_occupation: row.parent_occupation || "",
+          emergency_contact_phone: row.emergency_contact_phone || "",
+          institution_id: row.institution_id,
+          children: [child]
+        });
+      }
+    }
+    res.json({ count: grouped.size, parents: [...grouped.values()] });
+  })
+);
+
+app.post(
+  "/api/admission/parents/bulk-message",
+  auth,
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
+  asyncHandler(async (req, res) => {
+    const recipients = Array.isArray(req.body?.recipients) ? req.body.recipients : [];
+    const channel = cleanValue(req.body?.channel || "EMAIL").toUpperCase();
+    const subject = cleanValue(req.body?.subject || "School notice");
+    const body = cleanValue(req.body?.body || "");
+    if (!recipients.length || !body) return res.status(400).json({ error: "recipients[] and body are required." });
+    if (!["EMAIL", "SMS", "BOTH"].includes(channel)) return res.status(400).json({ error: "channel must be EMAIL/SMS/BOTH." });
+    let okCount = 0;
+    const failures = [];
+    for (const r of recipients.slice(0, 800)) {
+      const email = cleanValue(r?.email || "");
+      const phone = cleanValue(r?.phone || "");
+      try {
+        if ((channel === "EMAIL" || channel === "BOTH") && email && emailChannelReady()) {
+          await sendTransactionalEmail({ to: email, subject, text: body });
+          okCount += 1;
+        }
+        if ((channel === "SMS" || channel === "BOTH") && phone && smsChannelReady()) {
+          await sendTransactionalSms({ to: phone, text: body });
+          okCount += 1;
+        }
+      } catch (err) {
+        failures.push({ email, phone, error: err?.message || "send failed" });
+      }
+    }
+    await auditLog(req.user, "PARENT_BULK_MESSAGE", "learners", null, {
+      channel, count: recipients.length, ok_count: okCount, failures: failures.length
+    });
+    res.json({ requested: recipients.length, ok: okCount, failures });
+  })
+);
+
+// === Item 29: Admission applicant accounts ===
+app.post(
+  "/api/public/admission-applicant/register",
+  asyncHandler(async (req, res) => {
+    const email = cleanValue(req.body?.email || "").toLowerCase();
+    const password = cleanValue(req.body?.password || "");
+    const fullName = cleanValue(req.body?.full_name || "");
+    const phone = cleanValue(req.body?.phone || "");
+    if (!email || !password) return res.status(400).json({ error: "email and password are required." });
+    if (password.length < 10) return res.status(400).json({ error: "password must be at least 10 characters." });
+    const existing = await query(`SELECT id FROM admission_applicants WHERE email = ? LIMIT 1`, [email]);
+    if (existing.length) return res.status(409).json({ error: "An applicant with that email already exists." });
+    const passwordHash = await hashPassword(password);
+    const verifyToken = crypto.randomBytes(24).toString("hex");
+    const verifyExpires = dayjs().add(48, "hour").format("YYYY-MM-DD HH:mm:ss");
+    await query(
+      `INSERT INTO admission_applicants
+        (email, password_hash, full_name, phone, email_verified,
+         email_verification_token, email_verification_expires_at)
+       VALUES (?, ?, ?, ?, 0, ?, ?)`,
+      [email, passwordHash, fullName || null, phone || null, verifyToken, verifyExpires]
+    );
+    const verifyUrl = `${cleanValue(req.headers["x-forwarded-host"] || req.get("host"))}/admission-portal.html?verify=${verifyToken}`;
+    if (emailChannelReady()) {
+      try {
+        await sendTransactionalEmail({
+          to: email,
+          subject: "Verify your IMIS Admission Portal account",
+          text: `Welcome.\n\nClick the link below to verify your account (valid 48h):\n${verifyUrl}\n\nIf you did not request this, ignore this email.`
+        });
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.warn("[applicant-register] email send failed:", err?.message);
+      }
+    }
+    res.status(201).json({ message: "Account created. Check your email for the verification link." });
+  })
+);
+
+app.get(
+  "/api/public/admission-applicant/verify",
+  asyncHandler(async (req, res) => {
+    const token = cleanValue(req.query?.token || "");
+    if (!token) return res.status(400).json({ error: "token is required." });
+    const rows = await query(
+      `SELECT id FROM admission_applicants
+       WHERE email_verification_token = ?
+         AND email_verification_expires_at > NOW()
+         AND email_verified = 0
+       LIMIT 1`,
+      [token]
+    );
+    if (!rows.length) return res.status(400).json({ error: "Verification link is invalid or expired." });
+    await query(
+      `UPDATE admission_applicants
+       SET email_verified = 1,
+           email_verification_token = NULL,
+           email_verification_expires_at = NULL
+       WHERE id = ?`,
+      [rows[0].id]
+    );
+    res.json({ message: "Email verified. You may now sign in." });
+  })
+);
+
+app.post(
+  "/api/public/admission-applicant/login",
+  asyncHandler(async (req, res) => {
+    const email = cleanValue(req.body?.email || "").toLowerCase();
+    const password = cleanValue(req.body?.password || "");
+    if (!email || !password) return res.status(400).json({ error: "email and password required." });
+    const rows = await query(
+      `SELECT id, password_hash, email_verified, is_active, full_name
+       FROM admission_applicants WHERE email = ? LIMIT 1`,
+      [email]
+    );
+    if (!rows.length) return res.status(401).json({ error: "Invalid credentials." });
+    const applicant = rows[0];
+    if (!applicant.is_active) return res.status(403).json({ error: "Account inactive." });
+    if (!applicant.email_verified) return res.status(403).json({ error: "Please verify your email before signing in." });
+    const passwordOk = await verifyPassword(password, applicant.password_hash);
+    if (!passwordOk) return res.status(401).json({ error: "Invalid credentials." });
+    const token = jwt.sign(
+      { applicant_id: applicant.id, kind: "admission_applicant" },
+      JWT_SECRET,
+      { expiresIn: "1d" }
+    );
+    res.json({ token, full_name: applicant.full_name || null });
+  })
+);
+
+app.post(
+  "/api/public/admission-applicant/forgot-password",
+  asyncHandler(async (req, res) => {
+    const email = cleanValue(req.body?.email || "").toLowerCase();
+    if (!email) return res.status(400).json({ error: "email is required." });
+    const rows = await query(`SELECT id FROM admission_applicants WHERE email = ? LIMIT 1`, [email]);
+    if (rows.length) {
+      const token = crypto.randomBytes(24).toString("hex");
+      const expires = dayjs().add(2, "hour").format("YYYY-MM-DD HH:mm:ss");
+      await query(
+        `UPDATE admission_applicants SET password_reset_token = ?, password_reset_expires_at = ? WHERE id = ?`,
+        [token, expires, rows[0].id]
+      );
+      const resetUrl = `${cleanValue(req.headers["x-forwarded-host"] || req.get("host"))}/admission-portal.html?reset=${token}`;
+      if (emailChannelReady()) {
+        try {
+          await sendTransactionalEmail({
+            to: email,
+            subject: "IMIS Admission Portal — password reset",
+            text: `Use this link within 2 hours to reset your password:\n${resetUrl}`
+          });
+        } catch (err) {
+          // eslint-disable-next-line no-console
+          console.warn("[applicant-forgot] email send failed:", err?.message);
+        }
+      }
+    }
+    // Always 200 to avoid email enumeration.
+    res.json({ message: "If the email exists, a reset link was sent." });
+  })
+);
+
+app.post(
+  "/api/public/admission-applicant/reset-password",
+  asyncHandler(async (req, res) => {
+    const token = cleanValue(req.body?.token || "");
+    const password = cleanValue(req.body?.password || "");
+    if (!token || !password) return res.status(400).json({ error: "token and password are required." });
+    if (password.length < 10) return res.status(400).json({ error: "password must be at least 10 characters." });
+    const rows = await query(
+      `SELECT id FROM admission_applicants
+       WHERE password_reset_token = ?
+         AND password_reset_expires_at > NOW()
+       LIMIT 1`,
+      [token]
+    );
+    if (!rows.length) return res.status(400).json({ error: "Reset link is invalid or expired." });
+    const passwordHash = await hashPassword(password);
+    await query(
+      `UPDATE admission_applicants
+       SET password_hash = ?, password_reset_token = NULL, password_reset_expires_at = NULL
+       WHERE id = ?`,
+      [passwordHash, rows[0].id]
+    );
+    res.json({ message: "Password reset. You may now sign in." });
+  })
+);
+
+// === Item 40: applicant document upload ===
+app.post(
+  "/api/public/admission-documents/upload",
+  rev46AdmissionDocUpload.array("files", 6),
+  asyncHandler(async (req, res) => {
+    const requestId = Number(req.body?.request_id || 0) || null;
+    const documentType = cleanValue(req.body?.document_type || "OTHER").toUpperCase().slice(0, 60);
+    const files = Array.isArray(req.files) ? req.files : [];
+    if (!files.length) return res.status(400).json({ error: "No files were uploaded." });
+    const stored = [];
+    for (const f of files) {
+      const insert = await query(
+        `INSERT INTO admission_documents
+          (request_id, institution_id, applicant_user_id, document_type, original_filename, stored_path, mime_type, size_bytes)
+         VALUES (?, NULL, NULL, ?, ?, ?, ?, ?)`,
+        [requestId, documentType, cleanValue(f.originalname || ""), `/uploads/admission-documents/${f.filename}`, cleanValue(f.mimetype || ""), Number(f.size || 0)]
+      );
+      stored.push({
+        id: insert.insertId,
+        url: `/uploads/admission-documents/${f.filename}`,
+        original_filename: f.originalname,
+        mime_type: f.mimetype,
+        size_bytes: f.size
+      });
+    }
+    res.status(201).json({ uploaded: stored.length, files: stored });
+  })
+);
+
+// === Approval gate: module access grants ===
+async function listApprovedModulesForUser(userId, institutionId) {
+  if (!Number(userId) || !Number(institutionId)) return [];
+  const rows = await query(
+    `SELECT module_key, permission_key
+     FROM module_access_grants
+     WHERE user_id = ? AND institution_id = ? AND approved = 1`,
+    [Number(userId), Number(institutionId)]
+  );
+  return rows;
+}
+
+app.get(
+  "/api/access-grants/me",
+  auth,
+  asyncHandler(async (req, res) => {
+    const role = normalizeRole(req.user.role);
+    if (
+      role === ROLES.SUPER_SYSTEM_DEVELOPER ||
+      role === ROLES.SYSTEM_DEVELOPER
+    ) {
+      return res.json({ developer_bypass: true, grants: [] });
+    }
+    const grants = await listApprovedModulesForUser(req.user.id, req.user.institution_id);
+    res.json({ developer_bypass: false, grants });
+  })
+);
+
+app.get(
+  "/api/access-grants/:userId",
+  auth,
+  enforceRole([
+    ROLES.SUPER_SYSTEM_DEVELOPER,
+    ROLES.SYSTEM_DEVELOPER,
+    ROLES.ADMIN,
+    ROLES.HEAD_OF_INSTITUTION
+  ]),
+  asyncHandler(async (req, res) => {
+    const userId = Number(req.params.userId || 0);
+    if (!userId) return res.status(400).json({ error: "userId required." });
+    const userRows = await query(`SELECT id, institution_id, role FROM users WHERE id = ? LIMIT 1`, [userId]);
+    if (!userRows.length) return res.status(404).json({ error: "User not found." });
+    const target = userRows[0];
+    const reqRole = normalizeRole(req.user.role);
+    if (
+      [ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION].includes(reqRole) &&
+      Number(target.institution_id) !== Number(req.user.institution_id)
+    ) {
+      return res.status(403).json({ error: "Out of institution scope." });
+    }
+    const grants = await query(
+      `SELECT module_key, permission_key, approved, approved_at, approval_note
+       FROM module_access_grants
+       WHERE user_id = ? AND institution_id = ?`,
+      [target.id, target.institution_id]
+    );
+    res.json({ user_id: target.id, institution_id: target.institution_id, grants });
+  })
+);
+
+app.post(
+  "/api/access-grants/:userId/approve",
+  auth,
+  enforceRole([
+    ROLES.SUPER_SYSTEM_DEVELOPER,
+    ROLES.SYSTEM_DEVELOPER,
+    ROLES.ADMIN,
+    ROLES.HEAD_OF_INSTITUTION
+  ]),
+  asyncHandler(async (req, res) => {
+    const userId = Number(req.params.userId || 0);
+    const moduleKeys = Array.isArray(req.body?.module_keys) ? req.body.module_keys : [];
+    const permissions = Array.isArray(req.body?.permissions) && req.body.permissions.length
+      ? req.body.permissions
+      : ["ACCESS"];
+    const note = cleanValue(req.body?.note || "");
+    if (!userId || !moduleKeys.length) return res.status(400).json({ error: "userId and module_keys[] required." });
+
+    const userRows = await query(`SELECT id, institution_id, role FROM users WHERE id = ? LIMIT 1`, [userId]);
+    if (!userRows.length) return res.status(404).json({ error: "User not found." });
+    const target = userRows[0];
+
+    const reqRole = normalizeRole(req.user.role);
+    // HoI/Admin can only grant inside their institution and not for developer roles.
+    if ([ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION].includes(reqRole)) {
+      if (Number(target.institution_id) !== Number(req.user.institution_id)) {
+        return res.status(403).json({ error: "HoI/Admin can only approve users in their own institution." });
+      }
+      if (isAnySystemDeveloperRole(target.role)) {
+        return res.status(403).json({ error: "HoI/Admin cannot approve developer-role accounts." });
+      }
+    }
+
+    let approved = 0;
+    for (const mk of moduleKeys) {
+      for (const p of permissions) {
+        // eslint-disable-next-line no-await-in-loop
+        await query(
+          `INSERT INTO module_access_grants
+            (institution_id, user_id, module_key, permission_key, approved, approved_by_user_id, approved_at, approval_note)
+           VALUES (?, ?, ?, ?, 1, ?, NOW(), ?)
+           ON DUPLICATE KEY UPDATE
+             approved = 1,
+             approved_by_user_id = VALUES(approved_by_user_id),
+             approved_at = NOW(),
+             approval_note = VALUES(approval_note)`,
+          [target.institution_id, target.id, cleanValue(mk).slice(0, 120), cleanValue(p).slice(0, 60), req.user.id, note || null]
+        );
+        approved += 1;
+      }
+    }
+    await auditLog(req.user, "MODULE_ACCESS_GRANTED", "module_access_grants", target.id, {
+      module_keys: moduleKeys, permissions, note
+    });
+    res.json({ approved });
+  })
+);
+
+app.post(
+  "/api/access-grants/:userId/revoke",
+  auth,
+  enforceRole([
+    ROLES.SUPER_SYSTEM_DEVELOPER,
+    ROLES.SYSTEM_DEVELOPER,
+    ROLES.ADMIN,
+    ROLES.HEAD_OF_INSTITUTION
+  ]),
+  asyncHandler(async (req, res) => {
+    const userId = Number(req.params.userId || 0);
+    const moduleKeys = Array.isArray(req.body?.module_keys) ? req.body.module_keys : [];
+    if (!userId || !moduleKeys.length) return res.status(400).json({ error: "userId and module_keys[] required." });
+    const userRows = await query(`SELECT id, institution_id FROM users WHERE id = ? LIMIT 1`, [userId]);
+    if (!userRows.length) return res.status(404).json({ error: "User not found." });
+    const target = userRows[0];
+    if (
+      [ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION].includes(normalizeRole(req.user.role)) &&
+      Number(target.institution_id) !== Number(req.user.institution_id)
+    ) {
+      return res.status(403).json({ error: "Out of institution scope." });
+    }
+    const placeholders = moduleKeys.map(() => "?").join(", ");
+    await query(
+      `UPDATE module_access_grants
+       SET approved = 0, approved_at = NULL, approval_note = CONCAT(COALESCE(approval_note, ''), ' [revoked]')
+       WHERE user_id = ? AND institution_id = ? AND module_key IN (${placeholders})`,
+      [target.id, target.institution_id, ...moduleKeys.map((m) => cleanValue(m).slice(0, 120))]
+    );
+    await auditLog(req.user, "MODULE_ACCESS_REVOKED", "module_access_grants", target.id, { module_keys: moduleKeys });
+    res.json({ revoked: moduleKeys.length });
+  })
+);
 
 app.use((err, req, res, next) => {
   if (res.headersSent) {
