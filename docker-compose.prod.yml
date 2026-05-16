@@ -10,7 +10,7 @@ version: "3.9"
 services:
   app:
     build: .
-    image: imis-basic-learning:rev54
+    image: imis-basic-learning:rev56
     container_name: imis_app
     restart: unless-stopped
     env_file: .env
@@ -23,9 +23,14 @@ services:
       DB_NAME: iims_school_system
       IIMS_CSRF_ENABLED: "true"
       IIMS_APPROVAL_GATE: "true"
+      IIMS_AI_QUEUE_BACKEND: "redis"
+      REDIS_URL: "redis://redis:6379"
+      AI_QUEUE_NAME: "imis-ai"
     depends_on:
       db:
         condition: service_healthy
+      redis:
+        condition: service_started
     expose:
       - "5002"
     volumes:
@@ -61,6 +66,14 @@ services:
       retries: 8
       start_period: 25s
 
+  redis:
+    image: redis:7-alpine
+    container_name: imis_redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru"]
+    volumes:
+      - imis_redis_data:/data
+
   nginx:
     image: nginx:1.27-alpine
     container_name: imis_nginx
@@ -77,3 +90,4 @@ services:
 
 volumes:
   imis_db_data:
+  imis_redis_data:
