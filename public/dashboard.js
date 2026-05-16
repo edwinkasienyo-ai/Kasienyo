@@ -13,7 +13,7 @@ let portalContext = null;
 let searchRowDrafts = {};
 let dashboardAutoRefreshHandle = null;
 let currentSidebarSubmoduleId = null;
-const CLIENT_UI_BUNDLE_ID = "dash-bundle-rev55-finalize-44";
+const CLIENT_UI_BUNDLE_ID = "dash-bundle-rev56-strands-bug-bullmq-deploy";
 const examPanelState = {
   generatedExam: null,
   serials: [],

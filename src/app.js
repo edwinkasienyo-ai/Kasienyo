@@ -76,7 +76,7 @@ const {
 const { importLocalCurriculumFromPdfDirectory } = require("./services/localCurriculumImportService");
 
 /** Bump when shipping UI/API changes so schools can confirm they run the right copy. */
-const IIMS_BUILD_STAMP = process.env.IIMS_BUILD_STAMP || "ui-deploy-rev55-finalize-44";
+const IIMS_BUILD_STAMP = process.env.IIMS_BUILD_STAMP || "ui-deploy-rev56-strands-bug-bullmq-deploy";
 const {
   readPublicIndexFingerprint,
   readPublicDashboardFingerprint
@@ -13122,12 +13122,16 @@ app.post(
       }
     }
 
+    // rev56 fix: case-insensitive, whitespace-tolerant comparison so
+    // "Pre-Technical Studies" / "pre-technical studies" / "Pre Technical Studies"
+    // / "Social Studies" / "Social studies" all match the saved row.
     const curriculumRowsRaw = await query(
       `SELECT id, grade, form_name, learning_area, strand, sub_strand,
               specific_learning_outcomes, learning_experiences, notes
        FROM cbc_curriculum_entries
        WHERE institution_id = ?
-         AND learning_area = ?
+         AND LOWER(REPLACE(REPLACE(learning_area, '-', ' '), '  ', ' '))
+             = LOWER(REPLACE(REPLACE(?, '-', ' '), '  ', ' '))
        ORDER BY id ASC
        LIMIT 4000`,
       [req.user.institution_id, selectedLearningArea]
@@ -13147,7 +13151,8 @@ app.post(
         `SELECT learning_area, strand, sub_strand, notes, grade, form_name
          FROM cbc_structure_mappings
          WHERE institution_id = ?
-           AND learning_area = ?
+           AND LOWER(REPLACE(REPLACE(learning_area, '-', ' '), '  ', ' '))
+               = LOWER(REPLACE(REPLACE(?, '-', ' '), '  ', ' '))
          ORDER BY id ASC
          LIMIT 3000`,
         [req.user.institution_id, selectedLearningArea]
@@ -16810,6 +16815,77 @@ function safeParseJson(value) {
   if (typeof value === "object") return value;
   try { return JSON.parse(value); } catch { return null; }
 }
+
+// =====================================================================
+// rev56: Curriculum coverage diagnostic (helps trace empty-strand reports)
+// =====================================================================
+app.get(
+  "/api/cbc/coverage-diagnostic",
+  auth,
+  enforceRole([
+    ROLES.SUPER_SYSTEM_DEVELOPER,
+    ROLES.SYSTEM_DEVELOPER,
+    ROLES.ADMIN,
+    ROLES.HEAD_OF_INSTITUTION,
+    ROLES.TEACHER,
+    ROLES.SENIOR_TEACHER,
+    ROLES.HEAD_OF_DEPARTMENT
+  ]),
+  asyncHandler(async (req, res) => {
+    const institutionId = Number(req.user.institution_id);
+    const role = normalizeRole(req.user.role);
+    const isDev = role === ROLES.SUPER_SYSTEM_DEVELOPER || role === ROLES.SYSTEM_DEVELOPER;
+    const learningArea = cleanValue(req.query?.learning_area || "");
+    const grade = cleanValue(req.query?.grade || "");
+    const params = [];
+    let where = "1=1";
+    if (!isDev) { where += " AND institution_id = ?"; params.push(institutionId); }
+    if (learningArea) {
+      where += " AND LOWER(REPLACE(REPLACE(learning_area, '-', ' '), '  ', ' ')) = LOWER(REPLACE(REPLACE(?, '-', ' '), '  ', ' '))";
+      params.push(learningArea);
+    }
+    if (grade) { where += " AND (grade = ? OR form_name = ?)"; params.push(grade, grade); }
+
+    const curriculum = await query(
+      `SELECT
+         learning_area, grade, form_name,
+         COUNT(*) AS rows_count,
+         COUNT(DISTINCT strand) AS distinct_strands,
+         COUNT(DISTINCT sub_strand) AS distinct_sub_strands
+       FROM cbc_curriculum_entries
+       WHERE ${where}
+       GROUP BY learning_area, grade, form_name
+       ORDER BY learning_area, grade, form_name
+       LIMIT 200`,
+      params
+    );
+    const mappings = await query(
+      `SELECT
+         learning_area, grade, form_name,
+         COUNT(*) AS rows_count,
+         COUNT(DISTINCT strand) AS distinct_strands
+       FROM cbc_structure_mappings
+       WHERE ${where}
+       GROUP BY learning_area, grade, form_name
+       ORDER BY learning_area, grade, form_name
+       LIMIT 200`,
+      params
+    );
+    const distinctLearningAreas = await query(
+      `SELECT DISTINCT learning_area FROM cbc_curriculum_entries
+       ${isDev ? "" : "WHERE institution_id = ?"}
+       ORDER BY learning_area
+       LIMIT 200`,
+      isDev ? [] : [institutionId]
+    );
+    res.json({
+      requested: { learning_area: learningArea, grade },
+      curriculum_rollup: curriculum,
+      mappings_rollup: mappings,
+      distinct_learning_areas: distinctLearningAreas.map((r) => r.learning_area)
+    });
+  })
+);
 
 // =====================================================================
 // rev55: Exam blueprint composer (items 15, 16, 17, 20, 21)
