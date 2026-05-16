@@ -1,0 +1,401 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate, private" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>IMIS Admission Portal</title>
+    <link rel="stylesheet" href="/styles.css?v=76" />
+    <style>
+      /* Full-page scroll — do not inherit login-page overflow:hidden + fixed height */
+      body.admission-portal-page {
+        min-height: 100vh;
+        min-height: 100dvh;
+        height: auto !important;
+        overflow-x: hidden !important;
+        overflow-y: auto !important;
+        margin: 0;
+        display: block;
+        background: radial-gradient(ellipse 120% 80% at 10% 10%, #1a5482 0%, #0a2440 52%, #071a2e 100%);
+      }
+
+      .admission-portal-shell {
+        max-width: min(980px, calc(100vw - 24px));
+        margin: 0 auto;
+        padding: 24px 14px 72px;
+      }
+
+      .admission-portal-banner {
+        display: flex;
+        justify-content: space-between;
+        flex-wrap: wrap;
+        gap: 10px;
+        margin-bottom: 16px;
+      }
+
+      .admission-portal-banner a {
+        text-decoration: none;
+      }
+
+      .muted {
+        opacity: 0.85;
+        font-size: 13px;
+      }
+
+      body.admission-portal-page .glass-card.auth-card--compact {
+        max-height: none !important;
+        overflow-y: visible !important;
+        overflow-x: hidden;
+      }
+
+      body.admission-portal-page .auth-grid {
+        gap: 10px;
+      }
+
+      #learningAreasPick {
+        width: 100%;
+        min-height: 140px;
+        padding: 8px;
+        border-radius: 8px;
+        border: 1px solid rgba(15, 56, 96, 0.22);
+      }
+
+      .workflow-grid {
+        display: grid;
+        gap: 8px;
+        margin-top: 10px;
+        padding-top: 10px;
+        border-top: 1px dashed #d2deec;
+      }
+
+      .workflow-grid.hidden {
+        display: none;
+      }
+    </style>
+  </head>
+  <body class="admission-portal-page">
+    <main class="admission-portal-shell">
+      <div class="admission-portal-banner">
+        <div>
+          <h1 style="margin: 0 0 8px;">Online admission portal</h1>
+          <p class="muted">Submit a provisional admission request — the institution completes verification inside IMIS.</p>
+        </div>
+        <a class="quicklink-pill" href="/" style="padding: 8px 12px;">← Institution login</a>
+      </div>
+
+      <div class="glass-card auth-card auth-card--compact">
+        <h3>New application</h3>
+        <p id="portalStatusLine" class="small-note muted" aria-live="polite"></p>
+
+        <div class="auth-grid">
+          <label>Landing email (required for online status tracking)</label>
+          <input id="applicantEmail" type="email" placeholder="parent@domain.com" />
+          <label>Mobile SMS (recommended)</label>
+          <input id="applicantPhone" placeholder="+2547..." />
+
+          <label>Institution</label>
+          <select id="institutionPick">
+            <option value="">Loading institutions…</option>
+          </select>
+
+          <label>Learner full name</label>
+          <input id="learnerName" />
+
+          <label>Learner pathway</label>
+          <select id="learnerType">
+            <option value="NEW">New learner</option>
+            <option value="TRANSFER">Transferred learner</option>
+          </select>
+
+          <label>Grade / Form</label>
+          <input id="gradeOrForm" placeholder="e.g. Grade 7 / Form 1" />
+
+          <label>Preferred stream</label>
+          <input id="preferredStream" placeholder="Optional stream" />
+
+          <label>Learning areas / subjects of interest — hold Ctrl (Windows) or ⌘ (Mac) to multi-select after choosing an institution</label>
+          <select id="learningAreasPick" multiple aria-label="Learning areas"></select>
+
+          <div class="workflow-grid hidden" id="newLearnerExtras">
+            <strong>New learner — parent basics</strong>
+            <label>Parent / guardian full name</label>
+            <input id="parentNameNew" />
+            <label>Residence</label>
+            <input id="parentResidence" />
+            <label>Emergency contact</label>
+            <input id="parentEmergency" />
+          </div>
+
+          <div class="workflow-grid hidden" id="transferExtras">
+            <strong>Transferred learner — prior school</strong>
+            <label>Transferred from (relationship)</label>
+            <input id="transferRelation" placeholder="County / relationship" />
+            <label>Previous school name</label>
+            <input id="priorSchoolName" />
+            <label>Previous school county</label>
+            <input id="priorCounty" />
+            <label>Previous school sub-county</label>
+            <input id="priorSubCounty" />
+            <label>Assessment number</label>
+            <input id="assessmentNumber" />
+            <label>UPI number</label>
+            <input id="upiNumber" />
+            <label>Previous performance snapshot</label>
+            <input id="priorPerformance" />
+            <label>Transfer reason</label>
+            <input id="transferReason" />
+          </div>
+
+          <div style="grid-column: 1 / -1;">
+            <button id="submitAdmissionBtn" type="button" class="auth-primary-btn">Submit admission request</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="glass-card auth-card auth-card--compact" style="margin-top: 16px;">
+        <h3>Track application status</h3>
+        <p class="small-note muted">
+          Use the Reference ID from your confirmation email together with the exact email address you typed when applying.
+        </p>
+        <div class="auth-grid">
+          <label>Reference ID</label>
+          <input id="trackRequestId" inputmode="numeric" placeholder="e.g. 12" />
+          <label>Email used on application</label>
+          <input id="trackApplicantEmail" type="email" />
+          <div style="grid-column: 1 / -1;">
+            <button id="lookupStatusBtn" type="button" class="auth-primary-btn">Check status</button>
+          </div>
+        </div>
+        <pre id="trackResult" class="small-note" style="margin-top: 12px; white-space: pre-wrap;"></pre>
+      </div>
+      <p class="small-note muted" style="margin-top: 14px;">
+        Dedicated applicant accounts with passwords are planned next; Reference ID plus email proofs keep lookups private until then.
+      </p>
+    </main>
+
+    <script>
+      const FALLBACK_LEARNING_AREAS = [
+        "Mathematics",
+        "English",
+        "Kiswahili",
+        "Science and Technology",
+        "Social Studies",
+        "CRE",
+        "IRE",
+        "Hindu Religious Education",
+        "Agriculture",
+        "Home Science",
+        "Art and Craft",
+        "Music",
+        "Physical Education and Sports",
+        "ICT",
+        "Pre-Technical Studies"
+      ];
+
+      const statusEl = document.getElementById("portalStatusLine");
+      const institutionPick = document.getElementById("institutionPick");
+      const learnerType = document.getElementById("learnerType");
+      const learningAreasPick = document.getElementById("learningAreasPick");
+
+      function fillLearningAreaOptions(areas) {
+        const list = Array.isArray(areas) && areas.length ? areas : FALLBACK_LEARNING_AREAS;
+        learningAreasPick.innerHTML = "";
+        list.forEach((raw) => {
+          const label = String(raw || "").trim();
+          if (!label) return;
+          const opt = document.createElement("option");
+          opt.value = label;
+          opt.textContent = label;
+          learningAreasPick.appendChild(opt);
+        });
+      }
+
+      async function loadLearningAreasForInstitution(institutionId) {
+        if (!institutionId) {
+          learningAreasPick.innerHTML = "";
+          fillLearningAreaOptions(FALLBACK_LEARNING_AREAS);
+          return;
+        }
+        learningAreasPick.innerHTML = `<option value="">Loading…</option>`;
+        try {
+          const res = await fetch(
+            `/api/public/online-admission/learning-areas?institution_id=${encodeURIComponent(institutionId)}`,
+            { credentials: "same-origin" }
+          );
+          if (!res.ok) throw new Error("learning-areas");
+          const body = await res.json();
+          const areas = Array.isArray(body.learning_areas) ? body.learning_areas : [];
+          fillLearningAreaOptions(areas.length ? areas : FALLBACK_LEARNING_AREAS);
+        } catch (_) {
+          fillLearningAreaOptions(FALLBACK_LEARNING_AREAS);
+        }
+      }
+
+      async function bootstrapInstitutions() {
+        try {
+          const res = await fetch("/api/public/online-admission/institutions-summary", { credentials: "same-origin" });
+          if (!res.ok) throw new Error("Unable to load institutions.");
+          const body = await res.json();
+          const rows = Array.isArray(body.institutions) ? body.institutions : [];
+          institutionPick.innerHTML =
+            `<option value="">Choose institution…</option>` +
+            rows
+              .map(
+                (row) =>
+                  `<option value="${row.id}">${row.institution_name} (${row.institution_code})</option>`
+              )
+              .join("");
+          statusEl.textContent = `${rows.length} institution(s) available for intake.`;
+          await loadLearningAreasForInstitution(Number(institutionPick.value || 0));
+        } catch (error) {
+          statusEl.textContent = error.message || "Institution picker failed.";
+        }
+      }
+
+      function toggleWorkflowPanels() {
+        const mode = String(learnerType.value || "").toUpperCase();
+        document.getElementById("newLearnerExtras").classList.toggle("hidden", mode !== "NEW");
+        document.getElementById("transferExtras").classList.toggle("hidden", mode !== "TRANSFER");
+      }
+
+      learnerType.addEventListener("change", toggleWorkflowPanels);
+      institutionPick.addEventListener("change", () => loadLearningAreasForInstitution(Number(institutionPick.value || 0)));
+
+      document.getElementById("submitAdmissionBtn").addEventListener("click", async () => {
+        const applicant_email = document.getElementById("applicantEmail").value.trim();
+        const applicant_mobile = document.getElementById("applicantPhone").value.trim();
+        const institution_id = Number(institutionPick.value || 0);
+        const learner_full_name = document.getElementById("learnerName").value.trim();
+        const learner_type = learnerType.value;
+        const grade_or_form = document.getElementById("gradeOrForm").value.trim();
+        const stream = document.getElementById("preferredStream").value.trim();
+
+        const selectedAreas = Array.from(learningAreasPick.selectedOptions || [])
+          .map((o) => o.value.trim())
+          .filter(Boolean);
+
+        const payload_json = {};
+
+        if (learner_type === "NEW") {
+          payload_json.parent_guardian_full_name = document.getElementById("parentNameNew").value.trim();
+          payload_json.residence = document.getElementById("parentResidence").value.trim();
+          payload_json.emergency_contact = document.getElementById("parentEmergency").value.trim();
+        } else if (learner_type === "TRANSFER") {
+          payload_json.transferred_from = document.getElementById("transferRelation").value.trim();
+          payload_json.previous_school_name = document.getElementById("priorSchoolName").value.trim();
+          payload_json.previous_school_county = document.getElementById("priorCounty").value.trim();
+          payload_json.previous_school_sub_county = document.getElementById("priorSubCounty").value.trim();
+          payload_json.assessment_number = document.getElementById("assessmentNumber").value.trim();
+          payload_json.upi_number = document.getElementById("upiNumber").value.trim();
+          payload_json.previous_performance = document.getElementById("priorPerformance").value.trim();
+          payload_json.transfer_reason = document.getElementById("transferReason").value.trim();
+        }
+
+        if (selectedAreas.length) {
+          payload_json.learning_areas = selectedAreas;
+        }
+
+        if (!institution_id) {
+          alert("Pick an institution first.");
+          return;
+        }
+        if (!learner_full_name) {
+          alert("Learner name is required.");
+          return;
+        }
+        if (!applicant_email) {
+          alert("Landing email is required so you can privately track this request later.");
+          return;
+        }
+
+        try {
+          statusEl.textContent = "Sending request…";
+          const res = await fetch("/api/public/online-admission-requests", {
+            method: "POST",
+            credentials: "same-origin",
+            headers: {
+              Accept: "application/json",
+              "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+              applicant_email,
+              applicant_mobile,
+              institution_id,
+              learner_full_name,
+              learner_type,
+              grade_or_form,
+              stream,
+              learning_areas: selectedAreas,
+              payload_json
+            })
+          });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) throw new Error(data.error || data.message || "Submission failed.");
+          statusEl.textContent = data.message || "REQUEST SENT SUCCESSFULLY. PLEASE WAIT FOR INSTITUTION RESPONSE.";
+          if (data.request_id) {
+            document.getElementById("trackRequestId").value = String(data.request_id);
+            document.getElementById("trackApplicantEmail").value = applicant_email;
+            document.getElementById("trackResult").textContent =
+              "Reference ID filled — scroll to Track application status and tap Check status.";
+          }
+          alert(data.message || "REQUEST SENT SUCCESSFULLY.");
+        } catch (error) {
+          console.error(error);
+          statusEl.textContent = error.message || "Submission failed.";
+          alert(error.message || "Submission failed.");
+        }
+      });
+
+      document.getElementById("lookupStatusBtn").addEventListener("click", async () => {
+        const request_id = Number(document.getElementById("trackRequestId").value.trim() || 0);
+        const applicant_email = document.getElementById("trackApplicantEmail").value.trim();
+        const out = document.getElementById("trackResult");
+        out.textContent = "Checking…";
+        if (!request_id || !applicant_email) {
+          out.textContent = "Enter Reference ID and email.";
+          return;
+        }
+        try {
+          const res = await fetch("/api/public/online-admission/lookup-status", {
+            method: "POST",
+            credentials: "same-origin",
+            headers: {
+              Accept: "application/json",
+              "Content-Type": "application/json"
+            },
+            body: JSON.stringify({ request_id, applicant_email })
+          });
+          const payload = await res.json().catch(() => ({}));
+          if (!res.ok) {
+            out.textContent = payload.error || "Lookup failed.";
+            return;
+          }
+          const areas =
+            Array.isArray(payload.learning_areas) && payload.learning_areas.length
+              ? payload.learning_areas.join(", ")
+              : payload.learning_areas_summary || "";
+          const lines = [
+            `Institution: ${payload.institution_name || "—"}`,
+            `Learner: ${payload.learner_name || "—"}${payload.learner_type ? " (" + payload.learner_type + ")" : ""}`,
+            `Grade / form: ${payload.grade_or_form || "—"}`,
+            `Stream: ${payload.stream || "—"}`
+          ];
+          if (areas) lines.push(`Learning areas / interests: ${areas}`);
+          lines.push(
+            `Status: ${payload.status || "—"}`,
+            `Submitted: ${payload.submitted_at || "—"}`,
+            `Last updated: ${payload.last_updated_at || "—"}`,
+            `Institution response at: ${payload.institution_response_at || "—"}`
+          );
+          if (payload.institution_comment) lines.push(`Comment: ${payload.institution_comment}`);
+          out.textContent = lines.join("\n");
+        } catch (error) {
+          out.textContent = error.message || "Lookup failed.";
+        }
+      });
+
+      toggleWorkflowPanels();
+      bootstrapInstitutions();
+    </script>
+  </body>
+</html>
