@@ -76,7 +76,7 @@ const {
 const { importLocalCurriculumFromPdfDirectory } = require("./services/localCurriculumImportService");
 
 /** Bump when shipping UI/API changes so schools can confirm they run the right copy. */
-const IIMS_BUILD_STAMP = process.env.IIMS_BUILD_STAMP || "ui-deploy-rev49-54-batched";
+const IIMS_BUILD_STAMP = process.env.IIMS_BUILD_STAMP || "ui-deploy-rev55-finalize-44";
 const {
   readPublicIndexFingerprint,
   readPublicDashboardFingerprint
@@ -16810,6 +16810,83 @@ function safeParseJson(value) {
   if (typeof value === "object") return value;
   try { return JSON.parse(value); } catch { return null; }
 }
+
+// =====================================================================
+// rev55: Exam blueprint composer (items 15, 16, 17, 20, 21)
+// =====================================================================
+const { composeBalancedExam } = require("./services/examBlueprintService");
+
+app.post(
+  "/api/exam/blueprint/compose",
+  auth,
+  enforceRole([
+    ROLES.SUPER_SYSTEM_DEVELOPER,
+    ROLES.SYSTEM_DEVELOPER,
+    ROLES.ADMIN,
+    ROLES.HEAD_OF_INSTITUTION,
+    ROLES.TEACHER,
+    ROLES.SENIOR_TEACHER,
+    ROLES.HEAD_OF_DEPARTMENT
+  ]),
+  asyncHandler(async (req, res) => {
+    const institutionId = Number(req.user.institution_id);
+    const body = req.body || {};
+    const scope = body.scope || {};
+    const requirements = body.requirements || {};
+    const role = normalizeRole(req.user.role);
+    const isDev = role === ROLES.SUPER_SYSTEM_DEVELOPER || role === ROLES.SYSTEM_DEVELOPER;
+
+    // Pull candidate questions: institution-scoped + approved bank, plus any
+    // SocialStudies map questions that are approved.
+    const grade = cleanValue(scope.gradeOrForm || "");
+    const learningArea = cleanValue(scope.learningArea || "");
+    const strandFilter = Array.isArray(scope.strands) ? scope.strands.map(cleanValue).filter(Boolean) : [];
+    const subStrandFilter = Array.isArray(scope.subStrands) ? scope.subStrands.map(cleanValue).filter(Boolean) : [];
+
+    const params = [];
+    let where = "1=1";
+    if (!isDev) { where += " AND (institution_id = ? OR institution_id IS NULL)"; params.push(institutionId); }
+    where += " AND status = 'APPROVED'";
+    if (grade) { where += " AND (grade_or_form = ? OR grade_or_form IS NULL OR grade_or_form = '')"; params.push(grade); }
+    if (learningArea) { where += " AND learning_area = ?"; params.push(learningArea); }
+    if (strandFilter.length) {
+      where += ` AND (strand IS NULL OR strand IN (${strandFilter.map(() => "?").join(",")}))`;
+      params.push(...strandFilter);
+    }
+    if (subStrandFilter.length) {
+      where += ` AND (sub_strand IS NULL OR sub_strand IN (${subStrandFilter.map(() => "?").join(",")}))`;
+      params.push(...subStrandFilter);
+    }
+
+    const candidatePool = await query(
+      `SELECT id, institution_id, learning_area, grade_or_form, strand, sub_strand,
+              bloom_level, difficulty, question_type, stem_text, mcq_json, status, source
+       FROM exam_question_bank
+       WHERE ${where}
+       ORDER BY id DESC
+       LIMIT 600`,
+      params
+    );
+    const result = await composeBalancedExam({
+      scope,
+      requirements,
+      candidatePool,
+      context: {
+        institutionId,
+        examId: Number(body.exam_id) || null,
+        examTitle: cleanValue(body.exam_title || ""),
+        term: cleanValue(body.term || ""),
+        year: cleanValue(body.year || "")
+      }
+    });
+    await auditLog(req.user, "EXAM_BLUEPRINT_COMPOSED", "exam_versions", result.version_id || null, {
+      total: result.blueprint.total,
+      mcq: result.blueprint.mcq,
+      structured: result.blueprint.structured
+    });
+    res.json(result);
+  })
+);
 
 // =====================================================================
 // rev51: Exam QR scan → marks pre-fill
