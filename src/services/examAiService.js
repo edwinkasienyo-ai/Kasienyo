@@ -1,5 +1,7 @@
 "use strict";
 
+const { runAiTask } = require("./aiQueueService");
+
 const institutionExamAiBuckets = new Map();
 
 function consumeInstitutionExamAiBurst(institutionId) {
@@ -81,6 +83,7 @@ function extractJsonObject(text) {
  */
 async function generateExamStemsWithOpenAi({
   institutionId = null,
+  requestedByUserId = null,
   learningArea,
   gradeOrForm,
   referenceRows,
@@ -120,50 +123,62 @@ async function generateExamStemsWithOpenAi({
     excerpt
   ].join("\n");
 
-  const res = await fetch("https://api.openai.com/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify({
+  try {
+    return await runAiTask({
+      institutionId,
+      requestedByUserId,
+      namespace: "exam_stems",
       model,
-      temperature: 0.85,
-      max_tokens: Math.min(8000, count * 140 + 220),
-      messages: [
-        {
-          role: "system",
-          content:
-            'Reply with a single JSON object only. The object must have key "stems" whose value is an array of strings. No markdown outside JSON.'
-        },
-        { role: "user", content: userPrompt }
-      ]
-    })
-  });
+      moderatePrompts: [userPrompt],
+      cacheKeyPayload: { learningArea, gradeOrForm, count, excerptHash: excerpt.length },
+      execute: async () => {
+        const res = await fetch("https://api.openai.com/v1/chat/completions", {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${apiKey}`,
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+            model,
+            temperature: 0.85,
+            max_tokens: Math.min(8000, count * 140 + 220),
+            messages: [
+              {
+                role: "system",
+                content:
+                  'Reply with a single JSON object only. The object must have key "stems" whose value is an array of strings. No markdown outside JSON.'
+              },
+              { role: "user", content: userPrompt }
+            ]
+          })
+        });
 
-  if (!res.ok) {
-    const errText = await res.text().catch(() => "");
+        if (!res.ok) {
+          const errText = await res.text().catch(() => "");
+          throw new Error(`OpenAI HTTP ${res.status}: ${errText.slice(0, 400)}`);
+        }
+
+        const json = await res.json();
+        const content = json?.choices?.[0]?.message?.content || "";
+        const parsed = extractJsonObject(content);
+        const stems = parsed?.stems;
+        if (!Array.isArray(stems)) return [];
+
+        return stems
+          .map((s) =>
+            cleanValue(String(s || ""))
+              .replace(/^\d+[\).\s]+/, "")
+              .slice(0, 420)
+          )
+          .filter((s) => s.length > 18)
+          .slice(0, count);
+      }
+    });
+  } catch (err) {
     // eslint-disable-next-line no-console
-    console.warn("[exam-ai] OpenAI HTTP", res.status, errText.slice(0, 400));
+    console.warn("[exam-ai] generation failed:", err?.message || err);
     return [];
   }
-
-  const json = await res.json();
-  const content = json?.choices?.[0]?.message?.content || "";
-  const parsed = extractJsonObject(content);
-  const stems = parsed?.stems;
-  if (!Array.isArray(stems)) {
-    return [];
-  }
-
-  return stems
-    .map((s) =>
-      cleanValue(String(s || ""))
-        .replace(/^\d+[\).\s]+/, "")
-        .slice(0, 420)
-    )
-    .filter((s) => s.length > 18)
-    .slice(0, count);
 }
 
 module.exports = {

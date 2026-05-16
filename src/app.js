@@ -76,7 +76,7 @@ const {
 const { importLocalCurriculumFromPdfDirectory } = require("./services/localCurriculumImportService");
 
 /** Bump when shipping UI/API changes so schools can confirm they run the right copy. */
-const IIMS_BUILD_STAMP = process.env.IIMS_BUILD_STAMP || "ui-deploy-rev46-finalize";
+const IIMS_BUILD_STAMP = process.env.IIMS_BUILD_STAMP || "ui-deploy-rev47-finalize-extras";
 const {
   readPublicIndexFingerprint,
   readPublicDashboardFingerprint
@@ -16548,6 +16548,268 @@ app.use((req, res, next) => {
   }
   return res.status(404).sendFile(path.join(process.cwd(), "public", "404.html"));
 });
+
+// =====================================================================
+// rev47-finalize-extras: AI queue/cache stats, social-studies maps,
+// AI settings, CSRF (double-submit cookie).
+// =====================================================================
+const { aiQueueStats } = require("./services/aiQueueService");
+
+app.get(
+  "/api/ai/queue/stats",
+  auth,
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
+  asyncHandler(async (_req, res) => {
+    res.json(aiQueueStats());
+  })
+);
+
+// === rev47 (item 18): Social Studies map engine ===
+const SOCIAL_STUDIES_MAP_FEATURE_TYPES = [
+  "RIVER", "ROAD", "FOREST", "MOUNTAIN", "RAILWAY", "SETTLEMENT", "LAKE",
+  "ECONOMIC_ACTIVITY", "VEGETATION", "DRAINAGE", "CLIMATE", "TRANSPORT", "PHYSICAL_FEATURE"
+];
+
+app.get(
+  "/api/social-studies/maps",
+  auth,
+  asyncHandler(async (req, res) => {
+    const role = normalizeRole(req.user.role);
+    const institutionId = Number(req.user.institution_id);
+    const isDev = role === ROLES.SUPER_SYSTEM_DEVELOPER || role === ROLES.SYSTEM_DEVELOPER;
+    const rows = await query(
+      `SELECT id, institution_id, title, scope, level, geometry_url, features_json, notes, is_active, created_at
+       FROM social_studies_map_templates
+       WHERE is_active = 1
+         AND (scope = 'GLOBAL' OR institution_id = ? ${isDev ? "OR ?" : ""})
+       ORDER BY scope DESC, title ASC`,
+      isDev ? [institutionId, 1] : [institutionId]
+    );
+    res.json({
+      feature_types: SOCIAL_STUDIES_MAP_FEATURE_TYPES,
+      maps: rows.map((row) => ({
+        ...row,
+        features_json: row.features_json ? safeParseJson(row.features_json) : null
+      }))
+    });
+  })
+);
+
+app.post(
+  "/api/social-studies/maps",
+  auth,
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
+  asyncHandler(async (req, res) => {
+    const b = req.body || {};
+    const title = cleanValue(b.title || "");
+    if (!title) return res.status(400).json({ error: "title is required." });
+    const role = normalizeRole(req.user.role);
+    const isDev = role === ROLES.SUPER_SYSTEM_DEVELOPER || role === ROLES.SYSTEM_DEVELOPER;
+    const scope = isDev && cleanValue(b.scope || "").toUpperCase() === "GLOBAL" ? "GLOBAL" : "INSTITUTION";
+    const features = Array.isArray(b.features) ? b.features.slice(0, 200) : [];
+    const result = await query(
+      `INSERT INTO social_studies_map_templates
+        (institution_id, title, scope, level, geometry_url, features_json, notes, uploaded_by_user_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        scope === "GLOBAL" ? null : Number(req.user.institution_id),
+        title,
+        scope,
+        cleanValue(b.level || "") || null,
+        cleanValue(b.geometry_url || "") || null,
+        JSON.stringify(features),
+        cleanValue(b.notes || "") || null,
+        req.user.id
+      ]
+    );
+    await auditLog(req.user, "MAP_TEMPLATE_CREATE", "social_studies_map_templates", result.insertId, { title, scope });
+    res.status(201).json({ id: result.insertId, message: "Map template saved." });
+  })
+);
+
+app.post(
+  "/api/social-studies/maps/:id/generate-questions",
+  auth,
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER]),
+  asyncHandler(async (req, res) => {
+    const id = Number(req.params.id || 0);
+    if (!id) return res.status(400).json({ error: "Map id required." });
+    const rows = await query(
+      `SELECT institution_id, title, features_json FROM social_studies_map_templates WHERE id = ? LIMIT 1`,
+      [id]
+    );
+    if (!rows.length) return res.status(404).json({ error: "Map not found." });
+    const map = rows[0];
+    const features = safeParseJson(map.features_json) || [];
+    const TOPIC_TEMPLATES = {
+      RIVER: ["State two economic activities along {label}.", "Explain how {label} influences settlement patterns.", "Describe the source and mouth of {label}."],
+      ROAD: ["Describe the importance of {label} to trade.", "Mention two factors that influence the alignment of {label}."],
+      FOREST: ["Give two reasons for the presence of {label}.", "State two products obtained from {label}."],
+      MOUNTAIN: ["Explain how {label} affects climate of the surrounding region.", "Describe the formation of {label}."],
+      RAILWAY: ["State two settlements served by {label}.", "Explain the economic importance of {label}."],
+      SETTLEMENT: ["Give two reasons for the growth of {label}.", "State two challenges facing {label}."],
+      LAKE: ["Describe the drainage of {label}.", "Mention two economic activities carried out at {label}."]
+    };
+    const generated = [];
+    for (const feature of features) {
+      const type = String(feature?.type || "").toUpperCase();
+      const label = cleanValue(feature?.label || feature?.name || "the feature");
+      const templates = TOPIC_TEMPLATES[type] || ["Describe {label} and its significance."];
+      for (const t of templates) {
+        generated.push({
+          topic: type || "PHYSICAL_FEATURE",
+          question_text: t.replace("{label}", label),
+          marks: 2,
+          difficulty: "MEDIUM",
+          source: "TEMPLATE"
+        });
+      }
+    }
+    for (const q of generated.slice(0, 80)) {
+      // eslint-disable-next-line no-await-in-loop
+      await query(
+        `INSERT INTO social_studies_map_questions
+          (map_template_id, institution_id, topic, question_text, marks, difficulty, source, approved)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 0)`,
+        [id, map.institution_id, q.topic, q.question_text, q.marks, q.difficulty, q.source]
+      );
+    }
+    await auditLog(req.user, "MAP_QUESTIONS_GENERATED", "social_studies_map_questions", id, { count: generated.length });
+    res.json({ generated: generated.length, requires_approval: true });
+  })
+);
+
+app.get(
+  "/api/social-studies/map-questions",
+  auth,
+  asyncHandler(async (req, res) => {
+    const role = normalizeRole(req.user.role);
+    const institutionId = Number(req.user.institution_id);
+    const isDev = role === ROLES.SUPER_SYSTEM_DEVELOPER || role === ROLES.SYSTEM_DEVELOPER;
+    const where = isDev ? "1 = 1" : "(institution_id = ? OR institution_id IS NULL)";
+    const params = isDev ? [] : [institutionId];
+    const rows = await query(
+      `SELECT id, map_template_id, institution_id, topic, question_text, marks, difficulty, source, approved, created_at
+       FROM social_studies_map_questions
+       WHERE ${where}
+       ORDER BY id DESC
+       LIMIT 500`,
+      params
+    );
+    res.json({ rows });
+  })
+);
+
+app.post(
+  "/api/social-studies/map-questions/:id/approve",
+  auth,
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER]),
+  asyncHandler(async (req, res) => {
+    const id = Number(req.params.id || 0);
+    if (!id) return res.status(400).json({ error: "Question id required." });
+    await query(`UPDATE social_studies_map_questions SET approved = 1 WHERE id = ?`, [id]);
+    res.json({ message: "Question approved." });
+  })
+);
+
+// === rev47 (item 26): AI Settings Panel ===
+const AI_SETTINGS_DEFAULTS = {
+  question_difficulty: "MEDIUM",
+  number_of_questions: "40",
+  randomization_level: "STANDARD",
+  cbc_strictness: "HIGH",
+  strand_balancing: "BALANCED",
+  language_tone: "FORMAL"
+};
+
+app.get(
+  "/api/ai/settings",
+  auth,
+  asyncHandler(async (req, res) => {
+    const institutionId = Number(req.user.institution_id);
+    const rows = await query(
+      `SELECT setting_key, setting_value, notes, updated_at FROM ai_settings WHERE institution_id = ?`,
+      [institutionId]
+    );
+    const map = { ...AI_SETTINGS_DEFAULTS };
+    rows.forEach((row) => { map[row.setting_key] = row.setting_value; });
+    res.json({ defaults: AI_SETTINGS_DEFAULTS, settings: map });
+  })
+);
+
+app.put(
+  "/api/ai/settings",
+  auth,
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
+  asyncHandler(async (req, res) => {
+    const institutionId = Number(req.user.institution_id);
+    const updates = req.body || {};
+    const allowedKeys = Object.keys(AI_SETTINGS_DEFAULTS);
+    let saved = 0;
+    for (const key of allowedKeys) {
+      if (updates[key] === undefined) continue;
+      const value = cleanValue(String(updates[key])).slice(0, 250);
+      // eslint-disable-next-line no-await-in-loop
+      await query(
+        `INSERT INTO ai_settings (institution_id, setting_key, setting_value, updated_by_user_id)
+         VALUES (?, ?, ?, ?)
+         ON DUPLICATE KEY UPDATE
+           setting_value = VALUES(setting_value),
+           updated_by_user_id = VALUES(updated_by_user_id),
+           updated_at = NOW()`,
+        [institutionId, key, value, req.user.id]
+      );
+      saved += 1;
+    }
+    await auditLog(req.user, "AI_SETTINGS_UPDATE", "ai_settings", null, { saved });
+    res.json({ saved });
+  })
+);
+
+// === rev47 (item 43): CSRF — double-submit cookie ===
+function generateCsrfToken() {
+  return crypto.randomBytes(24).toString("hex");
+}
+
+app.get(
+  "/api/csrf-token",
+  asyncHandler(async (req, res) => {
+    let token = req.cookies?.imis_csrf;
+    if (!token || token.length < 16) {
+      token = generateCsrfToken();
+      const isHttps = String(req.headers["x-forwarded-proto"] || req.protocol) === "https";
+      res.cookie("imis_csrf", token, {
+        httpOnly: false,
+        sameSite: "lax",
+        secure: isHttps,
+        path: "/"
+      });
+    }
+    res.json({ csrf_token: token });
+  })
+);
+
+function csrfProtection(req, res, next) {
+  // Skip safe methods and the public/applicant flows that have their own throttling.
+  const safeMethods = new Set(["GET", "HEAD", "OPTIONS"]);
+  if (safeMethods.has(req.method)) return next();
+  if (req.path.startsWith("/api/public/")) return next();
+  // Skip if not enabled (default off until you turn it on with env var).
+  if (String(process.env.IIMS_CSRF_ENABLED || "false").toLowerCase() !== "true") return next();
+  const cookieToken = String(req.cookies?.imis_csrf || "");
+  const headerToken = String(req.get("x-csrf-token") || "");
+  if (!cookieToken || !headerToken || cookieToken !== headerToken) {
+    return res.status(419).json({ error: "CSRF token mismatch — refresh the page and retry." });
+  }
+  return next();
+}
+app.use(csrfProtection);
+
+function safeParseJson(value) {
+  if (!value) return null;
+  if (typeof value === "object") return value;
+  try { return JSON.parse(value); } catch { return null; }
+}
 
 // =====================================================================
 // rev46-finalize: items 9, 27, 29, 32, 34, 35, 38, 40 + approval gate
