@@ -13,7 +13,7 @@ let portalContext = null;
 let searchRowDrafts = {};
 let dashboardAutoRefreshHandle = null;
 let currentSidebarSubmoduleId = null;
-const CLIENT_UI_BUNDLE_ID = "dash-bundle-rev56-strands-bug-bullmq-deploy";
+const CLIENT_UI_BUNDLE_ID = "dash-bundle-rev57-theimis-zoho";
 const examPanelState = {
   generatedExam: null,
   serials: [],

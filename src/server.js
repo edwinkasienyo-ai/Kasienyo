@@ -5,7 +5,7 @@ const {
   readPublicDashboardFingerprint
 } = require("./readIndexFingerprint");
 
-const IIMS_BUILD_STAMP = process.env.IIMS_BUILD_STAMP || "ui-deploy-rev56-strands-bug-bullmq-deploy";
+const IIMS_BUILD_STAMP = process.env.IIMS_BUILD_STAMP || "ui-deploy-rev57-theimis-zoho";
 const { query } = require("./config/db");
 const { hashPassword } = require("./utils/password");
 const { ROLES, MODULE_KEYS } = require("./config/constants");

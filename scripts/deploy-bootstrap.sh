@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
-# rev54 — one-shot deploy bootstrap on a fresh Ubuntu 22.04+ VPS.
-#   curl -fsSL https://raw.githubusercontent.com/edwinkasienyo-ai/Kasienyo/cursor/rev49-54-batched-2a2b/scripts/deploy-bootstrap.sh | bash -s -- imis.example.co.ke admin@example.com
+# rev57 — one-shot deploy bootstrap on a fresh Ubuntu 22.04+ VPS.
+# Defaults target www.theimis.com / developer@theimis.com (Zoho).
+#   curl -fsSL https://raw.githubusercontent.com/edwinkasienyo-ai/Kasienyo/cursor/rev57-theimis-zoho-2a2b/scripts/deploy-bootstrap.sh \
+#     | bash -s -- www.theimis.com developer@theimis.com
 set -euo pipefail
-DOMAIN="${1:-}"
-ACME_EMAIL="${2:-admin@${DOMAIN:-example.com}}"
+DOMAIN="${1:-www.theimis.com}"
+ACME_EMAIL="${2:-developer@theimis.com}"
 
 if [[ -z "$DOMAIN" ]]; then
   echo "Usage: $0 <imis-domain> <admin-email>"
@@ -42,28 +44,42 @@ FORCE_HTTPS=true
 ENABLE_CSP=true
 IIMS_CSRF_ENABLED=true
 IIMS_APPROVAL_GATE=true
-IIMS_BUILD_STAMP=ui-deploy-rev54
+IIMS_BUILD_STAMP=ui-deploy-rev57
 
-JWT_SECRET=replace-with-random-32-char
+JWT_SECRET=replace-with-random-32-char-secret
 DB_HOST=db
 DB_PORT=3306
 DB_USER=imis_app
-DB_PASS=replace-with-strong-pass
+DB_PASS=replace-with-strong-db-pass
 DB_NAME=iims_school_system
-MYSQL_ROOT_PASSWORD=replace-with-stronger-pass
-IMIS_DB_PASS=replace-with-strong-pass
+MYSQL_ROOT_PASSWORD=replace-with-stronger-root-pass
+IMIS_DB_PASS=replace-with-strong-db-pass
 
-# Optional: AI / messaging / SMTP
+# AI queue
+IIMS_AI_QUEUE_BACKEND=redis
+REDIS_URL=redis://redis:6379
+AI_QUEUE_NAME=imis-ai
+
+# OpenAI
 OPENAI_API_KEY=
-SENDGRID_API_KEY=
-SENDGRID_FROM=
-SMTP_HOST=
-SMTP_USER=
-SMTP_PASS=
+
+# === Zoho Mail (developer@theimis.com) ===
+# Steps once: log into mail.zoho.com → Settings → Mail Accounts →
+# IMAP/SMTP → "Generate App Password" → copy below.
+SMTP_HOST=smtp.zoho.com
+SMTP_PORT=587
+SMTP_SECURE=false
+SMTP_USER=developer@theimis.com
+SMTP_PASS=zoho-app-password-paste-here
+SMTP_FROM=IMIS <developer@theimis.com>
+
+# Optional: Twilio Verify / SMS
 TWILIO_ACCOUNT_SID=
 TWILIO_AUTH_TOKEN=
 TWILIO_FROM=
 TWILIO_VERIFY_SERVICE_SID=
+
+# Optional: Africas Talking (cheaper SMS in Kenya)
 AT_API_KEY=
 AT_USERNAME=
 AT_FROM=
