@@ -13,7 +13,7 @@ let portalContext = null;
 let searchRowDrafts = {};
 let dashboardAutoRefreshHandle = null;
 let currentSidebarSubmoduleId = null;
-const CLIENT_UI_BUNDLE_ID = "dash-bundle-rev46-finalize";
+const CLIENT_UI_BUNDLE_ID = "dash-bundle-rev47-finalize-extras";
 const examPanelState = {
   generatedExam: null,
   serials: [],
@@ -14981,6 +14981,7 @@ async function openModule(targetModule, options = {}) {
   if (targetModule === "institutional-registers") return renderInstitutionalRegistersHub();
   if (targetModule === "admission-processing-centre") return renderAdmissionProcessingCentre();
   if (targetModule === "parents-directory") return renderParentsDirectoryHub();
+  if (targetModule === "ai-settings") return renderAiSettingsPanel();
   if (moduleConfigs[targetModule]) return renderCrudModule(targetModule, options);
   return null;
 }
@@ -15980,6 +15981,112 @@ window.renderAdmissionProcessingCentre = renderAdmissionProcessingCentre;
 // =====================================================================
 // rev46 (item 9): Parent / Guardian Directory hub.
 // =====================================================================
+// =====================================================================
+// rev47 (item 41): tiny skeleton + PDF preview helpers
+// =====================================================================
+window.imisSkeleton = function imisSkeleton(target, kind = "row", count = 4) {
+  if (!target) return;
+  const html = Array.from({ length: count })
+    .map(() => `<div class="iim-skeleton iim-skeleton--${kind}"></div>`)
+    .join("");
+  target.innerHTML = html;
+};
+
+window.imisPdfPreview = function imisPdfPreview(target, url, title = "Preview") {
+  if (!target || !url) return;
+  target.innerHTML = `
+    <div class="iim-pdf-preview-toolbar">
+      <strong>${escapeHtml(title)}</strong>
+      <button class="iim-action-btn" id="iimPdfOpen">Open in new tab</button>
+      <button class="iim-action-btn" id="iimPdfDownload">Download</button>
+      <button class="iim-action-btn" id="iimPdfPrint">Print</button>
+    </div>
+    <iframe class="iim-pdf-preview" src="${escapeHtmlAttribute(url)}" loading="lazy"></iframe>
+  `;
+  document.getElementById("iimPdfOpen").onclick = () => window.open(url, "_blank", "noopener");
+  document.getElementById("iimPdfDownload").onclick = () => {
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "";
+    a.click();
+  };
+  document.getElementById("iimPdfPrint").onclick = () => {
+    const w = window.open(url, "_blank", "noopener");
+    if (w) setTimeout(() => { try { w.print(); } catch (_) {} }, 800);
+  };
+};
+
+// =====================================================================
+// rev47 (item 26): AI Settings Panel renderer
+// =====================================================================
+async function renderAiSettingsPanel() {
+  if (typeof setActiveSidebarButton === "function") setActiveSidebarButton("ai-settings");
+  const moduleTitle = document.getElementById("moduleTitle");
+  if (moduleTitle) moduleTitle.textContent = "AI Settings";
+  const target = document.getElementById("formArea") || document.body;
+  if (!target) return;
+  target.innerHTML = `<div class="dashboard-section"><h3>AI Settings</h3><div id="aiSettingsHolder">${
+    Array.from({ length: 6 }).map(() => `<div class="iim-skeleton iim-skeleton--row"></div>`).join("")
+  }</div></div>`;
+  const holder = document.getElementById("aiSettingsHolder");
+  try {
+    const data = await request("/api/ai/settings");
+    const settings = data?.settings || {};
+    const defs = data?.defaults || {};
+    const fields = [
+      { key: "question_difficulty", label: "Question difficulty", options: ["EASY", "MEDIUM", "HARD", "MIXED"] },
+      { key: "number_of_questions", label: "Number of questions", input: "number", min: 5, max: 80 },
+      { key: "randomization_level", label: "Randomization level", options: ["NONE", "STANDARD", "HIGH"] },
+      { key: "cbc_strictness", label: "CBC strictness", options: ["LOW", "MEDIUM", "HIGH"] },
+      { key: "strand_balancing", label: "Strand balancing", options: ["BALANCED", "STRAND_BIAS", "MIXED"] },
+      { key: "language_tone", label: "Language tone", options: ["FORMAL", "PLAIN", "FRIENDLY"] }
+    ];
+    holder.innerHTML = `
+      <p class="small-note">Per-institution overrides for AI exam generation. Leave a row blank to inherit the default.</p>
+      <table style="width:100%;border-collapse:collapse">
+        <thead><tr><th>Setting</th><th>Default</th><th>Override</th></tr></thead>
+        <tbody>
+        ${fields.map((f) => `
+          <tr>
+            <td><strong>${escapeHtml(f.label)}</strong></td>
+            <td>${escapeHtml(defs[f.key] || "-")}</td>
+            <td>
+              ${f.options
+                ? `<select data-ai-key="${escapeHtmlAttribute(f.key)}">
+                     <option value="">— inherit —</option>
+                     ${f.options.map((o) =>
+                       `<option ${settings[f.key] === o ? "selected" : ""}>${escapeHtml(o)}</option>`
+                     ).join("")}
+                   </select>`
+                : `<input type="${f.input}" min="${f.min || ""}" max="${f.max || ""}"
+                          data-ai-key="${escapeHtmlAttribute(f.key)}" value="${escapeHtmlAttribute(settings[f.key] || "")}" />`}
+            </td>
+          </tr>
+        `).join("")}
+        </tbody>
+      </table>
+      <div class="iim-actions-row" style="margin-top:8px">
+        <button class="iim-action-btn success" id="aiSettingsSave">Save</button>
+      </div>
+    `;
+    document.getElementById("aiSettingsSave").onclick = async () => {
+      const updates = {};
+      holder.querySelectorAll("[data-ai-key]").forEach((el) => {
+        const k = el.getAttribute("data-ai-key");
+        const v = String(el.value || "").trim();
+        if (v) updates[k] = v;
+      });
+      try {
+        await request("/api/ai/settings", { method: "PUT", body: JSON.stringify(updates) });
+        alert("AI settings saved.");
+      } catch (err) { alert(err?.message || "Save failed."); }
+    };
+  } catch (err) {
+    holder.innerHTML = `<p class="small-note error">${escapeHtml(err?.message || "Failed to load AI settings.")}</p>`;
+  }
+}
+window.renderAiSettingsPanel = renderAiSettingsPanel;
+
 async function renderParentsDirectoryHub() {
   if (typeof setActiveSidebarButton === "function") setActiveSidebarButton("parents-directory");
   const moduleTitle = document.getElementById("moduleTitle");

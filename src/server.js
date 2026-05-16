@@ -5,7 +5,7 @@ const {
   readPublicDashboardFingerprint
 } = require("./readIndexFingerprint");
 
-const IIMS_BUILD_STAMP = process.env.IIMS_BUILD_STAMP || "ui-deploy-rev46-finalize";
+const IIMS_BUILD_STAMP = process.env.IIMS_BUILD_STAMP || "ui-deploy-rev47-finalize-extras";
 const { query } = require("./config/db");
 const { hashPassword } = require("./utils/password");
 const { ROLES, MODULE_KEYS } = require("./config/constants");
@@ -1739,6 +1739,53 @@ CREATE TABLE IF NOT EXISTS learner_exam_records (
   INDEX idx_lex_records_inst_exam (institution_id, exam_id),
   INDEX idx_lex_records_learner (learner_id),
   UNIQUE KEY uq_lex_records_exam_learner (institution_id, exam_id, learner_id)
+)`);
+
+  await query(`
+CREATE TABLE IF NOT EXISTS social_studies_map_templates (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  institution_id BIGINT NULL,
+  title VARCHAR(255) NOT NULL,
+  scope VARCHAR(40) NOT NULL DEFAULT 'INSTITUTION',
+  level VARCHAR(40) NULL,
+  geometry_url VARCHAR(500) NULL,
+  features_json JSON NULL,
+  notes TEXT NULL,
+  uploaded_by_user_id BIGINT NULL,
+  is_active TINYINT(1) NOT NULL DEFAULT 1,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  INDEX idx_map_templates_inst (institution_id, scope, is_active)
+)`);
+
+  await query(`
+CREATE TABLE IF NOT EXISTS social_studies_map_questions (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  map_template_id BIGINT NULL,
+  institution_id BIGINT NULL,
+  topic VARCHAR(120) NOT NULL,
+  question_text TEXT NOT NULL,
+  expected_answer TEXT NULL,
+  marks INT NOT NULL DEFAULT 1,
+  difficulty VARCHAR(20) NULL,
+  source VARCHAR(40) NOT NULL DEFAULT 'MANUAL',
+  approved TINYINT(1) NOT NULL DEFAULT 0,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  INDEX idx_map_q_topic (institution_id, topic, approved)
+)`);
+
+  await query(`
+CREATE TABLE IF NOT EXISTS ai_settings (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  institution_id BIGINT NOT NULL,
+  setting_key VARCHAR(80) NOT NULL,
+  setting_value VARCHAR(255) NULL,
+  notes VARCHAR(255) NULL,
+  updated_by_user_id BIGINT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY uq_ai_setting (institution_id, setting_key)
 )`);
 
   await query(`
