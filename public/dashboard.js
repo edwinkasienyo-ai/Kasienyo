@@ -13,7 +13,7 @@ let portalContext = null;
 let searchRowDrafts = {};
 let dashboardAutoRefreshHandle = null;
 let currentSidebarSubmoduleId = null;
-const CLIENT_UI_BUNDLE_ID = "dash-bundle-rev49-54-batched";
+const CLIENT_UI_BUNDLE_ID = "dash-bundle-rev55-finalize-44";
 const examPanelState = {
   generatedExam: null,
   serials: [],
@@ -15024,6 +15024,7 @@ async function openModule(targetModule, options = {}) {
   if (targetModule === "finance-fee-status") return renderFeeStatusHub();
   if (targetModule === "institutional-registers") return renderInstitutionalRegistersHub();
   if (targetModule === "admission-processing-centre") return renderAdmissionProcessingCentre();
+  if (targetModule === "admission-register-horizontal") return renderAdmissionRegisterHorizontal();
   if (targetModule === "parents-directory") return renderParentsDirectoryHub();
   if (targetModule === "ai-settings") return renderAiSettingsPanel();
   if (targetModule === "social-studies-maps") return renderSocialStudiesMapsHub();
@@ -16133,6 +16134,199 @@ async function renderAiSettingsPanel() {
   }
 }
 window.renderAiSettingsPanel = renderAiSettingsPanel;
+
+// =====================================================================
+// rev55 (item 10): Admission Register (Horizontal) — new renderer alongside
+// the original `Admission` page so nothing existing is removed.
+// =====================================================================
+async function renderAdmissionRegisterHorizontal() {
+  if (typeof setActiveSidebarButton === "function") setActiveSidebarButton("admission-register-horizontal");
+  const moduleTitle = document.getElementById("moduleTitle");
+  if (moduleTitle) moduleTitle.textContent = "Admission Register (Horizontal)";
+  const target = document.getElementById("formArea") || document.body;
+  if (!target) return;
+  target.innerHTML = `
+    <section class="dashboard-section">
+      <h3>Admission Register</h3>
+      <p class="small-note">Horizontal layout. Each row exposes view / edit / save / delete / print / promote / archive. Filters apply server-side; pagination uses limit + offset.</p>
+      <div class="form-grid" style="grid-template-columns:repeat(6,1fr);gap:8px">
+        <input id="arhSearch" placeholder="Search name / admission no / UPI" />
+        <input id="arhGrade" placeholder="Grade (e.g. Grade 7)" />
+        <input id="arhStream" placeholder="Stream" />
+        <input id="arhStatus" placeholder="Status (e.g. Active)" />
+        <input id="arhYear" type="number" placeholder="Year" />
+        <button class="iim-action-btn success" id="arhLoad">Apply filters</button>
+      </div>
+      <div class="iim-actions-row" style="gap:8px;margin-top:8px">
+        <button class="iim-action-btn" id="arhBulkPrint">Print selected</button>
+        <button class="iim-action-btn" id="arhBulkPromote">Promote selected (next grade)</button>
+        <button class="iim-action-btn delete" id="arhBulkArchive">Archive selected</button>
+        <button class="iim-action-btn" id="arhExportCsv">Export CSV (filtered)</button>
+      </div>
+      <div class="iim-actions-row" style="gap:8px;margin-top:8px">
+        <button class="iim-action-btn" id="arhPrev">◀ Prev</button>
+        <span id="arhPageMeta" class="small-note"></span>
+        <button class="iim-action-btn" id="arhNext">Next ▶</button>
+      </div>
+      <div id="arhResult" style="margin-top:10px"><div class="iim-skeleton iim-skeleton--row"></div></div>
+    </section>
+  `;
+  let limit = 50;
+  let offset = 0;
+  let lastRows = [];
+
+  async function load() {
+    const holder = document.getElementById("arhResult");
+    holder.innerHTML = `<div class="iim-skeleton iim-skeleton--row"></div>`.repeat(6);
+    const params = new URLSearchParams({
+      q: document.getElementById("arhSearch").value || "",
+      grade: document.getElementById("arhGrade").value || "",
+      stream: document.getElementById("arhStream").value || "",
+      status: document.getElementById("arhStatus").value || "",
+      year: document.getElementById("arhYear").value || "",
+      limit: String(limit),
+      offset: String(offset)
+    });
+    try {
+      const data = await request(`/api/admission/learners?${params.toString()}`);
+      const rows = Array.isArray(data) ? data : (Array.isArray(data?.rows) ? data.rows : []);
+      lastRows = rows;
+      document.getElementById("arhPageMeta").textContent = `Showing ${rows.length} starting at offset ${offset} (limit ${limit}).`;
+      if (!rows.length) { holder.innerHTML = `<p class="small-note">No matching rows.</p>`; return; }
+      holder.innerHTML = `
+        <div style="overflow-x:auto">
+        <table style="width:100%;border-collapse:collapse;min-width:1200px">
+          <thead><tr>
+            <th><input id="arhSelectAll" type="checkbox" /></th>
+            <th>Full name</th><th>Admission no</th><th>Grade</th><th>Stream</th>
+            <th>Gender</th><th>Date of admission</th><th>Parent</th><th>Status</th>
+            <th>Fee category</th><th>Residence</th><th>Actions</th>
+          </tr></thead>
+          <tbody>${rows.map((r) => `
+            <tr data-arh-row="${Number(r.id)}">
+              <td><input type="checkbox" class="arh-row-select" data-arh-id="${Number(r.id)}" /></td>
+              <td>${escapeHtml(r.full_name || "-")}</td>
+              <td>${escapeHtml(r.admission_number || "-")}</td>
+              <td>${escapeHtml(r.grade || "-")}</td>
+              <td>${escapeHtml(r.stream || "-")}</td>
+              <td>${escapeHtml(r.gender || "-")}</td>
+              <td>${escapeHtml(String(r.date_of_admission || r.created_at || "").slice(0,10))}</td>
+              <td>${escapeHtml(r.parent_full_name || "-")}</td>
+              <td>${escapeHtml(r.status || "-")}</td>
+              <td>${escapeHtml(r.fee_category || "-")}</td>
+              <td>${escapeHtml(r.parent_residence || r.address || "-")}</td>
+              <td>
+                <button class="iim-action-btn" data-arh-action="view">👁</button>
+                <button class="iim-action-btn" data-arh-action="edit">✎</button>
+                <button class="iim-action-btn success" data-arh-action="save">💾</button>
+                <button class="iim-action-btn delete" data-arh-action="delete">🗑</button>
+                <button class="iim-action-btn" data-arh-action="print">🖨</button>
+                <button class="iim-action-btn" data-arh-action="promote">⬆</button>
+                <button class="iim-action-btn" data-arh-action="archive">📦</button>
+              </td>
+            </tr>`).join("")}</tbody>
+        </table>
+        </div>
+      `;
+      const selAll = document.getElementById("arhSelectAll");
+      selAll.onchange = () => holder.querySelectorAll(".arh-row-select").forEach((cb) => { cb.checked = selAll.checked; });
+      holder.querySelectorAll("[data-arh-action]").forEach((btn) => {
+        btn.onclick = async () => {
+          const action = btn.getAttribute("data-arh-action");
+          const tr = btn.closest("[data-arh-row]");
+          const id = Number(tr?.dataset?.arhRow || 0);
+          if (!id) return;
+          if (action === "view") {
+            const r = lastRows.find((x) => Number(x.id) === id) || {};
+            alert(JSON.stringify(r, null, 2));
+            return;
+          }
+          if (action === "edit") {
+            const newName = window.prompt("Edit full name:", lastRows.find((x) => Number(x.id) === id)?.full_name || "");
+            if (!newName) return;
+            try { await request(`/api/admission/learners/${id}`, { method: "PUT", body: JSON.stringify({ full_name: newName }) }); await load(); }
+            catch (err) { alert(err?.message || "Edit failed."); }
+            return;
+          }
+          if (action === "save") { alert("Row already saved."); return; }
+          if (action === "delete") {
+            const reason = window.prompt("Type a deletion reason (>=6 chars):", "");
+            if (!reason || reason.length < 6) { alert("Reason required."); return; }
+            const conf = window.prompt("Type DELETE to confirm (irreversible — goes to recycle bin):", "");
+            if (conf !== "DELETE") return;
+            const pwd = window.prompt("Re-enter your own password to authorise:", "");
+            if (!pwd) return;
+            try {
+              await request(`/api/admission/learners/${id}`, { method: "DELETE", body: JSON.stringify({ deletion_reason: reason, password_confirm: pwd, confirm_text: "DELETE" }) });
+              await load();
+            } catch (err) { alert(err?.message || "Delete failed."); }
+            return;
+          }
+          if (action === "print") { window.open(`/api/admission/learners/${id}/admission-letter`, "_blank", "noopener"); return; }
+          if (action === "promote") {
+            const next = window.prompt("Promote to which grade? (e.g. Grade 8)", "");
+            if (!next) return;
+            try { await request(`/api/admission/learners/${id}`, { method: "PUT", body: JSON.stringify({ grade: next }) }); await load(); }
+            catch (err) { alert(err?.message || "Promote failed."); }
+            return;
+          }
+          if (action === "archive") {
+            try { await request(`/api/admission/learners/${id}`, { method: "PUT", body: JSON.stringify({ status: "Archived" }) }); await load(); }
+            catch (err) { alert(err?.message || "Archive failed."); }
+            return;
+          }
+        };
+      });
+    } catch (err) {
+      holder.innerHTML = `<p class="small-note error">${escapeHtml(err?.message || "Failed to load.")}</p>`;
+    }
+  }
+
+  document.getElementById("arhLoad").onclick = () => { offset = 0; load(); };
+  document.getElementById("arhPrev").onclick = () => { offset = Math.max(0, offset - limit); load(); };
+  document.getElementById("arhNext").onclick = () => { offset += limit; load(); };
+
+  document.getElementById("arhBulkPrint").onclick = () => {
+    [...document.querySelectorAll(".arh-row-select:checked")].forEach((cb) => {
+      window.open(`/api/admission/learners/${cb.getAttribute("data-arh-id")}/admission-letter`, "_blank", "noopener");
+    });
+  };
+  document.getElementById("arhBulkArchive").onclick = async () => {
+    const ids = [...document.querySelectorAll(".arh-row-select:checked")].map((cb) => Number(cb.getAttribute("data-arh-id")));
+    if (!ids.length) return;
+    if (!window.confirm(`Archive ${ids.length} selected learners?`)) return;
+    for (const id of ids) {
+      try { await request(`/api/admission/learners/${id}`, { method: "PUT", body: JSON.stringify({ status: "Archived" }) }); }
+      catch (_) {}
+    }
+    await load();
+  };
+  document.getElementById("arhBulkPromote").onclick = async () => {
+    const next = window.prompt("Promote selected to which grade? (e.g. Grade 8)", "");
+    if (!next) return;
+    const ids = [...document.querySelectorAll(".arh-row-select:checked")].map((cb) => Number(cb.getAttribute("data-arh-id")));
+    if (!ids.length) return;
+    for (const id of ids) {
+      try { await request(`/api/admission/learners/${id}`, { method: "PUT", body: JSON.stringify({ grade: next }) }); }
+      catch (_) {}
+    }
+    await load();
+  };
+  document.getElementById("arhExportCsv").onclick = () => {
+    if (!lastRows.length) return alert("Load some rows first.");
+    const cols = ["full_name","admission_number","grade","stream","gender","date_of_admission","parent_full_name","status","fee_category","parent_residence"];
+    const csv = [cols.join(",")].concat(lastRows.map((r) => cols.map((c) => `"${String(r[c] ?? "").replace(/"/g, '""')}"`).join(","))).join("\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `admission-register-${Date.now()}.csv`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+  };
+
+  load();
+}
+window.renderAdmissionRegisterHorizontal = renderAdmissionRegisterHorizontal;
 
 // =====================================================================
 // rev49: Social Studies map-template uploader UI

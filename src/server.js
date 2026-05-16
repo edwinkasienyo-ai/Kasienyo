@@ -5,7 +5,7 @@ const {
   readPublicDashboardFingerprint
 } = require("./readIndexFingerprint");
 
-const IIMS_BUILD_STAMP = process.env.IIMS_BUILD_STAMP || "ui-deploy-rev49-54-batched";
+const IIMS_BUILD_STAMP = process.env.IIMS_BUILD_STAMP || "ui-deploy-rev55-finalize-44";
 const { query } = require("./config/db");
 const { hashPassword } = require("./utils/password");
 const { ROLES, MODULE_KEYS } = require("./config/constants");
