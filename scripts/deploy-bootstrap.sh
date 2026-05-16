@@ -1,0 +1,97 @@
+#!/usr/bin/env bash
+# rev54 — one-shot deploy bootstrap on a fresh Ubuntu 22.04+ VPS.
+#   curl -fsSL https://raw.githubusercontent.com/edwinkasienyo-ai/Kasienyo/cursor/rev49-54-batched-2a2b/scripts/deploy-bootstrap.sh | bash -s -- imis.example.co.ke admin@example.com
+set -euo pipefail
+DOMAIN="${1:-}"
+ACME_EMAIL="${2:-admin@${DOMAIN:-example.com}}"
+
+if [[ -z "$DOMAIN" ]]; then
+  echo "Usage: $0 <imis-domain> <admin-email>"
+  exit 1
+fi
+
+echo "[1/8] Updating apt + installing docker, certbot, ufw..."
+sudo apt-get update -y
+sudo apt-get install -y docker.io docker-compose-plugin ufw curl git certbot
+
+echo "[2/8] Firewalling 22, 80, 443 only..."
+sudo ufw default deny incoming || true
+sudo ufw default allow outgoing || true
+sudo ufw allow 22/tcp || true
+sudo ufw allow 80/tcp || true
+sudo ufw allow 443/tcp || true
+yes | sudo ufw enable || true
+
+PROJECT_DIR="${HOME}/imis"
+if [[ ! -d "$PROJECT_DIR/.git" ]]; then
+  echo "[3/8] Cloning repo into $PROJECT_DIR ..."
+  git clone https://github.com/edwinkasienyo-ai/Kasienyo.git "$PROJECT_DIR"
+else
+  echo "[3/8] Repo present, pulling..."
+  ( cd "$PROJECT_DIR" && git pull --ff-only )
+fi
+
+cd "$PROJECT_DIR"
+
+if [[ ! -f .env ]]; then
+  echo "[4/8] Writing .env template (EDIT BEFORE STARTING containers)..."
+  cat > .env <<EOF
+NODE_ENV=production
+PORT=5002
+FORCE_HTTPS=true
+ENABLE_CSP=true
+IIMS_CSRF_ENABLED=true
+IIMS_APPROVAL_GATE=true
+IIMS_BUILD_STAMP=ui-deploy-rev54
+
+JWT_SECRET=replace-with-random-32-char
+DB_HOST=db
+DB_PORT=3306
+DB_USER=imis_app
+DB_PASS=replace-with-strong-pass
+DB_NAME=iims_school_system
+MYSQL_ROOT_PASSWORD=replace-with-stronger-pass
+IMIS_DB_PASS=replace-with-strong-pass
+
+# Optional: AI / messaging / SMTP
+OPENAI_API_KEY=
+SENDGRID_API_KEY=
+SENDGRID_FROM=
+SMTP_HOST=
+SMTP_USER=
+SMTP_PASS=
+TWILIO_ACCOUNT_SID=
+TWILIO_AUTH_TOKEN=
+TWILIO_FROM=
+TWILIO_VERIFY_SERVICE_SID=
+AT_API_KEY=
+AT_USERNAME=
+AT_FROM=
+EOF
+  echo
+  echo "    Edit $PROJECT_DIR/.env now (passwords, JWT_SECRET, OPENAI_API_KEY, SMTP, Twilio)."
+  echo "    Press ENTER to continue once edited."
+  read -r _
+fi
+
+echo "[5/8] Substituting your domain in the nginx config..."
+sed -i "s|_yourdomain_|$DOMAIN|g" scripts/nginx-imis.conf
+
+echo "[6/8] Bringing up the stack (without HTTPS yet so certbot can answer port 80)..."
+sed -i 's|^  ssl_certificate|# tmp ssl_certificate|' scripts/nginx-imis.conf
+sed -i 's|^  ssl_certificate_key|# tmp ssl_certificate_key|' scripts/nginx-imis.conf
+mkdir -p scripts/letsencrypt scripts/letsencrypt-www logs uploads
+sudo docker compose -f docker-compose.prod.yml up -d --build
+
+echo "[7/8] Issuing TLS certificate via certbot http-01..."
+sudo certbot certonly --webroot -w "$PROJECT_DIR/scripts/letsencrypt-www" \
+  -d "$DOMAIN" --email "$ACME_EMAIL" --agree-tos --no-eff-email --non-interactive
+sudo cp -L /etc/letsencrypt/live/$DOMAIN/fullchain.pem $PROJECT_DIR/scripts/letsencrypt/live/$DOMAIN/fullchain.pem 2>/dev/null || true
+sudo cp -L /etc/letsencrypt/live/$DOMAIN/privkey.pem $PROJECT_DIR/scripts/letsencrypt/live/$DOMAIN/privkey.pem 2>/dev/null || true
+sed -i 's|# tmp ssl_certificate|ssl_certificate|' scripts/nginx-imis.conf
+sed -i 's|# tmp ssl_certificate_key|ssl_certificate_key|' scripts/nginx-imis.conf
+sudo docker compose -f docker-compose.prod.yml restart nginx
+
+echo "[8/8] Done. Site should be reachable at: https://$DOMAIN"
+echo "  Health: https://$DOMAIN/api/health"
+echo "  Logs:   docker logs -f imis_app"

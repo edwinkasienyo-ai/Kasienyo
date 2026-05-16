@@ -5,7 +5,7 @@ const {
   readPublicDashboardFingerprint
 } = require("./readIndexFingerprint");
 
-const IIMS_BUILD_STAMP = process.env.IIMS_BUILD_STAMP || "ui-deploy-rev48-csrf-frontend";
+const IIMS_BUILD_STAMP = process.env.IIMS_BUILD_STAMP || "ui-deploy-rev49-54-batched";
 const { query } = require("./config/db");
 const { hashPassword } = require("./utils/password");
 const { ROLES, MODULE_KEYS } = require("./config/constants");
@@ -1739,6 +1739,24 @@ CREATE TABLE IF NOT EXISTS learner_exam_records (
   INDEX idx_lex_records_inst_exam (institution_id, exam_id),
   INDEX idx_lex_records_learner (learner_id),
   UNIQUE KEY uq_lex_records_exam_learner (institution_id, exam_id, learner_id)
+)`);
+
+  await query(`
+CREATE TABLE IF NOT EXISTS exam_versions (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  institution_id BIGINT NOT NULL,
+  exam_id BIGINT NULL,
+  exam_title VARCHAR(255) NULL,
+  grade_or_form VARCHAR(120) NULL,
+  learning_area VARCHAR(255) NULL,
+  term VARCHAR(40) NULL,
+  year VARCHAR(20) NULL,
+  content_hash CHAR(64) NOT NULL,
+  bloom_distribution_json JSON NULL,
+  difficulty_distribution_json JSON NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE KEY uq_exam_version_content (institution_id, content_hash),
+  INDEX idx_exam_versions_inst_exam (institution_id, exam_id, created_at)
 )`);
 
   await query(`

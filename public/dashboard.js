@@ -13,7 +13,7 @@ let portalContext = null;
 let searchRowDrafts = {};
 let dashboardAutoRefreshHandle = null;
 let currentSidebarSubmoduleId = null;
-const CLIENT_UI_BUNDLE_ID = "dash-bundle-rev48-csrf-frontend";
+const CLIENT_UI_BUNDLE_ID = "dash-bundle-rev49-54-batched";
 const examPanelState = {
   generatedExam: null,
   serials: [],
@@ -15026,6 +15026,9 @@ async function openModule(targetModule, options = {}) {
   if (targetModule === "admission-processing-centre") return renderAdmissionProcessingCentre();
   if (targetModule === "parents-directory") return renderParentsDirectoryHub();
   if (targetModule === "ai-settings") return renderAiSettingsPanel();
+  if (targetModule === "social-studies-maps") return renderSocialStudiesMapsHub();
+  if (targetModule === "exam-qr-scan") return renderExamQrScanHub();
+  if (targetModule === "institution-templates") return renderTemplateManagementHub();
   if (moduleConfigs[targetModule]) return renderCrudModule(targetModule, options);
   return null;
 }
@@ -16130,6 +16133,382 @@ async function renderAiSettingsPanel() {
   }
 }
 window.renderAiSettingsPanel = renderAiSettingsPanel;
+
+// =====================================================================
+// rev49: Social Studies map-template uploader UI
+// =====================================================================
+async function renderSocialStudiesMapsHub() {
+  if (typeof setActiveSidebarButton === "function") setActiveSidebarButton("social-studies-maps");
+  const moduleTitle = document.getElementById("moduleTitle");
+  if (moduleTitle) moduleTitle.textContent = "Social Studies Maps";
+  const target = document.getElementById("formArea") || document.body;
+  if (!target) return;
+  target.innerHTML = `
+    <section class="dashboard-section">
+      <h3>Social Studies — Map Templates &amp; Question Generator</h3>
+      <p class="small-note">Add a map (Kenyan / county / sub-county outline). Pin features (rivers, roads, settlements, lakes, mountains, forests, railways, climate zones). Generate auto-questions from each pinned feature; questions land in the Question Bank as <em>unapproved</em> until a teacher approves.</p>
+
+      <div class="form-grid" style="margin-top:8px">
+        <label>Title</label>
+        <input id="mapTitle" placeholder="e.g. Western Kenya — physical features" />
+
+        <label>Level</label>
+        <select id="mapLevel">
+          ${["GRADE 5","GRADE 6","GRADE 7","GRADE 8","GRADE 9","FORM 3","FORM 4"].map((g) => `<option>${g}</option>`).join("")}
+        </select>
+
+        <label>Scope</label>
+        <select id="mapScope">
+          <option value="INSTITUTION">Institution-only</option>
+          <option value="GLOBAL">Global (Super/System Developer only)</option>
+        </select>
+
+        <label>Geometry URL (optional, e.g. /uploads/maps/western.svg)</label>
+        <input id="mapGeometryUrl" placeholder="Optional reference image / SVG" />
+
+        <label>Notes</label>
+        <textarea id="mapNotes" rows="2" placeholder="Free-text reference for teachers"></textarea>
+      </div>
+
+      <h4 style="margin-top:12px">Pinned features</h4>
+      <p class="small-note">Click <strong>+ feature</strong> to add. Type, label, optional X / Y for SVG layout.</p>
+      <div id="mapFeatureRows"></div>
+      <button class="iim-action-btn" id="mapAddFeatureBtn">+ feature</button>
+
+      <div class="iim-actions-row" style="margin-top:12px;gap:6px">
+        <button class="iim-action-btn success" id="mapSaveBtn">Save map</button>
+        <button class="iim-action-btn" id="mapReloadBtn">Refresh list</button>
+      </div>
+
+      <h4 style="margin-top:18px">Existing maps</h4>
+      <div id="mapList"><div class="iim-skeleton iim-skeleton--row"></div></div>
+    </section>
+  `;
+  const FEATURE_TYPES = [
+    "RIVER","ROAD","FOREST","MOUNTAIN","RAILWAY","SETTLEMENT","LAKE",
+    "ECONOMIC_ACTIVITY","VEGETATION","DRAINAGE","CLIMATE","TRANSPORT","PHYSICAL_FEATURE"
+  ];
+  const featureRows = document.getElementById("mapFeatureRows");
+  function addFeatureRow(initial = {}) {
+    const row = document.createElement("div");
+    row.className = "form-grid";
+    row.style.marginTop = "6px";
+    row.style.padding = "6px";
+    row.style.border = "1px dashed #cfd6e2";
+    row.style.borderRadius = "6px";
+    row.innerHTML = `
+      <label>Type</label>
+      <select class="map-feature-type">${FEATURE_TYPES.map((t) => `<option ${t === initial.type ? "selected" : ""}>${t}</option>`).join("")}</select>
+      <label>Label</label>
+      <input class="map-feature-label" value="${escapeHtmlAttribute(initial.label || "")}" placeholder="e.g. River Nzoia" />
+      <label>X (optional)</label>
+      <input class="map-feature-x" value="${escapeHtmlAttribute(initial.x || "")}" placeholder="0–100" />
+      <label>Y (optional)</label>
+      <input class="map-feature-y" value="${escapeHtmlAttribute(initial.y || "")}" placeholder="0–100" />
+      <div></div>
+      <button type="button" class="iim-action-btn delete map-feature-remove">Remove</button>
+    `;
+    row.querySelector(".map-feature-remove").addEventListener("click", () => row.remove());
+    featureRows.appendChild(row);
+  }
+  document.getElementById("mapAddFeatureBtn").onclick = () => addFeatureRow();
+  addFeatureRow({ type: "RIVER", label: "" });
+
+  function collectFeatures() {
+    return [...featureRows.querySelectorAll(".form-grid")].map((row) => ({
+      type: row.querySelector(".map-feature-type").value,
+      label: row.querySelector(".map-feature-label").value.trim(),
+      x: Number(row.querySelector(".map-feature-x").value) || null,
+      y: Number(row.querySelector(".map-feature-y").value) || null
+    })).filter((f) => f.label);
+  }
+
+  async function refresh() {
+    const list = document.getElementById("mapList");
+    list.innerHTML = `<div class="iim-skeleton iim-skeleton--row"></div>`.repeat(3);
+    try {
+      const data = await request("/api/social-studies/maps");
+      const maps = Array.isArray(data?.maps) ? data.maps : [];
+      if (!maps.length) { list.innerHTML = `<p class="small-note">No maps saved yet.</p>`; return; }
+      list.innerHTML = `
+        <table style="width:100%;border-collapse:collapse">
+          <thead><tr><th>Title</th><th>Scope</th><th>Level</th><th>Features</th><th>Created</th><th>Actions</th></tr></thead>
+          <tbody>${maps.map((m) => `
+            <tr>
+              <td>${escapeHtml(m.title || "-")}</td>
+              <td>${escapeHtml(m.scope || "-")}</td>
+              <td>${escapeHtml(m.level || "-")}</td>
+              <td>${Array.isArray(m.features_json) ? m.features_json.length : 0}</td>
+              <td>${escapeHtml(String(m.created_at || "").replace("T"," ").slice(0,16))}</td>
+              <td><button class="iim-action-btn success" data-gen-questions="${Number(m.id)}">Generate questions</button></td>
+            </tr>`).join("")}</tbody>
+        </table>
+      `;
+      list.querySelectorAll("[data-gen-questions]").forEach((btn) => {
+        btn.onclick = async () => {
+          const id = Number(btn.getAttribute("data-gen-questions") || 0);
+          if (!id) return;
+          try {
+            const resp = await request(`/api/social-studies/maps/${id}/generate-questions`, { method: "POST" });
+            alert(`Generated ${resp.generated} questions (require approval).`);
+          } catch (err) { alert(err?.message || "Failed."); }
+        };
+      });
+    } catch (err) { list.innerHTML = `<p class="small-note error">${escapeHtml(err?.message || "Failed to load.")}</p>`; }
+  }
+
+  document.getElementById("mapReloadBtn").onclick = refresh;
+  document.getElementById("mapSaveBtn").onclick = async () => {
+    const body = {
+      title: document.getElementById("mapTitle").value.trim(),
+      level: document.getElementById("mapLevel").value,
+      scope: document.getElementById("mapScope").value,
+      geometry_url: document.getElementById("mapGeometryUrl").value.trim() || null,
+      notes: document.getElementById("mapNotes").value.trim() || null,
+      features: collectFeatures()
+    };
+    if (!body.title) return alert("Title is required.");
+    if (!body.features.length) return alert("Add at least one pinned feature.");
+    try {
+      const r = await request("/api/social-studies/maps", { method: "POST", body: JSON.stringify(body) });
+      alert(`Map saved (id ${r.id}).`);
+      await refresh();
+    } catch (err) { alert(err?.message || "Save failed."); }
+  };
+  refresh();
+}
+window.renderSocialStudiesMapsHub = renderSocialStudiesMapsHub;
+
+// =====================================================================
+// rev51: Exam QR scan → marks entry pre-fill (uses bundled jsQR vendor).
+// =====================================================================
+async function renderExamQrScanHub() {
+  if (typeof setActiveSidebarButton === "function") setActiveSidebarButton("exam-qr-scan");
+  const moduleTitle = document.getElementById("moduleTitle");
+  if (moduleTitle) moduleTitle.textContent = "Exam QR Scan → Marks";
+  const target = document.getElementById("formArea") || document.body;
+  if (!target) return;
+  target.innerHTML = `
+    <section class="dashboard-section">
+      <h3>Exam QR Scan</h3>
+      <p class="small-note">Aim a learner-paper QR at the camera. The serial resolves to learner + exam metadata; only the marks field stays editable.</p>
+      <div class="iim-actions-row" style="gap:6px">
+        <button class="iim-action-btn success" id="qrStartBtn">Start camera</button>
+        <button class="iim-action-btn delete" id="qrStopBtn">Stop</button>
+        <input id="qrManualSerial" placeholder="…or paste serial / reference number" style="min-width:280px" />
+        <button class="iim-action-btn" id="qrLookupBtn">Look up</button>
+      </div>
+      <video id="qrVideo" playsinline style="width:100%;max-width:520px;background:#000;border-radius:8px;margin-top:8px;display:none"></video>
+      <canvas id="qrCanvas" hidden></canvas>
+      <div id="qrFoundPanel" style="margin-top:12px"></div>
+    </section>
+  `;
+  const video = document.getElementById("qrVideo");
+  const canvas = document.getElementById("qrCanvas");
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  let stream = null;
+  let scanning = false;
+
+  async function lookupSerial(serial) {
+    if (!serial) return;
+    const panel = document.getElementById("qrFoundPanel");
+    panel.innerHTML = `<div class="iim-skeleton iim-skeleton--row"></div>`.repeat(3);
+    try {
+      const data = await request(`/api/exam/scan?serial=${encodeURIComponent(serial)}`);
+      if (!data?.match) {
+        panel.innerHTML = `<p class="small-note error">Serial not recognised.</p>`;
+        return;
+      }
+      const meta = data.match;
+      panel.innerHTML = `
+        <div class="dashboard-section">
+          <h4>Match found</h4>
+          <p>
+            <strong>${escapeHtml(meta.learner_name || "-")}</strong> ·
+            ${escapeHtml(meta.grade || "-")} · Stream ${escapeHtml(meta.stream || "-")}<br>
+            <em>${escapeHtml(meta.learning_area || "-")} — ${escapeHtml(meta.exam_title || "-")} · Term ${escapeHtml(meta.term || "-")} · Year ${escapeHtml(meta.year || "-")}</em>
+          </p>
+          <div class="form-grid">
+            <label>Marks (only field editable)</label>
+            <input id="qrMarksField" type="number" min="0" max="100" placeholder="0-100" />
+          </div>
+          <div class="iim-actions-row">
+            <button class="iim-action-btn success" id="qrSaveMarksBtn">Save marks</button>
+          </div>
+        </div>
+      `;
+      document.getElementById("qrSaveMarksBtn").onclick = async () => {
+        const marks = Number(document.getElementById("qrMarksField").value);
+        if (!Number.isFinite(marks) || marks < 0 || marks > 100) return alert("Marks must be 0–100.");
+        try {
+          await request(`/api/exam/scan/save-marks`, {
+            method: "POST",
+            body: JSON.stringify({ serial, marks })
+          });
+          alert("Marks saved.");
+        } catch (err) { alert(err?.message || "Save failed."); }
+      };
+    } catch (err) { panel.innerHTML = `<p class="small-note error">${escapeHtml(err?.message || "Lookup failed.")}</p>`; }
+  }
+
+  async function startCamera() {
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+      video.srcObject = stream;
+      video.style.display = "block";
+      await video.play();
+      scanning = true;
+      tick();
+    } catch (err) { alert("Cannot access camera: " + (err?.message || err)); }
+  }
+  function stopCamera() {
+    scanning = false;
+    if (stream) { stream.getTracks().forEach((t) => t.stop()); stream = null; }
+    video.style.display = "none";
+  }
+  function tick() {
+    if (!scanning) return;
+    if (video.readyState === video.HAVE_ENOUGH_DATA && window.jsQR) {
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      const code = window.jsQR(img.data, img.width, img.height, { inversionAttempts: "dontInvert" });
+      if (code && code.data) {
+        scanning = false;
+        stopCamera();
+        lookupSerial(String(code.data).trim());
+        return;
+      }
+    }
+    requestAnimationFrame(tick);
+  }
+  document.getElementById("qrStartBtn").onclick = startCamera;
+  document.getElementById("qrStopBtn").onclick = stopCamera;
+  document.getElementById("qrLookupBtn").onclick = () => lookupSerial(document.getElementById("qrManualSerial").value.trim());
+
+  if (!window.jsQR) {
+    const s = document.createElement("script");
+    s.src = "/vendor/jsQR.js";
+    s.async = false;
+    document.head.appendChild(s);
+  }
+}
+window.renderExamQrScanHub = renderExamQrScanHub;
+
+// =====================================================================
+// rev52: Template Management hub
+// =====================================================================
+async function renderTemplateManagementHub() {
+  if (typeof setActiveSidebarButton === "function") setActiveSidebarButton("institution-templates");
+  const moduleTitle = document.getElementById("moduleTitle");
+  if (moduleTitle) moduleTitle.textContent = "Template Management";
+  const target = document.getElementById("formArea") || document.body;
+  if (!target) return;
+  const KINDS = [
+    "ADMISSION_FORM","ADMISSION_LETTER","REPORT_CARD","ASSESSMENT_REPORT",
+    "FEE_INVOICE","PAYSLIP","P9","LETTER_HEAD","LESSON_PLAN","SCHEME_OF_WORK","RECORD_OF_WORK",
+    "TIMETABLE","DISCIPLINE_RECORD","TRANSFER_CERTIFICATE","CUSTOM"
+  ];
+  target.innerHTML = `
+    <section class="dashboard-section">
+      <h3>Template Management</h3>
+      <p class="small-note">Per-institution and (Super/System Developer) global templates. Versioning + restore preserved.</p>
+      <div class="form-grid">
+        <label>Kind</label>
+        <select id="tmplKind">${KINDS.map((k) => `<option>${k}</option>`).join("")}</select>
+        <label>Title</label>
+        <input id="tmplTitle" placeholder="e.g. Form 1 admission letter" />
+        <label>Format</label>
+        <select id="tmplFormat"><option>PDF</option><option>DOCX</option><option>HTML</option></select>
+        <label>File</label>
+        <input id="tmplFile" type="file" accept=".pdf,.docx,.html,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/html" />
+      </div>
+      <div class="iim-actions-row">
+        <button class="iim-action-btn success" id="tmplUploadBtn">Upload new version</button>
+        <button class="iim-action-btn" id="tmplReloadBtn">Refresh</button>
+      </div>
+      <div id="tmplList" style="margin-top:10px"><div class="iim-skeleton iim-skeleton--row"></div></div>
+    </section>
+  `;
+  async function refresh() {
+    const list = document.getElementById("tmplList");
+    list.innerHTML = `<div class="iim-skeleton iim-skeleton--row"></div>`.repeat(3);
+    try {
+      const data = await request("/api/institution-templates");
+      const rows = Array.isArray(data?.rows) ? data.rows : [];
+      if (!rows.length) { list.innerHTML = `<p class="small-note">No templates uploaded yet.</p>`; return; }
+      list.innerHTML = `
+        <table style="width:100%;border-collapse:collapse">
+          <thead><tr><th>Kind</th><th>Title</th><th>Format</th><th>v</th><th>Active</th><th>Uploaded</th><th>Actions</th></tr></thead>
+          <tbody>${rows.map((r) => `
+            <tr>
+              <td>${escapeHtml(r.template_kind || "-")}</td>
+              <td>${escapeHtml(r.title || "-")}</td>
+              <td>${escapeHtml(r.format || "-")}</td>
+              <td>${escapeHtml(String(r.version))}</td>
+              <td>${Number(r.is_active) ? "✓" : "—"}</td>
+              <td>${escapeHtml(String(r.created_at || "").replace("T"," ").slice(0,16))}</td>
+              <td>
+                <button class="iim-action-btn" data-tmpl-preview="${Number(r.id)}" data-tmpl-url="${escapeHtmlAttribute(r.storage_path || "")}">Preview</button>
+                <button class="iim-action-btn success" data-tmpl-restore="${Number(r.id)}">Restore as active</button>
+              </td>
+            </tr>`).join("")}</tbody>
+        </table>
+        <div id="tmplPreview" style="margin-top:8px"></div>
+      `;
+      list.querySelectorAll("[data-tmpl-preview]").forEach((btn) => {
+        btn.onclick = () => {
+          const url = btn.getAttribute("data-tmpl-url");
+          const holder = document.getElementById("tmplPreview");
+          if (typeof window.imisPdfPreview === "function" && url) {
+            window.imisPdfPreview(holder, url, "Template preview");
+          } else if (url) {
+            holder.innerHTML = `<a target="_blank" href="${escapeHtmlAttribute(url)}">Open template</a>`;
+          }
+        };
+      });
+      list.querySelectorAll("[data-tmpl-restore]").forEach((btn) => {
+        btn.onclick = async () => {
+          const id = Number(btn.getAttribute("data-tmpl-restore") || 0);
+          if (!id) return;
+          try { await request(`/api/institution-templates/${id}/restore`, { method: "POST" }); await refresh(); }
+          catch (err) { alert(err?.message || "Restore failed."); }
+        };
+      });
+    } catch (err) { list.innerHTML = `<p class="small-note error">${escapeHtml(err?.message || "Failed to load.")}</p>`; }
+  }
+  document.getElementById("tmplReloadBtn").onclick = refresh;
+  document.getElementById("tmplUploadBtn").onclick = async () => {
+    const file = document.getElementById("tmplFile").files?.[0];
+    const kind = document.getElementById("tmplKind").value;
+    const title = document.getElementById("tmplTitle").value.trim();
+    const format = document.getElementById("tmplFormat").value;
+    if (!file) return alert("Choose a file first.");
+    if (!title) return alert("Title is required.");
+    const fd = new FormData();
+    fd.append("file", file);
+    fd.append("template_kind", kind);
+    fd.append("title", title);
+    fd.append("format", format);
+    const csrf = await ensureCsrfToken();
+    const res = await fetch("/api/institution-templates", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        ...(csrf ? { "X-CSRF-Token": csrf } : {})
+      },
+      body: fd
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) return alert(json?.error || "Upload failed.");
+    alert(`Saved as version ${json.version}.`);
+    await refresh();
+  };
+  refresh();
+}
+window.renderTemplateManagementHub = renderTemplateManagementHub;
 
 async function renderParentsDirectoryHub() {
   if (typeof setActiveSidebarButton === "function") setActiveSidebarButton("parents-directory");

@@ -76,7 +76,7 @@ const {
 const { importLocalCurriculumFromPdfDirectory } = require("./services/localCurriculumImportService");
 
 /** Bump when shipping UI/API changes so schools can confirm they run the right copy. */
-const IIMS_BUILD_STAMP = process.env.IIMS_BUILD_STAMP || "ui-deploy-rev48-csrf-frontend";
+const IIMS_BUILD_STAMP = process.env.IIMS_BUILD_STAMP || "ui-deploy-rev49-54-batched";
 const {
   readPublicIndexFingerprint,
   readPublicDashboardFingerprint
@@ -16810,6 +16810,210 @@ function safeParseJson(value) {
   if (typeof value === "object") return value;
   try { return JSON.parse(value); } catch { return null; }
 }
+
+// =====================================================================
+// rev51: Exam QR scan → marks pre-fill
+// =====================================================================
+app.get(
+  "/api/exam/scan",
+  auth,
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER, ROLES.SENIOR_TEACHER, ROLES.HEAD_OF_DEPARTMENT]),
+  asyncHandler(async (req, res) => {
+    const serial = cleanValue(req.query?.serial || "");
+    if (!serial) return res.status(400).json({ error: "serial is required." });
+    const institutionId = Number(req.user.institution_id);
+    const role = normalizeRole(req.user.role);
+    const isDev = role === ROLES.SUPER_SYSTEM_DEVELOPER || role === ROLES.SYSTEM_DEVELOPER;
+    const where = isDev ? "qr.serial = ?" : "qr.serial = ? AND qr.institution_id = ?";
+    const params = isDev ? [serial] : [serial, institutionId];
+    const rows = await query(
+      `SELECT qr.*, l.full_name AS learner_name, l.grade, l.stream, e.title AS exam_title,
+              e.subject AS learning_area, e.term, e.year
+       FROM qr_tracking qr
+       LEFT JOIN learners l ON l.id = qr.learner_id
+       LEFT JOIN academic_exams e ON e.id = qr.exam_id
+       WHERE ${where}
+       LIMIT 1`,
+      params
+    );
+    if (!rows.length) return res.json({ match: null });
+    const r = rows[0];
+    res.json({
+      match: {
+        serial: r.serial,
+        learner_id: r.learner_id,
+        learner_name: r.learner_name,
+        grade: r.grade,
+        stream: r.stream,
+        exam_id: r.exam_id,
+        exam_title: r.exam_title,
+        learning_area: r.learning_area,
+        term: r.term,
+        year: r.year
+      }
+    });
+  })
+);
+
+app.post(
+  "/api/exam/scan/save-marks",
+  auth,
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION, ROLES.TEACHER]),
+  asyncHandler(async (req, res) => {
+    const serial = cleanValue(req.body?.serial || "");
+    const marks = Number(req.body?.marks);
+    if (!serial) return res.status(400).json({ error: "serial is required." });
+    if (!Number.isFinite(marks) || marks < 0 || marks > 100) {
+      return res.status(400).json({ error: "marks must be a number 0-100." });
+    }
+    const institutionId = Number(req.user.institution_id);
+    const role = normalizeRole(req.user.role);
+    const isDev = role === ROLES.SUPER_SYSTEM_DEVELOPER || role === ROLES.SYSTEM_DEVELOPER;
+    const where = isDev ? "qr.serial = ?" : "qr.serial = ? AND qr.institution_id = ?";
+    const params = isDev ? [serial] : [serial, institutionId];
+    const rows = await query(
+      `SELECT qr.* FROM qr_tracking qr WHERE ${where} LIMIT 1`,
+      params
+    );
+    if (!rows.length) return res.status(404).json({ error: "Serial not found." });
+    const meta = rows[0];
+    const cbcBand = marks >= 75 ? "EE" : marks >= 50 ? "ME" : marks >= 25 ? "AE" : "BE";
+    await query(
+      `INSERT INTO learner_exam_records
+        (institution_id, exam_id, learner_id, serial, marks, percentage, cbc_grade_band)
+       VALUES (?, ?, ?, ?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE
+         marks = VALUES(marks),
+         percentage = VALUES(percentage),
+         cbc_grade_band = VALUES(cbc_grade_band),
+         updated_at = NOW()`,
+      [meta.institution_id, meta.exam_id, meta.learner_id, serial, marks, marks, cbcBand]
+    );
+    await query(`UPDATE qr_tracking SET status = 'CONSUMED', scanned_at = NOW() WHERE serial = ?`, [serial]);
+    await auditLog(req.user, "EXAM_QR_MARKS_SAVED", "learner_exam_records", meta.exam_id || null, {
+      serial, marks, cbc_band: cbcBand
+    });
+    res.json({ message: "Marks saved.", cbc_band: cbcBand });
+  })
+);
+
+// =====================================================================
+// rev52: Template Management (multipart, versioning, restore)
+// =====================================================================
+const REV52_TEMPLATES_DIR = path.join(uploadsPath, "institution-templates");
+if (!fs.existsSync(REV52_TEMPLATES_DIR)) fs.mkdirSync(REV52_TEMPLATES_DIR, { recursive: true });
+const REV52_ALLOWED_TEMPLATE_MIME = new Set([
+  "application/pdf",
+  "application/msword",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "text/html"
+]);
+const rev52TemplateUpload = multer({
+  storage: multer.diskStorage({
+    destination: (_req, _file, cb) => cb(null, REV52_TEMPLATES_DIR),
+    filename: (_req, file, cb) => {
+      const ext = path.extname(file.originalname || "").toLowerCase().slice(0, 8);
+      cb(null, `${Date.now()}-${crypto.randomBytes(6).toString("hex")}${ext}`);
+    }
+  }),
+  limits: { fileSize: Number(process.env.REV52_TEMPLATE_MAX_BYTES || 8 * 1024 * 1024) },
+  fileFilter: (_req, file, cb) => {
+    if (!REV52_ALLOWED_TEMPLATE_MIME.has(String(file.mimetype || "").toLowerCase())) {
+      return cb(new Error(`Unsupported template type: ${file.mimetype}`));
+    }
+    cb(null, true);
+  }
+});
+
+app.get(
+  "/api/institution-templates",
+  auth,
+  asyncHandler(async (req, res) => {
+    const institutionId = Number(req.user.institution_id);
+    const role = normalizeRole(req.user.role);
+    const isDev = role === ROLES.SUPER_SYSTEM_DEVELOPER || role === ROLES.SYSTEM_DEVELOPER;
+    const rows = await query(
+      `SELECT id, institution_id, template_kind, title, format, storage_path, version, is_active, created_at
+       FROM institution_templates
+       ${isDev ? "" : "WHERE institution_id = ? OR institution_id IS NULL"}
+       ORDER BY template_kind ASC, version DESC, id DESC
+       LIMIT 500`,
+      isDev ? [] : [institutionId]
+    );
+    res.json({ rows });
+  })
+);
+
+app.post(
+  "/api/institution-templates",
+  auth,
+  rev52TemplateUpload.single("file"),
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
+  asyncHandler(async (req, res) => {
+    const file = req.file;
+    if (!file) return res.status(400).json({ error: "file is required." });
+    const kind = cleanValue(req.body?.template_kind || "").toUpperCase().slice(0, 80);
+    const title = cleanValue(req.body?.title || "").slice(0, 250);
+    const format = cleanValue(req.body?.format || "PDF").toUpperCase().slice(0, 10);
+    if (!kind || !title) return res.status(400).json({ error: "template_kind and title are required." });
+    const role = normalizeRole(req.user.role);
+    const isDev = role === ROLES.SUPER_SYSTEM_DEVELOPER || role === ROLES.SYSTEM_DEVELOPER;
+    const institutionId = isDev && cleanValue(req.body?.scope || "").toUpperCase() === "GLOBAL"
+      ? null
+      : Number(req.user.institution_id);
+    const versionRow = await query(
+      `SELECT COALESCE(MAX(version), 0) AS v
+       FROM institution_templates
+       WHERE template_kind = ?
+         AND ((institution_id <=> ?))`,
+      [kind, institutionId]
+    );
+    const nextVersion = Number(versionRow[0]?.v || 0) + 1;
+    if (institutionId) {
+      await query(`UPDATE institution_templates SET is_active = 0 WHERE template_kind = ? AND institution_id = ?`, [kind, institutionId]);
+    } else {
+      await query(`UPDATE institution_templates SET is_active = 0 WHERE template_kind = ? AND institution_id IS NULL`, [kind]);
+    }
+    const storagePath = `/uploads/institution-templates/${file.filename}`;
+    const result = await query(
+      `INSERT INTO institution_templates
+        (institution_id, template_kind, title, format, storage_path, version, is_active, uploaded_by_user_id)
+       VALUES (?, ?, ?, ?, ?, ?, 1, ?)`,
+      [institutionId, kind, title, format, storagePath, nextVersion, req.user.id]
+    );
+    await auditLog(req.user, "TEMPLATE_UPLOAD", "institution_templates", result.insertId, { kind, title, version: nextVersion });
+    res.status(201).json({ id: result.insertId, version: nextVersion, storage_path: storagePath });
+  })
+);
+
+app.post(
+  "/api/institution-templates/:id/restore",
+  auth,
+  enforceRole([ROLES.SUPER_SYSTEM_DEVELOPER, ROLES.SYSTEM_DEVELOPER, ROLES.ADMIN, ROLES.HEAD_OF_INSTITUTION]),
+  asyncHandler(async (req, res) => {
+    const id = Number(req.params.id || 0);
+    if (!id) return res.status(400).json({ error: "id required." });
+    const rows = await query(
+      `SELECT institution_id, template_kind FROM institution_templates WHERE id = ? LIMIT 1`,
+      [id]
+    );
+    if (!rows.length) return res.status(404).json({ error: "Template not found." });
+    const r = rows[0];
+    const role = normalizeRole(req.user.role);
+    const isDev = role === ROLES.SUPER_SYSTEM_DEVELOPER || role === ROLES.SYSTEM_DEVELOPER;
+    if (!isDev && Number(r.institution_id) !== Number(req.user.institution_id)) {
+      return res.status(403).json({ error: "Out of institution scope." });
+    }
+    if (r.institution_id === null) {
+      await query(`UPDATE institution_templates SET is_active = 0 WHERE template_kind = ? AND institution_id IS NULL`, [r.template_kind]);
+    } else {
+      await query(`UPDATE institution_templates SET is_active = 0 WHERE template_kind = ? AND institution_id = ?`, [r.template_kind, r.institution_id]);
+    }
+    await query(`UPDATE institution_templates SET is_active = 1 WHERE id = ?`, [id]);
+    await auditLog(req.user, "TEMPLATE_RESTORE", "institution_templates", id, {});
+    res.json({ message: "Template version activated." });
+  })
+);
 
 // =====================================================================
 // rev46-finalize: items 9, 27, 29, 32, 34, 35, 38, 40 + approval gate
